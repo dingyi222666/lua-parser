@@ -3,6 +3,7 @@ package io.github.dingyi222666.lua.parser
 import io.github.dingyi222666.lua.parser.ast.node.*
 import io.github.dingyi222666.lua.lexer.LuaLexer
 import io.github.dingyi222666.lua.lexer.LuaTokenTypes
+import io.github.dingyi222666.lua.parser.util.require
 import java.io.InputStream
 import java.io.Reader
 import java.io.StringReader
@@ -209,6 +210,10 @@ class LuaParser {
                 }
             }
 
+            LuaTokenTypes.MINUS, LuaTokenTypes.GETN, LuaTokenTypes.BIT_TILDE, LuaTokenTypes.NOT -> parseUnaryExpression(
+                parent
+            )
+
             LuaTokenTypes.ELLIPSIS -> VarargLiteral()
             else -> error("unexpected symbol ${lexerText()} near ${lastToken.name.lowercase()}")
         }
@@ -216,6 +221,14 @@ class LuaParser {
         node.parent = parent
 
         return node
+    }
+
+    private fun parseUnaryExpression(parent: BaseASTNode): UnaryExpression {
+        val result = UnaryExpression()
+        result.parent = parent
+        result.operator = ExpressionOperator.values().find { it.value == lexerText() }.require()
+        result.arg = parseExp(result)
+        return result
     }
 
 

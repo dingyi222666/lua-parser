@@ -117,14 +117,27 @@ class VarargLiteral : ExpressionNode by ExpressionNodeSupport() {
     }
 }
 
+class UnaryExpression : ExpressionNode by ExpressionNodeSupport() {
+    var operator by Delegates.notNull<ExpressionOperator>()
+    var arg by Delegates.notNull<ExpressionNode>()
+    override fun toString(): String {
+        return "UnaryExpression(operator=$operator, arg=$arg)"
+    }
+
+
+}
+
+enum class ExpressionOperator(val value: String) {
+    NOT("not"), GETLEN("#"), BIT_TILDE("~"), MINUS("-")
+}
+
 class FunctionDeclaration : ExpressionNode, StatementNode, ASTNode() {
     var body: BlockNode? = null
     var params = mutableListOf<Identifier>()
-    var identifier:ExpressionNode? = null
+    var identifier: ExpressionNode? = null
     var isLocal = false
     override fun toString(): String {
         return "FunctionDeclaration(body=$body, params=$params, identifier=$identifier, isLocal=$isLocal)"
     }
-
 
 }

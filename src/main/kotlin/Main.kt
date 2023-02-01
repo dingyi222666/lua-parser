@@ -5,7 +5,7 @@ fun main(args: Array<String>) {
     parser.parse(
         """
         local function s(a)
-           local f = 1
+           local f = not true
         end   
     """.trimIndent()
     ).run {
