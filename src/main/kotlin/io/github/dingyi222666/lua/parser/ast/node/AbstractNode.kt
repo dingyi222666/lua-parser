@@ -9,7 +9,7 @@ import kotlin.properties.Delegates
  **/
 
 interface BaseASTNode {
-    var parent: ASTNode
+    var parent: BaseASTNode
     var location: Location
 }
 
@@ -23,7 +23,7 @@ class ExpressionNodeSupport : ExpressionNode, ASTNode()
 
 
 abstract class ASTNode : BaseASTNode {
-    override var parent: ASTNode by Delegates.notNull()
+    override var parent: BaseASTNode by Delegates.notNull()
     override var location: Location by Delegates.notNull()
 }
 

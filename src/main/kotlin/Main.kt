@@ -4,7 +4,9 @@ fun main(args: Array<String>) {
     val parser = LuaParser()
     parser.parse(
         """
-        local s = ...
+        local function s(a)
+           local f = 1
+        end   
     """.trimIndent()
     ).run {
         println(this)

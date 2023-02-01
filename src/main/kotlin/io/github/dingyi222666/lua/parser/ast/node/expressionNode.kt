@@ -122,4 +122,9 @@ class FunctionDeclaration : ExpressionNode, StatementNode, ASTNode() {
     var params = mutableListOf<Identifier>()
     var identifier:ExpressionNode? = null
     var isLocal = false
+    override fun toString(): String {
+        return "FunctionDeclaration(body=$body, params=$params, identifier=$identifier, isLocal=$isLocal)"
+    }
+
+
 }

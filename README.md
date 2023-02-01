@@ -1,3 +1,5 @@
 ## lua-parser
 
-Hand written recursive descent of parser, lexer using flex
+### _work in progress_
+
+Handwritten recursive descent of parser, lexer using flex
