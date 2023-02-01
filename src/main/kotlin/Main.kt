@@ -1,10 +1,10 @@
-import io.github.dingyi222666.parser.lua.ast.ASTGenerator
+import io.github.dingyi222666.lua.parser.LuaParser
 
 fun main(args: Array<String>) {
-    val generator = ASTGenerator()
-    generator.generate(
+    val parser = LuaParser()
+    parser.parse(
         """
-        local d,a,c = 12,12,a
+        local s = ...
     """.trimIndent()
     ).run {
         println(this)

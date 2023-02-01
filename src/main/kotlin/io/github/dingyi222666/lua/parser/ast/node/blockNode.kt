@@ -1,4 +1,4 @@
-package io.github.dingyi222666.parser.lua.ast.node
+package io.github.dingyi222666.lua.parser.ast.node
 
 import kotlin.properties.Delegates
 

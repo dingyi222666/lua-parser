@@ -1,4 +1,4 @@
-package io.github.dingyi222666.parser.lua.ast.node
+package io.github.dingyi222666.lua.parser.ast.node
 
 import kotlin.properties.Delegates
 
@@ -8,9 +8,9 @@ import kotlin.properties.Delegates
  * @description:
  **/
 class LocalStatement(
-    val variables: MutableList<ASTNode> = mutableListOf(),
-    val init: MutableList<ASTNode> = mutableListOf(),
-) : StatementNode() {
+    val variables: MutableList<ExpressionNode> = mutableListOf(),
+    val init: MutableList<Identifier> = mutableListOf(),
+) : StatementNode by StatementNodeSupport() {
 
     override fun toString(): String {
         return "LocalStatement(variables=$variables, init=$init)"
@@ -22,7 +22,7 @@ class LocalStatement(
  * @date: 2021/10/9 14:58
  * @description:
  **/
-class CallStatement : StatementNode() {
+class CallStatement : StatementNode by StatementNodeSupport() {
     var expression by Delegates.notNull<CallExpression>()
 }
 
@@ -31,7 +31,7 @@ class CallStatement : StatementNode() {
  * @date: 2021/10/20 11:41
  * @description:
  **/
-class WhileStatement : StatementNode() {
+class WhileStatement : StatementNode by StatementNodeSupport() {
     var condition by Delegates.notNull<ASTNode>()
     var body by Delegates.notNull<BlockNode>()
 
@@ -41,12 +41,13 @@ class WhileStatement : StatementNode() {
 
 }
 
+
 /**
  * @author: dingyi
  * @date: 2021/10/8 20:08
  * @description:
  **/
-class DoStatement : StatementNode() {
+class DoStatement : StatementNode by StatementNodeSupport() {
 
     var body by Delegates.notNull<BlockNode>()
 
