@@ -4,21 +4,6 @@ import com.google.gson.annotations.Expose
 import com.google.gson.annotations.SerializedName
 import kotlin.properties.Delegates
 
-/**
- * @author: dingyi
- * @date: 2023/2/1
- * @description:
- **/
-class MemberExpression : ExpressionNode by ExpressionNodeSupport() {
-
-
-    var identifier by Delegates.notNull<Identifier>()
-
-    var indexer by Delegates.notNull<String>()
-
-    var base by Delegates.notNull<ExpressionNode>()
-
-}
 
 /**
  * @author: dingyi
@@ -111,8 +96,19 @@ class ConstantsNode(
  * @description:
  **/
 class CallExpression : ExpressionNode by ExpressionNodeSupport() {
-    lateinit var base: ExpressionNode
+    lateinit var base: MemberExpression
     val arguments = mutableListOf<ExpressionNode>()
+}
+
+class MemberExpression : ExpressionNode by ExpressionNodeSupport() {
+    lateinit var identifier: Identifier
+    var indexer: String = "."
+    lateinit var base: ExpressionNode
+}
+
+class IndexExpression : ExpressionNode by ExpressionNodeSupport() {
+    lateinit var index: ExpressionNode
+    lateinit var base: ExpressionNode
 }
 
 class VarargLiteral : ExpressionNode by ExpressionNodeSupport() {
@@ -137,7 +133,6 @@ class BinaryExpression : ExpressionNode by ExpressionNodeSupport() {
     override fun toString(): String {
         return "BinaryExpression(left=$left, right=$right, operator=$operator)"
     }
-
 
 }
 

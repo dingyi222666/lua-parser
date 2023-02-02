@@ -7,7 +7,7 @@ fun main(args: Array<String>) {
     parser.parse(
         """
         do 
-          local f = 123
+          local f = a.c['4']
         end
     """.trimIndent()
     ).run {

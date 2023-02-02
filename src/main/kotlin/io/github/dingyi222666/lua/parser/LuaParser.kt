@@ -42,10 +42,10 @@ class LuaParser {
         return parseChunk()
     }
 
-    private fun consume(func: (LuaTokenTypes) -> Boolean): Boolean {
+    private fun <T> consume(func: (LuaTokenTypes) -> T): T {
         advance()
         val needConsume = func.invoke(currentToken)
-        if (!needConsume) {
+        if (needConsume is Boolean && !needConsume) {
             lexer.yypushback(lexer.yylength())
         }
         return needConsume
@@ -91,7 +91,15 @@ class LuaParser {
     private fun expectToken(target: LuaTokenTypes, messageBuilder: () -> String): Boolean {
         advance()
         if (currentToken != target) {
-            error("(${lexer.yyline()},${lexer.yycolumn()}): " + messageBuilder())
+            error(messageBuilder())
+        }
+        return true
+    }
+
+    private fun expectToken(array: Array<LuaTokenTypes>, messageBuilder: () -> String): Boolean {
+        advance()
+        if (currentToken !in array) {
+            error(messageBuilder())
         }
         return true
     }
@@ -230,13 +238,11 @@ class LuaParser {
     }
 
 
-    //     exp ::= (unop exp | primary | prefixexp ) { binop exp }
+    //      exp ::= (unop exp | primary | prefixexp ) { binop exp }
     //
     //     primary ::= nil | false | true | Number | String | '...'
     //          | functiondef | tableconstructor
     //
-    //     prefixexp ::= (Name | '(' exp ')' ) { '[' exp ']'
-    //          | '.' Name | ':' Name args | args }
     //
     private fun parseExp(parent: BaseASTNode): ExpressionNode {
         return parseSubExp(parent, 0).require()
@@ -269,11 +275,12 @@ class LuaParser {
     }
 
 
+    //
     private fun parseSubExp(parent: BaseASTNode, minPrecedence: Int): ExpressionNode {
 
         var precedence: Int
 
-        currentToken = advance()
+        val currentToken = peek()
         var node: ExpressionNode
         node = when {
 
@@ -287,18 +294,18 @@ class LuaParser {
             }
 
             // primary
-            currentToken == LuaTokenTypes.ELLIPSIS -> VarargLiteral()
-            currentToken == LuaTokenTypes.NIL -> ConstantsNode.NIL.copy()
+            currentToken == LuaTokenTypes.ELLIPSIS -> consume { VarargLiteral() }
+            currentToken == LuaTokenTypes.NIL -> consume { ConstantsNode.NIL.copy() }
 
             equalsMore(
                 currentToken, LuaTokenTypes.FALSE, LuaTokenTypes.TRUE
-            ) -> ConstantsNode(ConstantsNode.TYPE.BOOLEAN, lexerText())
+            ) -> consume { ConstantsNode(ConstantsNode.TYPE.BOOLEAN, lexerText()) }
 
             equalsMore(
                 currentToken, LuaTokenTypes.LONG_STRING, LuaTokenTypes.STRING
-            ) -> ConstantsNode(ConstantsNode.TYPE.STRING, lexerText())
+            ) -> consume { ConstantsNode(ConstantsNode.TYPE.STRING, lexerText()) }
 
-            currentToken == LuaTokenTypes.NUMBER -> {
+            currentToken == LuaTokenTypes.NUMBER -> consume {
                 val lexerText = lexerText()
                 if (lexerText.contains(".")) {
                     ConstantsNode(ConstantsNode.TYPE.FLOAT, lexerText)
@@ -309,7 +316,8 @@ class LuaParser {
 
             binaryPrecedence(currentToken).also {
                 precedence = it
-            } > 0 -> {
+            } > 0 -> consume {
+
                 precedence = binaryPrecedence(currentToken)
                 val result = BinaryExpression().apply {
                     this.parent = parent
@@ -322,9 +330,9 @@ class LuaParser {
                 result
             }
 
-            //TODO: table / function call ....
+            //TODO: table ....
 
-            else -> error("unexpected symbol ${lexerText()} near ${lastToken.name.lowercase()}")
+            else -> parsePrefixExp(parent)
         }
 
 
@@ -361,8 +369,78 @@ class LuaParser {
     }
 
 
+    //  primaryexp ::= NAME | '(' expr ')' *
+    private fun parsePrimaryExp(parent: BaseASTNode): ExpressionNode {
+        return when (currentToken) {
+            LuaTokenTypes.NAME -> parseName(parent)
+            LuaTokenTypes.LPAREN -> {
+                val exp = parseExp(parent)
+                expectToken(LuaTokenTypes.RPAREN) { "')' expected near ${lexerText()}" }
+                exp
+            }
+
+            else -> error("unexpected symbol ${lexerText()} near ${lexerText()}")
+        }
+    }
+
+    //  prefixExp ::= primaryexp { '.' fieldset | '[' exp ']' | ':' NAME funcargs | funcargs }
+    private fun parsePrefixExp(parent: BaseASTNode): ExpressionNode {
+
+        var result = parsePrimaryExp(parent)
+
+        var parentNode = parent
+
+        while (true) {
+            result = when (peek()) {
+                // '.' fieldset*
+                LuaTokenTypes.DOT -> {
+                    parseFieldSet(parentNode, result)
+                }
+                // [' exp ']'
+                LuaTokenTypes.LBRACK -> {
+                    parseIndexExpression(parentNode, result)
+                }
+
+                else -> break
+            }
+            parentNode = result
+        }
+
+        return result
+
+    }
+
+
+    // [' exp ']'
+    private fun parseIndexExpression(parent: BaseASTNode, base: ExpressionNode): IndexExpression {
+        advance()
+
+        val result = IndexExpression()
+        result.parent = parent
+        result.base = base
+        result.index = parseExp(parent)
+
+        expectToken(LuaTokenTypes.RBRACK) { "']' expected near ${lexerText()}" }
+
+        return result
+    }
+
+    //  ['.' | ':'] NAME
+    private fun parseFieldSet(parent: BaseASTNode, base: ExpressionNode): MemberExpression {
+        val result = MemberExpression()
+
+        result.indexer = consume { lexerText() }
+
+        result.base = base
+
+        result.identifier = parseName(result)
+        result.parent = parent
+        return result
+    }
+
     //	unop ::= ‘-’ | not | ‘#’ | ‘~’
     private fun parseUnaryExpression(parent: BaseASTNode): UnaryExpression {
+        advance()
         val result = UnaryExpression()
         result.parent = parent
         result.operator = findExpressionOperator(lexerText()).require()
