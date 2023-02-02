@@ -1,6 +1,5 @@
 package io.github.dingyi222666.lua.parser.ast.node
 
-import com.google.gson.annotations.Expose
 import com.google.gson.annotations.SerializedName
 import kotlin.properties.Delegates
 
@@ -24,8 +23,8 @@ class Identifier(var name: String = "") : ExpressionNode by ExpressionNodeSuppor
  * @date: 2021/10/7 10:38
  * @description:
  **/
-class ConstantsNode(
-    var type: TYPE = TYPE.UNKNOWN,
+class ConstantNode(
+    var constantType: TYPE = TYPE.UNKNOWN,
     value: Any = 0
 ) : ExpressionNode by ExpressionNodeSupport() {
 
@@ -41,7 +40,7 @@ class ConstantsNode(
     )
 
     private fun switchValue(newValue: Any): Any {
-        return when (type) {
+        return when (constantType) {
             TYPE.INTERGER -> {
                 newValue.toString().toIntOrNull()
                     ?: newValue
@@ -77,16 +76,16 @@ class ConstantsNode(
         return _value as Boolean
     }
 
-    fun nilOf(): ConstantsNode = NIL
+    fun nilOf(): ConstantNode = NIL
 
     override fun toString(): String {
-        return "ConstantsNode(type=$type, value=$_value)"
+        return "ConstantsNode(type=$constantType, value=$_value)"
     }
 
-    fun copy(): ConstantsNode = ConstantsNode(type = this.type, value = this.rawValue)
+    fun copy(): ConstantNode = ConstantNode(constantType = this.constantType, value = this.rawValue)
 
     companion object {
-        val NIL = ConstantsNode(value = Any(), type = TYPE.NIL)
+        val NIL = ConstantNode(value = Any(), constantType = TYPE.NIL)
     }
 }
 

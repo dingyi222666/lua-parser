@@ -8,7 +8,6 @@ import io.github.dingyi222666.lua.parser.util.require
 import java.io.InputStream
 import java.io.Reader
 import java.io.StringReader
-import kotlin.math.cbrt
 import kotlin.properties.Delegates
 
 /**
@@ -85,7 +84,7 @@ class LuaParser {
         return currentToken
     }
 
-    private fun lexerText(nextToken:Boolean = false):String {
+    private fun lexerText(nextToken: Boolean = false): String {
         if (nextToken) {
             advance()
         }
@@ -209,7 +208,28 @@ class LuaParser {
 
         return if (peek() == LuaTokenTypes.ASSIGN) {
             parseForNumericStatement(name, parent)
-        } else CallStatement()
+        } else parseForGenericStatement(name,parent)
+    }
+
+    //             for namelist in explist do block end |
+    private fun parseForGenericStatement(variable: Identifier, parent: BaseASTNode): ForGenericStatement {
+        val result = ForGenericStatement()
+        result.parent = parent
+        result.variables.add(variable)
+
+        val findComma = consume { it == LuaTokenTypes.COMMA }
+
+        if (findComma) {
+            result.variables.addAll(parseNameList(result))
+        }
+
+        expectToken(LuaTokenTypes.IN) { "<in> expected near '${lexerText()}'" }
+
+        result.iterators.addAll(parseExpList(result))
+
+        result.body = parseForBody(result)
+
+        return result
     }
 
     //  for Name ‘=’ exp ‘,’ exp [‘,’ exp] do block end |
@@ -218,7 +238,7 @@ class LuaParser {
         result.variable = variable
         result.parent = parent
 
-        expectToken(LuaTokenTypes.ASSIGN) { "'in' expected near '${lexerText()}'" }
+        expectToken(LuaTokenTypes.ASSIGN) { "'=' expected near '${lexerText()}'" }
 
         result.start = parseExp(result)
 
@@ -511,22 +531,22 @@ class LuaParser {
 
             // primary
             currentToken == LuaTokenTypes.ELLIPSIS -> consume { VarargLiteral() }
-            currentToken == LuaTokenTypes.NIL -> consume { ConstantsNode.NIL.copy() }
+            currentToken == LuaTokenTypes.NIL -> consume { ConstantNode.NIL.copy() }
 
             equalsMore(
                 currentToken, LuaTokenTypes.FALSE, LuaTokenTypes.TRUE
-            ) -> consume { ConstantsNode(ConstantsNode.TYPE.BOOLEAN, lexerText()) }
+            ) -> consume { ConstantNode(ConstantNode.TYPE.BOOLEAN, lexerText()) }
 
             equalsMore(
                 currentToken, LuaTokenTypes.LONG_STRING, LuaTokenTypes.STRING
-            ) -> consume { ConstantsNode(ConstantsNode.TYPE.STRING, lexerText()) }
+            ) -> consume { ConstantNode(ConstantNode.TYPE.STRING, lexerText()) }
 
             currentToken == LuaTokenTypes.NUMBER -> consume {
                 val lexerText = lexerText()
                 if (lexerText.contains(".")) {
-                    ConstantsNode(ConstantsNode.TYPE.FLOAT, lexerText)
+                    ConstantNode(ConstantNode.TYPE.FLOAT, lexerText)
                 } else {
-                    ConstantsNode(ConstantsNode.TYPE.INTERGER, lexerText)
+                    ConstantNode(ConstantNode.TYPE.INTERGER, lexerText)
                 }
             }
 

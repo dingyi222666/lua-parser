@@ -16,7 +16,8 @@ class LocalStatement : StatementNode by StatementNodeSupport() {
     }
 }
 
-class AssignmentStatement  : StatementNode by StatementNodeSupport() {
+
+class AssignmentStatement : StatementNode by StatementNodeSupport() {
 
     val variables: MutableList<ExpressionNode> = mutableListOf()
     val init: MutableList<ExpressionNode> = mutableListOf()
@@ -26,16 +27,22 @@ class AssignmentStatement  : StatementNode by StatementNodeSupport() {
 }
 
 
-class ForNumericStatement: StatementNode by StatementNodeSupport() {
-    lateinit var variable:Identifier
-    lateinit var start:ExpressionNode
-    lateinit var end:ExpressionNode
-    var step:ExpressionNode? = null
-    lateinit var body:BlockNode
+class ForGenericStatement : StatementNode by StatementNodeSupport() {
+    val variables: MutableList<Identifier> = mutableListOf()
+    val iterators: MutableList<ExpressionNode> = mutableListOf()
+    lateinit var body: BlockNode
+}
+
+
+class ForNumericStatement : StatementNode by StatementNodeSupport() {
+    lateinit var variable: Identifier
+    lateinit var start: ExpressionNode
+    lateinit var end: ExpressionNode
+    var step: ExpressionNode? = null
+    lateinit var body: BlockNode
     override fun toString(): String {
         return "ForNumericStatement(variable=$variable, start=$start, end=$end, step=$step, body=$body)"
     }
-
 
 }
 

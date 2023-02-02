@@ -28,6 +28,7 @@ abstract class ASTNode : BaseASTNode {
     override var parent: BaseASTNode by Delegates.notNull()
     @delegate:SerializedName("location")
     override var location: Location by Delegates.notNull()
+
 }
 
 data class Location(
