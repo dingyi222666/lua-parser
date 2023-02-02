@@ -25,6 +25,20 @@ class AssignmentStatement  : StatementNode by StatementNodeSupport() {
     }
 }
 
+
+class ForNumericStatement: StatementNode by StatementNodeSupport() {
+    lateinit var variable:Identifier
+    lateinit var start:ExpressionNode
+    lateinit var end:ExpressionNode
+    var step:ExpressionNode? = null
+    lateinit var body:BlockNode
+    override fun toString(): String {
+        return "ForNumericStatement(variable=$variable, start=$start, end=$end, step=$step, body=$body)"
+    }
+
+
+}
+
 /**
  * @author: dingyi
  * @date: 2021/10/9 14:58

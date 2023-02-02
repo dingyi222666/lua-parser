@@ -85,8 +85,13 @@ class LuaParser {
         return currentToken
     }
 
-    private fun lexerText() = cacheText ?: lexer.yytext().apply {
-        cacheText = this
+    private fun lexerText(nextToken:Boolean = false):String {
+        if (nextToken) {
+            advance()
+        }
+        return cacheText ?: lexer.yytext().apply {
+            cacheText = this
+        }
     }
 
     private fun consumeToken(target: LuaTokenTypes): Boolean {
@@ -161,6 +166,7 @@ class LuaParser {
                     BreakStatement()
                 }
 
+                consumeToken(LuaTokenTypes.FOR) -> parseForStatement(blockNode)
                 consumeToken(LuaTokenTypes.FUNCTION) -> parseGlobalFunctionDeclaration(blockNode)
                 consumeToken(LuaTokenTypes.CONTINUE) -> {
                     ContinueStatement()
@@ -188,6 +194,55 @@ class LuaParser {
         }
 
         return blockNode
+    }
+
+
+    //  for Name ‘=’ exp ‘,’ exp [‘,’ exp] do block end |
+    //             for namelist in explist do block end |
+    private fun parseForStatement(parent: BaseASTNode): StatementNode {
+
+        //1. parse first name
+
+        val name = parseName(parent)
+
+        //2. check `=`
+
+        return if (peek() == LuaTokenTypes.ASSIGN) {
+            parseForNumericStatement(name, parent)
+        } else CallStatement()
+    }
+
+    //  for Name ‘=’ exp ‘,’ exp [‘,’ exp] do block end |
+    private fun parseForNumericStatement(variable: Identifier, parent: BaseASTNode): ForNumericStatement {
+        val result = ForNumericStatement()
+        result.variable = variable
+        result.parent = parent
+
+        expectToken(LuaTokenTypes.ASSIGN) { "'in' expected near '${lexerText()}'" }
+
+        result.start = parseExp(result)
+
+        expectToken(LuaTokenTypes.COMMA) { "',' expected near '${lexerText()}'" }
+
+        result.end = parseExp(result)
+
+        val findComma = consume { it == LuaTokenTypes.COMMA }
+
+        if (findComma) {
+            result.step = parseExp(result)
+        }
+
+        result.body = parseForBody(result)
+
+        return result
+    }
+
+    private fun parseForBody(parent: BaseASTNode): BlockNode {
+        val findDoToken = consumeToken(LuaTokenTypes.DO)
+        if (!findDoToken) {
+            warning("The <do> expected near ${lexerText()}")
+        }
+        return parseBlockNode(parent)
     }
 
     //     goto Name |
@@ -259,12 +314,12 @@ class LuaParser {
 
         val findDoToken = consumeToken(LuaTokenTypes.DO)
         if (!findDoToken) {
-            warning("The <do> expected near ${lexerText()}")
+            warning("The <do> expected near ${lexerText(true)}")
         }
 
         result.body = parseBlockNode(result)
 
-        expectToken(LuaTokenTypes.END) { "'end' expected (to close 'do' at line $currentLine) near ${lexerText()}" }
+        expectToken(LuaTokenTypes.END) { "'end' expected (to close 'do' at line $currentLine) near ${lexerText(true)}" }
 
         return result
     }
@@ -541,11 +596,11 @@ class LuaParser {
             LuaTokenTypes.LPAREN -> {
                 advance()
                 val exp = parseExp(parent)
-                expectToken(LuaTokenTypes.RPAREN) { "')' expected near ${lexerText()}" }
+                expectToken(LuaTokenTypes.RPAREN) { "')' expected near ${lexerText(true)}" }
                 exp
             }
 
-            else -> error("unexpected symbol ${lexerText()} near ${lexerText()}")
+            else -> error("<expression> expected near ${lexerText(true)}")
         }
     }
 
