@@ -9,3 +9,12 @@ package io.github.dingyi222666.lua.parser.util
 inline fun <T> T?.require(): T {
     return this!!
 }
+
+fun <T> equalsMore(origin: T, vararg arg: T): Boolean {
+    for (v in arg) {
+        if (origin == v) {
+            return true
+        }
+    }
+    return false
+}

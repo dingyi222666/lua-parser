@@ -1,5 +1,6 @@
 package io.github.dingyi222666.lua.parser.ast.node
 
+import com.google.gson.annotations.SerializedName
 import kotlin.properties.Delegates
 
 /**
@@ -23,7 +24,9 @@ class ExpressionNodeSupport : ExpressionNode, ASTNode()
 
 
 abstract class ASTNode : BaseASTNode {
+    @delegate:SerializedName("parent")
     override var parent: BaseASTNode by Delegates.notNull()
+    @delegate:SerializedName("location")
     override var location: Location by Delegates.notNull()
 }
 

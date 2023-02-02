@@ -23,7 +23,7 @@ class LocalStatement(
  * @description:
  **/
 class CallStatement : StatementNode by StatementNodeSupport() {
-    var expression by Delegates.notNull<CallExpression>()
+    lateinit var expression: CallExpression
 }
 
 /**
@@ -32,8 +32,8 @@ class CallStatement : StatementNode by StatementNodeSupport() {
  * @description:
  **/
 class WhileStatement : StatementNode by StatementNodeSupport() {
-    var condition by Delegates.notNull<ASTNode>()
-    var body by Delegates.notNull<BlockNode>()
+    lateinit var condition: ASTNode
+    lateinit var body: BlockNode
 
     override fun toString(): String {
         return "WhileStatement(condition=$condition, body=$body)"

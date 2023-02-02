@@ -33,7 +33,7 @@ class BlockNode() : ASTNode() {
  * @description:
  **/
 class ChunkNode : ASTNode() {
-    var body by Delegates.notNull<BlockNode>()
+    lateinit var body:BlockNode
     override fun toString(): String {
         return "ChunkNode(body=$body)"
     }

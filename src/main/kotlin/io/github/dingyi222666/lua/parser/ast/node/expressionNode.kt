@@ -1,5 +1,7 @@
 package io.github.dingyi222666.lua.parser.ast.node
 
+import com.google.gson.annotations.Expose
+import com.google.gson.annotations.SerializedName
 import kotlin.properties.Delegates
 
 /**
@@ -42,8 +44,10 @@ class ConstantsNode(
     value: Any = 0
 ) : ExpressionNode by ExpressionNodeSupport() {
 
+    @SerializedName("value")
     private var _value: Any = 0
 
+    @delegate:Transient
     var rawValue by Delegates.observable(
         initialValue = Any(),
         onChange = { _, _, newValue ->
@@ -107,7 +111,7 @@ class ConstantsNode(
  * @description:
  **/
 class CallExpression : ExpressionNode by ExpressionNodeSupport() {
-    var base by Delegates.notNull<ExpressionNode>()
+    lateinit var base: ExpressionNode
     val arguments = mutableListOf<ExpressionNode>()
 }
 
@@ -118,17 +122,31 @@ class VarargLiteral : ExpressionNode by ExpressionNodeSupport() {
 }
 
 class UnaryExpression : ExpressionNode by ExpressionNodeSupport() {
-    var operator by Delegates.notNull<ExpressionOperator>()
-    var arg by Delegates.notNull<ExpressionNode>()
+    lateinit var operator: ExpressionOperator
+    lateinit var arg: ExpressionNode
     override fun toString(): String {
         return "UnaryExpression(operator=$operator, arg=$arg)"
+    }
+
+}
+
+class BinaryExpression : ExpressionNode by ExpressionNodeSupport() {
+    var left /*by Delegates.notNull<*/: ExpressionNode? = null
+    var right: ExpressionNode? = null
+    var operator: ExpressionOperator? = null
+    override fun toString(): String {
+        return "BinaryExpression(left=$left, right=$right, operator=$operator)"
     }
 
 
 }
 
 enum class ExpressionOperator(val value: String) {
-    NOT("not"), GETLEN("#"), BIT_TILDE("~"), MINUS("-")
+    NOT("not"), GETLEN("#"), BIT_TILDE("~"), MINUS("-"),
+    ADD("+"), DIV("/"), OR("or"), MULT("*"), BIT_EXP("^"),
+    LT("<"), BIT_LT("<<"), GT(">"), BIT_GT(">>"), BIT_OR("|"),
+    BIT_AND("&"), CONCAT(".."), LE("<="), GE(">="), EQ("=="),
+    NE("~="), DOUBLE_DIV("//"), MOD("%")
 }
 
 class FunctionDeclaration : ExpressionNode, StatementNode, ASTNode() {
