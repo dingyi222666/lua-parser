@@ -50,5 +50,9 @@ class WhileStatement : StatementNode by StatementNodeSupport() {
 class DoStatement : StatementNode by StatementNodeSupport() {
 
     var body by Delegates.notNull<BlockNode>()
+    override fun toString(): String {
+        return "DoStatement(body=$body)"
+    }
+
 
 }

@@ -24,7 +24,7 @@ class ExpressionNodeSupport : ExpressionNode, ASTNode()
 
 
 abstract class ASTNode : BaseASTNode {
-    @delegate:SerializedName("parent")
+    @delegate:Transient
     override var parent: BaseASTNode by Delegates.notNull()
     @delegate:SerializedName("location")
     override var location: Location by Delegates.notNull()

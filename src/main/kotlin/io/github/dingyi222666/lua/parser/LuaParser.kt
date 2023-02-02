@@ -131,6 +131,7 @@ class LuaParser {
                     else parseLocalVarList(blockNode)
                 }
 
+                consumeToken(LuaTokenTypes.DO) -> parseDoStatement(blockNode)
                 else -> break
             }
             blockNode.addStatement(stat)
@@ -140,12 +141,24 @@ class LuaParser {
         }
 
 
-
         if (parent != null) {
             blockNode.parent = parent
         }
 
         return blockNode
+    }
+
+    // do block end |
+    private fun parseDoStatement(parent: BaseASTNode): DoStatement {
+        val result = DoStatement()
+        val currentLine = lexer.yyline()
+
+        result.body = parseBlockNode(result)
+        result.parent = parent
+
+        expectToken(LuaTokenTypes.END) { "'end' expected (to close 'do' at line $currentLine) near ${lexerText()}" }
+
+        return result
     }
 
     //		 local function Name funcbody
@@ -341,7 +354,7 @@ class LuaParser {
     private fun parseUnaryExpression(parent: BaseASTNode): UnaryExpression {
         val result = UnaryExpression()
         result.parent = parent
-        result.operator = ExpressionOperator.values().find { it.value == lexerText() }.require()
+        result.operator = findExpressionOperator(lexerText()).require()
         result.arg = parseSubExp(result, 11);
         return result
     }
