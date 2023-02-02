@@ -22,7 +22,6 @@ class LuaParser {
 
     private var currentToken = LuaTokenTypes.WHITE_SPACE
     private var lastToken = LuaTokenTypes.WHITE_SPACE
-
     private var cacheText: String? = null
 
     var ignoreWarningMessage = true
@@ -167,6 +166,9 @@ class LuaParser {
                     ContinueStatement()
                 }
 
+                consumeToken(LuaTokenTypes.GOTO) -> parseGotoStatement(blockNode)
+                consumeToken(LuaTokenTypes.DOUBLE_COLON) -> parseLabelStatement(blockNode)
+
                 consumeToken(LuaTokenTypes.SEMI) -> continue
                 consumeToken(LuaTokenTypes.DO) -> parseDoStatement(blockNode)
                 peekToken(LuaTokenTypes.NAME) -> parseExpStatement(blockNode)
@@ -188,13 +190,31 @@ class LuaParser {
         return blockNode
     }
 
+    //     goto Name |
+    private fun parseGotoStatement(parent: BaseASTNode): GotoStatement {
+        val result = GotoStatement()
+        result.parent = parent
+        result.identifier = parseName(result)
+
+        return result
+    }
+
+
+    //      label ::= ‘::’ Name ‘::’
+    private fun parseLabelStatement(parent: BaseASTNode): LabelStatement {
+        val result = LabelStatement()
+        result.parent = parent
+        result.identifier = parseName(result)
+
+        expectToken(LuaTokenTypes.DOUBLE_COLON) { "'::' expected near '${lexerText()}'" }
+        return result
+    }
+
     //      function funcname funcbody |
     private fun parseGlobalFunctionDeclaration(parent: BaseASTNode): FunctionDeclaration {
         val result = FunctionDeclaration()
         result.parent = parent
-
         var nameExp: ExpressionNode = parseName(parent)
-
         var parentNode = parent
 
         //   funcname ::= Name {‘.’ Name} [‘:’ Name]

@@ -40,7 +40,7 @@ class WhileStatement : StatementNode by StatementNodeSupport() {
     }
 }
 
-class RepeatStatement: StatementNode by StatementNodeSupport() {
+class RepeatStatement : StatementNode by StatementNodeSupport() {
     lateinit var condition: ExpressionNode
     lateinit var body: BlockNode
     override fun toString(): String {
@@ -50,13 +50,28 @@ class RepeatStatement: StatementNode by StatementNodeSupport() {
 }
 
 
-class BreakStatement:StatementNode by StatementNodeSupport() {
+class BreakStatement : StatementNode by StatementNodeSupport() {
     override fun toString(): String {
         return "BreakStatement()"
     }
 }
 
-class ContinueStatement:StatementNode by StatementNodeSupport(){
+class LabelStatement : StatementNode by StatementNodeSupport() {
+    lateinit var identifier: Identifier
+    override fun toString(): String {
+        return "LabelStatement(identifier=$identifier)"
+    }
+}
+
+class GotoStatement : StatementNode by StatementNodeSupport() {
+    lateinit var identifier: Identifier
+    override fun toString(): String {
+        return "GotoStatement(identifier=$identifier)"
+    }
+}
+
+
+class ContinueStatement : StatementNode by StatementNodeSupport() {
     override fun toString(): String {
         return "ContinueStatement()"
     }

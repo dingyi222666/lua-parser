@@ -9,6 +9,8 @@ fun main(args: Array<String>) {
         function test.c:a(a,b)
           print("支持中文，简洁的parser")
         end  
+        :: test ::
+        goto test
     """.trimIndent()
     ).run {
         println(Gson()

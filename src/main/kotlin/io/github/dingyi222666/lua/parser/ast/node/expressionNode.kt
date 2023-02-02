@@ -104,6 +104,10 @@ class MemberExpression : ExpressionNode by ExpressionNodeSupport() {
     lateinit var identifier: Identifier
     var indexer: String = "."
     lateinit var base: ExpressionNode
+    override fun toString(): String {
+        return "MemberExpression(identifier=$identifier, indexer='$indexer', base=$base)"
+    }
+
 }
 
 class IndexExpression : ExpressionNode by ExpressionNodeSupport() {
