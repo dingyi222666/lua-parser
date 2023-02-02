@@ -153,6 +153,7 @@ class LuaParser {
                     if (consumeToken(LuaTokenTypes.FUNCTION)) parseLocalFunctionDeclaration(blockNode)
                     else parseLocalVarList(blockNode)
                 }
+
                 consumeToken(LuaTokenTypes.WHILE) -> parseWhileStatement(blockNode)
                 consumeToken(LuaTokenTypes.REPEAT) -> parseRepeatStatement(blockNode)
                 consumeToken(LuaTokenTypes.BREAK) -> {
@@ -186,9 +187,9 @@ class LuaParser {
     }
 
 
+    //		 repeat block until exp |
     private fun parseRepeatStatement(parent: BaseASTNode): RepeatStatement {
         val result = RepeatStatement()
-        val currentLine = lexer.yyline()
         result.parent = parent
 
         result.body = parseBlockNode(result)
@@ -200,6 +201,7 @@ class LuaParser {
         return result
     }
 
+    //		 while exp do block end |
     private fun parseWhileStatement(parent: BaseASTNode): WhileStatement {
         val result = WhileStatement()
         val currentLine = lexer.yyline()
@@ -246,6 +248,25 @@ class LuaParser {
         return result
     }
 
+    //      funcbody ::= ‘(’ [parlist] ‘)’ block end
+    private fun parseFunctionBody(
+        node: FunctionDeclaration,
+        parent: BaseASTNode,
+        currentLine: Int
+    ): FunctionDeclaration {
+        expectToken(LuaTokenTypes.LPAREN) { "( expected near ${lexerText()}" }
+
+        node.params.addAll(parseNameList(parent))
+
+        expectToken(LuaTokenTypes.RPAREN) { ") expected near ${lexerText()}" }
+
+        node.body = parseBlockNode(parent)
+
+        expectToken(LuaTokenTypes.END) { "'end' expected (to close 'function' at line $currentLine) near ${lexerText()}" }
+
+        return node
+    }
+
     //		 local function Name funcbody
     private fun parseLocalFunctionDeclaration(parent: BaseASTNode): FunctionDeclaration {
         val result = FunctionDeclaration()
@@ -257,17 +278,8 @@ class LuaParser {
 
         result.identifier = name
 
-        expectToken(LuaTokenTypes.LPAREN) { "( expected near ${lexerText()}" }
 
-        result.params.addAll(parseNameList(parent))
-
-        expectToken(LuaTokenTypes.RPAREN) { ") expected near ${lexerText()}" }
-
-        result.body = parseBlockNode(parent)
-
-        expectToken(LuaTokenTypes.END) { "'end' expected (to close 'function' at line $currentLine) near ${lexerText()}" }
-
-        return result
+        return parseFunctionBody(result, parent, currentLine)
     }
 
     private fun parseName(parent: BaseASTNode): Identifier {
@@ -341,6 +353,13 @@ class LuaParser {
     }
 
 
+    //          functiondef ::= function funcbody
+    private fun parseFunctionExp(parent: BaseASTNode): FunctionDeclaration {
+        val result = FunctionDeclaration()
+        return parseFunctionBody(result, parent, lexer.yyline())
+    }
+
+
     //
     private fun parseSubExp(parent: BaseASTNode, minPrecedence: Int): ExpressionNode {
 
@@ -378,6 +397,10 @@ class LuaParser {
                 } else {
                     ConstantsNode(ConstantsNode.TYPE.INTERGER, lexerText)
                 }
+            }
+
+            currentToken == LuaTokenTypes.FUNCTION -> consume {
+                parseFunctionExp(parent)
             }
 
             binaryPrecedence(currentToken).also {

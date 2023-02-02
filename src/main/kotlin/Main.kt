@@ -10,9 +10,9 @@ fun main(args: Array<String>) {
           a.c()
           local f = a.c:a(1,2,a)
         end
-        repeat
-           print("a的值为:", a)
-        until ( a > 15 )
+        local f = function(a,b)
+           print("call f")
+        end
     """.trimIndent()
     ).run {
         println(Gson()
