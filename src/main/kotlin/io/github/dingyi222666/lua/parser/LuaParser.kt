@@ -42,7 +42,7 @@ class LuaParser {
         return parseChunk()
     }
 
-    private fun <T> consume(func: (LuaTokenTypes) -> T): T {
+    private inline fun <T> consume(crossinline func: (LuaTokenTypes) -> T): T {
         advance()
         val needConsume = func.invoke(currentToken)
         if (needConsume is Boolean && !needConsume) {
@@ -55,7 +55,7 @@ class LuaParser {
         return peek { it }
     }
 
-    private fun <T> peek(func: (LuaTokenTypes) -> T): T {
+    private inline fun <T> peek(crossinline func: (LuaTokenTypes) -> T): T {
         advance()
         val result = func.invoke(currentToken)
         lexer.yypushback(lexer.yylength())
@@ -88,7 +88,7 @@ class LuaParser {
         }
     }
 
-    private fun expectToken(target: LuaTokenTypes, messageBuilder: () -> String): Boolean {
+    private inline fun expectToken(target: LuaTokenTypes, crossinline messageBuilder: () -> String): Boolean {
         advance()
         if (currentToken != target) {
             error(messageBuilder())
@@ -96,7 +96,7 @@ class LuaParser {
         return true
     }
 
-    private fun expectToken(array: Array<LuaTokenTypes>, messageBuilder: () -> String): Boolean {
+    private inline fun expectToken(array: Array<LuaTokenTypes>, crossinline messageBuilder: () -> String): Boolean {
         advance()
         if (currentToken !in array) {
             error(messageBuilder())
@@ -400,6 +400,10 @@ class LuaParser {
                 LuaTokenTypes.LBRACK -> {
                     parseIndexExpression(parentNode, result)
                 }
+                // funcargs
+                LuaTokenTypes.LPAREN -> {
+                    parseCallExpression(parent, result)
+                }
 
                 else -> break
             }
@@ -410,6 +414,28 @@ class LuaParser {
 
     }
 
+    // funcargs -> '(' [ explist ] ')'
+    private fun parseCallExpression(parent: BaseASTNode, base: ExpressionNode): CallExpression {
+        val result = CallExpression()
+        result.parent = parent
+        result.base = base
+
+        // consume (
+        advance()
+
+        val findRight = consume { it == LuaTokenTypes.RPAREN }
+
+        if (findRight) {
+            // empty arg
+            return result
+        }
+
+        result.arguments.addAll(parseExpList(parent))
+
+        expectToken(LuaTokenTypes.RPAREN) { "')' expected near ${lexerText()}" }
+
+        return result
+    }
 
     // [' exp ']'
     private fun parseIndexExpression(parent: BaseASTNode, base: ExpressionNode): IndexExpression {

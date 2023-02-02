@@ -96,7 +96,7 @@ class ConstantsNode(
  * @description:
  **/
 class CallExpression : ExpressionNode by ExpressionNodeSupport() {
-    lateinit var base: MemberExpression
+    lateinit var base: ExpressionNode
     val arguments = mutableListOf<ExpressionNode>()
 }
 
