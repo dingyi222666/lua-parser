@@ -7,13 +7,21 @@ import kotlin.properties.Delegates
  * @date: 2021/10/7 10:23
  * @description:
  **/
-class LocalStatement(
-    val variables: MutableList<ExpressionNode> = mutableListOf(),
-    val init: MutableList<Identifier> = mutableListOf(),
-) : StatementNode by StatementNodeSupport() {
+class LocalStatement : StatementNode by StatementNodeSupport() {
 
+    val variables: MutableList<ExpressionNode> = mutableListOf()
+    val init: MutableList<Identifier> = mutableListOf()
     override fun toString(): String {
         return "LocalStatement(variables=$variables, init=$init)"
+    }
+}
+
+class AssignmentStatement  : StatementNode by StatementNodeSupport() {
+
+    val variables: MutableList<ExpressionNode> = mutableListOf()
+    val init: MutableList<ExpressionNode> = mutableListOf()
+    override fun toString(): String {
+        return "AssignmentStatement(variables=$variables, init=$init)"
     }
 }
 

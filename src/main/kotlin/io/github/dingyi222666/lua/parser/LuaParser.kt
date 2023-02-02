@@ -274,14 +274,38 @@ class LuaParser {
 
         val suffix = parsePrefixExp(parent)
 
-        if (false) {
-            return CallStatement()
+        val peekToken = peek()
+        return if (equalsMore(peekToken, LuaTokenTypes.ASSIGN, LuaTokenTypes.COMMA)) {
+            parseAssignmentStatement(parent, suffix)
         } else {
-            return CallStatement().apply {
+            // function call
+            CallStatement().apply {
                 this.parent = parent
                 expression = suffix as CallExpression
             }
         }
+    }
+
+    //  varlist ‘=’ explist |
+    private fun parseAssignmentStatement(parent: BaseASTNode, base: ExpressionNode): AssignmentStatement {
+        val initList = mutableListOf<ExpressionNode>()
+        val result = AssignmentStatement()
+        result.parent = parent
+
+
+        while (peek() == LuaTokenTypes.COMMA) {
+            // ,
+            advance()
+            initList.add(parseExp(result))
+        }
+
+        expectToken(LuaTokenTypes.ASSIGN) { "'=' expected near '${lexerText()}'" }
+
+        initList.add(base)
+
+        result.init.addAll(initList)
+        result.variables.addAll(parseExpList(result))
+        return result
     }
 
     // do block end |

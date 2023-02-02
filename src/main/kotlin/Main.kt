@@ -6,11 +6,7 @@ fun main(args: Array<String>) {
     val parser = LuaParser()
     parser.parse(
         """
-        function test.c:a(a,b)
-          print("支持中文，简洁的parser")
-        end  
-        :: test ::
-        goto test
+        a.c,b,c = 12,function() end,114514
     """.trimIndent()
     ).run {
         println(Gson()
