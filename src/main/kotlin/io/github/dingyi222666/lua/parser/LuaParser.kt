@@ -149,6 +149,7 @@ class LuaParser {
     //		 function funcname funcbody |
     //		 local function Name funcbody |
     //		 local attnamelist [‘=’ explist]
+    //       when exp exp
     private fun parseBlockNode(parent: BaseASTNode? = null): BlockNode {
         val blockNode = BlockNode()
         while (!consumeToken(LuaTokenTypes.EOF)) {
@@ -171,6 +172,7 @@ class LuaParser {
                     ContinueStatement()
                 }
 
+                //consumeToken(LuaTokenTypes.IF) -> parseIfStatement(blockNode)
                 consumeToken(LuaTokenTypes.GOTO) -> parseGotoStatement(blockNode)
                 consumeToken(LuaTokenTypes.DOUBLE_COLON) -> parseLabelStatement(blockNode)
 
@@ -195,6 +197,10 @@ class LuaParser {
         return blockNode
     }
 
+    //		 if exp then block {elseif exp then block} [else block] end |
+    private fun parseIfStatement(parent: BaseASTNode): StatementNode {
+        TODO()
+    }
 
     //  for Name ‘=’ exp ‘,’ exp [‘,’ exp] do block end |
     //             for namelist in explist do block end |
@@ -208,7 +214,7 @@ class LuaParser {
 
         return if (peek() == LuaTokenTypes.ASSIGN) {
             parseForNumericStatement(name, parent)
-        } else parseForGenericStatement(name,parent)
+        } else parseForGenericStatement(name, parent)
     }
 
     //             for namelist in explist do block end |
@@ -572,7 +578,9 @@ class LuaParser {
 
             //TODO: table ....
 
-            else -> parsePrefixExp(parent)
+            else ->
+                parsePrefixExp(parent)
+
         }
 
 
@@ -624,7 +632,7 @@ class LuaParser {
         }
     }
 
-    //  prefixExp ::= primaryexp { '.' fieldset | '[' exp ']' | ':' NAME funcargs | funcargs }
+    //  prefixExp ::= primaryexp { '.' fieldset | '[' exp ']' | ':' NAME funcargs | funcargs  }
 
     private fun parsePrefixExp(parent: BaseASTNode): ExpressionNode {
         var result = parsePrimaryExp(parent)
@@ -634,17 +642,16 @@ class LuaParser {
         while (true) {
             result = when (peek()) {
                 // '.' fieldset*
-                LuaTokenTypes.DOT -> {
+                LuaTokenTypes.DOT ->
                     parseFieldSet(parentNode, result)
-                }
+
                 // [' exp ']'
-                LuaTokenTypes.LBRACK -> {
+                LuaTokenTypes.LBRACK ->
                     parseIndexExpression(parentNode, result)
-                }
+
                 // funcargs
-                LuaTokenTypes.LPAREN -> {
+                LuaTokenTypes.LPAREN, LuaTokenTypes.STRING ->
                     parseCallExpression(parent, result)
-                }
 
                 //  ':' NAME funcargs
                 LuaTokenTypes.COLON -> {
@@ -661,14 +668,30 @@ class LuaParser {
 
     }
 
-    // funcargs -> '(' [ explist ] ')'
+
+    // funcargs -> '(' [ explist ] ') | tableconstructor | string
     private fun parseCallExpression(parent: BaseASTNode, base: ExpressionNode): CallExpression {
         val result = CallExpression()
         result.parent = parent
         result.base = base
 
-        // consume (
-        advance()
+        // consume
+
+
+        val isOnlyExpList = when (peek()) {
+            LuaTokenTypes.STRING -> {
+                result.base = parseStringCallExpression(result, base)
+                false
+            }
+
+            else -> true
+        }
+
+        val findLeft = consume { it == LuaTokenTypes.LPAREN }
+        if (!findLeft && !isOnlyExpList) {
+            // empty left
+            return result
+        }
 
         val findRight = consume { it == LuaTokenTypes.RPAREN }
 
@@ -681,8 +704,22 @@ class LuaParser {
 
         expectToken(LuaTokenTypes.RPAREN) { "')' expected near ${lexerText()}" }
 
+
         return result
     }
+
+
+    private fun parseStringCallExpression(parent: BaseASTNode, base: ExpressionNode): StringCallExpression {
+        val result = StringCallExpression()
+        result.parent = parent
+        result.base = base
+
+        // consume string
+        result.arguments.add(parseExp(parent))
+
+        return result
+    }
+
 
     // [' exp ']'
     private fun parseIndexExpression(parent: BaseASTNode, base: ExpressionNode): IndexExpression {

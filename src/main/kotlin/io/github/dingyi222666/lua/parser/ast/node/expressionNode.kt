@@ -94,10 +94,21 @@ class ConstantNode(
  * @date: 2021/10/9 15:00
  * @description:
  **/
-class CallExpression : ExpressionNode by ExpressionNodeSupport() {
+open class CallExpression : ExpressionNode by ExpressionNodeSupport() {
     lateinit var base: ExpressionNode
     val arguments = mutableListOf<ExpressionNode>()
+    override fun toString(): String {
+        return "CallExpression(base=$base, arguments=$arguments)"
+    }
+
 }
+
+class StringCallExpression  : CallExpression() {
+    override fun toString(): String {
+        return "StringCallExpression(base=$base, arguments=$arguments)"
+    }
+}
+
 
 class MemberExpression : ExpressionNode by ExpressionNodeSupport() {
     lateinit var identifier: Identifier
