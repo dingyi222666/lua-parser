@@ -32,11 +32,19 @@ class CallStatement : StatementNode by StatementNodeSupport() {
  * @description:
  **/
 class WhileStatement : StatementNode by StatementNodeSupport() {
-    lateinit var condition: ASTNode
+    lateinit var condition: ExpressionNode
     lateinit var body: BlockNode
 
     override fun toString(): String {
         return "WhileStatement(condition=$condition, body=$body)"
+    }
+}
+
+class RepeatStatement: StatementNode by StatementNodeSupport() {
+    lateinit var condition: ExpressionNode
+    lateinit var body: BlockNode
+    override fun toString(): String {
+        return "RepeatStatement(condition=$condition, body=$body)"
     }
 
 }

@@ -6,9 +6,13 @@ fun main(args: Array<String>) {
     val parser = LuaParser()
     parser.parse(
         """
-        do 
-          local f = a.c(1,2,a)
+        while true 
+          a.c()
+          local f = a.c:a(1,2,a)
         end
+        repeat
+           print("a的值为:", a)
+        until ( a > 15 )
     """.trimIndent()
     ).run {
         println(Gson()

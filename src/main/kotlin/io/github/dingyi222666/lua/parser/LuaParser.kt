@@ -24,6 +24,8 @@ class LuaParser {
 
     private var cacheText: String? = null
 
+    var ignoreWarningMessage = true
+
     fun parse(source: InputStream): ChunkNode {
         return parse(source.bufferedReader())
     }
@@ -62,6 +64,11 @@ class LuaParser {
         cacheText = null
         return result
     }
+
+    private inline fun peekToken(tokenTypes: LuaTokenTypes): Boolean {
+        return peek { it == tokenTypes }
+    }
+
 
     private fun advance(): LuaTokenTypes {
         var advanceToken: LuaTokenTypes
@@ -106,6 +113,13 @@ class LuaParser {
 
     private fun error(message: String): Nothing = kotlin.error("(${lexer.yyline()},${lexer.yycolumn()}): " + message)
 
+    private fun warning(message: String) {
+        if (ignoreWarningMessage) {
+            System.err.println("(${lexer.yyline()},${lexer.yycolumn()}): " + message + ". This message is ignored now.")
+        } else error(message)
+    }
+
+
     // chunk ::= block
     private fun parseChunk(): ChunkNode {
         val chunkNode = ChunkNode()
@@ -139,7 +153,8 @@ class LuaParser {
                     if (consumeToken(LuaTokenTypes.FUNCTION)) parseLocalFunctionDeclaration(blockNode)
                     else parseLocalVarList(blockNode)
                 }
-
+                consumeToken(LuaTokenTypes.WHILE) -> parseWhileStatement(blockNode)
+                consumeToken(LuaTokenTypes.REPEAT) -> parseRepeatStatement(blockNode)
                 consumeToken(LuaTokenTypes.BREAK) -> {
                     //TODO: Check is in loop
                     BreakStatement()
@@ -149,8 +164,11 @@ class LuaParser {
                     ContinueStatement()
                 }
 
+                consumeToken(LuaTokenTypes.SEMI) -> continue
                 consumeToken(LuaTokenTypes.DO) -> parseDoStatement(blockNode)
-                else -> break
+                peekToken(LuaTokenTypes.NAME) -> parseExpStatement(blockNode)
+                // function call, varlist = explist
+                else -> break // parseExpStatement(blockNode)
             }
             stat.parent = blockNode
             blockNode.addStatement(stat)
@@ -165,6 +183,54 @@ class LuaParser {
         }
 
         return blockNode
+    }
+
+
+    private fun parseRepeatStatement(parent: BaseASTNode): RepeatStatement {
+        val result = RepeatStatement()
+        val currentLine = lexer.yyline()
+        result.parent = parent
+
+        result.body = parseBlockNode(result)
+
+        expectToken(LuaTokenTypes.UNTIL) { "'until' expected near '${lexerText()}'" }
+
+        result.condition = parseExp(result)
+
+        return result
+    }
+
+    private fun parseWhileStatement(parent: BaseASTNode): WhileStatement {
+        val result = WhileStatement()
+        val currentLine = lexer.yyline()
+        result.parent = parent
+        result.condition = parseExp(result)
+
+        val findDoToken = consumeToken(LuaTokenTypes.DO)
+        if (!findDoToken) {
+            warning("The <do> expected near ${lexerText()}")
+        }
+
+        result.body = parseBlockNode(result)
+
+        expectToken(LuaTokenTypes.END) { "'end' expected (to close 'do' at line $currentLine) near ${lexerText()}" }
+
+        return result
+    }
+
+    //  stat -> func | assignment
+    private fun parseExpStatement(parent: BaseASTNode): StatementNode {
+
+        val suffix = parsePrefixExp(parent)
+
+        if (false) {
+            return CallStatement()
+        } else {
+            return CallStatement().apply {
+                this.parent = parent
+                expression = suffix as CallExpression
+            }
+        }
     }
 
     // do block end |
@@ -371,9 +437,10 @@ class LuaParser {
 
     //  primaryexp ::= NAME | '(' expr ')' *
     private fun parsePrimaryExp(parent: BaseASTNode): ExpressionNode {
-        return when (currentToken) {
+        return when (peek()) {
             LuaTokenTypes.NAME -> parseName(parent)
             LuaTokenTypes.LPAREN -> {
+                advance()
                 val exp = parseExp(parent)
                 expectToken(LuaTokenTypes.RPAREN) { "')' expected near ${lexerText()}" }
                 exp
@@ -384,8 +451,8 @@ class LuaParser {
     }
 
     //  prefixExp ::= primaryexp { '.' fieldset | '[' exp ']' | ':' NAME funcargs | funcargs }
-    private fun parsePrefixExp(parent: BaseASTNode): ExpressionNode {
 
+    private fun parsePrefixExp(parent: BaseASTNode): ExpressionNode {
         var result = parsePrimaryExp(parent)
 
         var parentNode = parent
@@ -403,6 +470,12 @@ class LuaParser {
                 // funcargs
                 LuaTokenTypes.LPAREN -> {
                     parseCallExpression(parent, result)
+                }
+
+                //  ':' NAME funcargs
+                LuaTokenTypes.COLON -> {
+                    val fieldSet = parseFieldSet(parent, result)
+                    parseCallExpression(parent, fieldSet)
                 }
 
                 else -> break
