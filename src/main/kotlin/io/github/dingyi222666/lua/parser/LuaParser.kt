@@ -8,6 +8,7 @@ import io.github.dingyi222666.lua.parser.util.require
 import java.io.InputStream
 import java.io.Reader
 import java.io.StringReader
+import kotlin.math.cbrt
 import kotlin.properties.Delegates
 
 /**
@@ -161,6 +162,7 @@ class LuaParser {
                     BreakStatement()
                 }
 
+                consumeToken(LuaTokenTypes.FUNCTION) -> parseGlobalFunctionDeclaration(blockNode)
                 consumeToken(LuaTokenTypes.CONTINUE) -> {
                     ContinueStatement()
                 }
@@ -186,6 +188,33 @@ class LuaParser {
         return blockNode
     }
 
+    //      function funcname funcbody |
+    private fun parseGlobalFunctionDeclaration(parent: BaseASTNode): FunctionDeclaration {
+        val result = FunctionDeclaration()
+        result.parent = parent
+
+        var nameExp: ExpressionNode = parseName(parent)
+
+        var parentNode = parent
+
+        //   funcname ::= Name {‘.’ Name} [‘:’ Name]
+        while (true) {
+            nameExp = when (peek()) {
+                // '.' NAME
+                //  ':' NAME
+                LuaTokenTypes.DOT, LuaTokenTypes.COLON -> {
+                    parseFieldSet(parentNode, nameExp)
+                }
+
+                else -> break
+            }
+            parentNode = nameExp
+        }
+
+        result.identifier = nameExp
+
+        return parseFunctionBody(result, parent, lexer.yyline())
+    }
 
     //		 repeat block until exp |
     private fun parseRepeatStatement(parent: BaseASTNode): RepeatStatement {
@@ -254,9 +283,15 @@ class LuaParser {
         parent: BaseASTNode,
         currentLine: Int
     ): FunctionDeclaration {
+
         expectToken(LuaTokenTypes.LPAREN) { "( expected near ${lexerText()}" }
 
-        node.params.addAll(parseNameList(parent))
+        val findRight = peek { it == LuaTokenTypes.RPAREN }
+
+        // empty arg
+        if (!findRight) {
+            node.params.addAll(parseNameList(parent))
+        }
 
         expectToken(LuaTokenTypes.RPAREN) { ") expected near ${lexerText()}" }
 
@@ -283,9 +318,7 @@ class LuaParser {
     }
 
     private fun parseName(parent: BaseASTNode): Identifier {
-        val expectedName = { "<name> expected near ${lexerText()}" }
-
-        expectToken(LuaTokenTypes.NAME, expectedName)
+        expectToken(LuaTokenTypes.NAME) { "<name> expected near ${lexerText()}" }
 
         return Identifier(lexerText()).apply {
             this.parent = parent
@@ -303,7 +336,6 @@ class LuaParser {
         if (!hasComma) {
             return result
         }
-
         var nameNode = parseName(parent)
         while (true) {
             result.add(nameNode)
