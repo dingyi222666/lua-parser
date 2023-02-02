@@ -42,6 +42,18 @@ class WhileStatement : StatementNode by StatementNodeSupport() {
 }
 
 
+class BreakStatement:StatementNode by StatementNodeSupport() {
+    override fun toString(): String {
+        return "BreakStatement()"
+    }
+}
+
+class ContinueStatement:StatementNode by StatementNodeSupport(){
+    override fun toString(): String {
+        return "ContinueStatement()"
+    }
+}
+
 /**
  * @author: dingyi
  * @date: 2021/10/8 20:08

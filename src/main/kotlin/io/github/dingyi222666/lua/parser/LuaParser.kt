@@ -112,6 +112,7 @@ class LuaParser {
     //		 functioncall |
     //		 label |
     //		 break |
+    //       continue | (androlua+)
     //		 goto Name |
     //		 do block end |
     //		 while exp do block end |
@@ -131,9 +132,19 @@ class LuaParser {
                     else parseLocalVarList(blockNode)
                 }
 
+                consumeToken(LuaTokenTypes.BREAK) -> {
+                    //TODO: Check is in loop
+                    BreakStatement()
+                }
+
+                consumeToken(LuaTokenTypes.CONTINUE) -> {
+                    ContinueStatement()
+                }
+
                 consumeToken(LuaTokenTypes.DO) -> parseDoStatement(blockNode)
                 else -> break
             }
+            stat.parent = blockNode
             blockNode.addStatement(stat)
 
             // ;
