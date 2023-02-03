@@ -119,7 +119,7 @@ class LuaParser {
 
     private fun warning(message: String) {
         if (ignoreWarningMessage) {
-            System.err.println("(${lexer.yyline()},${lexer.yycolumn()}): " + message + ". This message is ignored now.")
+            System.err.println("(${lexer.yyline()},${lexer.yycolumn()}): " + message + ". This error is ignored now.")
         } else error(message)
     }
 
@@ -172,15 +172,15 @@ class LuaParser {
                     ContinueStatement()
                 }
 
-                //consumeToken(LuaTokenTypes.IF) -> parseIfStatement(blockNode)
+                peekToken(LuaTokenTypes.IF) -> parseIfStatement(blockNode)
                 consumeToken(LuaTokenTypes.GOTO) -> parseGotoStatement(blockNode)
                 consumeToken(LuaTokenTypes.DOUBLE_COLON) -> parseLabelStatement(blockNode)
 
                 consumeToken(LuaTokenTypes.SEMI) -> continue
                 consumeToken(LuaTokenTypes.DO) -> parseDoStatement(blockNode)
-                peekToken(LuaTokenTypes.NAME) -> parseExpStatement(blockNode)
                 // function call, varlist = explist
-                else -> break // parseExpStatement(blockNode)
+                peekToken(LuaTokenTypes.NAME) -> parseExpStatement(blockNode)
+                else -> break
             }
             stat.parent = blockNode
             blockNode.addStatement(stat)
@@ -198,8 +198,76 @@ class LuaParser {
     }
 
     //		 if exp then block {elseif exp then block} [else block] end |
-    private fun parseIfStatement(parent: BaseASTNode): StatementNode {
-        TODO()
+    private fun parseIfStatement(parent: BaseASTNode): IfStatement {
+        val result = IfStatement()
+        val currentLine = lexer.yyline()
+        result.parent = parent
+
+        result.causes.add(parseIfCause(result))
+
+        while (true) {
+            val cause = when (peek()) {
+                LuaTokenTypes.ELSEIF -> parseElseIfCause(parent)
+                LuaTokenTypes.ELSE -> parseElseClause(parent)
+                else -> break
+            }
+            result.causes.add(cause)
+        }
+
+        expectToken(LuaTokenTypes.END) { "'end' expected (to close 'do' at line $currentLine) near ${lexerText(true)}" }
+
+        return result
+    }
+
+    //       else block
+    private fun parseElseClause(parent: BaseASTNode): IfClause {
+        val result = ElseClause()
+        result.parent = parent
+
+        expectToken(LuaTokenTypes.ELSE) { "<else> expected near '${lexerText()}'" }
+
+        result.condition = ExpressionNode.EMPTY
+        result.body = parseBlockNode(result)
+
+        return result
+    }
+
+    //       elseif exp then block
+    private fun parseElseIfCause(parent: BaseASTNode): IfClause {
+        val result = ElseIfClause()
+        result.parent = parent
+
+        expectToken(LuaTokenTypes.ELSEIF) { "<elseif> expected near '${lexerText()}'" }
+
+        result.condition = parseExp(result)
+
+        val findThenToken = consumeToken(LuaTokenTypes.THEN)
+        if (!findThenToken) {
+            warning("The <then> expected near ${lexerText()}")
+        }
+
+        result.body = parseBlockNode(result)
+
+        return result
+    }
+
+    //       if exp then block
+    private fun parseIfCause(parent: BaseASTNode): IfClause {
+        val result = IfClause()
+        result.parent = parent
+
+        expectToken(LuaTokenTypes.IF) { "<if> expected near '${lexerText()}'" }
+
+        result.condition = parseExp(result)
+
+        val findThenToken = consumeToken(LuaTokenTypes.THEN)
+        if (!findThenToken) {
+            warning("The <then> expected near ${lexerText()}")
+        }
+
+        result.body = parseBlockNode(result)
+
+        return result
     }
 
     //  for Name ‘=’ exp ‘,’ exp [‘,’ exp] do block end |
@@ -356,7 +424,8 @@ class LuaParser {
         val suffix = parsePrefixExp(parent)
 
         val peekToken = peek()
-        return if (equalsMore(peekToken, LuaTokenTypes.ASSIGN, LuaTokenTypes.COMMA)) {
+
+        return if (suffix is Identifier || equalsMore(peekToken, LuaTokenTypes.ASSIGN, LuaTokenTypes.COMMA)) {
             parseAssignmentStatement(parent, suffix)
         } else {
             // function call
@@ -676,7 +745,6 @@ class LuaParser {
         result.base = base
 
         // consume
-
 
         val isOnlyExpList = when (peek()) {
             LuaTokenTypes.STRING -> {

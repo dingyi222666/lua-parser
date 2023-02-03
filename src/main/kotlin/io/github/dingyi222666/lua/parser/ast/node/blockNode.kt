@@ -9,6 +9,7 @@ import kotlin.properties.Delegates
  **/
 class BlockNode() : ASTNode() {
 
+
     constructor(vararg statements: StatementNode) : this() {
         this.statements.addAll(statements)
     }

@@ -106,6 +106,21 @@ class ContinueStatement : StatementNode by StatementNodeSupport() {
     }
 }
 
+open class IfClause: StatementNode by StatementNodeSupport() {
+    lateinit var condition: ExpressionNode
+    lateinit var body: BlockNode
+}
+
+class ElseIfClause: IfClause()
+
+class ElseClause: IfClause() {
+
+}
+
+class IfStatement : StatementNode by StatementNodeSupport() {
+    var causes = mutableListOf<IfClause>()
+}
+
 /**
  * @author: dingyi
  * @date: 2021/10/8 20:08

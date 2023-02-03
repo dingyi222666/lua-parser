@@ -28,6 +28,7 @@ class ConstantNode(
     value: Any = 0
 ) : ExpressionNode by ExpressionNodeSupport() {
 
+
     @SerializedName("value")
     private var _value: Any = 0
 

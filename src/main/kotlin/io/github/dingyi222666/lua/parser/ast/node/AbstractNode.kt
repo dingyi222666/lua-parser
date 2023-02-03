@@ -16,11 +16,17 @@ interface BaseASTNode {
 
 interface StatementNode : BaseASTNode
 
-interface ExpressionNode : BaseASTNode
+interface ExpressionNode : BaseASTNode {
+    companion object {
+        val EMPTY = ExpressionNodeSupport()
+    }
+}
 
-class StatementNodeSupport : StatementNode, ASTNode()
+class StatementNodeSupport : StatementNode, ASTNode() {
+}
 
-class ExpressionNodeSupport : ExpressionNode, ASTNode()
+class ExpressionNodeSupport : ExpressionNode, ASTNode() {
+}
 
 
 abstract class ASTNode : BaseASTNode {
