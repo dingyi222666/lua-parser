@@ -119,6 +119,14 @@ class StringCallExpression  : CallExpression() {
 }
 
 
+class TableCallExpression  : CallExpression() {
+
+    override fun toString(): String {
+        return "TableCallExpression(base=$base, arguments=$arguments)"
+    }
+}
+
+
 class MemberExpression : ExpressionNode by ExpressionNodeSupport() {
    
 

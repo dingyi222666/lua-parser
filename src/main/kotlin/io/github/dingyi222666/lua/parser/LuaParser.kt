@@ -462,6 +462,13 @@ class LuaParser {
         return if (suffix is Identifier || equalsMore(peekToken, LuaTokenTypes.ASSIGN, LuaTokenTypes.COMMA)) {
             parseAssignmentStatement(parent, suffix)
         } else {
+
+            /*  if (suffix is Identifier) {
+                  //The target is functioncall, but no match is made.
+                  //Then it is an incorrect assignment
+                  parseAssignmentStatement(parent, suffix)
+              }*/
+
             // function call
             CallStatement().apply {
                 this.parent = parent
@@ -841,7 +848,7 @@ class LuaParser {
                     parseIndexExpression(parentNode, result)
 
                 // funcargs
-                LuaTokenTypes.LPAREN, LuaTokenTypes.STRING ->
+                LuaTokenTypes.LPAREN, LuaTokenTypes.LCURLY, LuaTokenTypes.STRING ->
                     parseCallExpression(parent, result)
 
                 //  ':' NAME funcargs
@@ -874,6 +881,11 @@ class LuaParser {
                 false
             }
 
+            LuaTokenTypes.LCURLY -> {
+                result.base = parseTableCallExpression(result, base)
+                false
+            }
+
             else -> true
         }
 
@@ -898,6 +910,16 @@ class LuaParser {
         return result
     }
 
+    private fun parseTableCallExpression(parent: BaseASTNode, base: ExpressionNode): TableCallExpression {
+        val result = TableCallExpression()
+        result.parent = parent
+        result.base = base
+
+        // consume tab
+        result.arguments.add(parseTableConstructorExpression(parent))
+
+        return result
+    }
 
     private fun parseStringCallExpression(parent: BaseASTNode, base: ExpressionNode): StringCallExpression {
         val result = StringCallExpression()
