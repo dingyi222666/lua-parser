@@ -218,7 +218,7 @@ class LuaParser {
 
         while (true) {
             when (peek()) {
-                LuaTokenTypes.EOF,LuaTokenTypes.END -> return result
+                LuaTokenTypes.EOF, LuaTokenTypes.END -> return result
                 LuaTokenTypes.SEMI -> continue
                 else -> break
             }
@@ -663,6 +663,9 @@ class LuaParser {
                 parseFunctionExp(parent)
             }
 
+            currentToken == LuaTokenTypes.LCURLY -> parseTableConstructorExpression(parent)
+
+
             binaryPrecedence(currentToken).also {
                 precedence = it
             } > 0 -> consume {
@@ -679,7 +682,6 @@ class LuaParser {
                 result
             }
 
-            //TODO: table ....
 
             else ->
                 parsePrefixExp(parent)
@@ -719,6 +721,92 @@ class LuaParser {
         return node.require()
     }
 
+    //  tableconstructor ::= ‘{’ [fieldlist] ‘}’
+    private fun parseTableConstructorExpression(parent: BaseASTNode): TableConstructorExpression {
+        val result = TableConstructorExpression()
+        val currentLine = lexer.yyline()
+        result.parent = parent
+
+        expectToken(LuaTokenTypes.LCURLY) { "'{' expected near ${lexerText()}" }
+
+        if (consumeToken(LuaTokenTypes.RCURLY)) {
+            // empty table
+            return result
+        }
+
+        result.fields.addAll(parseFieldList(parent))
+
+        expectToken(LuaTokenTypes.RCURLY) { "'}' expected (to close '{' at line $currentLine) near ${lexerText()}" }
+
+        return result
+    }
+
+    //  fieldlist ::= field {fieldsep field} [fieldsep]
+    //  fieldsep ::= ‘,’ | ‘;’
+    private fun parseFieldList(parent: BaseASTNode): List<TableKey> {
+        val result = mutableListOf<TableKey>()
+
+        result.add(parseField(parent))
+
+        if (!equalsMore(peek(), LuaTokenTypes.COMMA, LuaTokenTypes.SEMI)) {
+            // only one field
+            return result
+        }
+
+        while (true) {
+            if (!equalsMore(peek(), LuaTokenTypes.COMMA, LuaTokenTypes.SEMI)) {
+                break
+            }
+            advance()
+            result.add(parseField(parent))
+        }
+
+        consume { equalsMore(it, LuaTokenTypes.COMMA, LuaTokenTypes.SEMI) }
+
+        return result
+    }
+
+    //  field ::= ‘[’ exp ‘]’ ‘=’ exp | Name ‘=’ exp | exp
+    private fun parseField(parent: BaseASTNode): TableKey {
+        val defaultExp = when (peek()) {
+            //  Name ‘=’ exp |
+            LuaTokenTypes.NAME -> return parseTableStringKey(parent)
+            LuaTokenTypes.LBRACK -> return parseTableKey(parent)
+            // exp |
+            else -> parseExp(parent)
+        }
+        val result = TableKey()
+        result.value = defaultExp
+        return result
+    }
+
+    //  ‘[’ exp ‘]’ ‘=’ exp
+    private fun parseTableKey(parent: BaseASTNode): TableKey {
+        val result = TableKeyString()
+        result.parent = parent
+
+        expectToken(LuaTokenTypes.LBRACK) { "'[' expected near ${lexerText(true)}" }
+
+        result.key = parseExp(result)
+
+        expectToken(LuaTokenTypes.RBRACK) { "']' expected near ${lexerText(true)}" }
+        expectToken(LuaTokenTypes.ASSIGN) { "'=' expected near ${lexerText(true)}" }
+
+        result.value = parseExp(result)
+
+        return result
+    }
+
+    //   Name ‘=’ exp
+    private fun parseTableStringKey(parent: BaseASTNode): TableKeyString {
+        val result = TableKeyString()
+
+        val name = parseName(result)
+        result.key = name
+        expectToken(LuaTokenTypes.ASSIGN) { "'=' expected near ${lexerText(true)}" }
+        result.value = parseExp(result)
+        return result
+    }
 
     //  primaryexp ::= NAME | '(' expr ')' *
     private fun parsePrimaryExp(parent: BaseASTNode): ExpressionNode {

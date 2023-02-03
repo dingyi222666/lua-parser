@@ -5,9 +5,7 @@ fun main(args: Array<String>) {
     val parser = LuaParser()
     parser.parse(
         """
-            function a()
-            return 
-            end
+            b = { a=12,i = 14,["aaa"] = function()end}
     """.trimIndent()
     ).run {
         println(Gson()

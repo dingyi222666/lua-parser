@@ -10,6 +10,10 @@ import kotlin.properties.Delegates
  * @description:
  **/
 class Identifier(var name: String = "") : ExpressionNode by ExpressionNodeSupport() {
+
+   
+
+
     override fun toString(): String {
         return "Identifier(name='$name')"
     }
@@ -28,6 +32,7 @@ class ConstantNode(
     value: Any = 0
 ) : ExpressionNode by ExpressionNodeSupport() {
 
+   
 
     @SerializedName("value")
     private var _value: Any = 0
@@ -96,6 +101,8 @@ class ConstantNode(
  * @description:
  **/
 open class CallExpression : ExpressionNode by ExpressionNodeSupport() {
+    open
+
     lateinit var base: ExpressionNode
     val arguments = mutableListOf<ExpressionNode>()
     override fun toString(): String {
@@ -105,6 +112,7 @@ open class CallExpression : ExpressionNode by ExpressionNodeSupport() {
 }
 
 class StringCallExpression  : CallExpression() {
+
     override fun toString(): String {
         return "StringCallExpression(base=$base, arguments=$arguments)"
     }
@@ -112,6 +120,8 @@ class StringCallExpression  : CallExpression() {
 
 
 class MemberExpression : ExpressionNode by ExpressionNodeSupport() {
+   
+
     lateinit var identifier: Identifier
     var indexer: String = "."
     lateinit var base: ExpressionNode
@@ -122,17 +132,23 @@ class MemberExpression : ExpressionNode by ExpressionNodeSupport() {
 }
 
 class IndexExpression : ExpressionNode by ExpressionNodeSupport() {
+   
+
     lateinit var index: ExpressionNode
     lateinit var base: ExpressionNode
 }
 
 class VarargLiteral : ExpressionNode by ExpressionNodeSupport() {
+   
+
     override fun toString(): String {
         return "VarargLiteral()"
     }
 }
 
 class UnaryExpression : ExpressionNode by ExpressionNodeSupport() {
+   
+
     lateinit var operator: ExpressionOperator
     lateinit var arg: ExpressionNode
     override fun toString(): String {
@@ -142,6 +158,8 @@ class UnaryExpression : ExpressionNode by ExpressionNodeSupport() {
 }
 
 class BinaryExpression : ExpressionNode by ExpressionNodeSupport() {
+   
+
     var left /*by Delegates.notNull<*/: ExpressionNode? = null
     var right: ExpressionNode? = null
     var operator: ExpressionOperator? = null
@@ -151,15 +169,27 @@ class BinaryExpression : ExpressionNode by ExpressionNodeSupport() {
 
 }
 
+class TableConstructorExpression: ExpressionNode by ExpressionNodeSupport() {
+
+
+    val fields  = mutableListOf<TableKey>()
+}
+
 enum class ExpressionOperator(val value: String) {
     NOT("not"), GETLEN("#"), BIT_TILDE("~"), MINUS("-"),
     ADD("+"), DIV("/"), OR("or"), MULT("*"), BIT_EXP("^"),
     LT("<"), BIT_LT("<<"), GT(">"), BIT_GT(">>"), BIT_OR("|"),
     BIT_AND("&"), CONCAT(".."), LE("<="), GE(">="), EQ("=="),
-    NE("~="), DOUBLE_DIV("//"), MOD("%")
+    NE("~="), DOUBLE_DIV("//"), MOD("%");
+
+    override fun toString(): String {
+        return value
+    }
 }
 
 class FunctionDeclaration : ExpressionNode, StatementNode, ASTNode() {
+   
+
     var body: BlockNode? = null
     var params = mutableListOf<Identifier>()
     var identifier: ExpressionNode? = null
@@ -167,5 +197,5 @@ class FunctionDeclaration : ExpressionNode, StatementNode, ASTNode() {
     override fun toString(): String {
         return "FunctionDeclaration(body=$body, params=$params, identifier=$identifier, isLocal=$isLocal)"
     }
-
 }
+

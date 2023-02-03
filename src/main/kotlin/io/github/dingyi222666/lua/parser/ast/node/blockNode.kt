@@ -9,6 +9,8 @@ import kotlin.properties.Delegates
  **/
 class BlockNode : ASTNode() {
 
+   
+
     val statements = mutableListOf<StatementNode>()
 
     var returnStatement: ReturnStatement? = null
@@ -29,6 +31,9 @@ class BlockNode : ASTNode() {
  * @description:
  **/
 class ChunkNode : ASTNode() {
+
+   
+
     lateinit var body: BlockNode
     override fun toString(): String {
         return "ChunkNode(body=$body)"

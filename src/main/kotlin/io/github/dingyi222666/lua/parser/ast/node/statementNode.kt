@@ -14,6 +14,9 @@ class LocalStatement : StatementNode by StatementNodeSupport() {
     override fun toString(): String {
         return "LocalStatement(variables=$variables, init=$init)"
     }
+
+   
+
 }
 
 
@@ -24,6 +27,9 @@ class AssignmentStatement : StatementNode by StatementNodeSupport() {
     override fun toString(): String {
         return "AssignmentStatement(variables=$variables, init=$init)"
     }
+
+   
+
 }
 
 
@@ -31,6 +37,9 @@ class ForGenericStatement : StatementNode by StatementNodeSupport() {
     val variables: MutableList<Identifier> = mutableListOf()
     val iterators: MutableList<ExpressionNode> = mutableListOf()
     lateinit var body: BlockNode
+
+   
+
 }
 
 
@@ -44,6 +53,9 @@ class ForNumericStatement : StatementNode by StatementNodeSupport() {
         return "ForNumericStatement(variable=$variable, start=$start, end=$end, step=$step, body=$body)"
     }
 
+   
+
+
 }
 
 /**
@@ -53,6 +65,8 @@ class ForNumericStatement : StatementNode by StatementNodeSupport() {
  **/
 class CallStatement : StatementNode by StatementNodeSupport() {
     lateinit var expression: CallExpression
+   
+
 }
 
 /**
@@ -67,6 +81,8 @@ class WhileStatement : StatementNode by StatementNodeSupport() {
     override fun toString(): String {
         return "WhileStatement(condition=$condition, body=$body)"
     }
+   
+
 }
 
 class RepeatStatement : StatementNode by StatementNodeSupport() {
@@ -75,6 +91,8 @@ class RepeatStatement : StatementNode by StatementNodeSupport() {
     override fun toString(): String {
         return "RepeatStatement(condition=$condition, body=$body)"
     }
+   
+
 
 }
 
@@ -83,6 +101,8 @@ class BreakStatement : StatementNode by StatementNodeSupport() {
     override fun toString(): String {
         return "BreakStatement()"
     }
+   
+
 }
 
 class LabelStatement : StatementNode by StatementNodeSupport() {
@@ -90,6 +110,8 @@ class LabelStatement : StatementNode by StatementNodeSupport() {
     override fun toString(): String {
         return "LabelStatement(identifier=$identifier)"
     }
+   
+
 }
 
 class GotoStatement : StatementNode by StatementNodeSupport() {
@@ -97,6 +119,8 @@ class GotoStatement : StatementNode by StatementNodeSupport() {
     override fun toString(): String {
         return "GotoStatement(identifier=$identifier)"
     }
+   
+
 }
 
 
@@ -104,26 +128,41 @@ class ContinueStatement : StatementNode by StatementNodeSupport() {
     override fun toString(): String {
         return "ContinueStatement()"
     }
+   
+
 }
 
-class ReturnStatement :StatementNode by StatementNodeSupport() {
+class ReturnStatement : StatementNode by StatementNodeSupport() {
     val arguments = mutableListOf<ExpressionNode>()
+   
+
 }
 
-open class IfClause: StatementNode by StatementNodeSupport() {
+open class IfClause : StatementNode by StatementNodeSupport() {
     lateinit var condition: ExpressionNode
     lateinit var body: BlockNode
-}
-
-
-class ElseIfClause: IfClause()
-
-class ElseClause: IfClause() {
 
 }
+
+
+class ElseIfClause : IfClause()
+
+class ElseClause : IfClause()
+
+open class TableKey : StatementNode by StatementNodeSupport() {
+    var key: ExpressionNode? = null
+    lateinit var value: ExpressionNode
+   
+
+}
+
+open class TableKeyString : TableKey()
+
 
 class IfStatement : StatementNode by StatementNodeSupport() {
     var causes = mutableListOf<IfClause>()
+   
+
 }
 
 /**
@@ -137,6 +176,8 @@ class DoStatement : StatementNode by StatementNodeSupport() {
     override fun toString(): String {
         return "DoStatement(body=$body)"
     }
+   
+
 
 
 }
