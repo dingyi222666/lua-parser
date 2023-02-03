@@ -76,6 +76,10 @@ class LuaParser {
             cacheText = null
             when (advanceToken) {
                 LuaTokenTypes.WHITE_SPACE, LuaTokenTypes.NEW_LINE -> continue
+                //TODO: collect comment to scope
+                LuaTokenTypes.BLOCK_COMMENT, LuaTokenTypes.DOC_COMMENT,
+                LuaTokenTypes.SHORT_COMMENT -> continue
+
                 else -> break
             }
         }
@@ -149,10 +153,10 @@ class LuaParser {
     //		 function funcname funcbody |
     //		 local function Name funcbody |
     //		 local attnamelist [‘=’ explist]
-    //       when exp exp
+    //       when exp exp (x)
     private fun parseBlockNode(parent: BaseASTNode? = null): BlockNode {
         val blockNode = BlockNode()
-        while (!consumeToken(LuaTokenTypes.EOF)) {
+        while (!peekToken(LuaTokenTypes.EOF)) {
             val stat = when {
                 consumeToken(LuaTokenTypes.LOCAL) -> {
                     if (consumeToken(LuaTokenTypes.FUNCTION)) parseLocalFunctionDeclaration(blockNode)
@@ -180,10 +184,18 @@ class LuaParser {
                 consumeToken(LuaTokenTypes.DO) -> parseDoStatement(blockNode)
                 // function call, varlist = explist
                 peekToken(LuaTokenTypes.NAME) -> parseExpStatement(blockNode)
-                else -> break
+                peekToken(LuaTokenTypes.RETURN) -> parseReturnStatement(blockNode)
+                else -> {
+                    // println(peek())
+                    break
+                }
             }
             stat.parent = blockNode
-            blockNode.addStatement(stat)
+            if (stat is ReturnStatement) {
+                blockNode.returnStatement = stat as ReturnStatement
+            } else {
+                blockNode.addStatement(stat)
+            }
 
             // ;
             consumeToken(LuaTokenTypes.SEMI)
@@ -195,6 +207,28 @@ class LuaParser {
         }
 
         return blockNode
+    }
+
+
+    private fun parseReturnStatement(parent: BaseASTNode): ReturnStatement {
+        val result = ReturnStatement()
+        result.parent = parent
+
+        expectToken(LuaTokenTypes.RETURN) { "'return' expected near ${lexerText(true)}" }
+
+        while (true) {
+            when (peek()) {
+                LuaTokenTypes.EOF,LuaTokenTypes.END -> return result
+                LuaTokenTypes.SEMI -> continue
+                else -> break
+            }
+        }
+
+        result.arguments.addAll(parseExpList(result))
+
+        consumeToken(LuaTokenTypes.SEMI)
+
+        return result
     }
 
     //		 if exp then block {elseif exp then block} [else block] end |

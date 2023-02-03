@@ -7,16 +7,11 @@ import kotlin.properties.Delegates
  * @date: 2021/10/7 10:11
  * @description:
  **/
-class BlockNode() : ASTNode() {
-
-
-    constructor(vararg statements: StatementNode) : this() {
-        this.statements.addAll(statements)
-    }
+class BlockNode : ASTNode() {
 
     val statements = mutableListOf<StatementNode>()
 
-    var returnStatement: StatementNode? = null
+    var returnStatement: ReturnStatement? = null
 
     fun addStatement(statement: StatementNode) {
         statements.add(statement)
@@ -34,7 +29,7 @@ class BlockNode() : ASTNode() {
  * @description:
  **/
 class ChunkNode : ASTNode() {
-    lateinit var body:BlockNode
+    lateinit var body: BlockNode
     override fun toString(): String {
         return "ChunkNode(body=$body)"
     }

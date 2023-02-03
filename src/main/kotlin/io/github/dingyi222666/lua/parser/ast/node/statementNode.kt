@@ -106,10 +106,15 @@ class ContinueStatement : StatementNode by StatementNodeSupport() {
     }
 }
 
+class ReturnStatement :StatementNode by StatementNodeSupport() {
+    val arguments = mutableListOf<ExpressionNode>()
+}
+
 open class IfClause: StatementNode by StatementNodeSupport() {
     lateinit var condition: ExpressionNode
     lateinit var body: BlockNode
 }
+
 
 class ElseIfClause: IfClause()
 
