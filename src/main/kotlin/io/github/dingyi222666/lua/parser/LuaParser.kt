@@ -3,6 +3,7 @@ package io.github.dingyi222666.lua.parser
 import io.github.dingyi222666.lua.parser.ast.node.*
 import io.github.dingyi222666.lua.lexer.LuaLexer
 import io.github.dingyi222666.lua.lexer.LuaTokenTypes
+import io.github.dingyi222666.lua.lexer.WrapperLuaLexer
 import io.github.dingyi222666.lua.parser.util.equalsMore
 import io.github.dingyi222666.lua.parser.util.require
 import java.io.InputStream
@@ -17,7 +18,7 @@ import kotlin.properties.Delegates
  **/
 class LuaParser {
 
-    private var lexer by Delegates.notNull<LuaLexer>()
+    private var lexer by Delegates.notNull<WrapperLuaLexer>()
 
     private var currentToken = LuaTokenTypes.WHITE_SPACE
     private var lastToken = LuaTokenTypes.WHITE_SPACE
@@ -39,8 +40,10 @@ class LuaParser {
     }
 
     private fun parse(lexer: LuaLexer): ChunkNode {
-        this.lexer = lexer
-        return parseChunk()
+        this.lexer = WrapperLuaLexer(lexer)
+        val chunk = parseChunk()
+        this.lexer.close()
+        return chunk
     }
 
     private inline fun <T> consume(crossinline func: (LuaTokenTypes) -> T): T {
@@ -52,7 +55,7 @@ class LuaParser {
         return needConsume
     }
 
-    private inline fun peek(): LuaTokenTypes {
+    private fun peek(): LuaTokenTypes {
         return peek { it }
     }
 
@@ -69,19 +72,26 @@ class LuaParser {
     }
 
 
+    private fun ignoreToken(advanceToken: LuaTokenTypes): Boolean {
+        return when (advanceToken) {
+            LuaTokenTypes.WHITE_SPACE, LuaTokenTypes.NEW_LINE -> true
+            //TODO: collect comment to scope
+            LuaTokenTypes.BLOCK_COMMENT, LuaTokenTypes.DOC_COMMENT,
+            LuaTokenTypes.SHORT_COMMENT -> true
+
+            else -> false
+        }
+    }
+
     private fun advance(): LuaTokenTypes {
         var advanceToken: LuaTokenTypes
         while (true) {
             advanceToken = lexer.advance() ?: LuaTokenTypes.EOF
             cacheText = null
-            when (advanceToken) {
-                LuaTokenTypes.WHITE_SPACE, LuaTokenTypes.NEW_LINE -> continue
-                //TODO: collect comment to scope
-                LuaTokenTypes.BLOCK_COMMENT, LuaTokenTypes.DOC_COMMENT,
-                LuaTokenTypes.SHORT_COMMENT -> continue
+            if (ignoreToken(advanceToken)) {
+                continue
+            } else break
 
-                else -> break
-            }
         }
         lastToken = currentToken
         currentToken = advanceToken
@@ -95,6 +105,24 @@ class LuaParser {
         return cacheText ?: lexer.yytext().apply {
             cacheText = this
         }
+    }
+
+    private fun peekN(size: Int): LuaTokenTypes {
+        var result = currentToken
+        var currentSize = 0
+        var backSize = 0
+        while (currentSize < size) {
+            result = lexer.advance().require()
+            backSize++
+            if (ignoreToken(result)) {
+                continue
+            }
+            currentSize++
+        }
+
+        lexer.yyback(backSize)
+
+        return result
     }
 
     private fun consumeToken(target: LuaTokenTypes): Boolean {
@@ -111,13 +139,6 @@ class LuaParser {
         return true
     }
 
-    private inline fun expectToken(array: Array<LuaTokenTypes>, crossinline messageBuilder: () -> String): Boolean {
-        advance()
-        if (currentToken !in array) {
-            error(messageBuilder())
-        }
-        return true
-    }
 
     private fun error(message: String): Nothing = kotlin.error("(${lexer.yyline()},${lexer.yycolumn()}): " + message)
 
@@ -186,7 +207,6 @@ class LuaParser {
                 peekToken(LuaTokenTypes.NAME) -> parseExpStatement(blockNode)
                 peekToken(LuaTokenTypes.RETURN) -> parseReturnStatement(blockNode)
                 else -> {
-                    // println(peek())
                     break
                 }
             }
@@ -322,6 +342,7 @@ class LuaParser {
     //             for namelist in explist do block end |
     private fun parseForGenericStatement(variable: Identifier, parent: BaseASTNode): ForGenericStatement {
         val result = ForGenericStatement()
+        val currentLine = lexer.yyline()
         result.parent = parent
         result.variables.add(variable)
 
@@ -337,12 +358,15 @@ class LuaParser {
 
         result.body = parseForBody(result)
 
+        expectToken(LuaTokenTypes.END) { "'end' expected (to close 'for' at line $currentLine) near ${lexerText(true)}" }
+
         return result
     }
 
     //  for Name ‘=’ exp ‘,’ exp [‘,’ exp] do block end |
     private fun parseForNumericStatement(variable: Identifier, parent: BaseASTNode): ForNumericStatement {
         val result = ForNumericStatement()
+        val currentLine = lexer.yyline()
         result.variable = variable
         result.parent = parent
 
@@ -361,6 +385,8 @@ class LuaParser {
         }
 
         result.body = parseForBody(result)
+
+        expectToken(LuaTokenTypes.END) { "'end' expected (to close 'for' at line $currentLine) near ${lexerText(true)}" }
 
         return result
     }
@@ -626,7 +652,6 @@ class LuaParser {
         return parseFunctionBody(result, parent, lexer.yyline())
     }
 
-
     //
     private fun parseSubExp(parent: BaseASTNode, minPrecedence: Int): ExpressionNode {
 
@@ -689,9 +714,7 @@ class LuaParser {
                 result
             }
 
-
-            else ->
-                parsePrefixExp(parent)
+            else -> parsePrefixExp(parent)
 
         }
 
@@ -742,7 +765,6 @@ class LuaParser {
         }
 
         result.fields.addAll(parseFieldList(parent))
-
         expectToken(LuaTokenTypes.RCURLY) { "'}' expected (to close '{' at line $currentLine) near ${lexerText()}" }
 
         return result
@@ -753,19 +775,16 @@ class LuaParser {
     private fun parseFieldList(parent: BaseASTNode): List<TableKey> {
         val result = mutableListOf<TableKey>()
 
-        result.add(parseField(parent))
-
-        if (!equalsMore(peek(), LuaTokenTypes.COMMA, LuaTokenTypes.SEMI)) {
-            // only one field
-            return result
-        }
+        result.add(parseField(parent).require())
 
         while (true) {
+            // , :
             if (!equalsMore(peek(), LuaTokenTypes.COMMA, LuaTokenTypes.SEMI)) {
                 break
             }
             advance()
-            result.add(parseField(parent))
+            val fieldValue = parseField(parent) ?: break
+            result.add(fieldValue)
         }
 
         consume { equalsMore(it, LuaTokenTypes.COMMA, LuaTokenTypes.SEMI) }
@@ -774,21 +793,31 @@ class LuaParser {
     }
 
     //  field ::= ‘[’ exp ‘]’ ‘=’ exp | Name ‘=’ exp | exp
-    private fun parseField(parent: BaseASTNode): TableKey {
-        val defaultExp = when (peek()) {
+    private fun parseField(parent: BaseASTNode): TableKey? {
+        when (peek()) {
             //  Name ‘=’ exp |
-            LuaTokenTypes.NAME -> return parseTableStringKey(parent)
+            LuaTokenTypes.NAME -> {
+                val peek = peekN(2)
+                if (peek == LuaTokenTypes.ASSIGN) {
+                    return parseTableStringKey(parent)
+                }
+            }
+
             LuaTokenTypes.LBRACK -> return parseTableKey(parent)
+            LuaTokenTypes.RCURLY -> return null
             // exp |
-            else -> parseExp(parent)
+            // It is possible to encounter '}',
+            // and since we cannot tell if this is an expression, we use nullable return.
+            else -> {}
         }
         val result = TableKey()
-        result.value = defaultExp
+        result.value = parseExp(parent)
+
         return result
     }
 
     //  ‘[’ exp ‘]’ ‘=’ exp
-    private fun parseTableKey(parent: BaseASTNode): TableKey {
+    private fun parseTableKey(parent: BaseASTNode): TableKey? {
         val result = TableKeyString()
         result.parent = parent
 
@@ -807,10 +836,19 @@ class LuaParser {
     //   Name ‘=’ exp
     private fun parseTableStringKey(parent: BaseASTNode): TableKeyString {
         val result = TableKeyString()
+        result.parent = parent
 
         val name = parseName(result)
+        //val nameIndex = lexer.yychar()
         result.key = name
+
+        /* if (advance() != LuaTokenTypes.ASSIGN) {
+             back(lexer.yychar() - nameIndex)
+             return null
+         }*/
+
         expectToken(LuaTokenTypes.ASSIGN) { "'=' expected near ${lexerText(true)}" }
+
         result.value = parseExp(result)
         return result
     }
@@ -892,6 +930,7 @@ class LuaParser {
         val findLeft = consume { it == LuaTokenTypes.LPAREN }
         if (!findLeft && !isOnlyExpList) {
             // empty left
+            consumeToken(LuaTokenTypes.SEMI)
             return result
         }
 
@@ -905,7 +944,6 @@ class LuaParser {
         result.arguments.addAll(parseExpList(parent))
 
         expectToken(LuaTokenTypes.RPAREN) { "')' expected near ${lexerText()}" }
-
 
         return result
     }
