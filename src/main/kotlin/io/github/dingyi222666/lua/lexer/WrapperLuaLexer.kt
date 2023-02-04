@@ -13,24 +13,33 @@ class WrapperLuaLexer(
 
     private val lastStates = ArrayDeque<LexerState>()
     private val currentStates = ArrayDeque<LexerState>(5)
-    private var currentState: LexerState? = null
+    private var currentState = LexerState(
+        yychar = currentLexer.yychar(),
+        yycolumn = currentLexer.yycolumn(),
+        yylength = currentLexer.yylength(),
+        yyline = currentLexer.yyline(),
+        yytext = currentLexer.yytext(),
+        type = LuaTokenTypes.WHITE_SPACE
+    )
     fun yytext() = currentState.require().yytext
     fun yychar() = currentState.require().yychar
-    fun yylength() = currentState?.yylength ?: 0
-    fun yyline() = currentState.require().yyline
+    fun yylength() = currentState.yylength
 
-    fun yycolumn() = currentState.require().yycolumn
+    //粗暴加1，无所谓，需要的时候自己记得换算
+    fun yyline() = currentState.yyline + 1
 
-    fun advance(): LuaTokenTypes? {
+    fun yycolumn() = currentState.yycolumn + 1
+
+    fun advance(): LuaTokenTypes {
         if (currentStates.isNotEmpty()) {
             currentState = currentStates.removeFirst()
         } else {
             doAdvance()
-            currentState?.let(lastStates::addFirst)
+            currentState.let(lastStates::addFirst)
         }
 
         clearStates()
-        return currentState?.type
+        return currentState.type
     }
 
     fun yypushback(size: Int) {

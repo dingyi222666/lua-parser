@@ -9,8 +9,6 @@ import kotlin.properties.Delegates
  **/
 class BlockNode : ASTNode() {
 
-   
-
     val statements = mutableListOf<StatementNode>()
 
     var returnStatement: ReturnStatement? = null

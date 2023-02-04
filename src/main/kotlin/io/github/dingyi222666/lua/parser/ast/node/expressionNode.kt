@@ -9,7 +9,7 @@ import kotlin.properties.Delegates
  * @date: 2021/10/7 10:48
  * @description:
  **/
-class Identifier(var name: String = "") : ExpressionNode by ExpressionNodeSupport() {
+class Identifier(var name: String = "") : ExpressionNode, ASTNode() {
     override fun toString(): String {
         return "Identifier(name='$name')"
     }
@@ -26,9 +26,8 @@ class Identifier(var name: String = "") : ExpressionNode by ExpressionNodeSuppor
 class ConstantNode(
     var constantType: TYPE = TYPE.UNKNOWN,
     value: Any = 0
-) : ExpressionNode by ExpressionNodeSupport() {
+) : ExpressionNode, ASTNode() {
 
-   
 
     @SerializedName("value")
     private var _value: Any = 0
@@ -96,7 +95,7 @@ class ConstantNode(
  * @date: 2021/10/9 15:00
  * @description:
  **/
-open class CallExpression : ExpressionNode by ExpressionNodeSupport() {
+open class CallExpression : ExpressionNode, ASTNode() {
     lateinit var base: ExpressionNode
     val arguments = mutableListOf<ExpressionNode>()
     override fun toString(): String {
@@ -105,7 +104,7 @@ open class CallExpression : ExpressionNode by ExpressionNodeSupport() {
 
 }
 
-class StringCallExpression  : CallExpression() {
+class StringCallExpression : CallExpression() {
 
     override fun toString(): String {
         return "StringCallExpression(base=$base, arguments=$arguments)"
@@ -113,7 +112,7 @@ class StringCallExpression  : CallExpression() {
 }
 
 
-class TableCallExpression  : CallExpression() {
+class TableCallExpression : CallExpression() {
 
     override fun toString(): String {
         return "TableCallExpression(base=$base, arguments=$arguments)"
@@ -121,9 +120,7 @@ class TableCallExpression  : CallExpression() {
 }
 
 
-class MemberExpression : ExpressionNode by ExpressionNodeSupport() {
-   
-
+class MemberExpression : ExpressionNode, ASTNode() {
     lateinit var identifier: Identifier
     var indexer: String = "."
     lateinit var base: ExpressionNode
@@ -133,24 +130,22 @@ class MemberExpression : ExpressionNode by ExpressionNodeSupport() {
 
 }
 
-class IndexExpression : ExpressionNode by ExpressionNodeSupport() {
-   
+class IndexExpression : ExpressionNode, ASTNode() {
+
 
     lateinit var index: ExpressionNode
     lateinit var base: ExpressionNode
 }
 
-class VarargLiteral : ExpressionNode by ExpressionNodeSupport() {
-   
+class VarargLiteral : ExpressionNode, ASTNode() {
+
 
     override fun toString(): String {
         return "VarargLiteral()"
     }
 }
 
-class UnaryExpression : ExpressionNode by ExpressionNodeSupport() {
-   
-
+class UnaryExpression : ExpressionNode, ASTNode() {
     lateinit var operator: ExpressionOperator
     lateinit var arg: ExpressionNode
     override fun toString(): String {
@@ -159,8 +154,8 @@ class UnaryExpression : ExpressionNode by ExpressionNodeSupport() {
 
 }
 
-class BinaryExpression : ExpressionNode by ExpressionNodeSupport() {
-   
+class BinaryExpression : ExpressionNode, ASTNode() {
+
 
     var left /*by Delegates.notNull<*/: ExpressionNode? = null
     var right: ExpressionNode? = null
@@ -168,15 +163,14 @@ class BinaryExpression : ExpressionNode by ExpressionNodeSupport() {
     override fun toString(): String {
         return "BinaryExpression(left=$left, right=$right, operator=$operator)"
     }
-
 }
 
-class TableConstructorExpression: ExpressionNode by ExpressionNodeSupport() {
-    val fields  = mutableListOf<TableKey>()
+class TableConstructorExpression : ExpressionNode, ASTNode() {
+    val fields = mutableListOf<TableKey>()
 }
 
-class ArrayConstructorExpression: ExpressionNode by ExpressionNodeSupport() {
-    val fields  = mutableListOf<ExpressionNode>()
+class ArrayConstructorExpression : ExpressionNode, ASTNode() {
+    val fields = mutableListOf<ExpressionNode>()
 }
 
 enum class ExpressionOperator(val value: String) {
@@ -191,9 +185,9 @@ enum class ExpressionOperator(val value: String) {
     }
 }
 
-class LambdaDeclaration:ExpressionNode by ExpressionNodeSupport() {
+class LambdaDeclaration : ExpressionNode, ASTNode() {
     val params = mutableListOf<Identifier>()
-    lateinit var expression:ExpressionNode
+    lateinit var expression: ExpressionNode
 }
 
 

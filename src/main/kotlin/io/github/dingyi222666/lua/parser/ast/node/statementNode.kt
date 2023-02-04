@@ -7,7 +7,7 @@ import kotlin.properties.Delegates
  * @date: 2021/10/7 10:23
  * @description:
  **/
-class LocalStatement : StatementNode by StatementNodeSupport() {
+class LocalStatement : StatementNode, ASTNode() {
 
     val variables: MutableList<ExpressionNode> = mutableListOf()
     val init: MutableList<Identifier> = mutableListOf()
@@ -17,7 +17,7 @@ class LocalStatement : StatementNode by StatementNodeSupport() {
 }
 
 
-class AssignmentStatement : StatementNode by StatementNodeSupport() {
+class AssignmentStatement : StatementNode, ASTNode() {
 
     val variables: MutableList<ExpressionNode> = mutableListOf()
     val init: MutableList<ExpressionNode> = mutableListOf()
@@ -27,14 +27,14 @@ class AssignmentStatement : StatementNode by StatementNodeSupport() {
 }
 
 
-class ForGenericStatement : StatementNode by StatementNodeSupport() {
+class ForGenericStatement : StatementNode, ASTNode() {
     val variables: MutableList<Identifier> = mutableListOf()
     val iterators: MutableList<ExpressionNode> = mutableListOf()
     lateinit var body: BlockNode
 }
 
 
-class ForNumericStatement : StatementNode by StatementNodeSupport() {
+class ForNumericStatement : StatementNode, ASTNode() {
     lateinit var variable: Identifier
     lateinit var start: ExpressionNode
     lateinit var end: ExpressionNode
@@ -50,7 +50,7 @@ class ForNumericStatement : StatementNode by StatementNodeSupport() {
  * @date: 2021/10/9 14:58
  * @description:
  **/
-class CallStatement : StatementNode by StatementNodeSupport() {
+class CallStatement : StatementNode, ASTNode() {
     lateinit var expression: CallExpression
 }
 
@@ -59,7 +59,7 @@ class CallStatement : StatementNode by StatementNodeSupport() {
  * @date: 2021/10/20 11:41
  * @description:
  **/
-class WhileStatement : StatementNode by StatementNodeSupport() {
+class WhileStatement : StatementNode, ASTNode() {
     lateinit var condition: ExpressionNode
     lateinit var body: BlockNode
 
@@ -68,7 +68,7 @@ class WhileStatement : StatementNode by StatementNodeSupport() {
     }
 }
 
-class RepeatStatement : StatementNode by StatementNodeSupport() {
+class RepeatStatement : StatementNode, ASTNode() {
     lateinit var condition: ExpressionNode
     lateinit var body: BlockNode
     override fun toString(): String {
@@ -77,20 +77,20 @@ class RepeatStatement : StatementNode by StatementNodeSupport() {
 }
 
 
-class BreakStatement : StatementNode by StatementNodeSupport() {
+class BreakStatement : StatementNode, ASTNode() {
     override fun toString(): String {
         return "BreakStatement()"
     }
 }
 
-class LabelStatement : StatementNode by StatementNodeSupport() {
+class LabelStatement : StatementNode, ASTNode() {
     lateinit var identifier: Identifier
     override fun toString(): String {
         return "LabelStatement(identifier=$identifier)"
     }
 }
 
-class GotoStatement : StatementNode by StatementNodeSupport() {
+class GotoStatement : StatementNode, ASTNode() {
     lateinit var identifier: Identifier
     override fun toString(): String {
         return "GotoStatement(identifier=$identifier)"
@@ -98,28 +98,28 @@ class GotoStatement : StatementNode by StatementNodeSupport() {
 }
 
 
-class ContinueStatement : StatementNode by StatementNodeSupport() {
+class ContinueStatement : StatementNode, ASTNode() {
     override fun toString(): String {
         return "ContinueStatement()"
     }
 }
 
-class ReturnStatement : StatementNode by StatementNodeSupport() {
+class ReturnStatement : StatementNode, ASTNode() {
     val arguments = mutableListOf<ExpressionNode>()
 }
 
-class WhenStatement : StatementNode by StatementNodeSupport() {
+class WhenStatement : StatementNode, ASTNode() {
     lateinit var condition: ExpressionNode
     lateinit var ifCause: StatementNode
     var elseCause: StatementNode? = null
 }
 
-class SwitchStatement : StatementNode by StatementNodeSupport() {
+class SwitchStatement : StatementNode, ASTNode() {
     lateinit var condition: ExpressionNode
     val causes = mutableListOf<AbsSwitchCause>()
 }
 
-open class AbsSwitchCause : StatementNode by StatementNodeSupport()
+open class AbsSwitchCause : StatementNode, ASTNode()
 class CaseCause : AbsSwitchCause() {
     val conditions = mutableListOf<ExpressionNode>()
     lateinit var body: BlockNode
@@ -129,7 +129,7 @@ class DefaultCause : AbsSwitchCause() {
     lateinit var body: BlockNode
 }
 
-open class IfClause : StatementNode by StatementNodeSupport() {
+open class IfClause : StatementNode, ASTNode() {
     lateinit var condition: ExpressionNode
     lateinit var body: BlockNode
 }
@@ -139,7 +139,7 @@ class ElseIfClause : IfClause()
 
 class ElseClause : IfClause()
 
-open class TableKey : StatementNode by StatementNodeSupport() {
+open class TableKey : StatementNode, ASTNode() {
     var key: ExpressionNode? = null
     lateinit var value: ExpressionNode
 }
@@ -147,7 +147,7 @@ open class TableKey : StatementNode by StatementNodeSupport() {
 open class TableKeyString : TableKey()
 
 
-class IfStatement : StatementNode by StatementNodeSupport() {
+class IfStatement : StatementNode, ASTNode() {
     val causes = mutableListOf<IfClause>()
 }
 
@@ -156,7 +156,7 @@ class IfStatement : StatementNode by StatementNodeSupport() {
  * @date: 2021/10/8 20:08
  * @description:
  **/
-class DoStatement : StatementNode by StatementNodeSupport() {
+class DoStatement : StatementNode, ASTNode() {
     var body by Delegates.notNull<BlockNode>()
     override fun toString(): String {
         return "DoStatement(body=$body)"
