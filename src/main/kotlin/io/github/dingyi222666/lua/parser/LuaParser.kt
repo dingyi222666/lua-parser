@@ -633,7 +633,7 @@ class LuaParser {
     //      exp ::= (unop exp | primary | prefixexp ) { binop exp }
     //
     //     primary ::= nil | false | true | Number | String | '...'
-    //          | functiondef | tableconstructor | lambdadef
+    //          | functiondef | tableconstructor | lambdadef | arrayconstructor
     //
     //
     private fun parseExp(parent: BaseASTNode): ExpressionNode {
@@ -718,6 +718,8 @@ class LuaParser {
                 parseFunctionExp(parent)
             }
 
+            currentToken == LuaTokenTypes.LBRACK -> parseArrayConstructorExpression(parent)
+
             currentToken == LuaTokenTypes.LCURLY -> parseTableConstructorExpression(parent)
 
             binaryPrecedence(currentToken).also {
@@ -773,8 +775,23 @@ class LuaParser {
         return node.require()
     }
 
+    //   arrayconstructor ::= '[' [explist] ']'
+    private fun parseArrayConstructorExpression(parent: BaseASTNode): ArrayConstructorExpression {
+        expectToken(LuaTokenTypes.LBRACK) { "'[' expected near ${lexerText()}" }
+        val result = ArrayConstructorExpression()
+        result.parent = parent
 
-    // lambdadef ::= lambda ([parlist]|['(' [parlist] ')']) (':'|'=>','->') exp
+        if (consumeToken(LuaTokenTypes.RBRACK)) {
+            // empty token
+            return result
+        }
+
+        result.fields.addAll(parseExpList(parent))
+
+        return result
+    }
+
+    //   lambdadef ::= lambda ( [parlist] | ['(' [parlist] ')'] ) (':'|'=>','->') exp
     private fun parseLambdaExp(parent: BaseASTNode): LambdaDeclaration {
         expectToken(LuaTokenTypes.LAMBDA) { "<lambda> expected near ${lexerText()}" }
         val result = LambdaDeclaration()

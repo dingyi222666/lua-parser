@@ -1,1 +1,2 @@
-local a = lambda (_):1
+local a = [1,2,a,lambda (_):1,
+aa]

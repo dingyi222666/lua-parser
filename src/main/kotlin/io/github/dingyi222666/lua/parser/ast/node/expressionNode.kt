@@ -172,9 +172,11 @@ class BinaryExpression : ExpressionNode by ExpressionNodeSupport() {
 }
 
 class TableConstructorExpression: ExpressionNode by ExpressionNodeSupport() {
-
-
     val fields  = mutableListOf<TableKey>()
+}
+
+class ArrayConstructorExpression: ExpressionNode by ExpressionNodeSupport() {
+    val fields  = mutableListOf<ExpressionNode>()
 }
 
 enum class ExpressionOperator(val value: String) {
