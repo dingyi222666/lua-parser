@@ -101,8 +101,6 @@ class ConstantNode(
  * @description:
  **/
 open class CallExpression : ExpressionNode by ExpressionNodeSupport() {
-    open
-
     lateinit var base: ExpressionNode
     val arguments = mutableListOf<ExpressionNode>()
     override fun toString(): String {

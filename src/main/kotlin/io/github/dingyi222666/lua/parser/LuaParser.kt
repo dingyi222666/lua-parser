@@ -173,8 +173,8 @@ class LuaParser {
     //		 for namelist in explist do block end |
     //		 function funcname funcbody |
     //		 local function Name funcbody |
-    //		 local attnamelist [‘=’ explist]
-    //       when exp exp (x)
+    //		 local attnamelist [‘=’ explist] |
+    //       when exp (varlist ‘=’ explist| functioncall) | [else (varlist ‘=’ explist | functioncall)]
     private fun parseBlockNode(parent: BaseASTNode? = null): BlockNode {
         val blockNode = BlockNode()
         while (!peekToken(LuaTokenTypes.EOF)) {
@@ -197,6 +197,7 @@ class LuaParser {
                     ContinueStatement()
                 }
 
+                peekToken(LuaTokenTypes.WHEN) -> parseWhenStatement(blockNode)
                 peekToken(LuaTokenTypes.IF) -> parseIfStatement(blockNode)
                 consumeToken(LuaTokenTypes.GOTO) -> parseGotoStatement(blockNode)
                 consumeToken(LuaTokenTypes.DOUBLE_COLON) -> parseLabelStatement(blockNode)
@@ -230,6 +231,7 @@ class LuaParser {
     }
 
 
+    //   retstat ::= return [explist] [‘;’]
     private fun parseReturnStatement(parent: BaseASTNode): ReturnStatement {
         val result = ReturnStatement()
         result.parent = parent
@@ -251,7 +253,26 @@ class LuaParser {
         return result
     }
 
-    //		 if exp then block {elseif exp then block} [else block] end |
+    //      when exp (varlist ‘=’ explist| functioncall) | [else (varlist ‘=’ explist | functioncall)]
+    private fun parseWhenStatement(parent: BaseASTNode): WhenStatement {
+        expectToken(LuaTokenTypes.WHEN) { "<when> expected near '${lexerText()}'" }
+        val result = WhenStatement()
+        result.parent = parent
+
+        result.condition = parseExp(result)
+
+        result.ifCause = parseExpStatement(parent)
+
+        if (!consumeToken(LuaTokenTypes.ELSE)) {
+            return result
+        }
+
+        result.elseCause = parseExpStatement(parent)
+
+        return result
+    }
+
+    //		if exp then block {elseif exp then block} [else block] end |
     private fun parseIfStatement(parent: BaseASTNode): IfStatement {
         val result = IfStatement()
         val currentLine = lexer.yyline()
