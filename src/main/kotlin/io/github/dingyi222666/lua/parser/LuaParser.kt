@@ -174,7 +174,8 @@ class LuaParser {
     //		 function funcname funcbody |
     //		 local function Name funcbody |
     //		 local attnamelist [‘=’ explist] |
-    //       when exp (varlist ‘=’ explist| functioncall) | [else (varlist ‘=’ explist | functioncall)]
+    //       when exp (varlist ‘=’ explist| functioncall) | [else (varlist ‘=’ explist | functioncall)] |
+    //       switch exp do {case explist [then] block} [default block] end
     private fun parseBlockNode(parent: BaseASTNode? = null): BlockNode {
         val blockNode = BlockNode()
         while (!peekToken(LuaTokenTypes.EOF)) {
@@ -199,6 +200,7 @@ class LuaParser {
 
                 peekToken(LuaTokenTypes.WHEN) -> parseWhenStatement(blockNode)
                 peekToken(LuaTokenTypes.IF) -> parseIfStatement(blockNode)
+                peekToken(LuaTokenTypes.SWITCH) -> parseSwitchStatement(blockNode)
                 consumeToken(LuaTokenTypes.GOTO) -> parseGotoStatement(blockNode)
                 consumeToken(LuaTokenTypes.DOUBLE_COLON) -> parseLabelStatement(blockNode)
 
@@ -230,13 +232,73 @@ class LuaParser {
         return blockNode
     }
 
+    //    switch exp do {case explist [then] block} [default block] end
+    private fun parseSwitchStatement(parent: BaseASTNode): SwitchStatement {
+        expectToken(LuaTokenTypes.SWITCH) { "<switch> expected near ${lexerText(true)}" }
+        val result = SwitchStatement()
+        val currentLine = lexer.yyline()
+        result.parent = parent
+
+        result.condition = parseExp(result)
+
+        val findDoToken = consumeToken(LuaTokenTypes.DO)
+        if (!findDoToken) {
+            warning("The <do> expected near ${lexerText()}")
+        }
+
+        if (peekToken(LuaTokenTypes.CASE)) {
+            result.causes.addAll(parseSwitchCaseList(result))
+        }
+
+        if (peekToken(LuaTokenTypes.DEFAULT)) {
+            result.causes.add(parseSwitchDefaultCaseStatement(result))
+        }
+
+        expectToken(LuaTokenTypes.END) { "<end> expected (to close 'switch' at line $currentLine) near ${lexerText()}" }
+
+
+        return result
+    }
+
+    // [default block]
+    private fun parseSwitchDefaultCaseStatement(parent: BaseASTNode): DefaultCause {
+        expectToken(LuaTokenTypes.DEFAULT) { "<case> expected near ${lexerText(true)}" }
+        val result = DefaultCause()
+        result.parent = parent
+        result.body = parseBlockNode(result)
+        return result
+    }
+
+    // {case explist [then] block}
+    private fun parseSwitchCaseList(parent: BaseASTNode): List<CaseCause> {
+        val result = mutableListOf<CaseCause>()
+        while (peekToken(LuaTokenTypes.CASE)) {
+            result.add(parseSwitchCaseStatement(parent))
+        }
+        return result
+    }
+
+    //  case explist [then] block
+    private fun parseSwitchCaseStatement(parent: BaseASTNode): CaseCause {
+        expectToken(LuaTokenTypes.CASE) { "<case> expected near ${lexerText(true)}" }
+        val result = CaseCause()
+
+        result.parent = parent
+        result.conditions.addAll(parseExpList(result))
+
+        consumeToken(LuaTokenTypes.THEN)
+
+        result.body = parseBlockNode(result)
+
+        return result
+    }
 
     //   retstat ::= return [explist] [‘;’]
     private fun parseReturnStatement(parent: BaseASTNode): ReturnStatement {
+        expectToken(LuaTokenTypes.RETURN) { "<return> expected near ${lexerText(true)}" }
+
         val result = ReturnStatement()
         result.parent = parent
-
-        expectToken(LuaTokenTypes.RETURN) { "'return' expected near ${lexerText(true)}" }
 
         while (true) {
             when (peek()) {
@@ -289,7 +351,7 @@ class LuaParser {
             result.causes.add(cause)
         }
 
-        expectToken(LuaTokenTypes.END) { "'end' expected (to close 'do' at line $currentLine) near ${lexerText(true)}" }
+        expectToken(LuaTokenTypes.END) { "<end> expected (to close 'do' at line $currentLine) near ${lexerText(true)}" }
 
         return result
     }
@@ -373,13 +435,18 @@ class LuaParser {
             result.variables.addAll(parseNameList(result))
         }
 
-        expectToken(LuaTokenTypes.IN) { "<in> expected near '${lexerText()}'" }
+        val findInToken = consumeToken(LuaTokenTypes.IN)
+        if (!findInToken) {
+            warning("The <in> expected near '${lexerText()}'")
+        }
+
+        // expectToken(LuaTokenTypes.IN) { "<in> expected near '${lexerText()}'" }
 
         result.iterators.addAll(parseExpList(result))
 
         result.body = parseForBody(result)
 
-        expectToken(LuaTokenTypes.END) { "'end' expected (to close 'for' at line $currentLine) near ${lexerText(true)}" }
+        expectToken(LuaTokenTypes.END) { "<end> expected (to close 'for' at line $currentLine) near '${lexerText(true)}'" }
 
         return result
     }
@@ -407,7 +474,7 @@ class LuaParser {
 
         result.body = parseForBody(result)
 
-        expectToken(LuaTokenTypes.END) { "'end' expected (to close 'for' at line $currentLine) near ${lexerText(true)}" }
+        expectToken(LuaTokenTypes.END) { "<end> expected (to close 'for' at line $currentLine) near ${lexerText(true)}" }
 
         return result
     }
@@ -494,7 +561,7 @@ class LuaParser {
 
         result.body = parseBlockNode(result)
 
-        expectToken(LuaTokenTypes.END) { "'end' expected (to close 'do' at line $currentLine) near ${lexerText(true)}" }
+        expectToken(LuaTokenTypes.END) { "<end> expected (to close 'do' at line $currentLine) near ${lexerText(true)}" }
 
         return result
     }
@@ -554,7 +621,7 @@ class LuaParser {
         result.body = parseBlockNode(result)
         result.parent = parent
 
-        expectToken(LuaTokenTypes.END) { "'end' expected (to close 'do' at line $currentLine) near ${lexerText()}" }
+        expectToken(LuaTokenTypes.END) { "<end> expected (to close 'do' at line $currentLine) near ${lexerText()}" }
 
         return result
     }
@@ -579,7 +646,7 @@ class LuaParser {
 
         node.body = parseBlockNode(parent)
 
-        expectToken(LuaTokenTypes.END) { "'end' expected (to close 'function' at line $currentLine) near ${lexerText()}" }
+        expectToken(LuaTokenTypes.END) { "<end> expected (to close 'function' at line $currentLine) near ${lexerText()}" }
 
         return node
     }
