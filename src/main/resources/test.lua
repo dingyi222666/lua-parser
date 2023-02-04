@@ -1,1 +1,1 @@
-when a>1 a=12 else a()
+local a = lambda (_):1

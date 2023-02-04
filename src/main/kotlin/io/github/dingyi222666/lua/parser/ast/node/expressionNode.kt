@@ -10,10 +10,6 @@ import kotlin.properties.Delegates
  * @description:
  **/
 class Identifier(var name: String = "") : ExpressionNode by ExpressionNodeSupport() {
-
-   
-
-
     override fun toString(): String {
         return "Identifier(name='$name')"
     }
@@ -193,11 +189,15 @@ enum class ExpressionOperator(val value: String) {
     }
 }
 
-class FunctionDeclaration : ExpressionNode, StatementNode, ASTNode() {
-   
+class LambdaDeclaration:ExpressionNode by ExpressionNodeSupport() {
+    val params = mutableListOf<Identifier>()
+    lateinit var expression:ExpressionNode
+}
 
+
+class FunctionDeclaration : ExpressionNode, StatementNode, ASTNode() {
     var body: BlockNode? = null
-    var params = mutableListOf<Identifier>()
+    val params = mutableListOf<Identifier>()
     var identifier: ExpressionNode? = null
     var isLocal = false
     override fun toString(): String {

@@ -633,7 +633,7 @@ class LuaParser {
     //      exp ::= (unop exp | primary | prefixexp ) { binop exp }
     //
     //     primary ::= nil | false | true | Number | String | '...'
-    //          | functiondef | tableconstructor
+    //          | functiondef | tableconstructor | lambdadef
     //
     //
     private fun parseExp(parent: BaseASTNode): ExpressionNode {
@@ -712,12 +712,13 @@ class LuaParser {
                 }
             }
 
+            currentToken == LuaTokenTypes.LAMBDA -> parseLambdaExp(parent)
+
             currentToken == LuaTokenTypes.FUNCTION -> consume {
                 parseFunctionExp(parent)
             }
 
             currentToken == LuaTokenTypes.LCURLY -> parseTableConstructorExpression(parent)
-
 
             binaryPrecedence(currentToken).also {
                 precedence = it
@@ -770,6 +771,45 @@ class LuaParser {
         }
 
         return node.require()
+    }
+
+
+    // lambdadef ::= lambda ([parlist]|['(' [parlist] ')']) (':'|'=>','->') exp
+    private fun parseLambdaExp(parent: BaseASTNode): LambdaDeclaration {
+        expectToken(LuaTokenTypes.LAMBDA) { "<lambda> expected near ${lexerText()}" }
+        val result = LambdaDeclaration()
+        result.parent = parent
+
+        // ['(' [parlist] ')']
+        (func@{
+            if (!consumeToken(LuaTokenTypes.LPAREN)) return@func
+            if (consumeToken(LuaTokenTypes.RPAREN)) return@func
+            if (peekToken(LuaTokenTypes.NAME)) {
+                result.params.addAll(parseNameList(result))
+            }
+            expectToken(LuaTokenTypes.RPAREN) { "')' expected near ${lexerText()}" }
+        }).invoke()
+
+        // [parlist]
+        if (peekToken(LuaTokenTypes.NAME)) {
+            result.params.addAll(parseNameList(result))
+        }
+
+        (func@{
+            if (consumeToken(LuaTokenTypes.COLON)) return@func
+            if (consumeToken(LuaTokenTypes.MINUS)) {
+                expectToken(LuaTokenTypes.GT) { "'->' expected near ${lexerText()}" }
+                return@func
+            }
+            if (consumeToken(LuaTokenTypes.ASSIGN)) {
+                expectToken(LuaTokenTypes.GT) { "'=>' expected near ${lexerText()}" }
+                return@func
+            }
+            error("':' expected near ${lexerText()}")
+        }).invoke()
+
+        result.expression = parseExp(result)
+        return result
     }
 
     //  tableconstructor ::= ‘{’ [fieldlist] ‘}’
