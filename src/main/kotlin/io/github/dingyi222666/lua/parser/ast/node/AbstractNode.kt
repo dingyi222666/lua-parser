@@ -47,6 +47,7 @@ data class Range(
     companion object {
         val EMPTY = Range(Position.EMPTY, Position.EMPTY)
     }
+
 }
 
 data class Position(
@@ -71,5 +72,9 @@ data class Position(
 
     companion object {
         val EMPTY = Position(1, 1)
+    }
+
+    override fun toString(): String {
+        return "($line, $column)"
     }
 }

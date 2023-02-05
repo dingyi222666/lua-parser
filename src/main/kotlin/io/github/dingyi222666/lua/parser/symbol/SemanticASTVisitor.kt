@@ -34,7 +34,11 @@ class SemanticASTVisitor : ASTVisitor<BaseASTNode> {
         scopeStack.removeFirst()
     }
 
-    fun analyze(node: ChunkNode):GlobalScope {
+    private inline fun error(node: BaseASTNode, crossinline messageBuilder: () -> String) {
+        error("${node.range.start}: ${messageBuilder()}")
+    }
+
+    fun analyze(node: ChunkNode): GlobalScope {
         globalScope.range = node.range
         scopeStack.addFirst(globalScope)
         createLocalScope(node)
@@ -62,6 +66,25 @@ class SemanticASTVisitor : ASTVisitor<BaseASTNode> {
 
     override fun visitLocalStatement(node: LocalStatement, value: BaseASTNode) {
         super.visitLocalStatement(node, value)
+    }
+
+    override fun visitWhileStatement(node: WhileStatement, value: BaseASTNode) {
+        createLoopScope(node.body)
+        super.visitWhileStatement(node, node)
+    }
+
+    override fun visitBreakStatement(node: BreakStatement, value: BaseASTNode) {
+        val currentScope = scopeStack.first()
+        if (currentScope !is LoopScope) {
+            error(node) { "no loop to break" }
+        }
+    }
+
+    override fun visitContinueStatement(node: ContinueStatement, value: BaseASTNode) {
+        val currentScope = scopeStack.first()
+        if (currentScope !is LoopScope) {
+            error(node) { "no loop to continue" }
+        }
     }
 
     override fun visitFunctionDeclaration(node: FunctionDeclaration, value: BaseASTNode) {
