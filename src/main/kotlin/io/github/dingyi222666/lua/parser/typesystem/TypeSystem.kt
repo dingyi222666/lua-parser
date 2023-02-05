@@ -12,5 +12,10 @@ class TypeSystem {
         allType[type.getTypeName()] = type
     }
 
+    fun getType(typeName: String): Type? {
+        return allType[typeName]
+    }
+
+
 
 }
