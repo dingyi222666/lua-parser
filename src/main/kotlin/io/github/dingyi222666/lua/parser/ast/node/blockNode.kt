@@ -18,7 +18,7 @@ class BlockNode : ASTNode() {
         statements.add(statement)
     }
 
-    override fun <R, T> accept(visitor: ASTVisitor<R, T>, value: T) {
+    override fun <T> accept(visitor: ASTVisitor<T>, value: T) {
         visitor.visitBlockNode(this, value)
     }
 
@@ -38,7 +38,7 @@ class ChunkNode : ASTNode() {
 
     lateinit var body: BlockNode
 
-    override fun <R, T> accept(visitor: ASTVisitor<R, T>, value: T) {
+    override fun <T> accept(visitor: ASTVisitor<T>, value: T) {
         visitor.visitChunkNode(this, value)
     }
 

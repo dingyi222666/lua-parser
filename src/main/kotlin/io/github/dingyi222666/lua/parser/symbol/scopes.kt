@@ -17,55 +17,90 @@ interface Scope {
 
     fun addSymbol(symbol: Symbol)
 
-    fun addChild(scope: Scope)
+    fun removeSymbol(symbol: Symbol)
+
+    fun renameSymbol(symbol: Symbol, newName: String)
 
     var range: Range
 }
 
 abstract class BaseScope(
+    val parent: Scope?,
     override var range: Range
 ) : Scope {
     protected val symbolMap = mutableMapOf<String, Symbol>()
-    protected val childScopes = mutableListOf<Scope>()
     override fun resolveSymbol(symbolName: String): Symbol? {
         return symbolMap[symbolName]
     }
 
     override fun resolveSymbol(symbolName: String, position: Position): Symbol? {
-        return symbolMap[symbolName] ?: return resolveSymbolInChild(
+        return symbolMap[symbolName] ?: return parent?.resolveSymbol(
             symbolName, position
         )
     }
 
-    private fun resolveSymbolInChild(symbolName: String, position: Position): Symbol? {
-        val matchScope = childScopes
-            .filter {
-                it.range
-                    .start <= position ||
-                        it.range.end >= position
-            }
+    override fun removeSymbol(symbol: Symbol) {
+        symbolMap.remove(symbol.variable)
+    }
 
-        for (scope in matchScope) {
-            val symbol = scope.resolveSymbol(symbolName, position)
-            if (symbol != null) {
-                return symbol
-            }
-        }
-        return null
+    override fun renameSymbol(symbol: Symbol, newName: String) {
+        symbolMap.remove(symbol.variable)
+        symbolMap[newName] = symbol
     }
 
     override fun addSymbol(symbol: Symbol) {
         symbolMap[symbol.variable] = symbol
     }
 
-    override fun addChild(scope: Scope) {
-        childScopes.add(scope)
-    }
 }
 
 class GlobalScope(
     range: Range
-) : BaseScope(range) {
+) : BaseScope(null, range) {
+    private val childScopes = mutableListOf<Scope>()
 
+    fun addScope(scope: Scope) {
+        childScopes.add(scope)
+    }
 
+    fun removeScope(scope: Scope) {
+        childScopes.remove(scope)
+    }
+
+    private fun binarySearchScope(position: Position): Scope? {
+        var low = 0
+        var high = childScopes.size - 1
+        while (low <= high) {
+            val mid = (low + high).ushr(1)
+            val midVal = childScopes[mid].range
+            if (midVal.end.compareTo(position) == 0) {
+                return childScopes[mid]
+            } else if (midVal.end > position) {
+                high = mid - 1
+            } else {
+                low = mid + 1
+            }
+        }
+        return childScopes.getOrNull(high)
+    }
+
+    override fun resolveSymbol(symbolName: String): Symbol? {
+        return resolveSymbol(symbolName, Position.EMPTY)
+    }
+
+    override fun resolveSymbol(symbolName: String, position: Position): Symbol? {
+        val scope = binarySearchScope(position) ?: this
+        return scope.resolveSymbol(symbolName, position)
+    }
 }
+
+
+class LoopScope(
+    parent: Scope,
+    range: Range
+) : BaseScope(parent, range)
+
+class LocalScope(
+    parent: Scope,
+    range: Range
+) : BaseScope(parent, range)

@@ -27,4 +27,10 @@ enum class BaseType(private val typeName: String) : Type {
     override fun getTypeName(): String = typeName
 }
 
+class UnionType(private val types: List<Type>) : Type {
+    override fun getTypeName(): String {
+        return types.joinToString("|") { it.getTypeName() }
+    }
+}
+
 

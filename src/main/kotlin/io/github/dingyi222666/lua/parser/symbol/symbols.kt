@@ -13,13 +13,13 @@ import java.lang.reflect.TypeVariable
 
 interface Symbol {
     val variable: String
-    val type: Type
+    var type: Type
     val range: Range
 }
 
 open class VariableSymbol(
     override val variable: String,
-    override val type: Type,
+    override var type: Type,
     override val range: Range,
     val isLocal: Boolean,
     open val node: ExpressionNode
@@ -27,7 +27,7 @@ open class VariableSymbol(
 
 class ParamSymbol(
     override val variable: String,
-    override val type: Type,
+    override var type: Type,
     override val range: Range,
     override val node: ExpressionNode
 ) : VariableSymbol(variable, type, range, true, node)
@@ -39,7 +39,11 @@ class FunctionSymbol(
     isLocal: Boolean,
     val params: MutableList<ParamSymbol> = mutableListOf()
 ) : VariableSymbol(variable, BaseType.FUNCTION, range, isLocal, node) {
-    override val type = BaseType.FUNCTION
+    override var type: Type = BaseType.FUNCTION
+
+    override fun toString(): String {
+        return "FunctionSymbol(variable='$variable', type=$type, range=$range, isLocal=$isLocal, node=$node, params=$params)"
+    }
 }
 
 class TableSymbol(
@@ -48,7 +52,7 @@ class TableSymbol(
     override val node: TableConstructorExpression,
     isLocal: Boolean
 ) : VariableSymbol(variable, BaseType.TABLE, range, isLocal, node) {
-    override val type = BaseType.TABLE
+    override var type: Type = BaseType.TABLE
 
     internal val keyValues = mutableMapOf<String, Symbol>()
 
@@ -63,7 +67,7 @@ class TableSymbol(
 
 class ExpressionSymbol(
     override val variable: String,
-    override val type: Type,
+    override var type: Type,
     override val range: Range,
     val node: ExpressionNode
 ) : Symbol
@@ -73,7 +77,7 @@ class UnknownSymbol(
     override val range: Range,
     val node: ExpressionNode
 ) : Symbol {
-    override val type = BaseType.ANY
+    override var type: Type = BaseType.ANY
 }
 
 class UnknownLikeTableSymbol(
@@ -81,7 +85,7 @@ class UnknownLikeTableSymbol(
     override val range: Range,
     val node: ExpressionNode
 ) : Symbol {
-    override val type = BaseType.ANY
+    override var type: Type = BaseType.ANY
 
     internal val keyValues = mutableMapOf<String, Symbol>()
 

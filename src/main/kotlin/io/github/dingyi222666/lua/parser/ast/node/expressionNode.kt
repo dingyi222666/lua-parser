@@ -15,7 +15,7 @@ class Identifier(var name: String = "") : ExpressionNode, ASTNode() {
         return "Identifier(name='$name')"
     }
 
-    override fun <R, T> accept(visitor: ASTVisitor<R, T>, value: T) {
+    override fun <T> accept(visitor: ASTVisitor<T>, value: T) {
         visitor.visitIdentifier(this, value)
     }
 
@@ -90,7 +90,7 @@ class ConstantNode(
 
     fun copy(): ConstantNode = ConstantNode(constantType = this.constantType, value = this.rawValue)
 
-    override fun <R, T> accept(visitor: ASTVisitor<R, T>, value: T) {
+    override fun <T> accept(visitor: ASTVisitor<T>, value: T) {
         visitor.visitConstantNode(this, value)
     }
 
@@ -111,7 +111,7 @@ open class CallExpression : ExpressionNode, ASTNode() {
         return "CallExpression(base=$base, arguments=$arguments)"
     }
 
-    override fun <R, T> accept(visitor: ASTVisitor<R, T>, value: T) {
+    override fun <T> accept(visitor: ASTVisitor<T>, value: T) {
         visitor.visitCallExpression(this, value)
     }
 }
@@ -122,7 +122,7 @@ class StringCallExpression : CallExpression() {
         return "StringCallExpression(base=$base, arguments=$arguments)"
     }
 
-    override fun <R, T> accept(visitor: ASTVisitor<R, T>, value: T) {
+    override fun <T> accept(visitor: ASTVisitor<T>, value: T) {
         visitor.visitStringCallExpression(this, value)
     }
 }
@@ -134,7 +134,7 @@ class TableCallExpression : CallExpression() {
         return "TableCallExpression(base=$base, arguments=$arguments)"
     }
 
-    override fun <R, T> accept(visitor: ASTVisitor<R, T>, value: T) {
+    override fun <T> accept(visitor: ASTVisitor<T>, value: T) {
         visitor.visitTableCallExpression(this, value)
     }
 }
@@ -148,7 +148,7 @@ class MemberExpression : ExpressionNode, ASTNode() {
         return "MemberExpression(identifier=$identifier, indexer='$indexer', base=$base)"
     }
 
-    override fun <R, T> accept(visitor: ASTVisitor<R, T>, value: T) {
+    override fun <T> accept(visitor: ASTVisitor<T>, value: T) {
         visitor.visitMemberExpression(this, value)
     }
 
@@ -163,7 +163,7 @@ class IndexExpression : ExpressionNode, ASTNode() {
         return "IndexExpression(index=$index, base=$base)"
     }
 
-    override fun <R, T> accept(visitor: ASTVisitor<R, T>, value: T) {
+    override fun <T> accept(visitor: ASTVisitor<T>, value: T) {
         visitor.visitIndexExpression(this, value)
     }
 }
@@ -174,7 +174,7 @@ class VarargLiteral : ExpressionNode, ASTNode() {
         return "VarargLiteral()"
     }
 
-    override fun <R, T> accept(visitor: ASTVisitor<R, T>, value: T) {
+    override fun <T> accept(visitor: ASTVisitor<T>, value: T) {
         visitor.visitVarargLiteral(this, value)
     }
 }
@@ -186,7 +186,7 @@ class UnaryExpression : ExpressionNode, ASTNode() {
         return "UnaryExpression(operator=$operator, arg=$arg)"
     }
 
-    override fun <R, T> accept(visitor: ASTVisitor<R, T>, value: T) {
+    override fun <T> accept(visitor: ASTVisitor<T>, value: T) {
         visitor.visitUnaryExpression(this, value)
     }
 
@@ -202,7 +202,7 @@ class BinaryExpression : ExpressionNode, ASTNode() {
         return "BinaryExpression(left=$left, right=$right, operator=$operator)"
     }
 
-    override fun <R, T> accept(visitor: ASTVisitor<R, T>, value: T) {
+    override fun <T> accept(visitor: ASTVisitor<T>, value: T) {
         visitor.visitBinaryExpression(this, value)
     }
 }
@@ -214,7 +214,7 @@ class TableConstructorExpression : ExpressionNode, ASTNode() {
         return "TableConstructorExpression(fields=$fields)"
     }
 
-    override fun <R, T> accept(visitor: ASTVisitor<R, T>, value: T) {
+    override fun <T> accept(visitor: ASTVisitor<T>, value: T) {
         visitor.visitTableConstructorExpression(this, value)
     }
 }
@@ -226,7 +226,7 @@ class ArrayConstructorExpression : ExpressionNode, ASTNode() {
         return "ArrayConstructorExpression(values=$values)"
     }
 
-    override fun <R, T> accept(visitor: ASTVisitor<R, T>, value: T) {
+    override fun <T> accept(visitor: ASTVisitor<T>, value: T) {
         visitor.visitArrayConstructorExpression(this, value)
     }
 }
@@ -251,7 +251,7 @@ class LambdaDeclaration : ExpressionNode, ASTNode() {
         return "LambdaDeclaration(params=$params, expression=$expression)"
     }
 
-    override fun <R, T> accept(visitor: ASTVisitor<R, T>, value: T) {
+    override fun <T> accept(visitor: ASTVisitor<T>, value: T) {
         visitor.visitLambdaDeclaration(this, value)
     }
 }
@@ -266,7 +266,7 @@ class FunctionDeclaration : ExpressionNode, StatementNode, ASTNode() {
         return "FunctionDeclaration(body=$body, params=$params, identifier=$identifier, isLocal=$isLocal)"
     }
 
-    override fun <R, T> accept(visitor: ASTVisitor<R, T>, value: T) {
+    override fun <T> accept(visitor: ASTVisitor<T>, value: T) {
         visitor.visitFunctionDeclaration(this, value)
     }
 }

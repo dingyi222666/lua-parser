@@ -22,7 +22,7 @@ interface ExpressionNode : BaseASTNode {
         val EMPTY = ExpressionNodeSupport()
 
         class ExpressionNodeSupport : ExpressionNode, ASTNode() {
-            override fun <R, T> accept(visitor: ASTVisitor<R, T>, value: T) {
+            override fun <T> accept(visitor: ASTVisitor<T>, value: T) {
                 visitor.visitExpressionNode(this, value)
             }
         }
@@ -37,7 +37,7 @@ abstract class ASTNode : BaseASTNode {
     @SerializedName("location")
     override var range = Range.EMPTY
 
-    abstract fun <R, T> accept(visitor: ASTVisitor<R, T>, value: T)
+    abstract fun <T> accept(visitor: ASTVisitor<T>, value: T)
 }
 
 data class Range(
@@ -52,24 +52,24 @@ data class Range(
 data class Position(
     val line: Int,
     val column: Int
-) {
-    operator fun compareTo(position: Position): Int {
-        if (position.line > line) {
+):Comparable<Position> {
+    override operator fun compareTo(other: Position): Int {
+        if (other.line > line) {
+            return other.line - line
+        }
+        if (other.line < line) {
+            return other.line - line
+        }
+        if (other.column > column) {
             return 1
         }
-        if (position.line < line) {
-            return -1
-        }
-        if (position.column > column) {
-            return 1
-        }
-        if (position.column < column) {
+        if (other.column < column) {
             return -1
         }
         return 0
     }
 
     companion object {
-        val EMPTY = Position(1, 0)
+        val EMPTY = Position(1, 1)
     }
 }

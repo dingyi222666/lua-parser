@@ -8,9 +8,9 @@ import io.github.dingyi222666.lua.parser.ast.node.*
  * @description:
  **/
 
-abstract class ASTVisitor<R, T> {
+interface ASTVisitor<T> {
 
-    fun visitIfStatement(node: IfStatement, value: T): R? {
+    fun visitIfStatement(node: IfStatement, value: T) {
         node.causes.forEach {
             when (it) {
                 is ElseClause -> visitElseClause(it, value)
@@ -18,39 +18,39 @@ abstract class ASTVisitor<R, T> {
                 else -> visitIfClause(it, value)
             }
         }
-        return null
+
     }
 
-    fun visitGotoStatement(node: GotoStatement, value: T): R? {
+    fun visitGotoStatement(node: GotoStatement, value: T) {
         visitIdentifier(node.identifier, value)
-        return null
+
     }
 
-    fun visitLabelStatement(node: LabelStatement, value: T): R? {
+    fun visitLabelStatement(node: LabelStatement, value: T) {
         visitIdentifier(node.identifier, value)
-        return null
+
     }
 
-    fun visitBreakStatement(node: BreakStatement, value: T): R? {
-        return null
+    fun visitBreakStatement(node: BreakStatement, value: T) {
+
     }
 
-    fun visitContinueStatement(node: ContinueStatement, value: T): R? {
-        return null
+    fun visitContinueStatement(node: ContinueStatement, value: T) {
+
     }
 
-    fun visitWhileStatement(node: WhileStatement, value: T): R? {
+    fun visitWhileStatement(node: WhileStatement, value: T) {
         visitExpressionNode(node.condition, value)
         visitBlockNode(node.body, value)
-        return null
+
     }
 
-    fun visitDoStatement(node: DoStatement, value: T): R? {
+    fun visitDoStatement(node: DoStatement, value: T) {
         visitBlockNode(node.body, value)
-        return null
+
     }
 
-    fun visitForGenericStatement(node: ForGenericStatement, value: T): R? {
+    fun visitForGenericStatement(node: ForGenericStatement, value: T) {
         node.variables.forEach {
             visitIdentifier(it, value)
         }
@@ -58,10 +58,10 @@ abstract class ASTVisitor<R, T> {
             visitExpressionNode(it, value)
         }
         visitBlockNode(node.body, value)
-        return null
+
     }
 
-    fun visitForNumericStatement(node: ForNumericStatement, value: T): R? {
+    fun visitForNumericStatement(node: ForNumericStatement, value: T) {
         visitIdentifier(node.variable, value)
         visitExpressionNode(node.start, value)
         visitExpressionNode(node.end, value)
@@ -69,47 +69,47 @@ abstract class ASTVisitor<R, T> {
             visitExpressionNode(it, value)
         }
         visitBlockNode(node.body, value)
-        return null
+
     }
 
-    fun visitWhenStatement(node: WhenStatement, value: T): R? {
+    fun visitWhenStatement(node: WhenStatement, value: T) {
         visitExpressionNode(node.condition, value)
         visitStatementNode(node.ifCause, value)
         node.elseCause?.let {
             visitStatementNode(it, value)
         }
-        return null
+
     }
 
-    fun visitRepeatStatement(node: RepeatStatement, value: T): R? {
+    fun visitRepeatStatement(node: RepeatStatement, value: T) {
         visitBlockNode(node.body, value)
         visitExpressionNode(node.condition, value)
-        return null
+
     }
 
-    fun visitReturnStatement(node: ReturnStatement, value: T): R? {
+    fun visitReturnStatement(node: ReturnStatement, value: T) {
         node.arguments.forEach {
             visitExpressionNode(it, value)
         }
-        return null
+
     }
 
-    fun visitCallStatement(node: CallStatement, value: T): R? {
+    fun visitCallStatement(node: CallStatement, value: T) {
         visitExpressionNode(node.expression, value)
-        return null
+
     }
 
-    fun visitAssignmentStatement(node: AssignmentStatement, value: T): R? {
+    fun visitAssignmentStatement(node: AssignmentStatement, value: T) {
         node.init.forEach {
             visitExpressionNode(it, value)
         }
         node.variables.forEach {
             visitExpressionNode(it, value)
         }
-        return null
+
     }
 
-    fun visitSwitchStatement(node: SwitchStatement, value: T): R? {
+    fun visitSwitchStatement(node: SwitchStatement, value: T) {
         visitExpressionNode(node.condition, value)
         node.causes.forEach {
             when (it) {
@@ -117,72 +117,71 @@ abstract class ASTVisitor<R, T> {
                 is CaseCause -> visitCaseCause(it, value)
             }
         }
-        return null
+
     }
 
 
-    fun visitLocalStatement(node: LocalStatement, value: T): R? {
+    fun visitLocalStatement(node: LocalStatement, value: T) {
         node.init.forEach {
             visitIdentifier(it, value)
         }
         node.variables.forEach {
             visitExpressionNode(it, value)
         }
-        return null
+
     }
 
-    fun visitFunctionDeclaration(node: FunctionDeclaration, value: T): R? {
+    fun visitFunctionDeclaration(node: FunctionDeclaration, value: T) {
         node.identifier?.let { visitExpressionNode(it, value) }
         node.params.forEach {
             visitIdentifier(it, value)
         }
         node.body?.let { visitBlockNode(it, value) }
-        return null
+
     }
 
-    fun visitLambdaDeclaration(node: LambdaDeclaration, value: T): R? {
+    fun visitLambdaDeclaration(node: LambdaDeclaration, value: T) {
         node.params.forEach {
             visitIdentifier(it, value)
         }
         visitExpressionNode(node.expression, value)
-        return null
     }
 
-    fun visitIfClause(node: IfClause, value: T): R? {
+    fun visitIfClause(node: IfClause, value: T) {
         visitExpressionNode(node.condition, value)
         visitBlockNode(node.body, value)
-        return null
+
     }
 
-    fun visitElseClause(node: ElseClause, value: T): R? {
+    fun visitElseClause(node: ElseClause, value: T) {
         visitBlockNode(node.body, value)
-        return null
+
     }
 
-    fun visitElseIfClause(node: ElseIfClause, value: T): R? {
+    fun visitElseIfClause(node: ElseIfClause, value: T) {
         visitExpressionNode(node.condition, value)
         visitBlockNode(node.body, value)
-        return null
+
     }
 
-    fun visitCaseCause(node: CaseCause, value: T): R? {
+    fun visitCaseCause(node: CaseCause, value: T) {
         node.conditions.forEach {
             visitExpressionNode(it, value)
         }
         visitBlockNode(node.body, value)
-        return null
+
     }
 
-    fun visitDefaultCause(node: DefaultCause, value: T): R? {
+    fun visitDefaultCause(node: DefaultCause, value: T) {
         visitBlockNode(node.body, value)
-        return null
+
     }
 
-    fun visitConstantNode(node: ConstantNode, value: T): R? {
-        return null
+    fun visitConstantNode(node: ConstantNode, value: T) {
+
     }
 
-    fun visitStatementNode(node: StatementNode, value: T): R? {
+    fun visitStatementNode(node: StatementNode, value: T) {
         when (node) {
             is IfStatement -> visitIfStatement(node, value)
             is GotoStatement -> visitGotoStatement(node, value)
@@ -202,10 +201,10 @@ abstract class ASTVisitor<R, T> {
             is LocalStatement -> visitLocalStatement(node, value)
             is FunctionDeclaration -> visitFunctionDeclaration(node, value)
         }
-        return null
+
     }
 
-    fun visitExpressionNode(node: ExpressionNode, value: T): R? {
+    fun visitExpressionNode(node: ExpressionNode, value: T) {
         when (node) {
             is CallExpression -> visitCallExpression(node, value)
             is BinaryExpression -> visitBinaryExpression(node, value)
@@ -221,17 +220,17 @@ abstract class ASTVisitor<R, T> {
             is FunctionDeclaration -> visitFunctionDeclaration(node, value)
 
         }
-        return null
+
     }
 
-    fun visitExpressionNodes(list: List<ExpressionNode>, value: T): R? {
+    fun visitExpressionNodes(list: List<ExpressionNode>, value: T) {
         list.forEach {
             visitExpressionNode(it, value)
         }
-        return null
+
     }
 
-    fun visitCallExpression(node: CallExpression, value: T): R? {
+    fun visitCallExpression(node: CallExpression, value: T) {
         when (node) {
             is StringCallExpression -> return visitStringCallExpression(node, value)
             is TableCallExpression -> return visitTableCallExpression(node, value)
@@ -240,93 +239,91 @@ abstract class ASTVisitor<R, T> {
         node.arguments.forEach {
             visitExpressionNode(it, value)
         }
-        return null
+
     }
 
-    fun visitBinaryExpression(node: BinaryExpression, value: T): R? {
+    fun visitBinaryExpression(node: BinaryExpression, value: T) {
         node.left?.let { visitExpressionNode(it, value) }
         node.right?.let { visitExpressionNode(it, value) }
-        return null
+
     }
 
-    fun visitStringCallExpression(node: StringCallExpression, value: T): R? {
+    fun visitStringCallExpression(node: StringCallExpression, value: T) {
         visitExpressionNode(node.base, value)
         visitExpressionNodes(node.arguments, value)
-        return null
+
     }
 
-    fun visitIndexExpression(node: IndexExpression, value: T): R? {
+    fun visitIndexExpression(node: IndexExpression, value: T) {
         visitExpressionNode(node.base, value)
         visitExpressionNode(node.index, value)
-        return null
+
     }
 
-    fun visitTableCallExpression(node: TableCallExpression, value: T): R? {
+    fun visitTableCallExpression(node: TableCallExpression, value: T) {
         visitExpressionNode(node.base, value)
         visitExpressionNodes(node.arguments, value)
-        return null
+
     }
 
-    fun visitArrayConstructorExpression(node: ArrayConstructorExpression, value: T): R? {
+    fun visitArrayConstructorExpression(node: ArrayConstructorExpression, value: T) {
         node.values.forEach {
             visitExpressionNode(it, value)
         }
-        return null
+
     }
 
-    fun visitTableConstructorExpression(node: TableConstructorExpression, value: T): R? {
+    fun visitTableConstructorExpression(node: TableConstructorExpression, value: T) {
         node.fields.forEach {
             when (it) {
                 is TableKeyString -> visitTableKeyString(it, value)
                 else -> visitTableKey(it, value)
             }
         }
-        return null
+
     }
 
-    fun visitTableKey(node: TableKey, value: T): R? {
+    fun visitTableKey(node: TableKey, value: T) {
         // key always null
         visitExpressionNode(node.value, value)
-        return null
+
     }
 
-    fun visitTableKeyString(node: TableKeyString, value: T): R? {
+    fun visitTableKeyString(node: TableKeyString, value: T) {
         node.key?.let { visitExpressionNode(it, value) }
         visitExpressionNode(node.value, value)
-        return null
+
     }
 
 
-    fun visitVarargLiteral(node: VarargLiteral, value: T): R? {
-        return null
+    fun visitVarargLiteral(node: VarargLiteral, value: T) {
+
     }
 
-    fun visitIdentifier(node: Identifier, value: T): R? {
-        return null
+    fun visitIdentifier(node: Identifier, value: T) {
+
     }
 
-    fun visitUnaryExpression(node: UnaryExpression, value: T): R? {
+    fun visitUnaryExpression(node: UnaryExpression, value: T) {
         visitExpressionNode(node.arg, value)
-        return null
+
     }
 
-    fun visitMemberExpression(node: MemberExpression, value: T): R? {
+    fun visitMemberExpression(node: MemberExpression, value: T) {
         visitExpressionNode(node.base, value)
         visitExpressionNode(node.identifier, value)
-        return null
+
     }
 
-    fun visitChunkNode(node: ChunkNode, value: T): R? {
+    fun visitChunkNode(node: ChunkNode, value: T) {
         return visitBlockNode(node.body, value)
     }
 
 
-    fun visit(node: ChunkNode, value: T): R? = visitChunkNode(node, value)
-
-    fun visitBlockNode(node: BlockNode, value: T): R? {
+    fun visitBlockNode(node: BlockNode, value: T) {
         node.statements.forEach {
             visitStatementNode(it, value)
         }
-        return null
+
     }
 }
