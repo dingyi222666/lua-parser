@@ -84,11 +84,10 @@ class SemanticASTVisitor : ASTVisitor<BaseASTNode> {
     override fun visitConstantNode(node: ConstantNode, value: BaseASTNode) {
         val currentScope = scopeStack.first()
         when (value) {
-            is Identifier -> {
-                currentScope.resolveSymbol(value.name, value.range.start)?.let { symbol ->
-                    symbol.type = node.asType()
-                }
-            }
+            is Identifier -> setIdentifierType(value, node, currentScope)
+
+            is MemberExpression -> setMemberExpressionType(value, node, currentScope)
+
         }
     }
 
@@ -111,6 +110,17 @@ class SemanticASTVisitor : ASTVisitor<BaseASTNode> {
         }
     }
 
+    override fun visitBinaryExpression(node: BinaryExpression, value: BaseASTNode) {
+        val currentScope = scopeStack.first()
+        when (value) {
+            is Identifier -> setIdentifierType(value, node, currentScope)
+
+            // is MemberExpression -> setMemberExpressionType(value, node, currentScope)
+
+        }
+    }
+
+
     override fun visitAssignmentStatement(node: AssignmentStatement, value: BaseASTNode) {
         val currentScope = scopeStack.first()
         for (initNode in node.init) {
@@ -123,11 +133,8 @@ class SemanticASTVisitor : ASTVisitor<BaseASTNode> {
             if (initNode is MemberExpression) {
                 val list = transformationMemberExpressionToList(initNode)
 
-                val first = list.first()
-
-                if (currentScope.resolveSymbol(first.name, initNode.range.start) != null) {
-                    continue
-                }
+                //TODO: 检查是否为局部变量或者全局变量的table类型
+                createUnknownLikeTableSymbol(list)
 
             }
         }
@@ -159,11 +166,6 @@ class SemanticASTVisitor : ASTVisitor<BaseASTNode> {
         while (currentNode !is Identifier) {
             val memberExpression = currentNode as MemberExpression
             result.addFirst(memberExpression.identifier)
-            /* if (memberExpression.indexer != ".") {
-                 // 只会添加:
-                 result.addFirst(memberExpression)
-             }*/
-
             currentNode = memberExpression.base
         }
 
@@ -184,20 +186,117 @@ class SemanticASTVisitor : ASTVisitor<BaseASTNode> {
         }
     }
 
-    private fun createLocalVariable(identifier: Identifier) {
-        val currentScope = scopeStack.first()
 
-        val symbol = VariableSymbol(
+    private fun setIdentifierType(identifier: Identifier, expression: BinaryExpression, currentScope: Scope) {
+        TODO("Not yet implemented")
+    }
+
+    private fun setMemberExpressionType(value: MemberExpression, node: ConstantNode, currentScope: Scope) {
+        val list = transformationMemberExpressionToList(value)
+        val first = list.removeFirst()
+        var currentSymbol = currentScope.resolveSymbol(first.name, first.range.start)
+
+        while (list.isNotEmpty()) {
+            val identifier = list.removeFirst()
+
+            currentSymbol = when (currentSymbol) {
+                is UnknownLikeTableSymbol ->
+                    currentSymbol.getKeyValue(identifier.name)
+
+                else -> null
+            }
+        }
+        currentSymbol?.type = node.asType()
+
+    }
+
+    private fun setIdentifierType(identifier: Identifier, constant: ConstantNode, currentScope: Scope) {
+        currentScope.resolveSymbol(identifier.name, identifier.range.start)?.let { symbol ->
+            symbol.type = constant.asType()
+        }
+    }
+
+    private fun createUnknownLikeTableSymbol(list: ArrayDeque<Identifier>) {
+        var parentSymbol: Symbol? = null
+        for (index in list.indices) {
+            val identifier = list[index]
+            println(identifier)
+            // variable ?
+
+            if (parentSymbol == null &&
+                (globalScope.resolveSymbol(identifier.name, identifier.range.start) != null)
+            ) {
+                continue
+            } else if (parentSymbol is UnknownLikeTableSymbol &&
+                parentSymbol.getKeyValue(identifier.name) != null
+            ) {
+                continue
+            }
+
+            val symbol = if (index < list.lastIndex) {
+                createUnknownLikeTableSymbol(identifier)
+            } else {
+                createVariableSymbol(identifier, globalScope)
+            }
+
+            if (parentSymbol is VariableSymbol) {
+                val parentIdentifier = list.getOrNull(index - 1)
+
+                parentSymbol = createUnknownLikeTableSymbol(parentIdentifier.require())
+
+                val topSymbol = list.getOrNull(index - 2)?.let {
+                    globalScope.resolveSymbol(it.name, identifier.range.start)
+                }
+
+                if (topSymbol == null) {
+                    globalScope.renameSymbol(parentSymbol.variable, parentSymbol)
+                } else if (topSymbol is UnknownLikeTableSymbol) {
+                    topSymbol.addKeyValue(parentSymbol.variable, parentSymbol)
+                }
+
+            }
+
+
+            if (parentSymbol == null) {
+                globalScope.addSymbol(symbol)
+            } else if (parentSymbol is UnknownLikeTableSymbol) {
+
+                parentSymbol.addKeyValue(symbol.variable, symbol)
+            }
+
+            parentSymbol = symbol
+        }
+    }
+
+    private fun createUnknownLikeTableSymbol(identifier: Identifier): UnknownLikeTableSymbol {
+        return UnknownLikeTableSymbol(
             variable = identifier.name,
-            // 范围是整个local作用域
             range = Range(
                 identifier.range.start,
-                currentScope.range.end
+                globalScope.range.end
+            ),
+            node = identifier,
+        )
+    }
+
+    private fun createVariableSymbol(identifier: Identifier, scope: Scope): VariableSymbol {
+        return VariableSymbol(
+            variable = identifier.name,
+            range = Range(
+                identifier.range.start,
+                scope.range.end
             ),
             node = identifier,
             type = BaseType.ANY,
             isLocal = true
         )
+    }
+
+
+    private fun createLocalVariable(identifier: Identifier) {
+        val currentScope = scopeStack.first()
+
+        val symbol = createVariableSymbol(identifier, currentScope)
         currentScope.addSymbol(symbol)
     }
 
@@ -217,16 +316,7 @@ class SemanticASTVisitor : ASTVisitor<BaseASTNode> {
         val currentScope = scopeStack.first()
         val identifier = node.identifier as Identifier
 
-        val symbol = FunctionSymbol(
-            variable = identifier.name,
-            // 范围是整个local作用域
-            range = Range(
-                identifier.range.start,
-                currentScope.range.end
-            ),
-            node = node,
-            isLocal = node.isLocal
-        )
+        val symbol = createVariableSymbol(identifier, currentScope)
         currentScope.addSymbol(symbol)
     }
 }

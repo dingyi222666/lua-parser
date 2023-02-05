@@ -2,6 +2,7 @@ import com.google.gson.GsonBuilder
 import io.github.dingyi222666.lua.parser.LuaParser
 import io.github.dingyi222666.lua.parser.ast.node.Position
 import io.github.dingyi222666.lua.parser.symbol.SemanticASTVisitor
+import io.github.dingyi222666.lua.parser.symbol.UnknownLikeTableSymbol
 import java.io.File
 
 fun main(args: Array<String>) {
@@ -18,7 +19,8 @@ fun main(args: Array<String>) {
     println(localScope.resolveSymbol("b"))
     println(localScope.resolveSymbol("c"))
     println(localScope.resolveSymbol("d"))
-    println(globalScope.resolveSymbol("e"))
+    println((globalScope.resolveSymbol("e"))
+    /* as UnknownLikeTableSymbol).getKeyValueLikeLua("a.c")*/)
 
     println(
         GsonBuilder()

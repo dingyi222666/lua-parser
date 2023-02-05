@@ -19,7 +19,7 @@ interface Scope {
 
     fun removeSymbol(symbol: Symbol)
 
-    fun renameSymbol(symbol: Symbol, newName: String)
+    fun renameSymbol(oldName: String, newSymbol: Symbol)
 
     var range: Range
 }
@@ -62,9 +62,9 @@ abstract class BaseScope(
         symbolMap.remove(symbol.variable)
     }
 
-    override fun renameSymbol(symbol: Symbol, newName: String) {
-        symbolMap.remove(symbol.variable)
-        symbolMap[newName] = symbol
+    override fun renameSymbol(oldName: String, newSymbol: Symbol) {
+        symbolMap.remove(oldName)
+        symbolMap[newSymbol.variable] = newSymbol
     }
 
     override fun addSymbol(symbol: Symbol) {

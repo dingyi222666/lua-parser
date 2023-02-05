@@ -1,2 +1,2 @@
 local a,b,c,d = "",12,true,nil
-e.a.c = 1
+e = 12 / 6

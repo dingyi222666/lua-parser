@@ -103,6 +103,25 @@ class UnknownLikeTableSymbol(
     fun getKeyValue(key: String): Symbol? {
         return keyValues[key]
     }
+
+    fun getKeyValueLikeLua(key: String): Symbol? {
+        val splitList = key.split(":", ".")
+        var result: Symbol? = this
+        for (split in splitList) {
+            if (result is UnknownLikeTableSymbol) {
+                result = result.getKeyValue(split)
+            } else {
+                return null
+            }
+        }
+        return result
+    }
+
+    override fun toString(): String {
+        return "UnknownLikeTableSymbol(variable='$variable', range=$range, node=$node, type=$type, keyValues=$keyValues)"
+    }
+
+
 }
 
 
