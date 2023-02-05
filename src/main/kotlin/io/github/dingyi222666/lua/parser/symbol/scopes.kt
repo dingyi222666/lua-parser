@@ -13,7 +13,7 @@ interface Scope {
 
     fun resolveSymbol(symbolName: String): Symbol?
 
-    fun resolveSymbol(symbolName: String, position: Position): Symbol?
+    fun resolveSymbol(symbolName: String, position: Position, onlyResolveOnThisScope: Boolean = false): Symbol?
 
     fun addSymbol(symbol: Symbol)
 
@@ -33,10 +33,29 @@ abstract class BaseScope(
         return symbolMap[symbolName]
     }
 
-    override fun resolveSymbol(symbolName: String, position: Position): Symbol? {
-        return symbolMap[symbolName] ?: return parent?.resolveSymbol(
-            symbolName, position
-        )
+    override fun resolveSymbol(
+        symbolName: String,
+        position: Position,
+        onlyResolveOnThisScope: Boolean
+    ): Symbol? {
+        val scope = symbolMap[symbolName]
+
+        if (scope != null) {
+            return scope
+        }
+
+        if (onlyResolveOnThisScope) {
+            return null
+        }
+
+        return if (parent is GlobalScope) {
+            parent.resolveSymbol(symbolName)
+        } else {
+            parent?.resolveSymbol(
+                symbolName, position, false
+            )
+        }
+
     }
 
     override fun removeSymbol(symbol: Symbol) {
@@ -85,12 +104,24 @@ class GlobalScope(
     }
 
     override fun resolveSymbol(symbolName: String): Symbol? {
-        return resolveSymbol(symbolName, Position.EMPTY)
+        return super.resolveSymbol(symbolName)
     }
 
-    override fun resolveSymbol(symbolName: String, position: Position): Symbol? {
-        val scope = binarySearchScope(position) ?: this
-        return scope.resolveSymbol(symbolName, position)
+    fun resolveScope(position: Position): Scope {
+        return binarySearchScope(position) ?: this
+    }
+
+    override fun resolveSymbol(
+        symbolName: String,
+        position: Position,
+        onlyResolveOnThisScope: Boolean
+    ): Symbol? {
+        val searchSymbol = this.resolveSymbol(symbolName)
+        if (onlyResolveOnThisScope || searchSymbol != null) {
+            return searchSymbol
+        }
+        val scope = binarySearchScope(position)
+        return scope?.resolveSymbol(symbolName, position)
     }
 }
 

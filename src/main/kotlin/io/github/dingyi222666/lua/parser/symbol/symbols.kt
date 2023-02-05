@@ -23,7 +23,11 @@ open class VariableSymbol(
     override val range: Range,
     val isLocal: Boolean,
     open val node: ExpressionNode
-) : Symbol
+) : Symbol {
+    override fun toString(): String {
+        return "VariableSymbol(variable='$variable', type=$type, range=$range, isLocal=$isLocal, node=$node)"
+    }
+}
 
 class ParamSymbol(
     override val variable: String,
@@ -38,8 +42,11 @@ class FunctionSymbol(
     override val node: FunctionDeclaration,
     isLocal: Boolean,
     val params: MutableList<ParamSymbol> = mutableListOf()
+
 ) : VariableSymbol(variable, BaseType.FUNCTION, range, isLocal, node) {
     override var type: Type = BaseType.FUNCTION
+
+    var returns = mutableListOf<Symbol>()
 
     override fun toString(): String {
         return "FunctionSymbol(variable='$variable', type=$type, range=$range, isLocal=$isLocal, node=$node, params=$params)"

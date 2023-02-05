@@ -1,5 +1,6 @@
 import com.google.gson.GsonBuilder
 import io.github.dingyi222666.lua.parser.LuaParser
+import io.github.dingyi222666.lua.parser.ast.node.Position
 import io.github.dingyi222666.lua.parser.symbol.SemanticASTVisitor
 import java.io.File
 
@@ -11,7 +12,13 @@ fun main(args: Array<String>) {
 
     val globalScope = SemanticASTVisitor().analyze(rootNode)
 
-    println(globalScope.resolveSymbol("a"))
+    val localScope = globalScope.resolveScope(Position(1, 2))
+
+    println(localScope.resolveSymbol("a"))
+    println(localScope.resolveSymbol("b"))
+    println(localScope.resolveSymbol("c"))
+    println(localScope.resolveSymbol("d"))
+    println(globalScope.resolveSymbol("e"))
 
     println(
         GsonBuilder()

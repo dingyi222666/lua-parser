@@ -806,7 +806,8 @@ class LuaParser {
         node = when {
 
             equalsMore(
-                currentToken, LuaTokenTypes.MINUS, LuaTokenTypes.GETN, LuaTokenTypes.BIT_TILDE, LuaTokenTypes.NOT
+                currentToken, LuaTokenTypes.MINUS, LuaTokenTypes.GETN,
+                LuaTokenTypes.BIT_TILDE, LuaTokenTypes.NOT
             ) -> {
                 // unary
                 parseUnaryExpression(

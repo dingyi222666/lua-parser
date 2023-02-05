@@ -2,6 +2,9 @@ package io.github.dingyi222666.lua.parser.symbol
 
 import io.github.dingyi222666.lua.parser.ast.node.*
 import io.github.dingyi222666.lua.parser.ast.visitor.ASTVisitor
+import io.github.dingyi222666.lua.parser.typesystem.BaseType
+import io.github.dingyi222666.lua.parser.typesystem.asType
+import io.github.dingyi222666.lua.parser.util.require
 
 /**
  * @author: dingyi
@@ -65,7 +68,28 @@ class SemanticASTVisitor : ASTVisitor<BaseASTNode> {
     }
 
     override fun visitLocalStatement(node: LocalStatement, value: BaseASTNode) {
-        super.visitLocalStatement(node, value)
+        node.init.forEach {
+            createLocalVariable(it)
+        }
+
+        for (index in node.variables.indices) {
+            val varNode = node.variables[index]
+            val initNode = node.init.getOrNull(index)
+            if (initNode != null) {
+                visitExpressionNode(varNode, initNode)
+            }
+        }
+    }
+
+    override fun visitConstantNode(node: ConstantNode, value: BaseASTNode) {
+        val currentScope = scopeStack.first()
+        when (value) {
+            is Identifier -> {
+                currentScope.resolveSymbol(value.name, value.range.start)?.let { symbol ->
+                    symbol.type = node.asType()
+                }
+            }
+        }
     }
 
     override fun visitWhileStatement(node: WhileStatement, value: BaseASTNode) {
@@ -87,14 +111,106 @@ class SemanticASTVisitor : ASTVisitor<BaseASTNode> {
         }
     }
 
+    override fun visitAssignmentStatement(node: AssignmentStatement, value: BaseASTNode) {
+        val currentScope = scopeStack.first()
+        for (initNode in node.init) {
+            if (initNode is Identifier) {
+                if (currentScope.resolveSymbol(initNode.name, initNode.range.start) != null) {
+                    continue
+                }
+                createGlobalVariable(initNode)
+            }
+            if (initNode is MemberExpression) {
+                val list = transformationMemberExpressionToList(initNode)
+
+                val first = list.first()
+
+                if (currentScope.resolveSymbol(first.name, initNode.range.start) != null) {
+                    continue
+                }
+
+            }
+        }
+
+        for (index in node.variables.indices) {
+            val varNode = node.variables[index]
+            node.init.getOrNull(index)?.let { initNode ->
+                visitExpressionNode(varNode, initNode)
+            }
+        }
+    }
+
     override fun visitFunctionDeclaration(node: FunctionDeclaration, value: BaseASTNode) {
-        if (node.isLocal && node.identifier is Identifier) {
-            createLocalFunctionName(node)
+        if (node.isLocal) {
+            visitLocalFunctionDeclaration(node, value)
         }
         node.body?.let {
             createLocalScope(it)
             visitBlockNode(it, value)
         }
+    }
+
+
+    private fun transformationMemberExpressionToList(node: MemberExpression): ArrayDeque<Identifier> {
+        val result = ArrayDeque<Identifier>()
+
+        var currentNode: ExpressionNode = node
+
+        while (currentNode !is Identifier) {
+            val memberExpression = currentNode as MemberExpression
+            result.addFirst(memberExpression.identifier)
+            /* if (memberExpression.indexer != ".") {
+                 // 只会添加:
+                 result.addFirst(memberExpression)
+             }*/
+
+            currentNode = memberExpression.base
+        }
+
+        result.addFirst(currentNode)
+
+
+        return result
+    }
+
+
+    private fun visitLocalFunctionDeclaration(node: FunctionDeclaration, value: BaseASTNode) {
+        val currentScope = scopeStack.first()
+        if (node.identifier is Identifier) {
+            val identifier = node.identifier as Identifier
+            if (currentScope.resolveSymbol(identifier.name) == null) {
+                createLocalFunctionName(node)
+            }
+        }
+    }
+
+    private fun createLocalVariable(identifier: Identifier) {
+        val currentScope = scopeStack.first()
+
+        val symbol = VariableSymbol(
+            variable = identifier.name,
+            // 范围是整个local作用域
+            range = Range(
+                identifier.range.start,
+                currentScope.range.end
+            ),
+            node = identifier,
+            type = BaseType.ANY,
+            isLocal = true
+        )
+        currentScope.addSymbol(symbol)
+    }
+
+    private fun createGlobalVariable(identifier: Identifier) {
+        val symbol = VariableSymbol(
+            variable = identifier.name,
+            // 范围是整个作用域
+            range = globalScope.range,
+            node = identifier,
+            type = BaseType.ANY,
+            isLocal = false
+        )
+        globalScope.addSymbol(symbol)
     }
 
     private fun createLocalFunctionName(node: FunctionDeclaration) {
@@ -105,7 +221,7 @@ class SemanticASTVisitor : ASTVisitor<BaseASTNode> {
             variable = identifier.name,
             // 范围是整个local作用域
             range = Range(
-                node.range.start,
+                identifier.range.start,
                 currentScope.range.end
             ),
             node = node,

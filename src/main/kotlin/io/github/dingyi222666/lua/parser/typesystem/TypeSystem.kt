@@ -16,6 +16,28 @@ class TypeSystem {
         return allType[typeName]
     }
 
+    fun removeType(typeName: String) {
+        allType.remove(typeName)
+    }
 
+    fun unionType(type1: Type, type2: Type): Type {
+        val unionTypeLists = mutableListOf<Type>()
+        if (type1 is UnionType) {
+            unionTypeLists.addAll(type1.types)
+        } else {
+            unionTypeLists.add(type1)
+        }
 
+        if (type2 is UnionType) {
+            unionTypeLists.addAll(type2.types)
+        } else {
+            unionTypeLists.add(type2)
+        }
+
+        if (unionTypeLists.size > 4) {
+            return BaseType.ANY
+        }
+
+        return UnionType(listOf(type1, type2))
+    }
 }
