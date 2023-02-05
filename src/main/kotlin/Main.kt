@@ -19,7 +19,7 @@ fun main(args: Array<String>) {
     println(localScope.resolveSymbol("b"))
     println(localScope.resolveSymbol("c"))
     println(localScope.resolveSymbol("d"))
-    println((globalScope.resolveSymbol("e"))
+    println((localScope.resolveSymbol("e"))
     /* as UnknownLikeTableSymbol).getKeyValueLikeLua("a.c")*/)
 
     println(

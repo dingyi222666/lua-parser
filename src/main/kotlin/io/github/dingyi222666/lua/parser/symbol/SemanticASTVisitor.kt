@@ -188,7 +188,9 @@ class SemanticASTVisitor : ASTVisitor<BaseASTNode> {
 
 
     private fun setIdentifierType(identifier: Identifier, expression: BinaryExpression, currentScope: Scope) {
-        TODO("Not yet implemented")
+        currentScope.resolveSymbol(identifier.name, identifier.range.start)?.let { symbol ->
+            symbol.type = BaseType.NUMBER
+        }
     }
 
     private fun setMemberExpressionType(value: MemberExpression, node: ConstantNode, currentScope: Scope) {
@@ -220,17 +222,20 @@ class SemanticASTVisitor : ASTVisitor<BaseASTNode> {
         var parentSymbol: Symbol? = null
         for (index in list.indices) {
             val identifier = list[index]
-            println(identifier)
+            // println(identifier)
             // variable ?
 
-            if (parentSymbol == null &&
-                (globalScope.resolveSymbol(identifier.name, identifier.range.start) != null)
-            ) {
-                continue
-            } else if (parentSymbol is UnknownLikeTableSymbol &&
-                parentSymbol.getKeyValue(identifier.name) != null
-            ) {
-                continue
+            if (parentSymbol == null) {
+                parentSymbol = globalScope.resolveSymbol(identifier.name, identifier.range.start)
+
+                if (parentSymbol != null) {
+                    continue
+                }
+            } else if (parentSymbol is UnknownLikeTableSymbol) {
+                parentSymbol = parentSymbol.getKeyValue(identifier.name)
+                if (parentSymbol != null) {
+                    continue
+                }
             }
 
             val symbol = if (index < list.lastIndex) {
