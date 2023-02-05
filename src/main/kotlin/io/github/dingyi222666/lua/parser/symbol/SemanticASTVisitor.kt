@@ -3,6 +3,7 @@ package io.github.dingyi222666.lua.parser.symbol
 import io.github.dingyi222666.lua.parser.ast.node.*
 import io.github.dingyi222666.lua.parser.ast.visitor.ASTVisitor
 import io.github.dingyi222666.lua.parser.typesystem.BaseType
+import io.github.dingyi222666.lua.parser.typesystem.Type
 import io.github.dingyi222666.lua.parser.typesystem.asType
 import io.github.dingyi222666.lua.parser.util.require
 
@@ -24,6 +25,15 @@ class SemanticASTVisitor : ASTVisitor<BaseASTNode> {
         globalScope.addScope(localScope)
         return localScope
     }
+
+    private fun createFunctionScope(node: BaseASTNode): FunctionScope {
+        val parent = scopeStack.first()
+        val localScope = FunctionScope(parent, node.range)
+        scopeStack.addFirst(localScope)
+        globalScope.addScope(localScope)
+        return localScope
+    }
+
 
     private fun createLoopScope(node: BaseASTNode): LoopScope {
         val parent = scopeStack.first()
@@ -53,7 +63,7 @@ class SemanticASTVisitor : ASTVisitor<BaseASTNode> {
     override fun visitChunkNode(node: ChunkNode, value: BaseASTNode) {
         globalScope.range = node.range
         scopeStack.addFirst(globalScope)
-        createLocalScope(node)
+        createFunctionScope(node)
         super.visitChunkNode(node, value)
         destroyScope()
     }
@@ -115,7 +125,7 @@ class SemanticASTVisitor : ASTVisitor<BaseASTNode> {
         when (value) {
             is Identifier -> setIdentifierType(value, node, currentScope)
 
-            // is MemberExpression -> setMemberExpressionType(value, node, currentScope)
+            //is MemberExpression -> setMemberExpressionType(value, node, currentScope)
 
         }
     }
@@ -152,7 +162,7 @@ class SemanticASTVisitor : ASTVisitor<BaseASTNode> {
             visitLocalFunctionDeclaration(node, value)
         }
         node.body?.let {
-            createLocalScope(it)
+            createFunctionScope(it)
             visitBlockNode(it, value)
         }
     }
@@ -186,10 +196,34 @@ class SemanticASTVisitor : ASTVisitor<BaseASTNode> {
         }
     }
 
+    private fun getIdentifierSymbol(identifier: Identifier, currentScope: Scope): Symbol? {
+        return currentScope.resolveSymbol(identifier.name, identifier.range.start)
+    }
+
+    private fun getBinaryBinaryExpressionType(expression: BinaryExpression):Type {
+        return when (expression.operator) {
+            ExpressionOperator.CONCAT -> BaseType.STRING
+            ExpressionOperator.AND,
+            ExpressionOperator.OR,
+            ExpressionOperator.NOT -> BaseType.BOOLEAN
+
+            else -> BaseType.NUMBER
+        }
+
+    }
 
     private fun setIdentifierType(identifier: Identifier, expression: BinaryExpression, currentScope: Scope) {
         currentScope.resolveSymbol(identifier.name, identifier.range.start)?.let { symbol ->
-            symbol.type = BaseType.NUMBER
+            val type = when (expression.operator) {
+                ExpressionOperator.CONCAT -> BaseType.STRING
+                ExpressionOperator.AND,
+                ExpressionOperator.OR,
+                ExpressionOperator.NOT -> BaseType.BOOLEAN
+
+                else -> BaseType.NUMBER
+            }
+
+            symbol.type = type
         }
     }
 
@@ -224,7 +258,6 @@ class SemanticASTVisitor : ASTVisitor<BaseASTNode> {
             val identifier = list[index]
             // println(identifier)
             // variable ?
-
             if (parentSymbol == null) {
                 parentSymbol = globalScope.resolveSymbol(identifier.name, identifier.range.start)
 

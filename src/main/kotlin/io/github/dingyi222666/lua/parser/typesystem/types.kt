@@ -9,11 +9,55 @@ import io.github.dingyi222666.lua.parser.symbol.Symbol
  * @description:
  **/
 
+
+enum class TypeKind {
+    Void,
+    Function,
+    Class,
+    Union,
+    Primitive,
+    Array,
+    Parameter,
+    Nil,
+    Tuple,
+    Unknown,
+    String,
+    Boolean,
+    Table
+}
+
+
 /**
  * mark as a type
  */
 interface Type {
     fun getTypeName(): String
+
+    fun getParent(): Type {
+        return empty
+    }
+    fun subTypeOf(type: Type): Boolean {
+        return this == type
+    }
+
+    fun union(type: Type): Type {
+        if (this is UnionType && type !is UnionType) {
+            return this + type
+        }
+        if (this !is UnionType && type is UnionType) {
+            return type + this
+        }
+        if (this is UnionType && type is UnionType) {
+            return UnionType(this.types + type.types)
+        }
+        return UnionType(listOf(this, type))
+    }
+
+    companion object {
+        val empty = object : Type {
+            override fun getTypeName() = "empty"
+        }
+    }
 }
 
 enum class BaseType(private val typeName: String) : Type {
@@ -21,7 +65,6 @@ enum class BaseType(private val typeName: String) : Type {
     STRING("string"),
     TABLE("table"),
     FUNCTION("function"),
-    THREAD("thread"),
     ANY("any"),
     BOOLEAN("boolean");
 
@@ -37,19 +80,7 @@ fun ConstantNode.asType(): Type {
     }
 }
 
-class UnionType(internal val types: List<Type>) : Type {
-    override fun getTypeName(): String {
-        return types.joinToString("|") { it.getTypeName() }
-    }
-}
 
-class SymbolType(
-    private val typeName: String,
-    val symbol: Symbol
-) : Type {
-    override fun getTypeName(): String {
-        return typeName
-    }
-}
+
 
 

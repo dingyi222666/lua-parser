@@ -19,7 +19,7 @@ interface Symbol {
 
 open class VariableSymbol(
     override val variable: String,
-    override var type: Type,
+    open override var type: Type,
     override val range: Range,
     val isLocal: Boolean,
     open val node: ExpressionNode
@@ -29,27 +29,16 @@ open class VariableSymbol(
     }
 }
 
-class ParamSymbol(
-    override val variable: String,
-    override var type: Type,
-    override val range: Range,
-    override val node: ExpressionNode
-) : VariableSymbol(variable, type, range, true, node)
-
 class FunctionSymbol(
     override val variable: String,
     override val range: Range,
     override val node: FunctionDeclaration,
-    isLocal: Boolean,
-    val params: MutableList<ParamSymbol> = mutableListOf()
-
+    isLocal: Boolean
 ) : VariableSymbol(variable, BaseType.FUNCTION, range, isLocal, node) {
     override var type: Type = BaseType.FUNCTION
 
-    var returns = mutableListOf<Symbol>()
-
     override fun toString(): String {
-        return "FunctionSymbol(variable='$variable', type=$type, range=$range, isLocal=$isLocal, node=$node, params=$params)"
+        return "FunctionSymbol(variable='$variable', type=$type, range=$range, isLocal=$isLocal, node=$node)"
     }
 }
 

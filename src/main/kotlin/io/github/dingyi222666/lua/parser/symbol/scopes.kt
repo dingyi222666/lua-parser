@@ -135,3 +135,8 @@ class LocalScope(
     parent: Scope,
     range: Range
 ) : BaseScope(parent, range)
+
+class FunctionScope(
+    parent: Scope,
+    range: Range
+) : BaseScope(parent, range)

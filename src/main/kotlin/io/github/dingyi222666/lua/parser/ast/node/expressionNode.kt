@@ -236,7 +236,7 @@ enum class ExpressionOperator(val value: String) {
     ADD("+"), DIV("/"), OR("or"), MULT("*"), BIT_EXP("^"),
     LT("<"), BIT_LT("<<"), GT(">"), BIT_GT(">>"), BIT_OR("|"),
     BIT_AND("&"), CONCAT(".."), LE("<="), GE(">="), EQ("=="),
-    NE("~="), DOUBLE_DIV("//"), MOD("%");
+    NE("~="), DOUBLE_DIV("//"), MOD("%"), AND("and");
 
     override fun toString(): String {
         return value
