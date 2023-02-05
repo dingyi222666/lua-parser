@@ -1,6 +1,7 @@
 package io.github.dingyi222666.lua.parser.ast.node
 
 import com.google.gson.annotations.SerializedName
+import io.github.dingyi222666.lua.parser.ast.visitor.ASTVisitor
 import kotlin.properties.Delegates
 
 
@@ -12,6 +13,10 @@ import kotlin.properties.Delegates
 class Identifier(var name: String = "") : ExpressionNode, ASTNode() {
     override fun toString(): String {
         return "Identifier(name='$name')"
+    }
+
+    override fun <R, T> accept(visitor: ASTVisitor<R, T>, value: T) {
+        visitor.visitIdentifier(this, value)
     }
 
     var isLocal = false
@@ -85,6 +90,10 @@ class ConstantNode(
 
     fun copy(): ConstantNode = ConstantNode(constantType = this.constantType, value = this.rawValue)
 
+    override fun <R, T> accept(visitor: ASTVisitor<R, T>, value: T) {
+        visitor.visitConstantNode(this, value)
+    }
+
     companion object {
         val NIL = ConstantNode(value = Any(), constantType = TYPE.NIL)
     }
@@ -102,12 +111,19 @@ open class CallExpression : ExpressionNode, ASTNode() {
         return "CallExpression(base=$base, arguments=$arguments)"
     }
 
+    override fun <R, T> accept(visitor: ASTVisitor<R, T>, value: T) {
+        visitor.visitCallExpression(this, value)
+    }
 }
 
 class StringCallExpression : CallExpression() {
 
     override fun toString(): String {
         return "StringCallExpression(base=$base, arguments=$arguments)"
+    }
+
+    override fun <R, T> accept(visitor: ASTVisitor<R, T>, value: T) {
+        visitor.visitStringCallExpression(this, value)
     }
 }
 
@@ -116,6 +132,10 @@ class TableCallExpression : CallExpression() {
 
     override fun toString(): String {
         return "TableCallExpression(base=$base, arguments=$arguments)"
+    }
+
+    override fun <R, T> accept(visitor: ASTVisitor<R, T>, value: T) {
+        visitor.visitTableCallExpression(this, value)
     }
 }
 
@@ -128,20 +148,34 @@ class MemberExpression : ExpressionNode, ASTNode() {
         return "MemberExpression(identifier=$identifier, indexer='$indexer', base=$base)"
     }
 
+    override fun <R, T> accept(visitor: ASTVisitor<R, T>, value: T) {
+        visitor.visitMemberExpression(this, value)
+    }
+
 }
 
 class IndexExpression : ExpressionNode, ASTNode() {
 
-
     lateinit var index: ExpressionNode
     lateinit var base: ExpressionNode
+
+    override fun toString(): String {
+        return "IndexExpression(index=$index, base=$base)"
+    }
+
+    override fun <R, T> accept(visitor: ASTVisitor<R, T>, value: T) {
+        visitor.visitIndexExpression(this, value)
+    }
 }
 
 class VarargLiteral : ExpressionNode, ASTNode() {
 
-
     override fun toString(): String {
         return "VarargLiteral()"
+    }
+
+    override fun <R, T> accept(visitor: ASTVisitor<R, T>, value: T) {
+        visitor.visitVarargLiteral(this, value)
     }
 }
 
@@ -150,6 +184,10 @@ class UnaryExpression : ExpressionNode, ASTNode() {
     lateinit var arg: ExpressionNode
     override fun toString(): String {
         return "UnaryExpression(operator=$operator, arg=$arg)"
+    }
+
+    override fun <R, T> accept(visitor: ASTVisitor<R, T>, value: T) {
+        visitor.visitUnaryExpression(this, value)
     }
 
 }
@@ -163,14 +201,34 @@ class BinaryExpression : ExpressionNode, ASTNode() {
     override fun toString(): String {
         return "BinaryExpression(left=$left, right=$right, operator=$operator)"
     }
+
+    override fun <R, T> accept(visitor: ASTVisitor<R, T>, value: T) {
+        visitor.visitBinaryExpression(this, value)
+    }
 }
 
 class TableConstructorExpression : ExpressionNode, ASTNode() {
     val fields = mutableListOf<TableKey>()
+
+    override fun toString(): String {
+        return "TableConstructorExpression(fields=$fields)"
+    }
+
+    override fun <R, T> accept(visitor: ASTVisitor<R, T>, value: T) {
+        visitor.visitTableConstructorExpression(this, value)
+    }
 }
 
 class ArrayConstructorExpression : ExpressionNode, ASTNode() {
-    val fields = mutableListOf<ExpressionNode>()
+    val values = mutableListOf<ExpressionNode>()
+
+    override fun toString(): String {
+        return "ArrayConstructorExpression(values=$values)"
+    }
+
+    override fun <R, T> accept(visitor: ASTVisitor<R, T>, value: T) {
+        visitor.visitArrayConstructorExpression(this, value)
+    }
 }
 
 enum class ExpressionOperator(val value: String) {
@@ -188,6 +246,14 @@ enum class ExpressionOperator(val value: String) {
 class LambdaDeclaration : ExpressionNode, ASTNode() {
     val params = mutableListOf<Identifier>()
     lateinit var expression: ExpressionNode
+
+    override fun toString(): String {
+        return "LambdaDeclaration(params=$params, expression=$expression)"
+    }
+
+    override fun <R, T> accept(visitor: ASTVisitor<R, T>, value: T) {
+        visitor.visitLambdaDeclaration(this, value)
+    }
 }
 
 
@@ -198,6 +264,10 @@ class FunctionDeclaration : ExpressionNode, StatementNode, ASTNode() {
     var isLocal = false
     override fun toString(): String {
         return "FunctionDeclaration(body=$body, params=$params, identifier=$identifier, isLocal=$isLocal)"
+    }
+
+    override fun <R, T> accept(visitor: ASTVisitor<R, T>, value: T) {
+        visitor.visitFunctionDeclaration(this, value)
     }
 }
 

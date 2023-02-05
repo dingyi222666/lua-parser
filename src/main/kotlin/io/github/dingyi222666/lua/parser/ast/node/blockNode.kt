@@ -1,5 +1,6 @@
 package io.github.dingyi222666.lua.parser.ast.node
 
+import io.github.dingyi222666.lua.parser.ast.visitor.ASTVisitor
 import kotlin.properties.Delegates
 
 /**
@@ -17,9 +18,14 @@ class BlockNode : ASTNode() {
         statements.add(statement)
     }
 
+    override fun <R, T> accept(visitor: ASTVisitor<R, T>, value: T) {
+        visitor.visitBlockNode(this, value)
+    }
+
     override fun toString(): String {
         return "BlockNode(statements=$statements, returnStatement=$returnStatement)"
     }
+
 
 }
 
@@ -30,9 +36,12 @@ class BlockNode : ASTNode() {
  **/
 class ChunkNode : ASTNode() {
 
-   
-
     lateinit var body: BlockNode
+
+    override fun <R, T> accept(visitor: ASTVisitor<R, T>, value: T) {
+        visitor.visitChunkNode(this, value)
+    }
+
     override fun toString(): String {
         return "ChunkNode(body=$body)"
     }

@@ -4,6 +4,7 @@ import io.github.dingyi222666.lua.lexer.LuaLexer
 import io.github.dingyi222666.lua.lexer.LuaTokenTypes
 import io.github.dingyi222666.lua.lexer.WrapperLuaLexer
 import io.github.dingyi222666.lua.parser.ast.node.*
+import io.github.dingyi222666.lua.parser.symbol.Scope
 import io.github.dingyi222666.lua.parser.util.equalsMore
 import io.github.dingyi222666.lua.parser.util.require
 import java.io.InputStream
@@ -25,6 +26,7 @@ class LuaParser {
     private var lastToken = LuaTokenTypes.WHITE_SPACE
     private var cacheText: String? = null
     private val locations = ArrayDeque<Position>()
+    private val scopes = ArrayDeque<Scope>()
 
     var ignoreWarningMessage = true
 
@@ -42,30 +44,20 @@ class LuaParser {
     }
 
     private fun parse(lexer: LuaLexer): ChunkNode {
+        reset()
         this.lexer = WrapperLuaLexer(lexer)
         val chunk = parseChunk()
         this.lexer.close()
         return chunk
     }
 
-    private fun markLocation() {
-        //Exception("6").printStackTrace()
-        locations.addFirst(
-            Position(
-                line = lexer.yyline(),
-                column = max(lexer.yycolumn(), 1)
-            )
-        )
-    }
 
-    private fun <T : BaseASTNode> finishNode(node: T): T {
-        val end = Position(
-            line = lexer.yyline(),
-            column = max(lexer.yycolumn() + lexer.yylength(), 1)
-        )
-        val start = locations.removeFirst()
-        node.range = Range(start, end)
-        return node
+    fun reset() {
+        currentToken = LuaTokenTypes.WHITE_SPACE
+        lastToken = LuaTokenTypes.WHITE_SPACE
+        cacheText = null
+        locations.clear()
+        scopes.clear()
     }
 
     private inline fun <T> consume(crossinline func: (LuaTokenTypes) -> T): T {
@@ -92,7 +84,6 @@ class LuaParser {
     private fun peekToken(tokenTypes: LuaTokenTypes): Boolean {
         return peek { it == tokenTypes }
     }
-
 
     private fun ignoreToken(advanceToken: LuaTokenTypes): Boolean {
         return when (advanceToken) {
@@ -169,6 +160,26 @@ class LuaParser {
         } else error(message)
     }
 
+    private fun markLocation() {
+        //Exception("6").printStackTrace()
+        locations.addFirst(
+            Position(
+                line = lexer.yyline(),
+                column = max(lexer.yycolumn(), 1)
+            )
+        )
+    }
+
+    private fun <T : BaseASTNode> finishNode(node: T): T {
+        val end = Position(
+            line = lexer.yyline(),
+            column = max(lexer.yycolumn() + lexer.yylength(), 1)
+        )
+        val start = locations.removeFirst()
+        node.range = Range(start, end)
+        return node
+    }
+
 
     // chunk ::= block
     private fun parseChunk(): ChunkNode {
@@ -179,7 +190,6 @@ class LuaParser {
         expectToken(LuaTokenTypes.EOF) {
             "unexpected ${lexerText()} near '<eof>"
         }
-
         println(locations)
         return chunkNode
     }
@@ -217,7 +227,7 @@ class LuaParser {
                 consumeToken(LuaTokenTypes.WHILE) -> parseWhileStatement(blockNode)
                 consumeToken(LuaTokenTypes.REPEAT) -> parseRepeatStatement(blockNode)
                 consumeToken(LuaTokenTypes.BREAK) -> {
-                    //TODO: Check is in loop
+                    // check the syntax when traversing the tree
                     markLocation()
                     BreakStatement()
                 }
@@ -225,6 +235,7 @@ class LuaParser {
                 consumeToken(LuaTokenTypes.FOR) -> parseForStatement(blockNode)
                 consumeToken(LuaTokenTypes.FUNCTION) -> parseGlobalFunctionDeclaration(blockNode)
                 consumeToken(LuaTokenTypes.CONTINUE) -> {
+                    // check the syntax when traversing the tree
                     markLocation()
                     ContinueStatement()
                 }
@@ -896,7 +907,7 @@ class LuaParser {
             return result
         }
 
-        result.fields.addAll(parseExpList(parent))
+        result.values.addAll(parseExpList(parent))
 
         return finishNode(result)
     }

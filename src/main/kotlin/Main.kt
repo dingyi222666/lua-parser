@@ -8,7 +8,7 @@ fun main(args: Array<String>) {
     parser.parse(source).run {
         println(
             GsonBuilder()
-                .setPrettyPrinting()
+                //.setPrettyPrinting()
                 .create()
                 .toJson(this)
         )

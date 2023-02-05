@@ -1,6 +1,7 @@
 package io.github.dingyi222666.lua.parser.ast.node
 
 import com.google.gson.annotations.SerializedName
+import io.github.dingyi222666.lua.parser.ast.visitor.ASTVisitor
 import kotlin.properties.Delegates
 
 /**
@@ -20,7 +21,11 @@ interface ExpressionNode : BaseASTNode {
     companion object {
         val EMPTY = ExpressionNodeSupport()
 
-        class ExpressionNodeSupport : ExpressionNode, ASTNode()
+        class ExpressionNodeSupport : ExpressionNode, ASTNode() {
+            override fun <R, T> accept(visitor: ASTVisitor<R, T>, value: T) {
+                visitor.visitExpressionNode(this, value)
+            }
+        }
     }
 }
 
@@ -31,6 +36,8 @@ abstract class ASTNode : BaseASTNode {
 
     @SerializedName("location")
     override var range = Range.EMPTY
+
+    abstract fun <R, T> accept(visitor: ASTVisitor<R, T>, value: T)
 }
 
 data class Range(
@@ -46,6 +53,22 @@ data class Position(
     val line: Int,
     val column: Int
 ) {
+    operator fun compareTo(position: Position): Int {
+        if (position.line > line) {
+            return 1
+        }
+        if (position.line < line) {
+            return -1
+        }
+        if (position.column > column) {
+            return 1
+        }
+        if (position.column < column) {
+            return -1
+        }
+        return 0
+    }
+
     companion object {
         val EMPTY = Position(1, 0)
     }

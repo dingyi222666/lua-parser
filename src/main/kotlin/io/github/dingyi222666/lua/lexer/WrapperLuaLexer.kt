@@ -21,8 +21,8 @@ class WrapperLuaLexer(
         yytext = currentLexer.yytext(),
         type = LuaTokenTypes.WHITE_SPACE
     )
-    fun yytext() = currentState.require().yytext
-    fun yychar() = currentState.require().yychar
+    fun yytext() = currentState.yytext
+    fun yychar() = currentState.yychar
     fun yylength() = currentState.yylength
 
     //粗暴加1，无所谓，需要的时候自己记得换算
@@ -45,7 +45,7 @@ class WrapperLuaLexer(
     fun yypushback(size: Int) {
 
         if (currentStates.isNotEmpty()) {
-            currentStates.addFirst(currentState.require())
+            currentStates.addFirst(currentState)
             return
         }
 
@@ -53,7 +53,7 @@ class WrapperLuaLexer(
         doAdvance()
 
         if (currentStates.isEmpty()) {
-            currentStates.addFirst(currentState.require())
+            currentStates.addFirst(currentState)
         }
     }
 
@@ -87,6 +87,8 @@ class WrapperLuaLexer(
 
     fun close() {
         currentLexer.yyclose()
+        lastStates.clear()
+        currentStates.clear()
     }
 
     private fun clearStates() {
@@ -103,6 +105,4 @@ internal data class LexerState(
     val yycolumn: Int,
     val type: LuaTokenTypes,
     val yylength: Int
-) {
-
-}
+)
