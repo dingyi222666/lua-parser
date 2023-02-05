@@ -1,6 +1,6 @@
 package io.github.dingyi222666.lua.lexer
 
-import io.github.dingyi222666.lua.parser.util.require
+import io.github.dingyi222666.lua.util.require
 
 /**
  * @author: dingyi

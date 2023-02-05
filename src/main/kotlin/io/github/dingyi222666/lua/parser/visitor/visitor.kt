@@ -1,4 +1,4 @@
-package io.github.dingyi222666.lua.parser.ast.visitor
+package io.github.dingyi222666.lua.parser.visitor
 
 import io.github.dingyi222666.lua.parser.ast.node.*
 

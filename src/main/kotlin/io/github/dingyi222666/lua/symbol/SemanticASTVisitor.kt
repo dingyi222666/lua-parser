@@ -1,11 +1,11 @@
-package io.github.dingyi222666.lua.parser.symbol
+package io.github.dingyi222666.lua.symbol
 
 import io.github.dingyi222666.lua.parser.ast.node.*
-import io.github.dingyi222666.lua.parser.ast.visitor.ASTVisitor
-import io.github.dingyi222666.lua.parser.typesystem.BaseType
-import io.github.dingyi222666.lua.parser.typesystem.Type
-import io.github.dingyi222666.lua.parser.typesystem.asType
-import io.github.dingyi222666.lua.parser.util.require
+import io.github.dingyi222666.lua.parser.visitor.ASTVisitor
+import io.github.dingyi222666.lua.typesystem.BaseType
+import io.github.dingyi222666.lua.typesystem.Type
+import io.github.dingyi222666.lua.typesystem.asType
+import io.github.dingyi222666.lua.util.require
 
 /**
  * @author: dingyi
@@ -200,7 +200,7 @@ class SemanticASTVisitor : ASTVisitor<BaseASTNode> {
         return currentScope.resolveSymbol(identifier.name, identifier.range.start)
     }
 
-    private fun getBinaryBinaryExpressionType(expression: BinaryExpression):Type {
+    private fun getBinaryBinaryExpressionType(expression: BinaryExpression): Type {
         return when (expression.operator) {
             ExpressionOperator.CONCAT -> BaseType.STRING
             ExpressionOperator.AND,

@@ -1,7 +1,7 @@
-package io.github.dingyi222666.lua.parser.typesystem
+package io.github.dingyi222666.lua.typesystem
 
 import io.github.dingyi222666.lua.parser.ast.node.ConstantNode
-import io.github.dingyi222666.lua.parser.symbol.Symbol
+import io.github.dingyi222666.lua.symbol.Symbol
 
 /**
  * @author: dingyi
@@ -15,10 +15,10 @@ enum class TypeKind {
     Function,
     Class,
     Union,
-    Primitive,
     Array,
     Parameter,
     Nil,
+    Number,
     Tuple,
     Unknown,
     String,
@@ -26,16 +26,29 @@ enum class TypeKind {
     Table
 }
 
+fun TypeKind.isPrimitive(): Boolean {
+    return when (this) {
+        TypeKind.Nil, TypeKind.Boolean, TypeKind.Number,
+        TypeKind.String, TypeKind.Table,
+        TypeKind.Function -> true
+
+        else -> false
+    }
+}
 
 /**
  * mark as a type
  */
 interface Type {
+
+    val kind: TypeKind
+
     fun getTypeName(): String
 
-    fun getParent(): Type {
-        return empty
-    }
+    fun getSimpleTypeName() = getTypeName()
+
+    fun getParent(): Type? = null
+
     fun subTypeOf(type: Type): Boolean {
         return this == type
     }
@@ -50,14 +63,10 @@ interface Type {
         if (this is UnionType && type is UnionType) {
             return UnionType(this.types + type.types)
         }
-        return UnionType(listOf(this, type))
+        return UnionType(setOf(this, type))
     }
 
-    companion object {
-        val empty = object : Type {
-            override fun getTypeName() = "empty"
-        }
-    }
+
 }
 
 enum class BaseType(private val typeName: String) : Type {

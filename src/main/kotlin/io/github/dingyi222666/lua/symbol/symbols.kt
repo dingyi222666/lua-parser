@@ -1,8 +1,9 @@
-package io.github.dingyi222666.lua.parser.symbol
+package io.github.dingyi222666.lua.symbol
 
 import io.github.dingyi222666.lua.parser.ast.node.*
-import io.github.dingyi222666.lua.parser.typesystem.BaseType
-import io.github.dingyi222666.lua.parser.typesystem.Type
+import io.github.dingyi222666.lua.typesystem.BaseType
+import io.github.dingyi222666.lua.typesystem.FunctionType
+import io.github.dingyi222666.lua.typesystem.Type
 import java.lang.reflect.TypeVariable
 
 /**
@@ -19,10 +20,10 @@ interface Symbol {
 
 open class VariableSymbol(
     override val variable: String,
-    open override var type: Type,
     override val range: Range,
     val isLocal: Boolean,
-    open val node: ExpressionNode
+    open val node: ExpressionNode,
+    override var type: Type,
 ) : Symbol {
     override fun toString(): String {
         return "VariableSymbol(variable='$variable', type=$type, range=$range, isLocal=$isLocal, node=$node)"
@@ -33,12 +34,12 @@ class FunctionSymbol(
     override val variable: String,
     override val range: Range,
     override val node: FunctionDeclaration,
-    isLocal: Boolean
-) : VariableSymbol(variable, BaseType.FUNCTION, range, isLocal, node) {
-    override var type: Type = BaseType.FUNCTION
+    isLocal: Boolean,
+    override var type: FunctionType = FunctionType()
+) : VariableSymbol(variable, range, isLocal, node, type) {
 
     override fun toString(): String {
-        return "FunctionSymbol(variable='$variable', type=$type, range=$range, isLocal=$isLocal, node=$node)"
+        return "FunctionSymbol(variable='$variable', type=$type, range=$range, isLocal=$isLocal, node=$node"
     }
 }
 

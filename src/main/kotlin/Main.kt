@@ -1,8 +1,8 @@
 import com.google.gson.GsonBuilder
 import io.github.dingyi222666.lua.parser.LuaParser
 import io.github.dingyi222666.lua.parser.ast.node.Position
-import io.github.dingyi222666.lua.parser.symbol.SemanticASTVisitor
-import io.github.dingyi222666.lua.parser.symbol.UnknownLikeTableSymbol
+import io.github.dingyi222666.lua.symbol.SemanticASTVisitor
+import io.github.dingyi222666.lua.symbol.UnknownLikeTableSymbol
 import java.io.File
 
 fun main(args: Array<String>) {

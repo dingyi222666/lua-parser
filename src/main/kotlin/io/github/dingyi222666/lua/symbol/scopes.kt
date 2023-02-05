@@ -1,8 +1,8 @@
-package io.github.dingyi222666.lua.parser.symbol
+package io.github.dingyi222666.lua.symbol
 
 import io.github.dingyi222666.lua.parser.ast.node.Position
 import io.github.dingyi222666.lua.parser.ast.node.Range
-import io.github.dingyi222666.lua.parser.util.require
+import io.github.dingyi222666.lua.util.require
 
 /**
  * @author: dingyi

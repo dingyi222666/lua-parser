@@ -1,4 +1,4 @@
-package io.github.dingyi222666.lua.parser.util
+package io.github.dingyi222666.lua.util
 
 /**
  * @author: dingyi
