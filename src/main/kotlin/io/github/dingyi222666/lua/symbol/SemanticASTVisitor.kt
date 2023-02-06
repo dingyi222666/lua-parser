@@ -1,11 +1,8 @@
 package io.github.dingyi222666.lua.symbol
 
 import io.github.dingyi222666.lua.parser.ast.node.*
-import io.github.dingyi222666.lua.parser.visitor.ASTVisitor
-import io.github.dingyi222666.lua.typesystem.TableType
-import io.github.dingyi222666.lua.typesystem.Type
-import io.github.dingyi222666.lua.typesystem.UnknownLikeTableType
-import io.github.dingyi222666.lua.typesystem.asType
+import io.github.dingyi222666.lua.parser.ast.visitor.ASTVisitor
+import io.github.dingyi222666.lua.typesystem.*
 
 /**
  * @author: dingyi
@@ -94,7 +91,7 @@ class SemanticASTVisitor : ASTVisitor<BaseASTNode> {
     override fun visitConstantNode(node: ConstantNode, value: BaseASTNode) {
         val currentScope = scopeStack.first()
         when (value) {
-            is Identifier -> getIdentifierSymbol(value, currentScope)?.type = node.asType()
+            is Identifier -> setIdentifierType(value, currentScope, node.asType())
 
             is MemberExpression -> setMemberExpressionType(value, node.asType(), currentScope)
         }
@@ -122,9 +119,9 @@ class SemanticASTVisitor : ASTVisitor<BaseASTNode> {
     override fun visitBinaryExpression(node: BinaryExpression, value: BaseASTNode) {
         val currentScope = scopeStack.first()
         when (value) {
-            is Identifier -> getIdentifierSymbol(value, currentScope)?.type = getBinaryBinaryExpressionType(node)
+            is Identifier -> setIdentifierType(value, currentScope, getBinaryBinaryExpressionType(node))
 
-            //is MemberExpression -> setMemberExpressionType(value, node, currentScope)
+            is MemberExpression -> setMemberExpressionType(value, getBinaryBinaryExpressionType(node), currentScope)
 
         }
     }
@@ -142,7 +139,14 @@ class SemanticASTVisitor : ASTVisitor<BaseASTNode> {
             if (initNode is MemberExpression) {
                 val list = transformationMemberExpressionToList(initNode)
 
-                //TODO: 检查是否为局部变量或者全局变量的table类型
+                val first = list.first()
+
+                val findAssignedSymbol = currentScope.resolveSymbol(first.name, first.range.start)
+
+                if (findAssignedSymbol != null) {
+                    continue
+                }
+
                 createUnknownLikeTableSymbol(list)
 
             }
@@ -195,8 +199,12 @@ class SemanticASTVisitor : ASTVisitor<BaseASTNode> {
         }
     }
 
-    private fun getIdentifierSymbol(identifier: Identifier, currentScope: Scope): Symbol<Type>? {
-        return currentScope.resolveSymbol(identifier.name, identifier.range.start)
+
+    private fun setIdentifierType(identifier: Identifier, currentScope: Scope, targetType: Type) {
+        currentScope.resolveSymbol(identifier.name, identifier.range.start)
+            ?.let { symbol ->
+                setType(symbol, targetType)
+            }
     }
 
 
@@ -224,6 +232,14 @@ class SemanticASTVisitor : ASTVisitor<BaseASTNode> {
 
     }
 
+
+    private fun setType(symbol: Symbol<Type>, type: Type) {
+        val originType = symbol.type
+        val setType = originType.union(type)
+        symbol.type = setType
+    }
+
+
     private fun getBinaryBinaryExpressionType(expression: BinaryExpression): Type {
         return when (expression.operator) {
             // ExpressionOperator.CONCAT -> BaseType.STRING
@@ -247,8 +263,6 @@ class SemanticASTVisitor : ASTVisitor<BaseASTNode> {
 
         for (index in list.indices) {
             identifier = list[index]
-            // println(identifier)
-            // variable ?
 
             var currentType: Type?
 
@@ -294,7 +308,7 @@ class SemanticASTVisitor : ASTVisitor<BaseASTNode> {
                 scope.range.end
             ),
             node = identifier,
-            type = Type.ANY,
+            type = Type.UnDefined,
             isLocal = true
         )
     }
@@ -313,7 +327,7 @@ class SemanticASTVisitor : ASTVisitor<BaseASTNode> {
             // 范围是整个作用域
             range = globalScope.range,
             node = identifier,
-            type = Type.ANY,
+            type = Type.UnDefined,
             isLocal = false
         )
         globalScope.addSymbol(symbol)

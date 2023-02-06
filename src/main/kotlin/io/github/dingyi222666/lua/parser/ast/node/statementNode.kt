@@ -1,6 +1,6 @@
 package io.github.dingyi222666.lua.parser.ast.node
 
-import io.github.dingyi222666.lua.parser.visitor.ASTVisitor
+import io.github.dingyi222666.lua.parser.ast.visitor.ASTVisitor
 import kotlin.properties.Delegates
 
 /**

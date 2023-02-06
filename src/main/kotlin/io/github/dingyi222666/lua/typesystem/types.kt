@@ -23,7 +23,8 @@ enum class TypeKind {
     Unknown,
     String,
     Boolean,
-    Table
+    Table,
+    UnDefined,
 }
 
 fun TypeKind.isPrimitive(): Boolean {
@@ -43,7 +44,7 @@ interface Type {
 
     val kind: TypeKind
 
-    val typeVariableName:String
+    val typeVariableName: String
 
     fun getTypeName(): String
 
@@ -55,16 +56,36 @@ interface Type {
         return this == type
     }
 
+    private fun simplifyType(t1: Type, t2: Type): Type? {
+        if (t1 is UnDefinedType && t2 !is UnDefinedType) {
+            return t2
+        }
+
+        if (t1 is UnionType || t2 is UnionType) {
+            val set = mutableSetOf<Type>()
+            if (t1 is UnionType)
+                set.addAll(t1.types)
+            else set.add(t1)
+
+            if (t2 is UnionType)
+                set.addAll(t2.types)
+            else set.add(t2)
+
+            if (set.size > 3) {
+                return ANY
+            }
+            return UnionType(set)
+        }
+        return null
+    }
+
     fun union(type: Type): Type {
-        if (this is UnionType && type !is UnionType) {
-            return this + type
+        val simplifyType = simplifyType(this, type)
+
+        if (simplifyType != null) {
+            return simplifyType
         }
-        if (this !is UnionType && type is UnionType) {
-            return type + this
-        }
-        if (this is UnionType && type is UnionType) {
-            return UnionType(this.types + type.types)
-        }
+
         return UnionType(setOf(this, type))
     }
 
@@ -80,6 +101,7 @@ interface Type {
         )
         val ANY = AnyType()
 
+        val UnDefined = UnDefinedType()
     }
 
 }
@@ -101,6 +123,26 @@ class AnyType : Type {
 
     override fun subTypeOf(type: Type): Boolean {
         return true
+    }
+}
+
+class UnDefinedType : Type {
+    override val kind: TypeKind
+        get() = TypeKind.UnDefined
+
+    override val typeVariableName: String
+        get() = getTypeName()
+
+    override fun getTypeName(): String {
+        return "undefined"
+    }
+
+    override fun getParent(): Type? {
+        return null
+    }
+
+    override fun subTypeOf(type: Type): Boolean {
+        return false
     }
 }
 

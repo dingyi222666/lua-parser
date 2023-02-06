@@ -7,6 +7,8 @@ package io.github.dingyi222666.lua.typesystem
  **/
 class UnionType(internal val types: Set<Type>) : Type {
 
+    constructor(vararg types: Type) : this(types.toSet())
+
     override val kind: TypeKind
         get() = TypeKind.Union
 
@@ -23,5 +25,9 @@ class UnionType(internal val types: Set<Type>) : Type {
 
     operator fun plus(type: Type): UnionType {
         return UnionType(types + type)
+    }
+
+    override fun toString(): String {
+        return getTypeName()
     }
 }

@@ -40,9 +40,16 @@ open class TableType(
         }
     }
 
+
     fun setMember(name: String, type: Type) {
         fields[name] = type
     }
+
+
+    fun isMember(name: String): Boolean {
+        return fields.containsKey(name)
+    }
+
 
     fun searchMember(name: String): Type? {
         return fields[name]
