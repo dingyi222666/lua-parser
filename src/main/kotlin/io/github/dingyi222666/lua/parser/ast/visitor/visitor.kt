@@ -18,17 +18,14 @@ interface ASTVisitor<T> {
                 else -> visitIfClause(it, value)
             }
         }
-
     }
 
     fun visitGotoStatement(node: GotoStatement, value: T) {
         visitIdentifier(node.identifier, value)
-
     }
 
     fun visitLabelStatement(node: LabelStatement, value: T) {
         visitIdentifier(node.identifier, value)
-
     }
 
     fun visitBreakStatement(node: BreakStatement, value: T) {
@@ -42,7 +39,6 @@ interface ASTVisitor<T> {
     fun visitWhileStatement(node: WhileStatement, value: T) {
         visitExpressionNode(node.condition, value)
         visitBlockNode(node.body, value)
-
     }
 
     fun visitDoStatement(node: DoStatement, value: T) {
@@ -51,12 +47,8 @@ interface ASTVisitor<T> {
     }
 
     fun visitForGenericStatement(node: ForGenericStatement, value: T) {
-        node.variables.forEach {
-            visitIdentifier(it, value)
-        }
-        node.iterators.forEach {
-            visitExpressionNode(it, value)
-        }
+        visitIdentifiers(node.variables, value)
+        visitExpressionNodes(node.iterators, value)
         visitBlockNode(node.body, value)
 
     }
@@ -78,7 +70,6 @@ interface ASTVisitor<T> {
         node.elseCause?.let {
             visitStatementNode(it, value)
         }
-
     }
 
     fun visitRepeatStatement(node: RepeatStatement, value: T) {
@@ -88,10 +79,7 @@ interface ASTVisitor<T> {
     }
 
     fun visitReturnStatement(node: ReturnStatement, value: T) {
-        node.arguments.forEach {
-            visitExpressionNode(it, value)
-        }
-
+        visitExpressionNodes(node.arguments, value)
     }
 
     fun visitCallStatement(node: CallStatement, value: T) {
@@ -100,12 +88,8 @@ interface ASTVisitor<T> {
     }
 
     fun visitAssignmentStatement(node: AssignmentStatement, value: T) {
-        node.init.forEach {
-            visitExpressionNode(it, value)
-        }
-        node.variables.forEach {
-            visitExpressionNode(it, value)
-        }
+        visitExpressionNodes(node.init, value)
+        visitExpressionNodes(node.variables, value)
 
     }
 
@@ -117,33 +101,24 @@ interface ASTVisitor<T> {
                 is CaseCause -> visitCaseCause(it, value)
             }
         }
-
     }
 
 
     fun visitLocalStatement(node: LocalStatement, value: T) {
-        node.init.forEach {
-            visitIdentifier(it, value)
-        }
-        node.variables.forEach {
-            visitExpressionNode(it, value)
-        }
+        visitIdentifiers(node.init, value)
+        visitExpressionNodes(node.variables, value)
 
     }
 
     fun visitFunctionDeclaration(node: FunctionDeclaration, value: T) {
         node.identifier?.let { visitExpressionNode(it, value) }
-        node.params.forEach {
-            visitIdentifier(it, value)
-        }
+        visitIdentifiers(node.params, value)
         node.body?.let { visitBlockNode(it, value) }
 
     }
 
     fun visitLambdaDeclaration(node: LambdaDeclaration, value: T) {
-        node.params.forEach {
-            visitIdentifier(it, value)
-        }
+        visitIdentifiers(node.params, value)
         visitExpressionNode(node.expression, value)
     }
 
@@ -165,11 +140,8 @@ interface ASTVisitor<T> {
     }
 
     fun visitCaseCause(node: CaseCause, value: T) {
-        node.conditions.forEach {
-            visitExpressionNode(it, value)
-        }
+        visitExpressionNodes(node.conditions, value)
         visitBlockNode(node.body, value)
-
     }
 
     fun visitDefaultCause(node: DefaultCause, value: T) {
@@ -220,14 +192,19 @@ interface ASTVisitor<T> {
             is FunctionDeclaration -> visitFunctionDeclaration(node, value)
 
         }
-
     }
+
+    fun visitIdentifiers(list: List<Identifier>, value: T) {
+        list.forEach {
+            visitIdentifier(it, value)
+        }
+    }
+
 
     fun visitExpressionNodes(list: List<ExpressionNode>, value: T) {
         list.forEach {
             visitExpressionNode(it, value)
         }
-
     }
 
     fun visitCallExpression(node: CallExpression, value: T) {
@@ -236,22 +213,18 @@ interface ASTVisitor<T> {
             is TableCallExpression -> return visitTableCallExpression(node, value)
         }
         visitExpressionNode(node.base, value)
-        node.arguments.forEach {
-            visitExpressionNode(it, value)
-        }
+        visitExpressionNodes(node.arguments, value)
 
     }
 
     fun visitBinaryExpression(node: BinaryExpression, value: T) {
         node.left?.let { visitExpressionNode(it, value) }
         node.right?.let { visitExpressionNode(it, value) }
-
     }
 
     fun visitStringCallExpression(node: StringCallExpression, value: T) {
         visitExpressionNode(node.base, value)
         visitExpressionNodes(node.arguments, value)
-
     }
 
     fun visitIndexExpression(node: IndexExpression, value: T) {
@@ -263,7 +236,6 @@ interface ASTVisitor<T> {
     fun visitTableCallExpression(node: TableCallExpression, value: T) {
         visitExpressionNode(node.base, value)
         visitExpressionNodes(node.arguments, value)
-
     }
 
     fun visitArrayConstructorExpression(node: ArrayConstructorExpression, value: T) {
@@ -292,7 +264,6 @@ interface ASTVisitor<T> {
     fun visitTableKeyString(node: TableKeyString, value: T) {
         node.key?.let { visitExpressionNode(it, value) }
         visitExpressionNode(node.value, value)
-
     }
 
 
@@ -324,6 +295,5 @@ interface ASTVisitor<T> {
         node.statements.forEach {
             visitStatementNode(it, value)
         }
-
     }
 }

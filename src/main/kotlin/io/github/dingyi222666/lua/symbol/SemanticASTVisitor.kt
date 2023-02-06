@@ -3,6 +3,7 @@ package io.github.dingyi222666.lua.symbol
 import io.github.dingyi222666.lua.parser.ast.node.*
 import io.github.dingyi222666.lua.parser.ast.visitor.ASTVisitor
 import io.github.dingyi222666.lua.typesystem.*
+import kotlin.reflect.typeOf
 
 /**
  * @author: dingyi
@@ -51,7 +52,6 @@ class SemanticASTVisitor : ASTVisitor<BaseASTNode> {
     fun analyze(node: ChunkNode): GlobalScope {
         globalScope.range = node.range
         scopeStack.addFirst(globalScope)
-        createLocalScope(node)
         visitChunkNode(node, node)
         return globalScope
     }
@@ -59,7 +59,6 @@ class SemanticASTVisitor : ASTVisitor<BaseASTNode> {
 
     override fun visitChunkNode(node: ChunkNode, value: BaseASTNode) {
         globalScope.range = node.range
-        scopeStack.addFirst(globalScope)
         createFunctionScope(node)
         super.visitChunkNode(node, value)
         destroyScope()
@@ -120,9 +119,22 @@ class SemanticASTVisitor : ASTVisitor<BaseASTNode> {
         val currentScope = scopeStack.first()
         when (value) {
             is Identifier -> setIdentifierType(value, currentScope, getBinaryBinaryExpressionType(node))
-
             is MemberExpression -> setMemberExpressionType(value, getBinaryBinaryExpressionType(node), currentScope)
+        }
+    }
 
+
+    override fun visitIdentifier(node: Identifier, value: BaseASTNode) {
+        val currentScope = scopeStack.first()
+        when (value) {
+            // params?
+            is FunctionDeclaration -> {
+                // val symbol = currentScope.resolveSymbol(node.name, node.range.start)
+                /*if (symbol != null) {
+                    error(node) { "redefinition of '${node.name}'" }
+                }*/
+                createParamsVariable(node, currentScope)
+            }
         }
     }
 
@@ -146,9 +158,7 @@ class SemanticASTVisitor : ASTVisitor<BaseASTNode> {
                 if (findAssignedSymbol != null) {
                     continue
                 }
-
                 createUnknownLikeTableSymbol(list)
-
             }
         }
 
@@ -161,12 +171,22 @@ class SemanticASTVisitor : ASTVisitor<BaseASTNode> {
     }
 
     override fun visitFunctionDeclaration(node: FunctionDeclaration, value: BaseASTNode) {
+
+        val funcType = FunctionType("anonymous")
+
         if (node.isLocal) {
-            visitLocalFunctionDeclaration(node, value)
+            visitLocalFunctionDeclaration(node, value, funcType)
         }
+        val funcScope = createFunctionScope(node)
+        visitIdentifiers(node.params, node)
         node.body?.let {
-            createFunctionScope(it)
             visitBlockNode(it, value)
+        }
+
+        node.params.forEach {
+            funcScope.resolveSymbol(it.name, it.range.start)?.let { paramSymbol ->
+                funcType.addParamType(paramSymbol.type)
+            }
         }
     }
 
@@ -189,13 +209,16 @@ class SemanticASTVisitor : ASTVisitor<BaseASTNode> {
     }
 
 
-    private fun visitLocalFunctionDeclaration(node: FunctionDeclaration, value: BaseASTNode) {
+    private fun visitLocalFunctionDeclaration(
+        node: FunctionDeclaration,
+        value: BaseASTNode,
+        functionType: FunctionType
+    ) {
         val currentScope = scopeStack.first()
-        if (node.identifier is Identifier) {
-            val identifier = node.identifier as Identifier
-            if (currentScope.resolveSymbol(identifier.name) == null) {
-                createLocalFunctionName(node)
-            }
+
+        // local function
+        if (node.identifier is Identifier && node.isLocal) {
+            createLocalFunctionSymbol(node, currentScope, functionType)
         }
     }
 
@@ -314,6 +337,16 @@ class SemanticASTVisitor : ASTVisitor<BaseASTNode> {
     }
 
 
+    private fun createParamsVariable(node: Identifier, currentScope: Scope) {
+        // val indexOfParent = value.params.indexOf(node)
+        val symbol = ParameterSymbol(
+            variable = node.name,
+            range = currentScope.range,
+            node = node,
+        )
+        currentScope.addSymbol(symbol)
+    }
+
     private fun createLocalVariable(identifier: Identifier) {
         val currentScope = scopeStack.first()
 
@@ -333,11 +366,26 @@ class SemanticASTVisitor : ASTVisitor<BaseASTNode> {
         globalScope.addSymbol(symbol)
     }
 
-    private fun createLocalFunctionName(node: FunctionDeclaration) {
-        val currentScope = scopeStack.first()
+    private fun createLocalFunctionSymbol(
+        node: FunctionDeclaration,
+        currentScope: Scope,
+        functionType: FunctionType
+    ): FunctionSymbol {
         val identifier = node.identifier as Identifier
 
-        val symbol = createVariableSymbol(identifier, currentScope)
+        functionType.typeVariableName = identifier.name
+
+        val symbol = FunctionSymbol(
+            variable = identifier.name,
+            // 范围是整个作用域
+            range = Range(
+                identifier.range.start,
+                currentScope.range.end
+            ),
+            node = node,
+            type = functionType
+        )
         currentScope.addSymbol(symbol)
+        return symbol
     }
 }

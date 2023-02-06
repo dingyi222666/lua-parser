@@ -16,7 +16,7 @@ class UnionType(internal val types: Set<Type>) : Type {
         get() = getTypeName()
 
     override fun getTypeName(): String {
-        return types.joinToString("|") { it.getTypeName() }
+        return types.joinToString("|") { it.getSimpleTypeName() }
     }
 
     override fun subTypeOf(type: Type): Boolean {

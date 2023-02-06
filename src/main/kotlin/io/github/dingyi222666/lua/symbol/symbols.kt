@@ -2,8 +2,10 @@ package io.github.dingyi222666.lua.symbol
 
 import io.github.dingyi222666.lua.parser.ast.node.ExpressionNode
 import io.github.dingyi222666.lua.parser.ast.node.FunctionDeclaration
+import io.github.dingyi222666.lua.parser.ast.node.Identifier
 import io.github.dingyi222666.lua.parser.ast.node.Range
 import io.github.dingyi222666.lua.typesystem.FunctionType
+import io.github.dingyi222666.lua.typesystem.ParameterType
 import io.github.dingyi222666.lua.typesystem.Type
 import io.github.dingyi222666.lua.typesystem.UnknownLikeTableType
 
@@ -36,15 +38,30 @@ class FunctionSymbol(
     override val variable: String,
     override val range: Range,
     val node: FunctionDeclaration,
-    val isLocal: Boolean,
+    override var type: FunctionType = FunctionType(variable)
 ) : Symbol<FunctionType> {
 
-    override var type: FunctionType = FunctionType(variable)
+    var isLocal = false
+
 
     override fun toString(): String {
         return "FunctionSymbol(variable='$variable', type=$type, range=$range, isLocal=$isLocal, node=$node"
     }
 }
+
+class ParameterSymbol(
+    override val variable: String,
+    override val range: Range,
+    val node: Identifier
+) : Symbol<ParameterType> {
+
+    override var type: ParameterType = ParameterType(variable)
+
+    override fun toString(): String {
+        return "ParameterSymbol(variable='$variable', type=$type, range=$range, node=$node)"
+    }
+}
+
 
 class UnknownLikeTableSymbol(
     override val variable: String,

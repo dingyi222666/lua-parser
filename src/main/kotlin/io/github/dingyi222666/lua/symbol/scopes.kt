@@ -16,17 +16,23 @@ interface Scope {
 
     fun resolveSymbol(symbolName: String, position: Position, onlyResolveOnThisScope: Boolean = false): Symbol<Type>?
 
-    fun addSymbol(symbol: Symbol<Type>)
 
-    fun removeSymbol(symbol: Symbol<Type>)
+    fun addSymbol(symbol: Symbol<*>)
 
-    fun renameSymbol(oldName: String, newSymbol: Symbol<Type>)
+    fun removeSymbol(symbol: Symbol<*>)
+
+    fun renameSymbol(oldName: String, newSymbol: Symbol<*>) {
+        renameSymbol(oldName, newSymbol as Symbol<Type>)
+    }
+
 
     var range: Range
+
+    val parent: Scope?
 }
 
 abstract class BaseScope(
-    val parent: Scope?,
+    override val parent: Scope?,
     override var range: Range
 ) : Scope {
     protected val symbolMap = mutableMapOf<String, Symbol<Type>>()
@@ -50,7 +56,7 @@ abstract class BaseScope(
         }
 
         return if (parent is GlobalScope) {
-            parent.resolveSymbol(symbolName)
+            (parent as GlobalScope).resolveSymbol(symbolName)
         } else {
             parent?.resolveSymbol(
                 symbolName, position, false
@@ -59,18 +65,23 @@ abstract class BaseScope(
 
     }
 
-    override fun removeSymbol(symbol: Symbol<Type>) {
+    override fun removeSymbol(symbol: Symbol<*>) {
         symbolMap.remove(symbol.variable)
     }
 
-    override fun renameSymbol(oldName: String, newSymbol: Symbol<Type>) {
+    override fun renameSymbol(oldName: String, newSymbol: Symbol<*>) {
         symbolMap.remove(oldName)
-        symbolMap[newSymbol.variable] = newSymbol
+        symbolMap[newSymbol.variable] = newSymbol as Symbol<Type>
     }
 
-    override fun addSymbol(symbol: Symbol<Type>) {
-        symbolMap[symbol.variable] = symbol
+    override fun addSymbol(symbol: Symbol<*>) {
+        symbolMap[symbol.variable] = symbol as Symbol<Type>
     }
+
+    override fun toString(): String {
+        return "BaseScope(range=$range)"
+    }
+
 
 }
 
@@ -93,9 +104,9 @@ class GlobalScope(
         while (low <= high) {
             val mid = (low + high).ushr(1)
             val midVal = childScopes[mid].range
-            if (midVal.end.compareTo(position) == 0) {
+            if (midVal.start.compareTo(position) == 0) {
                 return childScopes[mid]
-            } else if (midVal.end > position) {
+            } else if (midVal.start < position) {
                 high = mid - 1
             } else {
                 low = mid + 1
@@ -124,20 +135,36 @@ class GlobalScope(
         val scope = binarySearchScope(position)
         return scope?.resolveSymbol(symbolName, position)
     }
+
+    override fun toString(): String {
+        return "GlobalScope(range=$range)"
+    }
 }
 
 
 class LoopScope(
     parent: Scope,
     range: Range
-) : BaseScope(parent, range)
+) : BaseScope(parent, range) {
+    override fun toString(): String {
+        return "LoopScope(range=$range)"
+    }
+}
 
 class LocalScope(
     parent: Scope,
     range: Range
-) : BaseScope(parent, range)
+) : BaseScope(parent, range) {
+    override fun toString(): String {
+        return "LocalScope(range=$range)"
+    }
+}
 
 class FunctionScope(
     parent: Scope,
     range: Range
-) : BaseScope(parent, range)
+) : BaseScope(parent, range) {
+    override fun toString(): String {
+        return "FunctionScope(range=$range)"
+    }
+}
