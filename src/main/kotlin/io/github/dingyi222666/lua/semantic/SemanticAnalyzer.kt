@@ -153,6 +153,10 @@ class SemanticAnalyzer : ASTVisitor<BaseASTNode> {
         }
     }
 
+    override fun visitTableConstructorExpression(node: TableConstructorExpression, value: BaseASTNode) {
+        super.visitTableConstructorExpression(node, value)
+    }
+
 
     override fun visitAssignmentStatement(node: AssignmentStatement, value: BaseASTNode) {
         val currentScope = scopeStack.first()

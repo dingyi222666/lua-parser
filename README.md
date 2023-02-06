@@ -2,7 +2,17 @@
 
 ### _work in progress_
 
-Handwritten recursive descent of parser, lexer using flex
+A Lua parser written in Kotlin _Jvm_.
+
+### Features
+
+[x] Parse Source To AST
+[ ] Semantic Analysis. Provide type information (WIP)
+[ ] Transform AST to source code (WIP)
+
+### Usage
+
+_Work in progress_
 
 ### Special thanks
 
