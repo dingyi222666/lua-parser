@@ -2,7 +2,7 @@
 
 ### _work in progress_
 
-A Lua parser written in Kotlin _Jvm_.
+A Lua 5.3 parser written in Kotlin _Jvm_.
 
 ### Features
 
