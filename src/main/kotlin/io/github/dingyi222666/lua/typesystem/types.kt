@@ -1,7 +1,7 @@
 package io.github.dingyi222666.lua.typesystem
 
 import io.github.dingyi222666.lua.parser.ast.node.ConstantNode
-import io.github.dingyi222666.lua.symbol.Symbol
+import io.github.dingyi222666.lua.semantic.symbol.Symbol
 
 /**
  * @author: dingyi

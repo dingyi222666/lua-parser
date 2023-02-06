@@ -1,8 +1,7 @@
 import com.google.gson.GsonBuilder
 import io.github.dingyi222666.lua.parser.LuaParser
 import io.github.dingyi222666.lua.parser.ast.node.Position
-import io.github.dingyi222666.lua.symbol.SemanticASTVisitor
-import io.github.dingyi222666.lua.symbol.UnknownLikeTableSymbol
+import io.github.dingyi222666.lua.semantic.SemanticAnalyzer
 import java.io.File
 
 fun main(args: Array<String>) {
@@ -11,7 +10,7 @@ fun main(args: Array<String>) {
     val rootNode = parser.parse(source)
 
 
-    val globalScope = SemanticASTVisitor().analyze(rootNode)
+    val globalScope = SemanticAnalyzer().analyze(rootNode)
 
     val localScope = globalScope.resolveScope(Position(1, 1))
 

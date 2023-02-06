@@ -1,16 +1,16 @@
-package io.github.dingyi222666.lua.symbol
+package io.github.dingyi222666.lua.semantic
 
 import io.github.dingyi222666.lua.parser.ast.node.*
 import io.github.dingyi222666.lua.parser.ast.visitor.ASTVisitor
+import io.github.dingyi222666.lua.semantic.symbol.*
 import io.github.dingyi222666.lua.typesystem.*
-import kotlin.reflect.typeOf
 
 /**
  * @author: dingyi
  * @date: 2023/2/5
  * @description:
  **/
-class SemanticASTVisitor : ASTVisitor<BaseASTNode> {
+class SemanticAnalyzer : ASTVisitor<BaseASTNode> {
 
     private val scopeStack = ArrayDeque<Scope>()
 

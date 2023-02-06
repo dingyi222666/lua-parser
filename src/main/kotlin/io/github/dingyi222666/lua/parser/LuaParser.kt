@@ -4,7 +4,7 @@ import io.github.dingyi222666.lua.lexer.LuaLexer
 import io.github.dingyi222666.lua.lexer.LuaTokenTypes
 import io.github.dingyi222666.lua.lexer.WrapperLuaLexer
 import io.github.dingyi222666.lua.parser.ast.node.*
-import io.github.dingyi222666.lua.symbol.Scope
+import io.github.dingyi222666.lua.semantic.symbol.Scope
 import io.github.dingyi222666.lua.util.equalsMore
 import io.github.dingyi222666.lua.util.require
 import java.io.InputStream

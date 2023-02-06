@@ -1,4 +1,4 @@
-package io.github.dingyi222666.lua.symbol
+package io.github.dingyi222666.lua.semantic.symbol
 
 import io.github.dingyi222666.lua.parser.ast.node.ExpressionNode
 import io.github.dingyi222666.lua.parser.ast.node.FunctionDeclaration
