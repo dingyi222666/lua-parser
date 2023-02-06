@@ -295,5 +295,6 @@ interface ASTVisitor<T> {
         node.statements.forEach {
             visitStatementNode(it, value)
         }
+        node.returnStatement?.let { visitStatementNode(it,value) }
     }
 }

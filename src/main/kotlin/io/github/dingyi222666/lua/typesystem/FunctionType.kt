@@ -23,7 +23,7 @@ class FunctionType(
     }
 
     override fun getTypeName(): String {
-        return "fun(${parameterTypes.joinToString(",") { it.getTypeName() }}):${returnTypes.joinToString(",") { it.getTypeName() }}"
+        return "fun(${parameterTypes.joinToString(",") { it.getSimpleTypeName() }}):${returnTypes.joinToString(",") { it.getTypeName() }}"
     }
 
     fun addParamType(type: Type) {

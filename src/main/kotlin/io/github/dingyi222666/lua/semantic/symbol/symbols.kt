@@ -1,9 +1,6 @@
 package io.github.dingyi222666.lua.semantic.symbol
 
-import io.github.dingyi222666.lua.parser.ast.node.ExpressionNode
-import io.github.dingyi222666.lua.parser.ast.node.FunctionDeclaration
-import io.github.dingyi222666.lua.parser.ast.node.Identifier
-import io.github.dingyi222666.lua.parser.ast.node.Range
+import io.github.dingyi222666.lua.parser.ast.node.*
 import io.github.dingyi222666.lua.typesystem.FunctionType
 import io.github.dingyi222666.lua.typesystem.ParameterType
 import io.github.dingyi222666.lua.typesystem.Type
@@ -31,6 +28,17 @@ open class VariableSymbol(
 ) : Symbol<Type> {
     override fun toString(): String {
         return "VariableSymbol(variable='$variable', type=$type, range=$range, isLocal=$isLocal, node=$node)"
+    }
+}
+
+open class StatementSymbol(
+    override val variable: String,
+    override val range: Range,
+    val node: StatementNode,
+    override var type: Type,
+) : Symbol<Type> {
+    override fun toString(): String {
+        return "StatementSymbol(variable='$variable', type=$type, range=$range, node=$node)"
     }
 }
 
