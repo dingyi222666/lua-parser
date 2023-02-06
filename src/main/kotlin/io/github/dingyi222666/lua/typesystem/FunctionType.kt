@@ -5,7 +5,9 @@ package io.github.dingyi222666.lua.typesystem
  * @date: 2023/2/6
  * @description:
  **/
-class FunctionType : Type {
+class FunctionType(
+    override val typeVariableName: String
+) : Type {
 
     override val kind: TypeKind = TypeKind.Function
 
@@ -35,6 +37,18 @@ class FunctionType : Type {
 
     fun getReturnType(index: Int): Type {
         return returnTypes[index]
+    }
+
+    override fun subTypeOf(type: Type): Boolean {
+        return when (type) {
+            is FunctionType -> {
+                paramTypes.size == type.paramTypes.size && returnTypes.size == type.returnTypes.size &&
+                        paramTypes.zip(type.paramTypes).all { (a, b) -> a.subTypeOf(b) } &&
+                        returnTypes.zip(type.returnTypes).all { (a, b) -> a.subTypeOf(b) }
+            }
+            is UnionType -> type.types.any { it.subTypeOf(this) }
+            else -> false
+        }
     }
 
     override fun equals(other: Any?): Boolean {

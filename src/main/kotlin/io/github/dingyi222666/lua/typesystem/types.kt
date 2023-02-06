@@ -43,6 +43,8 @@ interface Type {
 
     val kind: TypeKind
 
+    val typeVariableName:String
+
     fun getTypeName(): String
 
     fun getSimpleTypeName() = getTypeName()
@@ -66,26 +68,49 @@ interface Type {
         return UnionType(setOf(this, type))
     }
 
+    companion object {
+        val NUMBER = PrimitiveType(
+            TypeKind.Number
+        )
+        val BOOLEAN = PrimitiveType(
+            TypeKind.Boolean
+        )
+        val Nil = PrimitiveType(
+            TypeKind.Nil
+        )
+        val ANY = AnyType()
+
+    }
 
 }
 
-enum class BaseType(private val typeName: String) : Type {
-    NUMBER("number"),
-    STRING("string"),
-    TABLE("table"),
-    FUNCTION("function"),
-    ANY("any"),
-    BOOLEAN("boolean");
+class AnyType : Type {
+    override val kind: TypeKind
+        get() = TypeKind.Unknown
 
-    override fun getTypeName(): String = typeName
+    override val typeVariableName: String
+        get() = getTypeName()
+
+    override fun getTypeName(): String {
+        return "any"
+    }
+
+    override fun getParent(): Type? {
+        return null
+    }
+
+    override fun subTypeOf(type: Type): Boolean {
+        return true
+    }
 }
 
 fun ConstantNode.asType(): Type {
     return when (this.constantType) {
-        ConstantNode.TYPE.STRING -> BaseType.STRING
-        ConstantNode.TYPE.FLOAT, ConstantNode.TYPE.INTERGER -> BaseType.NUMBER
-        ConstantNode.TYPE.BOOLEAN -> BaseType.BOOLEAN
-        else -> BaseType.ANY
+        // ConstantNode.TYPE.STRING -> BaseType.STRING
+        ConstantNode.TYPE.FLOAT, ConstantNode.TYPE.INTERGER -> Type.NUMBER
+        ConstantNode.TYPE.BOOLEAN -> Type.BOOLEAN
+        ConstantNode.TYPE.NIL -> Type.Nil
+        else -> Type.ANY
     }
 }
 

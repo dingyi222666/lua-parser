@@ -2,10 +2,10 @@ package io.github.dingyi222666.lua.symbol
 
 import io.github.dingyi222666.lua.parser.ast.node.*
 import io.github.dingyi222666.lua.parser.visitor.ASTVisitor
-import io.github.dingyi222666.lua.typesystem.BaseType
+import io.github.dingyi222666.lua.typesystem.TableType
 import io.github.dingyi222666.lua.typesystem.Type
+import io.github.dingyi222666.lua.typesystem.UnknownLikeTableType
 import io.github.dingyi222666.lua.typesystem.asType
-import io.github.dingyi222666.lua.util.require
 
 /**
  * @author: dingyi
@@ -94,10 +94,9 @@ class SemanticASTVisitor : ASTVisitor<BaseASTNode> {
     override fun visitConstantNode(node: ConstantNode, value: BaseASTNode) {
         val currentScope = scopeStack.first()
         when (value) {
-            is Identifier -> setIdentifierType(value, node, currentScope)
+            is Identifier -> getIdentifierSymbol(value, currentScope)?.type = node.asType()
 
-            is MemberExpression -> setMemberExpressionType(value, node, currentScope)
-
+            is MemberExpression -> setMemberExpressionType(value, node.asType(), currentScope)
         }
     }
 
@@ -123,7 +122,7 @@ class SemanticASTVisitor : ASTVisitor<BaseASTNode> {
     override fun visitBinaryExpression(node: BinaryExpression, value: BaseASTNode) {
         val currentScope = scopeStack.first()
         when (value) {
-            is Identifier -> setIdentifierType(value, node, currentScope)
+            is Identifier -> getIdentifierSymbol(value, currentScope)?.type = getBinaryBinaryExpressionType(node)
 
             //is MemberExpression -> setMemberExpressionType(value, node, currentScope)
 
@@ -196,113 +195,83 @@ class SemanticASTVisitor : ASTVisitor<BaseASTNode> {
         }
     }
 
-    private fun getIdentifierSymbol(identifier: Identifier, currentScope: Scope): Symbol? {
+    private fun getIdentifierSymbol(identifier: Identifier, currentScope: Scope): Symbol<Type>? {
         return currentScope.resolveSymbol(identifier.name, identifier.range.start)
+    }
+
+
+    private fun setMemberExpressionType(expression: MemberExpression, targetType: Type, currentScope: Scope) {
+        val list = transformationMemberExpressionToList(expression)
+        val first = list.removeFirst()
+
+        val currentSymbol = currentScope.resolveSymbol(first.name, first.range.start)
+
+        var currentType = currentSymbol?.type
+
+        while (list.size < 2) {
+            val identifier = list.removeFirst()
+
+            currentType = when (currentType) {
+                is UnknownLikeTableType -> currentType.searchMember(identifier.name)
+
+                else -> break
+            }
+        }
+
+        when (currentType) {
+            is UnknownLikeTableType -> currentType.setMember(list.removeFirst().name, targetType)
+        }
+
     }
 
     private fun getBinaryBinaryExpressionType(expression: BinaryExpression): Type {
         return when (expression.operator) {
-            ExpressionOperator.CONCAT -> BaseType.STRING
+            // ExpressionOperator.CONCAT -> BaseType.STRING
             ExpressionOperator.AND,
             ExpressionOperator.OR,
-            ExpressionOperator.NOT -> BaseType.BOOLEAN
+            ExpressionOperator.NOT -> Type.BOOLEAN
 
-            else -> BaseType.NUMBER
+            else -> Type.NUMBER
         }
 
-    }
-
-    private fun setIdentifierType(identifier: Identifier, expression: BinaryExpression, currentScope: Scope) {
-        currentScope.resolveSymbol(identifier.name, identifier.range.start)?.let { symbol ->
-            val type = when (expression.operator) {
-                ExpressionOperator.CONCAT -> BaseType.STRING
-                ExpressionOperator.AND,
-                ExpressionOperator.OR,
-                ExpressionOperator.NOT -> BaseType.BOOLEAN
-
-                else -> BaseType.NUMBER
-            }
-
-            symbol.type = type
-        }
-    }
-
-    private fun setMemberExpressionType(value: MemberExpression, node: ConstantNode, currentScope: Scope) {
-        val list = transformationMemberExpressionToList(value)
-        val first = list.removeFirst()
-        var currentSymbol = currentScope.resolveSymbol(first.name, first.range.start)
-
-        while (list.isNotEmpty()) {
-            val identifier = list.removeFirst()
-
-            currentSymbol = when (currentSymbol) {
-                is UnknownLikeTableSymbol ->
-                    currentSymbol.getKeyValue(identifier.name)
-
-                else -> null
-            }
-        }
-        currentSymbol?.type = node.asType()
-
-    }
-
-    private fun setIdentifierType(identifier: Identifier, constant: ConstantNode, currentScope: Scope) {
-        currentScope.resolveSymbol(identifier.name, identifier.range.start)?.let { symbol ->
-            symbol.type = constant.asType()
-        }
     }
 
     private fun createUnknownLikeTableSymbol(list: ArrayDeque<Identifier>) {
-        var parentSymbol: Symbol? = null
+        var identifier = list.removeFirst()
+        var mainSymbol = globalScope.resolveSymbol(identifier.name, identifier.range.start)
+
+        if (mainSymbol == null) {
+            mainSymbol = createUnknownLikeTableSymbol(identifier) as Symbol<Type>?
+        }
+        var parentType = mainSymbol?.type
+
         for (index in list.indices) {
-            val identifier = list[index]
+            identifier = list[index]
             // println(identifier)
             // variable ?
-            if (parentSymbol == null) {
-                parentSymbol = globalScope.resolveSymbol(identifier.name, identifier.range.start)
 
-                if (parentSymbol != null) {
-                    continue
-                }
-            } else if (parentSymbol is UnknownLikeTableSymbol) {
-                parentSymbol = parentSymbol.getKeyValue(identifier.name)
-                if (parentSymbol != null) {
+            var currentType: Type?
+
+            if (parentType is UnknownLikeTableType) {
+                currentType = parentType.searchMember(identifier.name)
+
+                if (index < list.lastIndex && currentType is TableType) {
+                    parentType = currentType
                     continue
                 }
             }
 
-            val symbol = if (index < list.lastIndex) {
-                createUnknownLikeTableSymbol(identifier)
+            currentType = if (index == list.lastIndex) {
+                Type.ANY
             } else {
-                createVariableSymbol(identifier, globalScope)
+                UnknownLikeTableType(identifier.name)
             }
 
-            if (parentSymbol is VariableSymbol) {
-                val parentIdentifier = list.getOrNull(index - 1)
-
-                parentSymbol = createUnknownLikeTableSymbol(parentIdentifier.require())
-
-                val topSymbol = list.getOrNull(index - 2)?.let {
-                    globalScope.resolveSymbol(it.name, identifier.range.start)
-                }
-
-                if (topSymbol == null) {
-                    globalScope.renameSymbol(parentSymbol.variable, parentSymbol)
-                } else if (topSymbol is UnknownLikeTableSymbol) {
-                    topSymbol.addKeyValue(parentSymbol.variable, parentSymbol)
-                }
-
+            if (parentType is UnknownLikeTableType) {
+                parentType.setMember(identifier.name, currentType)
             }
 
-
-            if (parentSymbol == null) {
-                globalScope.addSymbol(symbol)
-            } else if (parentSymbol is UnknownLikeTableSymbol) {
-
-                parentSymbol.addKeyValue(symbol.variable, symbol)
-            }
-
-            parentSymbol = symbol
+            parentType = currentType
         }
     }
 
@@ -325,7 +294,7 @@ class SemanticASTVisitor : ASTVisitor<BaseASTNode> {
                 scope.range.end
             ),
             node = identifier,
-            type = BaseType.ANY,
+            type = Type.ANY,
             isLocal = true
         )
     }
@@ -344,7 +313,7 @@ class SemanticASTVisitor : ASTVisitor<BaseASTNode> {
             // 范围是整个作用域
             range = globalScope.range,
             node = identifier,
-            type = BaseType.ANY,
+            type = Type.ANY,
             isLocal = false
         )
         globalScope.addSymbol(symbol)

@@ -1,10 +1,11 @@
 package io.github.dingyi222666.lua.symbol
 
-import io.github.dingyi222666.lua.parser.ast.node.*
-import io.github.dingyi222666.lua.typesystem.BaseType
+import io.github.dingyi222666.lua.parser.ast.node.ExpressionNode
+import io.github.dingyi222666.lua.parser.ast.node.FunctionDeclaration
+import io.github.dingyi222666.lua.parser.ast.node.Range
 import io.github.dingyi222666.lua.typesystem.FunctionType
 import io.github.dingyi222666.lua.typesystem.Type
-import java.lang.reflect.TypeVariable
+import io.github.dingyi222666.lua.typesystem.UnknownLikeTableType
 
 /**
  * @author: dingyi
@@ -12,11 +13,12 @@ import java.lang.reflect.TypeVariable
  * @description:
  **/
 
-interface Symbol {
+interface Symbol<T : Type> {
     val variable: String
-    var type: Type
+    var type: T
     val range: Range
 }
+
 
 open class VariableSymbol(
     override val variable: String,
@@ -24,7 +26,7 @@ open class VariableSymbol(
     val isLocal: Boolean,
     open val node: ExpressionNode,
     override var type: Type,
-) : Symbol {
+) : Symbol<Type> {
     override fun toString(): String {
         return "VariableSymbol(variable='$variable', type=$type, range=$range, isLocal=$isLocal, node=$node)"
     }
@@ -33,85 +35,31 @@ open class VariableSymbol(
 class FunctionSymbol(
     override val variable: String,
     override val range: Range,
-    override val node: FunctionDeclaration,
-    isLocal: Boolean,
-    override var type: FunctionType = FunctionType()
-) : VariableSymbol(variable, range, isLocal, node, type) {
+    val node: FunctionDeclaration,
+    val isLocal: Boolean,
+) : Symbol<FunctionType> {
+
+    override var type: FunctionType = FunctionType(variable)
 
     override fun toString(): String {
         return "FunctionSymbol(variable='$variable', type=$type, range=$range, isLocal=$isLocal, node=$node"
     }
 }
 
-class TableSymbol(
-    override val variable: String,
-    override val range: Range,
-    override val node: TableConstructorExpression,
-    isLocal: Boolean
-) : VariableSymbol(variable, BaseType.TABLE, range, isLocal, node) {
-    override var type: Type = BaseType.TABLE
-
-    internal val keyValues = mutableMapOf<String, Symbol>()
-
-    fun addKeyValue(key: String, value: Symbol) {
-        keyValues[key] = value
-    }
-
-    fun getKeyValue(key: String): Symbol? {
-        return keyValues[key]
-    }
-}
-
-class ExpressionSymbol(
-    override val variable: String,
-    override var type: Type,
-    override val range: Range,
-    val node: ExpressionNode
-) : Symbol
-
-class UnknownSymbol(
-    override val variable: String,
-    override val range: Range,
-    val node: ExpressionNode
-) : Symbol {
-    override var type: Type = BaseType.ANY
-}
-
 class UnknownLikeTableSymbol(
     override val variable: String,
     override val range: Range,
-    val node: ExpressionNode
-) : Symbol {
-    override var type: Type = BaseType.ANY
+    val node: ExpressionNode,
+) : Symbol<UnknownLikeTableType> {
 
-    internal val keyValues = mutableMapOf<String, Symbol>()
+    val isLocal = false
 
-    fun addKeyValue(key: String, value: Symbol) {
-        keyValues[key] = value
-    }
-
-    fun getKeyValue(key: String): Symbol? {
-        return keyValues[key]
-    }
-
-    fun getKeyValueLikeLua(key: String): Symbol? {
-        val splitList = key.split(":", ".")
-        var result: Symbol? = this
-        for (split in splitList) {
-            if (result is UnknownLikeTableSymbol) {
-                result = result.getKeyValue(split)
-            } else {
-                return null
-            }
-        }
-        return result
-    }
+    override var type: UnknownLikeTableType = UnknownLikeTableType(variable)
 
     override fun toString(): String {
-        return "UnknownLikeTableSymbol(variable='$variable', range=$range, node=$node, type=$type, keyValues=$keyValues)"
+        return "UnknownLikeTableSymbol(variable='$variable', type=$type, range=$range, isLocal=$isLocal, node=$node)"
     }
-
-
 }
+
 
 

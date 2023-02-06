@@ -2,6 +2,7 @@ package io.github.dingyi222666.lua.symbol
 
 import io.github.dingyi222666.lua.parser.ast.node.Position
 import io.github.dingyi222666.lua.parser.ast.node.Range
+import io.github.dingyi222666.lua.typesystem.Type
 import io.github.dingyi222666.lua.util.require
 
 /**
@@ -11,15 +12,15 @@ import io.github.dingyi222666.lua.util.require
  **/
 interface Scope {
 
-    fun resolveSymbol(symbolName: String): Symbol?
+    fun resolveSymbol(symbolName: String): Symbol<Type>?
 
-    fun resolveSymbol(symbolName: String, position: Position, onlyResolveOnThisScope: Boolean = false): Symbol?
+    fun resolveSymbol(symbolName: String, position: Position, onlyResolveOnThisScope: Boolean = false): Symbol<Type>?
 
-    fun addSymbol(symbol: Symbol)
+    fun addSymbol(symbol: Symbol<Type>)
 
-    fun removeSymbol(symbol: Symbol)
+    fun removeSymbol(symbol: Symbol<Type>)
 
-    fun renameSymbol(oldName: String, newSymbol: Symbol)
+    fun renameSymbol(oldName: String, newSymbol: Symbol<Type>)
 
     var range: Range
 }
@@ -28,8 +29,8 @@ abstract class BaseScope(
     val parent: Scope?,
     override var range: Range
 ) : Scope {
-    protected val symbolMap = mutableMapOf<String, Symbol>()
-    override fun resolveSymbol(symbolName: String): Symbol? {
+    protected val symbolMap = mutableMapOf<String, Symbol<Type>>()
+    override fun resolveSymbol(symbolName: String): Symbol<Type>? {
         return symbolMap[symbolName]
     }
 
@@ -37,7 +38,7 @@ abstract class BaseScope(
         symbolName: String,
         position: Position,
         onlyResolveOnThisScope: Boolean
-    ): Symbol? {
+    ): Symbol<Type>? {
         val scope = symbolMap[symbolName]
 
         if (scope != null) {
@@ -58,16 +59,16 @@ abstract class BaseScope(
 
     }
 
-    override fun removeSymbol(symbol: Symbol) {
+    override fun removeSymbol(symbol: Symbol<Type>) {
         symbolMap.remove(symbol.variable)
     }
 
-    override fun renameSymbol(oldName: String, newSymbol: Symbol) {
+    override fun renameSymbol(oldName: String, newSymbol: Symbol<Type>) {
         symbolMap.remove(oldName)
         symbolMap[newSymbol.variable] = newSymbol
     }
 
-    override fun addSymbol(symbol: Symbol) {
+    override fun addSymbol(symbol: Symbol<Type>) {
         symbolMap[symbol.variable] = symbol
     }
 
@@ -103,7 +104,7 @@ class GlobalScope(
         return childScopes.getOrNull(high)
     }
 
-    override fun resolveSymbol(symbolName: String): Symbol? {
+    override fun resolveSymbol(symbolName: String): Symbol<Type>? {
         return super.resolveSymbol(symbolName)
     }
 
@@ -115,7 +116,7 @@ class GlobalScope(
         symbolName: String,
         position: Position,
         onlyResolveOnThisScope: Boolean
-    ): Symbol? {
+    ): Symbol<Type>? {
         val searchSymbol = this.resolveSymbol(symbolName)
         if (onlyResolveOnThisScope || searchSymbol != null) {
             return searchSymbol
