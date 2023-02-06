@@ -33,7 +33,6 @@ class ConstantNode(
     value: Any = 0
 ) : ExpressionNode, ASTNode() {
 
-
     @SerializedName("value")
     private var _value: Any = 0
 
@@ -94,9 +93,29 @@ class ConstantNode(
         visitor.visitConstantNode(this, value)
     }
 
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (javaClass != other?.javaClass) return false
+
+        other as ConstantNode
+
+        if (constantType != other.constantType) return false
+        if (_value != other._value) return false
+        return rawValue == other.rawValue
+    }
+
+    override fun hashCode(): Int {
+        var result = constantType.hashCode()
+        result = 31 * result + _value.hashCode()
+        result = 31 * result + rawValue.hashCode()
+        return result
+    }
+
     companion object {
         val NIL = ConstantNode(value = Any(), constantType = TYPE.NIL)
     }
+
+
 }
 
 /**

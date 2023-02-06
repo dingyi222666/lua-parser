@@ -61,6 +61,10 @@ interface Type {
             return t2
         }
 
+        if (t2 is UnDefinedType && t1 !is UnDefinedType) {
+            return t1
+        }
+
         if (t1 is UnionType || t2 is UnionType) {
             val set = mutableSetOf<Type>()
             if (t1 is UnionType)
@@ -99,6 +103,12 @@ interface Type {
         val Nil = PrimitiveType(
             TypeKind.Nil
         )
+
+        // TODO: Use ClassType instead of PrimitiveType
+        val STRING = PrimitiveType(
+            TypeKind.String
+        )
+
         val ANY = AnyType()
 
         val UnDefined = UnDefinedType()

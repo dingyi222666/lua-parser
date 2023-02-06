@@ -17,9 +17,9 @@ fun main(args: Array<String>) {
     println(localScope.resolveSymbol("a"))
     println(localScope.resolveSymbol("b"))
     println(localScope.resolveSymbol("c"))
-    println(localScope.resolveSymbol("s"))
-    val funcScope = globalScope.resolveScope(Position(3,1))
-    println(funcScope.resolveSymbol("t"))
+    println(localScope.resolveSymbol("d")?.type?.getTypeName())
+    //  val funcScope = globalScope.resolveScope(Position(3,1))
+    // println(funcScope.resolveSymbol("t"))
 
     /* as UnknownLikeTableSymbol).getKeyValueLikeLua("a.c")*/
 

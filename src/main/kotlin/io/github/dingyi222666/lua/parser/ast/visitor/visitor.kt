@@ -262,7 +262,7 @@ interface ASTVisitor<T> {
     }
 
     fun visitTableKeyString(node: TableKeyString, value: T) {
-        node.key?.let { visitExpressionNode(it, value) }
+        visitExpressionNode(node.key, value)
         visitExpressionNode(node.value, value)
     }
 

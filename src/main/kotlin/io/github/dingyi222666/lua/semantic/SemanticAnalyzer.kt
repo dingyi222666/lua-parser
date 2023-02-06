@@ -154,7 +154,16 @@ class SemanticAnalyzer : ASTVisitor<BaseASTNode> {
     }
 
     override fun visitTableConstructorExpression(node: TableConstructorExpression, value: BaseASTNode) {
-        super.visitTableConstructorExpression(node, value)
+
+        val currentScope = scopeStack.first()
+        when (value) {
+            is Identifier -> setIdentifierType(
+                value,
+                currentScope,
+                getTableConstructorExpressionType(node,value.name)
+            )
+
+        }
     }
 
 
@@ -202,7 +211,7 @@ class SemanticAnalyzer : ASTVisitor<BaseASTNode> {
         visitIdentifiers(node.params, node)
         node.body?.let {
             visitBlockNode(it, value)
-            it.returnStatement?.let { returnStatement ->
+            it.returnStatement?.let {
                 val returnSymbol = funcScope.resolveSymbol("return", funcScope.range.start, true)
                 val returnTupleType = returnSymbol?.type as TupleType
                 returnTupleType.list().forEach { type ->
@@ -270,6 +279,84 @@ class SemanticAnalyzer : ASTVisitor<BaseASTNode> {
         }
     }
 
+
+    private fun getTableConstructorExpressionType(
+        node: TableConstructorExpression,
+        name: String = "anonymous"
+    ): Type {
+        val resultType = TableType(TypeKind.Table, name)
+        val tableConstructorStack = ArrayDeque<TableConstructorExpression>()
+        var currentType = resultType
+
+        tableConstructorStack.addFirst(node)
+
+        val keyTypes = mutableSetOf<Type>()
+        val valueTypes = mutableSetOf<Type>()
+
+        while (tableConstructorStack.isNotEmpty()) {
+            val currentTableConstructor = tableConstructorStack.removeFirst()
+            for (field in currentTableConstructor.fields) {
+                val key = field.key
+                val value = field.value
+
+                var keyValue = if (field is TableKeyString) (key as Identifier).name
+                else resolveExpressionNodeValue(key)
+
+                val keyType = if (field is TableKeyString) Type.STRING else resolveExpressionNodeType(key)
+
+                if (keyType is Type) {
+                    keyTypes.add(keyType)
+                }
+
+                if (keyValue is ConstantNode) {
+                    keyValue = keyValue.rawValue
+                }
+
+                if (value is TableConstructorExpression) {
+                    val tableType = TableType(TypeKind.Table, keyValue.toString())
+                    valueTypes.add(tableType)
+                    currentType.setMember(keyValue.toString(), tableType)
+                    tableConstructorStack.addFirst(value)
+                    currentType = tableType
+                } else {
+                    val valueType = resolveExpressionNodeType(value)
+
+                    if (valueType is Type) {
+                        valueTypes.add(valueType)
+                        currentType.setMember(keyValue.toString(), valueType)
+                    }
+                }
+                if (value is TableConstructorExpression) {
+                    tableConstructorStack.addFirst(value)
+                }
+            }
+
+        }
+
+
+        val finalKeyType = if (keyTypes.size > 3) Type.ANY else UnionType(keyTypes, true)
+        val finalValueType = if (valueTypes.size > 3) Type.ANY else UnionType(valueTypes, true)
+
+        resultType.valueType = finalValueType
+        resultType.indexType = finalKeyType
+
+        return resultType
+    }
+
+    private fun resolveExpressionNodeType(node: ExpressionNode): Type? {
+        return when (node) {
+            is ConstantNode -> node.asType()
+            is TableConstructorExpression -> getTableConstructorExpressionType(node)
+            else -> null
+        }
+    }
+
+    private fun resolveExpressionNodeValue(node: ExpressionNode): Any? {
+        return when (node) {
+            is ConstantNode -> node.rawValue
+            else -> null
+        }
+    }
 
     private fun setMemberExpressionType(expression: MemberExpression, targetType: Type, currentScope: Scope) {
         val list = transformationMemberExpressionToList(expression)

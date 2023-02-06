@@ -16,8 +16,8 @@ open class TableType(
 
     val fields = mutableMapOf<String, Type>()
 
-    val indexType: Type = Type.ANY
-    val valueType: Type = Type.ANY
+    var indexType: Type = Type.ANY
+    var valueType: Type = Type.ANY
 
     override fun getTypeName(): String {
         return "table<${indexType.getSimpleTypeName()},${valueType.getSimpleTypeName()}>"
@@ -73,6 +73,9 @@ open class TableType(
         return result
     }
 
+    override fun toString(): String {
+        return "TableType(fields=$fields, indexType=$indexType, valueType=$valueType)"
+    }
 }
 
 

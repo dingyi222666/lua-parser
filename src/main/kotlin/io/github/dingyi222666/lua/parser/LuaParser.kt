@@ -10,6 +10,7 @@ import io.github.dingyi222666.lua.util.require
 import java.io.InputStream
 import java.io.Reader
 import java.io.StringReader
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.math.max
 import kotlin.properties.Delegates
 
@@ -974,7 +975,8 @@ class LuaParser {
     private fun parseFieldList(parent: BaseASTNode): List<TableKey> {
         val result = mutableListOf<TableKey>()
 
-        result.add(finishNode(parseField(parent).require()))
+        var index = AtomicInteger(1)
+        result.add(finishNode(parseField(parent, index).require()))
 
         while (true) {
             // , :
@@ -982,7 +984,7 @@ class LuaParser {
                 break
             }
             advance()
-            val fieldValue = parseField(parent) ?: break
+            val fieldValue = parseField(parent, index) ?: break
             result.add(finishNode(fieldValue))
         }
 
@@ -992,7 +994,7 @@ class LuaParser {
     }
 
     //  field ::= ‘[’ exp ‘]’ ‘=’ exp | Name ‘=’ exp | exp
-    private fun parseField(parent: BaseASTNode): TableKey? {
+    private fun parseField(parent: BaseASTNode, index: AtomicInteger): TableKey? {
         when (peek()) {
             //  Name ‘=’ exp |
             LuaTokenTypes.NAME -> {
@@ -1009,8 +1011,14 @@ class LuaParser {
             // and since we cannot tell if this is an expression, we use nullable return.
             else -> {}
         }
+
         markLocation()
+
         val result = TableKey()
+        // int
+        result.key = ConstantNode(ConstantNode.TYPE.INTERGER, index.getAndDecrement()).apply {
+            range = Range(locations.first(), locations.first())
+        }
         result.value = parseExp(parent)
 
         return result
@@ -1018,7 +1026,7 @@ class LuaParser {
 
     //  ‘[’ exp ‘]’ ‘=’ exp
     private fun parseTableKey(parent: BaseASTNode): TableKey {
-        val result = TableKeyString()
+        val result = TableKey()
         result.parent = parent
         expectToken(LuaTokenTypes.LBRACK) { "'[' expected near ${lexerText(true)}" }
         markLocation()

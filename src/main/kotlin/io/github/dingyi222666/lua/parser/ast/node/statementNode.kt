@@ -259,7 +259,7 @@ class ElseClause : IfClause() {
 
 
 open class TableKey : ExpressionNode, ASTNode() {
-    var key: ExpressionNode? = null
+    lateinit var key: ExpressionNode
     lateinit var value: ExpressionNode
 
     override fun toString(): String {
