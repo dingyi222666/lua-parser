@@ -7,7 +7,7 @@ local d = {
         a = 12
     }
 }
-d.e = 12
-d.f = {
-    a = true
-}
+
+function d.e()
+
+end

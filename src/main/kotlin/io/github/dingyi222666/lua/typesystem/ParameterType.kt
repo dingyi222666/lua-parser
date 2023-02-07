@@ -11,6 +11,8 @@ class ParameterType(
 
     var realType: Type = Type.ANY
 
+    var isSelf = false
+
     override val kind: TypeKind
         get() = TypeKind.Parameter
 

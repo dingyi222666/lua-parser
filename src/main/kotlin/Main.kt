@@ -22,7 +22,7 @@ fun main(args: Array<String>) {
     println(
         localScope.resolveSymbol("d")?.type?.let {
                 it as TableType
-            }?.searchMember("f")
+            }?.searchMember("e")
     )
     //  val funcScope = globalScope.resolveScope(Position(3,1))
     // println(funcScope.resolveSymbol("t"))

@@ -1,5 +1,7 @@
 package io.github.dingyi222666.lua.typesystem
 
+import java.lang.Exception
+
 /**
  * @author: dingyi
  * @date: 2023/2/6

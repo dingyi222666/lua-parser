@@ -65,6 +65,10 @@ interface Type {
             return t1
         }
 
+        if (t1 == t2) {
+            return t1
+        }
+
         if (t1 is UnionType || t2 is UnionType) {
             val set = mutableSetOf<Type>()
             if (t1 is UnionType)

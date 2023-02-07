@@ -16,14 +16,24 @@ class FunctionType(
     val returnTypes = mutableListOf<Type>()
 
     // x:xx xx(self,...)
-    var isSelf:Boolean = false
+    var isSelf: Boolean = false
 
     override fun getSimpleTypeName(): String {
         return "function"
     }
 
+    private fun wrapReturnTypesToString(): String {
+        return if (returnTypes.size == 0) {
+            "void?"
+        } else if (returnTypes.size == 1) {
+            returnTypes[0].getTypeName()
+        } else {
+            "(${returnTypes.joinToString(",") { it.getTypeName() }})"
+        }
+    }
+
     override fun getTypeName(): String {
-        return "fun(${parameterTypes.joinToString(",") { it.getSimpleTypeName() }}):${returnTypes.joinToString(",") { it.getTypeName() }}"
+        return "fun(${parameterTypes.joinToString(",") { it.getSimpleTypeName() }}):${wrapReturnTypesToString()}"
     }
 
     fun addParamType(type: Type) {
@@ -49,6 +59,7 @@ class FunctionType(
                         parameterTypes.zip(type.parameterTypes).all { (a, b) -> a.subTypeOf(b) } &&
                         returnTypes.zip(type.returnTypes).all { (a, b) -> a.subTypeOf(b) }
             }
+
             is UnionType -> type.types.any { it.subTypeOf(this) }
             else -> false
         }

@@ -169,6 +169,7 @@ class SemanticAnalyzer : ASTVisitor<BaseASTNode> {
                 currentScope,
                 getTableConstructorExpressionType(node, value.name)
             )
+
             is MemberExpression -> setMemberExpressionType(
                 value,
                 getTableConstructorExpressionType(node),
@@ -215,6 +216,8 @@ class SemanticAnalyzer : ASTVisitor<BaseASTNode> {
 
         if (node.isLocal) {
             visitLocalFunctionDeclaration(node, value, funcType)
+        } else {
+            visitGlobalFunctionDeclaration(node, value, funcType)
         }
 
         val funcScope = createFunctionScope(node)
@@ -234,6 +237,16 @@ class SemanticAnalyzer : ASTVisitor<BaseASTNode> {
 
         node.params.forEach {
             funcScope.resolveSymbol(it.name, it.range.start)?.let { paramSymbol ->
+                val paramType = paramSymbol.type
+                if (paramType.typeVariableName == "self" && !node.isLocal &&
+                    node.identifier is MemberExpression && paramType is ParameterType
+                ) {
+                    val list = transformationMemberExpressionToList(node.identifier as MemberExpression)
+                    paramType.isSelf = true
+                    // set to self
+                    paramType.realType = funcScope.resolveSymbol(list.first().name, list.first().range.start)?.type
+                        ?: paramType.realType
+                }
                 funcType.addParamType(paramSymbol.type)
             }
         }
@@ -258,6 +271,49 @@ class SemanticAnalyzer : ASTVisitor<BaseASTNode> {
     }
 
 
+    private fun visitGlobalFunctionDeclaration(
+        node: FunctionDeclaration,
+        value: BaseASTNode,
+        functionType: FunctionType
+    ) {
+        val currentScope = scopeStack.first()
+        val identifier = node.identifier
+        var variable = ""
+
+        // function xx() end
+        if (identifier is Identifier) {
+            variable = identifier.name
+            val symbol = currentScope.resolveSymbol(variable, identifier.range.start)
+            if (symbol != null) {
+                createGlobalFunctionSymbol(identifier, node, functionType)
+            }
+        }
+
+
+        if (identifier is MemberExpression) {
+            val list = transformationMemberExpressionToList(identifier)
+            val isCallSelf =
+                list.find { it.parent is MemberExpression && (it.parent as MemberExpression).indexer == ":" } != null
+
+            val last = list.first()
+
+            if (currentScope.resolveSymbol(last.name, last.range.start) == null) {
+                createUnknownLikeTableSymbol(list)
+            }
+
+            functionType.isSelf = isCallSelf
+
+
+            setMemberExpressionType(identifier, functionType, currentScope, list)
+        }
+
+
+        if (value is MemberExpression) {
+            setMemberExpressionType(value, functionType, currentScope)
+        }
+    }
+
+
     private fun visitLocalFunctionDeclaration(
         node: FunctionDeclaration,
         value: BaseASTNode,
@@ -269,6 +325,8 @@ class SemanticAnalyzer : ASTVisitor<BaseASTNode> {
         if (node.identifier is Identifier && node.isLocal) {
             createLocalFunctionSymbol(node, currentScope, functionType)
         }
+
+
     }
 
 
@@ -325,13 +383,13 @@ class SemanticAnalyzer : ASTVisitor<BaseASTNode> {
 
                 if (value is TableConstructorExpression) {
                     val valueType = TableType(TypeKind.Table, keyValue.toString())
-                    currentType.setMember(keyValue.toString(),keyType ?: Type.ANY, valueType)
+                    currentType.setMember(keyValue.toString(), keyType ?: Type.ANY, valueType)
                     tableConstructorStack.addLast(value to valueType)
                     currentType = valueType
                 } else {
                     val valueType = resolveExpressionNodeType(value)
                     if (valueType is Type) {
-                        currentType.setMember(keyValue.toString(),keyType ?: Type.ANY, valueType)
+                        currentType.setMember(keyValue.toString(), keyType ?: Type.ANY, valueType)
                     }
                 }
 
@@ -357,8 +415,10 @@ class SemanticAnalyzer : ASTVisitor<BaseASTNode> {
         }
     }
 
-    private fun setMemberExpressionType(expression: MemberExpression, targetType: Type, currentScope: Scope) {
-        val list = transformationMemberExpressionToList(expression)
+    private fun setMemberExpressionType(
+        expression: MemberExpression, targetType: Type, currentScope: Scope,
+        list: ArrayDeque<Identifier> = transformationMemberExpressionToList(expression)
+    ) {
         var last = list.removeFirst()
 
         val currentSymbol = currentScope.resolveSymbol(last.name, last.range.start)
@@ -368,11 +428,33 @@ class SemanticAnalyzer : ASTVisitor<BaseASTNode> {
         while (list.size > 1) {
             last = list.removeFirstOrNull() ?: break
 
+            val lastType = currentType
             currentType = when (currentType) {
                 is UnknownLikeTableType -> currentType.searchMember(last.name)
                 is TableType -> currentType.searchMember(last.name)
                 else -> break
             }
+
+            if (currentType != null) {
+                continue
+            }
+
+            currentType = when (lastType) {
+                is UnknownLikeTableType, is TableType -> {
+                    // Why not find the key? Maybe it isn't assigned yet.
+                    // So we create a new UnknownLikeTableType and set it to the parent.
+                    UnknownLikeTableType(last.name)
+                }
+
+                else -> break
+            }
+
+            if (lastType is UnknownLikeTableType) {
+                lastType.setMember(last.name, currentType)
+            } else if (lastType is TableType) {
+                lastType.setMember(last.name, currentType)
+            }
+
         }
 
 
@@ -404,7 +486,7 @@ class SemanticAnalyzer : ASTVisitor<BaseASTNode> {
 
     }
 
-    private fun createUnknownLikeTableSymbol(list: ArrayDeque<Identifier>) {
+    private fun createUnknownLikeTableSymbol(list: ArrayDeque<Identifier>): Symbol<Type>? {
         var identifier = list.removeFirst()
         var mainSymbol = globalScope.resolveSymbol(identifier.name, identifier.range.start)
 
@@ -439,6 +521,7 @@ class SemanticAnalyzer : ASTVisitor<BaseASTNode> {
 
             parentType = currentType
         }
+        return mainSymbol
     }
 
     private fun createUnknownLikeTableSymbol(identifier: Identifier): UnknownLikeTableSymbol {
@@ -477,6 +560,23 @@ class SemanticAnalyzer : ASTVisitor<BaseASTNode> {
         )
     }
 
+    private fun createGlobalFunctionSymbol(
+        identifier: Identifier,
+        node: FunctionDeclaration,
+        targetType: FunctionType
+    ): FunctionSymbol {
+        return FunctionSymbol(
+            variable = identifier.name,
+            range = Range(
+                identifier.range.start,
+                globalScope.range.end
+            ),
+            node = node,
+            type = targetType,
+        ).apply {
+            isLocal = false
+        }
+    }
 
     private fun createParamsVariable(node: Identifier, currentScope: Scope) {
         // val indexOfParent = value.params.indexOf(node)
