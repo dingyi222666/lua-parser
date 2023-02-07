@@ -20,9 +20,9 @@ fun main(args: Array<String>) {
     println(localScope.resolveSymbol("c"))
     println(localScope.resolveSymbol("e"))
     println(
-        localScope.resolveSymbol("d")?.type?.let {
-                it as TableType
-            }?.searchMember("e")
+        localScope.resolveSymbol("d", Position(1, 1))?.type?.let {
+            it as TableType
+        }/*?.searchMember("e")*/
     )
     //  val funcScope = globalScope.resolveScope(Position(3,1))
     // println(funcScope.resolveSymbol("t"))

@@ -1,5 +1,5 @@
 local a, b, c = 12, true, nil
-local d = {
+d = {
     a = 12,
     ['c'] = 15,
     --[[a = 13,]]
@@ -8,6 +8,6 @@ local d = {
     }
 }
 
-function d.e()
+d.e = function ()
 
 end

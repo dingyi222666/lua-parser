@@ -278,7 +278,7 @@ class SemanticAnalyzer : ASTVisitor<BaseASTNode> {
     ) {
         val currentScope = scopeStack.first()
         val identifier = node.identifier
-        var variable = ""
+        var variable: String
 
         // function xx() end
         if (identifier is Identifier) {

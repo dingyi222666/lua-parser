@@ -115,9 +115,6 @@ class GlobalScope(
         return childScopes.getOrNull(high)
     }
 
-    override fun resolveSymbol(symbolName: String): Symbol<Type>? {
-        return super.resolveSymbol(symbolName)
-    }
 
     fun resolveScope(position: Position): Scope {
         return binarySearchScope(position) ?: this
