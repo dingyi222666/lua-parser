@@ -45,6 +45,12 @@ open class TableType(
         fields[name] = type
     }
 
+    fun setMember(name: String, keyType: Type, type: Type) {
+        setMember(name, type)
+        indexType = indexType.union(keyType)
+        valueType = valueType.union(type)
+    }
+
 
     fun isMember(name: String): Boolean {
         return fields.containsKey(name)

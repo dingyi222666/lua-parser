@@ -7,4 +7,7 @@ local d = {
         a = 12
     }
 }
-local e = d
+d.e = 12
+d.f = {
+    a = true
+}

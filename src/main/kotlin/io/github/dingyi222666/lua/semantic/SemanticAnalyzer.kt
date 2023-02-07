@@ -169,7 +169,11 @@ class SemanticAnalyzer : ASTVisitor<BaseASTNode> {
                 currentScope,
                 getTableConstructorExpressionType(node, value.name)
             )
-
+            is MemberExpression -> setMemberExpressionType(
+                value,
+                getTableConstructorExpressionType(node),
+                currentScope
+            )
         }
     }
 
@@ -297,9 +301,6 @@ class SemanticAnalyzer : ASTVisitor<BaseASTNode> {
 
         tableConstructorStack.addFirst(node to rootType)
 
-        val keyTypes = mutableMapOf<TableConstructorExpression, Type>()
-        val valueTypes = mutableMapOf<TableConstructorExpression, Type>()
-
         while (tableConstructorStack.isNotEmpty()) {
 
             val pair = tableConstructorStack.removeFirst()
@@ -316,38 +317,25 @@ class SemanticAnalyzer : ASTVisitor<BaseASTNode> {
 
                 val keyType = if (field is TableKeyString) Type.STRING else resolveExpressionNodeType(key)
 
-                if (keyType is Type) {
-                    val newType = keyTypes.getOrPut(currentTableConstructor) { Type.UnDefined }
-                        .union(keyType)
-                    keyTypes[currentTableConstructor] = newType
-                }
 
                 if (keyValue is ConstantNode) {
                     keyValue = keyValue.rawValue
                 }
 
-                var tableValueType = valueTypes.getOrPut(currentTableConstructor) { Type.UnDefined }
 
                 if (value is TableConstructorExpression) {
                     val valueType = TableType(TypeKind.Table, keyValue.toString())
-                    tableValueType = tableValueType.union(valueType)
-                    currentType.setMember(keyValue.toString(), valueType)
+                    currentType.setMember(keyValue.toString(),keyType ?: Type.ANY, valueType)
                     tableConstructorStack.addLast(value to valueType)
                     currentType = valueType
                 } else {
                     val valueType = resolveExpressionNodeType(value)
                     if (valueType is Type) {
-                        tableValueType = tableValueType.union(valueType)
-                        currentType.setMember(keyValue.toString(), tableValueType)
+                        currentType.setMember(keyValue.toString(),keyType ?: Type.ANY, valueType)
                     }
                 }
 
-                valueTypes[currentTableConstructor] = tableValueType
-
             }
-
-            currentType.valueType = keyTypes.remove(currentTableConstructor) ?: Type.ANY
-            currentType.indexType = valueTypes.remove(currentTableConstructor) ?: Type.ANY
 
         }
 
@@ -371,24 +359,27 @@ class SemanticAnalyzer : ASTVisitor<BaseASTNode> {
 
     private fun setMemberExpressionType(expression: MemberExpression, targetType: Type, currentScope: Scope) {
         val list = transformationMemberExpressionToList(expression)
-        val first = list.removeFirst()
+        var last = list.removeFirst()
 
-        val currentSymbol = currentScope.resolveSymbol(first.name, first.range.start)
+        val currentSymbol = currentScope.resolveSymbol(last.name, last.range.start)
 
         var currentType = currentSymbol?.type
 
-        while (list.size < 2) {
-            val identifier = list.removeFirst()
+        while (list.size > 1) {
+            last = list.removeFirstOrNull() ?: break
 
             currentType = when (currentType) {
-                is UnknownLikeTableType -> currentType.searchMember(identifier.name)
-
+                is UnknownLikeTableType -> currentType.searchMember(last.name)
+                is TableType -> currentType.searchMember(last.name)
                 else -> break
             }
         }
 
+
+        last = list.removeFirst()
         when (currentType) {
-            is UnknownLikeTableType -> currentType.setMember(list.removeFirst().name, targetType)
+            is UnknownLikeTableType -> currentType.setMember(last.name, targetType)
+            is TableType -> currentType.setMember(last.name, targetType)
         }
 
     }
