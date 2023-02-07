@@ -21,6 +21,7 @@ class WrapperLuaLexer(
         yytext = currentLexer.yytext(),
         type = LuaTokenTypes.WHITE_SPACE
     )
+
     fun yytext() = currentState.yytext
     fun yychar() = currentState.yychar
     fun yylength() = currentState.yylength
@@ -48,7 +49,6 @@ class WrapperLuaLexer(
             currentStates.addFirst(currentState)
             return
         }
-
         currentLexer.yypushback(size)
         doAdvance()
 
@@ -56,6 +56,7 @@ class WrapperLuaLexer(
             currentStates.addFirst(currentState)
         }
     }
+
 
 
     fun yyback(tokenSize: Int) {

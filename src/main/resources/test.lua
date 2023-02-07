@@ -1,13 +1,11 @@
-local a, b, c = 12, true, nil
-d = {
-    a = 12,
-    ['c'] = 15,
-    --[[a = 13,]]
-    d = {
-        a = 12
-    }
-}
+local a, b = 12, true
 
-d.e = function ()
-
+local function c(a)
+    return a .. "6"
 end
+
+local function d(t)
+    return 12 + t
+end
+
+local e = d(c(a))

@@ -65,6 +65,10 @@ interface Type {
             return t1
         }
 
+        if (t1 is UnDefinedType && t2 is UnDefinedType) {
+            return ANY
+        }
+
         if (t1 == t2) {
             return t1
         }

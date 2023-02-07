@@ -214,7 +214,6 @@ interface ASTVisitor<T> {
         }
         visitExpressionNode(node.base, value)
         visitExpressionNodes(node.arguments, value)
-
     }
 
     fun visitBinaryExpression(node: BinaryExpression, value: T) {
@@ -295,6 +294,6 @@ interface ASTVisitor<T> {
         node.statements.forEach {
             visitStatementNode(it, value)
         }
-        node.returnStatement?.let { visitStatementNode(it,value) }
+        node.returnStatement?.let { visitStatementNode(it, value) }
     }
 }

@@ -87,10 +87,30 @@ class SemanticAnalyzer : ASTVisitor<BaseASTNode> {
         }
     }
 
+
+    override fun visitCallExpression(node: CallExpression, value: BaseASTNode) {
+        when (node) {
+            is StringCallExpression -> return visitStringCallExpression(node, value)
+            is TableCallExpression -> return visitTableCallExpression(node, value)
+        }
+
+        val currentScope = scopeStack.first()
+        when (value) {
+            is Identifier -> setIdentifierType(
+                value, getCallExpressionType(node, currentScope), currentScope
+            )
+
+            is MemberExpression -> setMemberExpressionType(
+                value, getCallExpressionType(node, currentScope), currentScope
+            )
+        }
+    }
+
+
     override fun visitConstantNode(node: ConstantNode, value: BaseASTNode) {
         val currentScope = scopeStack.first()
         when (value) {
-            is Identifier -> setIdentifierType(value, currentScope, node.asType())
+            is Identifier -> setIdentifierType(value, node.asType(), currentScope)
 
             is MemberExpression -> setMemberExpressionType(value, node.asType(), currentScope)
 
@@ -121,16 +141,25 @@ class SemanticAnalyzer : ASTVisitor<BaseASTNode> {
     override fun visitBinaryExpression(node: BinaryExpression, value: BaseASTNode) {
         val currentScope = scopeStack.first()
         when (value) {
-            is Identifier -> setIdentifierType(value, currentScope, getBinaryBinaryExpressionType(node))
-            is MemberExpression -> setMemberExpressionType(value, getBinaryBinaryExpressionType(node), currentScope)
+            is Identifier -> setIdentifierType(
+                value,
+
+                resolveExpressionNodeType(node, currentScope) ?: Type.ANY, currentScope
+            )
+
+            is MemberExpression -> setMemberExpressionType(
+                value, resolveExpressionNodeType(node, currentScope) ?: Type.ANY, currentScope
+            )
+
+            is ReturnStatement -> setReturnStatementType(
+                value, node, resolveExpressionNodeType(node, currentScope) ?: Type.ANY, currentScope
+            )
         }
     }
 
 
     override fun visitReturnStatement(node: ReturnStatement, value: BaseASTNode) {
-        val tupleType = TupleType(
-            node.arguments.map { Type.ANY }
-        )
+        val tupleType = TupleType(node.arguments.map { Type.ANY })
         val symbol = createStatementSymbol(
             "return", node, tupleType
         )
@@ -155,7 +184,7 @@ class SemanticAnalyzer : ASTVisitor<BaseASTNode> {
                 //  val symbolForVariableName = currentScope.resolveSymbol(value.name, node.range.start)
                 val symbolForValue = currentScope.resolveSymbol(node.name, node.range.start)
                 val type = symbolForValue?.type ?: Type.ANY
-                setIdentifierType(value, currentScope, type)
+                setIdentifierType(value, type, currentScope)
             }
         }
     }
@@ -166,14 +195,12 @@ class SemanticAnalyzer : ASTVisitor<BaseASTNode> {
         when (value) {
             is Identifier -> setIdentifierType(
                 value,
+                getTableConstructorExpressionType(node, value.name),
                 currentScope,
-                getTableConstructorExpressionType(node, value.name)
             )
 
             is MemberExpression -> setMemberExpressionType(
-                value,
-                getTableConstructorExpressionType(node),
-                currentScope
+                value, getTableConstructorExpressionType(node), currentScope
             )
         }
     }
@@ -215,7 +242,7 @@ class SemanticAnalyzer : ASTVisitor<BaseASTNode> {
         val funcType = FunctionType("anonymous")
 
         if (node.isLocal) {
-            visitLocalFunctionDeclaration(node, value, funcType)
+            visitLocalFunctionDeclaration(node, funcType)
         } else {
             visitGlobalFunctionDeclaration(node, value, funcType)
         }
@@ -227,7 +254,9 @@ class SemanticAnalyzer : ASTVisitor<BaseASTNode> {
             visitBlockNode(it, value)
             it.returnStatement?.let {
                 val returnSymbol = funcScope.resolveSymbol("return", funcScope.range.start, true)
+
                 val returnTupleType = returnSymbol?.type as TupleType
+
                 returnTupleType.list().forEach { type ->
                     funcType.addReturnType(type)
                 }
@@ -238,14 +267,12 @@ class SemanticAnalyzer : ASTVisitor<BaseASTNode> {
         node.params.forEach {
             funcScope.resolveSymbol(it.name, it.range.start)?.let { paramSymbol ->
                 val paramType = paramSymbol.type
-                if (paramType.typeVariableName == "self" && !node.isLocal &&
-                    node.identifier is MemberExpression && paramType is ParameterType
-                ) {
+                if (paramType.typeVariableName == "self" && !node.isLocal && node.identifier is MemberExpression && paramType is ParameterType) {
                     val list = transformationMemberExpressionToList(node.identifier as MemberExpression)
                     paramType.isSelf = true
                     // set to self
-                    paramType.realType = funcScope.resolveSymbol(list.first().name, list.first().range.start)?.type
-                        ?: paramType.realType
+                    paramType.realType =
+                        funcScope.resolveSymbol(list.first().name, list.first().range.start)?.type ?: paramType.realType
                 }
                 funcType.addParamType(paramSymbol.type)
             }
@@ -272,13 +299,11 @@ class SemanticAnalyzer : ASTVisitor<BaseASTNode> {
 
 
     private fun visitGlobalFunctionDeclaration(
-        node: FunctionDeclaration,
-        value: BaseASTNode,
-        functionType: FunctionType
+        node: FunctionDeclaration, value: BaseASTNode, functionType: FunctionType
     ) {
         val currentScope = scopeStack.first()
         val identifier = node.identifier
-        var variable: String
+        val variable: String
 
         // function xx() end
         if (identifier is Identifier) {
@@ -303,7 +328,6 @@ class SemanticAnalyzer : ASTVisitor<BaseASTNode> {
 
             functionType.isSelf = isCallSelf
 
-
             setMemberExpressionType(identifier, functionType, currentScope, list)
         }
 
@@ -315,9 +339,7 @@ class SemanticAnalyzer : ASTVisitor<BaseASTNode> {
 
 
     private fun visitLocalFunctionDeclaration(
-        node: FunctionDeclaration,
-        value: BaseASTNode,
-        functionType: FunctionType
+        node: FunctionDeclaration, functionType: FunctionType
     ) {
         val currentScope = scopeStack.first()
 
@@ -326,20 +348,17 @@ class SemanticAnalyzer : ASTVisitor<BaseASTNode> {
             createLocalFunctionSymbol(node, currentScope, functionType)
         }
 
-
     }
 
 
-    private fun setIdentifierType(identifier: Identifier, currentScope: Scope, targetType: Type) {
-        currentScope.resolveSymbol(identifier.name, identifier.range.start)
-            ?.let { symbol ->
-                setType(symbol, targetType)
-            }
+    private fun setIdentifierType(identifier: Identifier, targetType: Type, currentScope: Scope) {
+        currentScope.resolveSymbol(identifier.name, identifier.range.start)?.let { symbol ->
+            symbol.type = targetType.union(symbol.type)
+        }
     }
 
     private fun setReturnStatementType(
-        returnStatement: ReturnStatement,
-        node: ExpressionNode, targetType: Type, currentScope: Scope
+        returnStatement: ReturnStatement, node: ExpressionNode, targetType: Type, currentScope: Scope
     ) {
         currentScope.resolveSymbol("return", returnStatement.range.start)?.let {
             val type = it.type as TupleType
@@ -350,8 +369,7 @@ class SemanticAnalyzer : ASTVisitor<BaseASTNode> {
 
 
     private fun getTableConstructorExpressionType(
-        node: TableConstructorExpression,
-        name: String = "anonymous"
+        node: TableConstructorExpression, name: String = "anonymous"
     ): Type {
         val rootType = TableType(TypeKind.Table, name)
         val tableConstructorStack = ArrayDeque<Pair<TableConstructorExpression, TableType>>()
@@ -400,10 +418,123 @@ class SemanticAnalyzer : ASTVisitor<BaseASTNode> {
         return rootType
     }
 
-    private fun resolveExpressionNodeType(node: ExpressionNode): Type? {
+    private fun getCallExpressionType(
+        node: CallExpression,
+        currentScope: Scope,
+    ): Type {
+
+        val callExpressionTypeMap = mutableMapOf<CallExpression, Type>()
+
+        val callExpressionStack = ArrayDeque<CallExpression>()
+        val tmpCallExpressionStack = ArrayDeque<CallExpression>()
+
+        tmpCallExpressionStack.add(node)
+        callExpressionStack.add(node)
+
+        while (tmpCallExpressionStack.isNotEmpty()) {
+            val args = tmpCallExpressionStack.removeFirst().arguments
+            val callExpressionList = args.filterIsInstance(CallExpression::class.java)
+            if (args.isEmpty() || callExpressionStack.isEmpty()) {
+                break
+            }
+            callExpressionList.forEach {
+                callExpressionStack.addFirst(it)
+                tmpCallExpressionStack.addFirst(it)
+            }
+
+        }
+
+        tmpCallExpressionStack.clear()
+
+
+        while (callExpressionStack.isNotEmpty()) {
+            val callExpression = callExpressionStack.removeFirst()
+
+            val base = callExpression.base
+            val args = callExpression.arguments
+            val baseType = resolveExpressionNodeType(base, currentScope)
+
+            if (baseType is FunctionType) {
+                val params = baseType.parameterTypes
+                val paramsSize = params.size
+
+                for (i in 0 until paramsSize) {
+                    val paramType = params[i]
+                    val argNode = args.getOrNull(i) ?: break
+                    val argType = if (argNode is CallExpression) {
+                        callExpressionTypeMap[argNode] ?: Type.ANY
+                    } else resolveExpressionNodeType(argNode)
+                    if (argType is Type && paramType is ParameterType) {
+                        paramType.realType = argType
+                    }
+                }
+
+                callExpressionTypeMap[callExpression] = createTupleType(baseType.returnTypes)
+            }
+
+            if (baseType is ParameterType) {
+                val argsSize = args.size
+                if (argsSize != 2) {
+                    continue
+                }
+                val argType = resolveExpressionNodeType(args[0])
+                if (argType is Type) {
+                    baseType.realType = argType
+                }
+            }
+        }
+
+        val result = callExpressionTypeMap[node] ?: Type.ANY
+
+        callExpressionTypeMap.clear()
+
+        return result
+    }
+
+    private fun createTupleType(types: List<Type>): Type {
+        if (types.size == 1) {
+            return types[0]
+        }
+
+        return TupleType(types.distinct())
+    }
+
+    private fun resolveExpressionNodeType(node: ExpressionNode, scope: Scope = globalScope): Type? {
         return when (node) {
             is ConstantNode -> node.asType()
             is TableConstructorExpression -> getTableConstructorExpressionType(node)
+
+            is Identifier -> {
+                val symbol = scope.resolveSymbol(node.name, node.range.start)
+                symbol?.type
+            }
+
+            is BinaryExpression -> when (node.operator) {
+                ExpressionOperator.CONCAT -> Type.STRING
+                ExpressionOperator.AND, ExpressionOperator.OR, ExpressionOperator.NOT -> Type.BOOLEAN
+
+                else -> Type.NUMBER
+            }
+
+
+            is MemberExpression -> {
+                val list = transformationMemberExpressionToList(node)
+                var last = list.first()
+                val symbol = scope.resolveSymbol(last.name, last.range.start)
+                var currentType = symbol?.type
+
+                while (list.size > 1) {
+                    last = list.removeFirstOrNull() ?: break
+
+                    currentType = when (currentType) {
+                        is UnknownLikeTableType -> currentType.searchMember(last.name)
+                        is TableType -> currentType.searchMember(last.name)
+                        else -> break
+                    }
+                }
+                currentType
+            }
+
             else -> null
         }
     }
@@ -416,7 +547,9 @@ class SemanticAnalyzer : ASTVisitor<BaseASTNode> {
     }
 
     private fun setMemberExpressionType(
-        expression: MemberExpression, targetType: Type, currentScope: Scope,
+        expression: MemberExpression,
+        targetType: Type,
+        currentScope: Scope,
         list: ArrayDeque<Identifier> = transformationMemberExpressionToList(expression)
     ) {
         var last = list.removeFirst()
@@ -466,26 +599,6 @@ class SemanticAnalyzer : ASTVisitor<BaseASTNode> {
 
     }
 
-
-    private fun setType(symbol: Symbol<Type>, type: Type) {
-        val originType = symbol.type
-        val setType = originType.union(type)
-        symbol.type = setType
-    }
-
-
-    private fun getBinaryBinaryExpressionType(expression: BinaryExpression): Type {
-        return when (expression.operator) {
-            // ExpressionOperator.CONCAT -> BaseType.STRING
-            ExpressionOperator.AND,
-            ExpressionOperator.OR,
-            ExpressionOperator.NOT -> Type.BOOLEAN
-
-            else -> Type.NUMBER
-        }
-
-    }
-
     private fun createUnknownLikeTableSymbol(list: ArrayDeque<Identifier>): Symbol<Type>? {
         var identifier = list.removeFirst()
         var mainSymbol = globalScope.resolveSymbol(identifier.name, identifier.range.start)
@@ -528,8 +641,7 @@ class SemanticAnalyzer : ASTVisitor<BaseASTNode> {
         return UnknownLikeTableSymbol(
             variable = identifier.name,
             range = Range(
-                identifier.range.start,
-                globalScope.range.end
+                identifier.range.start, globalScope.range.end
             ),
             node = identifier,
         )
@@ -537,39 +649,27 @@ class SemanticAnalyzer : ASTVisitor<BaseASTNode> {
 
     private fun createStatementSymbol(name: String, node: StatementNode, type: Type): StatementSymbol {
         return StatementSymbol(
-            variable = name,
-            range = Range(
-                node.range.start,
-                globalScope.range.end
-            ),
-            node = node,
-            type = type
+            variable = name, range = Range(
+                node.range.start, globalScope.range.end
+            ), node = node, type = type
         )
     }
 
     private fun createVariableSymbol(identifier: Identifier, scope: Scope): VariableSymbol {
         return VariableSymbol(
-            variable = identifier.name,
-            range = Range(
-                identifier.range.start,
-                scope.range.end
-            ),
-            node = identifier,
-            type = Type.UnDefined,
-            isLocal = true
+            variable = identifier.name, range = Range(
+                identifier.range.start, scope.range.end
+            ), node = identifier, type = Type.UnDefined, isLocal = true
         )
     }
 
     private fun createGlobalFunctionSymbol(
-        identifier: Identifier,
-        node: FunctionDeclaration,
-        targetType: FunctionType
+        identifier: Identifier, node: FunctionDeclaration, targetType: FunctionType
     ): FunctionSymbol {
         return FunctionSymbol(
             variable = identifier.name,
             range = Range(
-                identifier.range.start,
-                globalScope.range.end
+                identifier.range.start, globalScope.range.end
             ),
             node = node,
             type = targetType,
@@ -607,22 +707,16 @@ class SemanticAnalyzer : ASTVisitor<BaseASTNode> {
     }
 
     private fun createLocalFunctionSymbol(
-        node: FunctionDeclaration,
-        currentScope: Scope,
-        functionType: FunctionType
+        node: FunctionDeclaration, currentScope: Scope, functionType: FunctionType
     ): FunctionSymbol {
         val identifier = node.identifier as Identifier
 
         functionType.typeVariableName = identifier.name
 
         val symbol = FunctionSymbol(
-            variable = identifier.name,
-            range = Range(
-                identifier.range.start,
-                currentScope.range.end
-            ),
-            node = node,
-            type = functionType
+            variable = identifier.name, range = Range(
+                identifier.range.start, currentScope.range.end
+            ), node = node, type = functionType
         )
         currentScope.addSymbol(symbol)
         return symbol

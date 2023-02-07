@@ -249,8 +249,15 @@ class LuaParser {
 
                 consumeToken(LuaTokenTypes.SEMI) -> continue
                 consumeToken(LuaTokenTypes.DO) -> parseDoStatement(blockNode)
-                // function call, varlist = explist
-                peekToken(LuaTokenTypes.NAME) -> parseExpStatement(blockNode)
+                // function call, varlist = explist, $(localvarlist)
+                peekToken(LuaTokenTypes.NAME) -> {
+                    val name = peek { lexerText() }
+                    if (name.startsWith('$'))
+                        parseLocalVarList(blockNode)
+                    else
+                        parseExpStatement(blockNode)
+                }
+
                 peekToken(LuaTokenTypes.RETURN) -> parseReturnStatement(blockNode)
                 else -> break
             }
@@ -688,7 +695,9 @@ class LuaParser {
         parent: BaseASTNode,
         currentLine: Int
     ): FunctionDeclaration {
-        expectToken(LuaTokenTypes.LPAREN) { "( expected near ${lexerText()}" }
+
+        expectToken(LuaTokenTypes.LPAREN) { "( expected near '${lexerText()}'" }
+
 
         val findRight = peek { it == LuaTokenTypes.RPAREN }
 
@@ -697,7 +706,7 @@ class LuaParser {
             node.params.addAll(parseNameList(parent))
         }
 
-        expectToken(LuaTokenTypes.RPAREN) { ") expected near ${lexerText()}" }
+        expectToken(LuaTokenTypes.RPAREN) { ") expected near '${lexerText()}'" }
 
         node.body = parseBlockNode(parent)
 
@@ -721,19 +730,26 @@ class LuaParser {
         return parseFunctionBody(result, parent, currentLine)
     }
 
-    private fun parseName(parent: BaseASTNode): Identifier {
+    private fun parseName(parent: BaseASTNode, supportDollarSymbol: Boolean = false): Identifier {
         expectToken(LuaTokenTypes.NAME) { "<name> expected near ${lexerText()}" }
         markLocation()
-        val identifier = Identifier(lexerText())
+        var name = lexerText()
+        if (name.startsWith('$')) {
+            if  (!supportDollarSymbol) {
+                error("'$' is not allowed in name ${lexerText()}")
+            }
+            name = name.substring(1)
+        }
+        val identifier = Identifier(name)
         identifier.parent = parent
         return finishNode(identifier)
     }
 
     // namelist ::= Name {‘,’ Name}
-    private fun parseNameList(parent: BaseASTNode): List<Identifier> {
+    private fun parseNameList(parent: BaseASTNode,supportDollarSymbol:Boolean = false): List<Identifier> {
         val result = mutableListOf<Identifier>()
 
-        result.add(parseName(parent))
+        result.add(parseName(parent, supportDollarSymbol = supportDollarSymbol))
 
         val hasComma = consumeToken(LuaTokenTypes.COMMA)
         if (!hasComma) {
@@ -1244,7 +1260,7 @@ class LuaParser {
         val localStatement = LocalStatement()
         localStatement.parent = parent
         markLocation()
-        localStatement.init.addAll(parseNameList(localStatement))
+        localStatement.init.addAll(parseNameList(localStatement,true))
         localStatement.init.forEach {
             it.isLocal = true
         }

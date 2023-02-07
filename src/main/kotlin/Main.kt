@@ -18,12 +18,11 @@ fun main(args: Array<String>) {
     println(localScope.resolveSymbol("a"))
     println(localScope.resolveSymbol("b"))
     println(localScope.resolveSymbol("c"))
+    println(localScope.resolveSymbol("d"))
     println(localScope.resolveSymbol("e"))
-    println(
-        localScope.resolveSymbol("d", Position(1, 1))?.type?.let {
-            it as TableType
-        }/*?.searchMember("e")*/
-    )
+    /*println(
+        localScope.resolveSymbol("e", Position(1, 1))?.type
+    )*/
     //  val funcScope = globalScope.resolveScope(Position(3,1))
     // println(funcScope.resolveSymbol("t"))
 
