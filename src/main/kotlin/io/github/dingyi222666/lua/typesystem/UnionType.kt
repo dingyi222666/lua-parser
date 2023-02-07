@@ -6,20 +6,8 @@ package io.github.dingyi222666.lua.typesystem
  * @description:
  **/
 class UnionType(
-    types: Iterable<Type>,
-    private val simplifyType: Boolean = false
+    internal val types: Set<Type>
 ) : Type {
-
-    internal val types: Set<Type> = types.filter {
-        if (!simplifyType)
-            true
-        else {
-            when (it) {
-                is UnDefinedType, Type.ANY -> false
-                else -> true
-            }
-        }
-    }.toSet()
 
     constructor(vararg types: Type) : this(types.toSet())
 

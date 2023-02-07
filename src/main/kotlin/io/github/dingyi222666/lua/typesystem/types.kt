@@ -158,7 +158,7 @@ class UnDefinedType : Type {
 
 fun ConstantNode.asType(): Type {
     return when (this.constantType) {
-        // ConstantNode.TYPE.STRING -> BaseType.STRING
+        ConstantNode.TYPE.STRING -> Type.STRING
         ConstantNode.TYPE.FLOAT, ConstantNode.TYPE.INTERGER -> Type.NUMBER
         ConstantNode.TYPE.BOOLEAN -> Type.BOOLEAN
         ConstantNode.TYPE.NIL -> Type.Nil

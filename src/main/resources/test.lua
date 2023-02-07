@@ -7,3 +7,4 @@ local d = {
         a = 12
     }
 }
+local e = d

@@ -2,6 +2,7 @@ import com.google.gson.GsonBuilder
 import io.github.dingyi222666.lua.parser.LuaParser
 import io.github.dingyi222666.lua.parser.ast.node.Position
 import io.github.dingyi222666.lua.semantic.SemanticAnalyzer
+import io.github.dingyi222666.lua.typesystem.TableType
 import java.io.File
 
 fun main(args: Array<String>) {
@@ -17,7 +18,12 @@ fun main(args: Array<String>) {
     println(localScope.resolveSymbol("a"))
     println(localScope.resolveSymbol("b"))
     println(localScope.resolveSymbol("c"))
-    println(localScope.resolveSymbol("d")?.type?.getTypeName())
+    println(localScope.resolveSymbol("e"))
+    println(
+        localScope.resolveSymbol("d")?.type?.let {
+                it as TableType
+            }?.searchMember("d")?.getTypeName() ?: ""
+    )
     //  val funcScope = globalScope.resolveScope(Position(3,1))
     // println(funcScope.resolveSymbol("t"))
 

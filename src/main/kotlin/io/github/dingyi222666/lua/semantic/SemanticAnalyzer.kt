@@ -150,6 +150,13 @@ class SemanticAnalyzer : ASTVisitor<BaseASTNode> {
                 }*/
                 createParamsVariable(node, currentScope)
             }
+            // identifier
+            is Identifier -> {
+                //  val symbolForVariableName = currentScope.resolveSymbol(value.name, node.range.start)
+                val symbolForValue = currentScope.resolveSymbol(node.name, node.range.start)
+                val type = symbolForValue?.type ?: Type.ANY
+                setIdentifierType(value, currentScope, type)
+            }
         }
     }
 
@@ -160,7 +167,7 @@ class SemanticAnalyzer : ASTVisitor<BaseASTNode> {
             is Identifier -> setIdentifierType(
                 value,
                 currentScope,
-                getTableConstructorExpressionType(node,value.name)
+                getTableConstructorExpressionType(node, value.name)
             )
 
         }
@@ -284,18 +291,23 @@ class SemanticAnalyzer : ASTVisitor<BaseASTNode> {
         node: TableConstructorExpression,
         name: String = "anonymous"
     ): Type {
-        val resultType = TableType(TypeKind.Table, name)
-        val tableConstructorStack = ArrayDeque<TableConstructorExpression>()
-        var currentType = resultType
+        val rootType = TableType(TypeKind.Table, name)
+        val tableConstructorStack = ArrayDeque<Pair<TableConstructorExpression, TableType>>()
+        var currentType: TableType
 
-        tableConstructorStack.addFirst(node)
+        tableConstructorStack.addFirst(node to rootType)
 
-        val keyTypes = mutableSetOf<Type>()
-        val valueTypes = mutableSetOf<Type>()
+        val keyTypes = mutableMapOf<TableConstructorExpression, Type>()
+        val valueTypes = mutableMapOf<TableConstructorExpression, Type>()
 
         while (tableConstructorStack.isNotEmpty()) {
-            val currentTableConstructor = tableConstructorStack.removeFirst()
+
+            val pair = tableConstructorStack.removeFirst()
+            val currentTableConstructor = pair.first
+            currentType = pair.second
+
             for (field in currentTableConstructor.fields) {
+
                 val key = field.key
                 val value = field.value
 
@@ -305,42 +317,41 @@ class SemanticAnalyzer : ASTVisitor<BaseASTNode> {
                 val keyType = if (field is TableKeyString) Type.STRING else resolveExpressionNodeType(key)
 
                 if (keyType is Type) {
-                    keyTypes.add(keyType)
+                    val newType = keyTypes.getOrPut(currentTableConstructor) { Type.UnDefined }
+                        .union(keyType)
+                    keyTypes[currentTableConstructor] = newType
                 }
 
                 if (keyValue is ConstantNode) {
                     keyValue = keyValue.rawValue
                 }
 
+                var tableValueType = valueTypes.getOrPut(currentTableConstructor) { Type.UnDefined }
+
                 if (value is TableConstructorExpression) {
-                    val tableType = TableType(TypeKind.Table, keyValue.toString())
-                    valueTypes.add(tableType)
-                    currentType.setMember(keyValue.toString(), tableType)
-                    tableConstructorStack.addFirst(value)
-                    currentType = tableType
+                    val valueType = TableType(TypeKind.Table, keyValue.toString())
+                    tableValueType = tableValueType.union(valueType)
+                    currentType.setMember(keyValue.toString(), valueType)
+                    tableConstructorStack.addLast(value to valueType)
+                    currentType = valueType
                 } else {
                     val valueType = resolveExpressionNodeType(value)
-
                     if (valueType is Type) {
-                        valueTypes.add(valueType)
-                        currentType.setMember(keyValue.toString(), valueType)
+                        tableValueType = tableValueType.union(valueType)
+                        currentType.setMember(keyValue.toString(), tableValueType)
                     }
                 }
-                if (value is TableConstructorExpression) {
-                    tableConstructorStack.addFirst(value)
-                }
+
+                valueTypes[currentTableConstructor] = tableValueType
+
             }
+
+            currentType.valueType = keyTypes.remove(currentTableConstructor) ?: Type.ANY
+            currentType.indexType = valueTypes.remove(currentTableConstructor) ?: Type.ANY
 
         }
 
-
-        val finalKeyType = if (keyTypes.size > 3) Type.ANY else UnionType(keyTypes, true)
-        val finalValueType = if (valueTypes.size > 3) Type.ANY else UnionType(valueTypes, true)
-
-        resultType.valueType = finalValueType
-        resultType.indexType = finalKeyType
-
-        return resultType
+        return rootType
     }
 
     private fun resolveExpressionNodeType(node: ExpressionNode): Type? {
