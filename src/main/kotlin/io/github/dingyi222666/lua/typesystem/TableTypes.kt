@@ -43,6 +43,7 @@ open class TableType(
 
     fun setMember(name: String, type: Type) {
         fields[name] = type
+        valueType = valueType.union(type)
     }
 
     fun setMember(name: String, keyType: Type, type: Type) {

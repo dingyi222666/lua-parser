@@ -168,22 +168,38 @@ class SemanticAnalyzer : ASTVisitor<BaseASTNode> {
         super.visitReturnStatement(node, node)
     }
 
+    override fun visitMemberExpression(node: MemberExpression, value: BaseASTNode) {
+        val currentScope = scopeStack.first()
+
+        val currentType = resolveMemberExpressionType(node, currentScope)
+        when (value) {
+            is Identifier -> setIdentifierType(value, currentType, currentScope)
+
+            is MemberExpression -> setMemberExpressionType(value, currentType, currentScope)
+
+            is ReturnStatement -> setReturnStatementType(value, node, currentType, currentScope)
+        }
+    }
+
     override fun visitIdentifier(node: Identifier, value: BaseASTNode) {
         val currentScope = scopeStack.first()
         when (value) {
             // params?
             is FunctionDeclaration -> {
-                // val symbol = currentScope.resolveSymbol(node.name, node.range.start)
-                /*if (symbol != null) {
-                    error(node) { "redefinition of '${node.name}'" }
-                }*/
-                createParamsVariable(node, currentScope)
+                val parameterSymbol = createParamsVariable(node, currentScope)
+                if (node.name == "self" && value.params.indexOf(node) == 0 &&
+                    value.identifier is MemberExpression
+                ) {
+                    setSelfType(value, parameterSymbol, currentScope)
+                }
             }
             // identifier
             is Identifier -> {
                 //  val symbolForVariableName = currentScope.resolveSymbol(value.name, node.range.start)
                 val symbolForValue = currentScope.resolveSymbol(node.name, node.range.start)
-                val type = symbolForValue?.type ?: Type.ANY
+
+                val type = unpackType(symbolForValue?.type ?: Type.ANY)
+
                 setIdentifierType(value, type, currentScope)
             }
         }
@@ -318,7 +334,9 @@ class SemanticAnalyzer : ASTVisitor<BaseASTNode> {
         if (identifier is MemberExpression) {
             val list = transformationMemberExpressionToList(identifier)
             val isCallSelf =
-                list.find { it.parent is MemberExpression && (it.parent as MemberExpression).indexer == ":" } != null
+                list.find {
+                    it.parent is MemberExpression && (it.parent as MemberExpression).indexer == ":"
+                } != null
 
             val last = list.first()
 
@@ -454,9 +472,19 @@ class SemanticAnalyzer : ASTVisitor<BaseASTNode> {
             val args = callExpression.arguments
             val baseType = resolveExpressionNodeType(base, currentScope)
 
+            val callSelf = if (base is MemberExpression) {
+                base.indexer == ":"
+            } else false
+
             if (baseType is FunctionType) {
                 val params = baseType.parameterTypes
                 val paramsSize = params.size
+
+
+                if (!callSelf && baseType.isSelf && args.isEmpty()) {
+                    println("需要使用:来加上self")
+                }
+
 
                 for (i in 0 until paramsSize) {
                     val paramType = params[i]
@@ -464,6 +492,7 @@ class SemanticAnalyzer : ASTVisitor<BaseASTNode> {
                     val argType = if (argNode is CallExpression) {
                         callExpressionTypeMap[argNode] ?: Type.ANY
                     } else resolveExpressionNodeType(argNode)
+
                     if (argType is Type && paramType is ParameterType) {
                         paramType.realType = argType
                     }
@@ -499,13 +528,74 @@ class SemanticAnalyzer : ASTVisitor<BaseASTNode> {
         return TupleType(types.distinct())
     }
 
+    private fun setSelfType(declaration: FunctionDeclaration, symbol: ParameterSymbol, currentScope: Scope) {
+        val identifier = declaration.identifier as MemberExpression
+        val list = transformationMemberExpressionToList(identifier)
+        val last = list.first()
+        val selfSymbol = currentScope.resolveSymbol(last.name, last.range.start)
+        val currentType = resolveMemberExpressionType(identifier,currentScope)
+        if (currentType is FunctionType) {
+            currentType.isSelf = true
+        }
+        symbol.type.isSelf = true
+        symbol.type.realType = selfSymbol?.type ?: Type.ANY
+    }
+
+    private fun resolveMemberExpressionType(
+        node: MemberExpression,
+        currentScope: Scope
+    ): Type {
+        val list = transformationMemberExpressionToList(node)
+        var last = list.removeFirst()
+        val symbol = currentScope.resolveSymbol(last.name, last.range.start)
+        var currentType: Type? = unpackType(symbol?.type ?: Type.ANY)
+
+        while (list.isNotEmpty()) {
+            last = list.removeFirstOrNull() ?: break
+
+            val lastType = currentType
+            currentType = when (currentType) {
+                is TableType ->
+                    currentType.searchMember(last.name)
+
+                else -> null
+            }
+
+            currentType = if (currentType is ParameterType) currentType.realType else currentType
+
+            if (currentType != null) {
+                continue
+            }
+
+            currentType = when (lastType) {
+                is UnknownLikeTableType, is TableType -> {
+                    // Why not find the key? Maybe it isn't assigned yet.
+                    // So we create a new UnknownLikeTableType and set it to the parent.
+                    if (list.size > 0) {
+                        Type.ANY
+                    } else UnknownLikeTableType(last.name)
+                }
+
+                else -> break
+            }
+
+            if (lastType is TableType) {
+                lastType.setMember(last.name, currentType)
+            }
+
+        }
+
+        return unpackType(currentType ?: Type.ANY)
+    }
+
     private fun resolveExpressionNodeType(node: ExpressionNode, scope: Scope = globalScope): Type? {
-        return when (node) {
+        val resultType = when (node) {
             is ConstantNode -> node.asType()
             is TableConstructorExpression -> getTableConstructorExpressionType(node)
 
             is Identifier -> {
                 val symbol = scope.resolveSymbol(node.name, node.range.start)
+
                 symbol?.type
             }
 
@@ -517,26 +607,13 @@ class SemanticAnalyzer : ASTVisitor<BaseASTNode> {
             }
 
 
-            is MemberExpression -> {
-                val list = transformationMemberExpressionToList(node)
-                var last = list.first()
-                val symbol = scope.resolveSymbol(last.name, last.range.start)
-                var currentType = symbol?.type
-
-                while (list.size > 1) {
-                    last = list.removeFirstOrNull() ?: break
-
-                    currentType = when (currentType) {
-                        is UnknownLikeTableType -> currentType.searchMember(last.name)
-                        is TableType -> currentType.searchMember(last.name)
-                        else -> break
-                    }
-                }
-                currentType
-            }
+            is MemberExpression -> resolveMemberExpressionType(node, scope)
 
             else -> null
         }
+
+
+        return unpackType(resultType ?: Type.ANY)
     }
 
     private fun resolveExpressionNodeValue(node: ExpressionNode): Any? {
@@ -576,15 +653,15 @@ class SemanticAnalyzer : ASTVisitor<BaseASTNode> {
                 is UnknownLikeTableType, is TableType -> {
                     // Why not find the key? Maybe it isn't assigned yet.
                     // So we create a new UnknownLikeTableType and set it to the parent.
-                    UnknownLikeTableType(last.name)
+                    if (list.size > 0) {
+                        Type.ANY
+                    } else UnknownLikeTableType(last.name)
                 }
 
                 else -> break
             }
 
-            if (lastType is UnknownLikeTableType) {
-                lastType.setMember(last.name, currentType)
-            } else if (lastType is TableType) {
+            if (lastType is TableType) {
                 lastType.setMember(last.name, currentType)
             }
 
@@ -593,7 +670,6 @@ class SemanticAnalyzer : ASTVisitor<BaseASTNode> {
 
         last = list.removeFirst()
         when (currentType) {
-            is UnknownLikeTableType -> currentType.setMember(last.name, targetType)
             is TableType -> currentType.setMember(last.name, targetType)
         }
 
@@ -637,6 +713,13 @@ class SemanticAnalyzer : ASTVisitor<BaseASTNode> {
         return mainSymbol
     }
 
+    private fun unpackType(type: Type): Type {
+        if (type is ParameterType) {
+            return type.realType
+        }
+        return type
+    }
+
     private fun createUnknownLikeTableSymbol(identifier: Identifier): UnknownLikeTableSymbol {
         return UnknownLikeTableSymbol(
             variable = identifier.name,
@@ -678,7 +761,7 @@ class SemanticAnalyzer : ASTVisitor<BaseASTNode> {
         }
     }
 
-    private fun createParamsVariable(node: Identifier, currentScope: Scope) {
+    private fun createParamsVariable(node: Identifier, currentScope: Scope): ParameterSymbol {
         // val indexOfParent = value.params.indexOf(node)
         val symbol = ParameterSymbol(
             variable = node.name,
@@ -686,6 +769,7 @@ class SemanticAnalyzer : ASTVisitor<BaseASTNode> {
             node = node,
         )
         currentScope.addSymbol(symbol)
+        return symbol
     }
 
     private fun createLocalVariable(identifier: Identifier) {
@@ -712,7 +796,6 @@ class SemanticAnalyzer : ASTVisitor<BaseASTNode> {
         val identifier = node.identifier as Identifier
 
         functionType.typeVariableName = identifier.name
-
         val symbol = FunctionSymbol(
             variable = identifier.name, range = Range(
                 identifier.range.start, currentScope.range.end

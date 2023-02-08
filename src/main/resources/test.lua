@@ -1,11 +1,10 @@
-local a, b = 12, true
+local a, b,c,d = 12, true,{},""
 
-local function c(a)
-    return a .. "6"
+function c.c(self)
+    return self.d
 end
 
-local function d(t)
-    return 12 + t
-end
+c.d = 12
 
-local e = d(c(a))
+local e = c:c()
+
