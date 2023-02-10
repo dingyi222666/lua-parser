@@ -32,8 +32,11 @@ fun main(args: Array<String>) {
 
 
     val parser = LuaParser()
-    val source = File("src/main/resources/test.lua").bufferedReader()
+    val source = File("src/main/resources/main(3).lua").bufferedReader()
     val rootNode = parser.parse(source)
+
+    val analyzer = OptimizationAnalyzer()
+    analyzer.analyze(rootNode)
 
     println(
         AST2Lua().toLua(rootNode)

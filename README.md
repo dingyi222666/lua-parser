@@ -8,7 +8,7 @@ A Lua 5.3 parser written in Kotlin _Jvm_.
 
 - [x] Parse Source To AST
 - [ ] Semantic Analysis. Provide type information (WIP)
-- [ ] Transform AST to source code (WIP)
+- [x] Transform AST to source code (WIP)
 
 ### Usage
 

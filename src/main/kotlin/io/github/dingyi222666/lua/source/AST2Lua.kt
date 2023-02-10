@@ -338,20 +338,24 @@ class AST2Lua : ASTVisitor<StringBuilder> {
     }
 
     override fun visitLocalStatement(node: LocalStatement, value: StringBuilder) {
-        indent(value)
-        value.append("local ")
-        node.init.forEachIndexed { index, baseASTNode ->
-            if (index != 0) {
-                value.append(", ")
+        if (node.init.isNotEmpty()) {
+            indent(value)
+            value.append("local ")
+            node.init.forEachIndexed { index, baseASTNode ->
+                if (index != 0) {
+                    value.append(", ")
+                }
+                visitExpressionNode(baseASTNode, value)
             }
-            visitExpressionNode(baseASTNode, value)
         }
-        value.append(" = ")
-        node.variables.forEachIndexed { index, baseASTNode ->
-            if (index != 0) {
-                value.append(", ")
+        if (node.variables.isNotEmpty()) {
+            value.append(" = ")
+            node.variables.forEachIndexed { index, baseASTNode ->
+                if (index != 0) {
+                    value.append(", ")
+                }
+                visitExpressionNode(baseASTNode, value)
             }
-            visitExpressionNode(baseASTNode, value)
         }
         value.appendLine()
     }

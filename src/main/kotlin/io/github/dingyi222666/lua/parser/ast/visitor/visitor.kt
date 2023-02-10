@@ -190,7 +190,8 @@ interface ASTVisitor<T> {
             is VarargLiteral -> visitVarargLiteral(node, value)
             is MemberExpression -> visitMemberExpression(node, value)
             is FunctionDeclaration -> visitFunctionDeclaration(node, value)
-
+            is TableKeyString -> visitTableKeyString(node, value)
+            is TableKey -> visitTableKey(node, value)
         }
     }
 
@@ -257,7 +258,6 @@ interface ASTVisitor<T> {
     fun visitTableKey(node: TableKey, value: T) {
         // key always null
         visitExpressionNode(node.value, value)
-
     }
 
     fun visitTableKeyString(node: TableKeyString, value: T) {

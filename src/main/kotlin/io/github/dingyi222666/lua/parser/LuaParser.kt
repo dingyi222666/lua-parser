@@ -649,6 +649,7 @@ class LuaParser {
             // function call
             CallStatement().apply {
                 this.parent = parent
+                suffix.parent = this
                 expression = suffix as CallExpression
             }
         }
@@ -659,7 +660,7 @@ class LuaParser {
         val initList = mutableListOf<ExpressionNode>()
         val result = AssignmentStatement()
         result.parent = parent
-
+        base.parent = result
         initList.add(base)
 
         while (peek() == LuaTokenTypes.COMMA) {
@@ -735,7 +736,7 @@ class LuaParser {
         markLocation()
         var name = lexerText()
         if (name.startsWith('$')) {
-            if  (!supportDollarSymbol) {
+            if (!supportDollarSymbol) {
                 error("'$' is not allowed in name ${lexerText()}")
             }
             name = name.substring(1)
@@ -746,7 +747,7 @@ class LuaParser {
     }
 
     // namelist ::= Name {‘,’ Name}
-    private fun parseNameList(parent: BaseASTNode,supportDollarSymbol:Boolean = false): List<Identifier> {
+    private fun parseNameList(parent: BaseASTNode, supportDollarSymbol: Boolean = false): List<Identifier> {
         val result = mutableListOf<Identifier>()
 
         result.add(parseName(parent, supportDollarSymbol = supportDollarSymbol))
@@ -991,7 +992,7 @@ class LuaParser {
     private fun parseFieldList(parent: BaseASTNode): List<TableKey> {
         val result = mutableListOf<TableKey>()
 
-        var index = AtomicInteger(1)
+        val index = AtomicInteger(1)
         result.add(finishNode(parseField(parent, index).require()))
 
         while (true) {
@@ -1202,7 +1203,7 @@ class LuaParser {
         val result = IndexExpression()
         result.parent = parent
         result.base = base
-        result.index = parseExp(parent)
+        result.index = parseExp(result)
 
         expectToken(LuaTokenTypes.RBRACK) { "']' expected near ${lexerText()}" }
 
@@ -1260,7 +1261,7 @@ class LuaParser {
         val localStatement = LocalStatement()
         localStatement.parent = parent
         markLocation()
-        localStatement.init.addAll(parseNameList(localStatement,true))
+        localStatement.init.addAll(parseNameList(localStatement, true))
         localStatement.init.forEach {
             it.isLocal = true
         }
