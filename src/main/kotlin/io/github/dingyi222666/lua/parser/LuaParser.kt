@@ -660,6 +660,8 @@ class LuaParser {
         val result = AssignmentStatement()
         result.parent = parent
 
+        initList.add(base)
+
         while (peek() == LuaTokenTypes.COMMA) {
             // ,
             advance()
@@ -667,8 +669,6 @@ class LuaParser {
         }
 
         expectToken(LuaTokenTypes.ASSIGN) { "'=' expected near '${lexerText()}'" }
-
-        initList.add(base)
 
         result.init.addAll(initList)
         result.variables.addAll(parseExpList(result))
@@ -871,7 +871,7 @@ class LuaParser {
                 val result = BinaryExpression().apply {
                     this.parent = parent
                     left = parent as ExpressionNode
-                    operator = findExpressionOperator(lexerText())
+                    operator = findExpressionOperator(lexerText()).require()
                 }
 
                 precedence = binaryPrecedence(currentToken)
@@ -898,7 +898,7 @@ class LuaParser {
             node = BinaryExpression().apply {
                 this.parent = parent
                 left = node
-                operator = findExpressionOperator(lexerText())
+                operator = findExpressionOperator(lexerText()).require()
             }
 
             node.right = parseSubExp(node, precedence)

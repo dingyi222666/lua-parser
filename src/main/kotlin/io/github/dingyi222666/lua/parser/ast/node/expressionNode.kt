@@ -216,7 +216,7 @@ class BinaryExpression : ExpressionNode, ASTNode() {
 
     var left /*by Delegates.notNull<*/: ExpressionNode? = null
     var right: ExpressionNode? = null
-    var operator: ExpressionOperator? = null
+    lateinit var operator: ExpressionOperator/*? = null*/
     override fun toString(): String {
         return "BinaryExpression(left=$left, right=$right, operator=$operator)"
     }
