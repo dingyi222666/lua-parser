@@ -1,18 +1,33 @@
 import com.google.gson.GsonBuilder
 import io.github.dingyi222666.lua.lexer.LuaLexer
-import io.github.dingyi222666.lua.lexer.TestLuaLexer
 import io.github.dingyi222666.lua.parser.LuaParser
 import io.github.dingyi222666.lua.parser.ast.node.Position
 import io.github.dingyi222666.lua.semantic.SemanticAnalyzer
+import io.github.dingyi222666.lua.source.AST2Lua
 import java.io.File
 
 fun main(args: Array<String>) {
 
-    val lexer = TestLuaLexer(
+    val lexer = LuaLexer(
         """
-        local s = 0xff1.2
-        s += 1
-        local 你好 = a
+        local foo = 1 do foo = 2 end
+do local foo = 1 end foo = 2
+do local foo = 1 end do foo = 2 end
+local foo do foo = 1 do foo = 2 end end
+local function foo() end foo()
+local a = { a }
+local b = { b, b.a, b[a], b:a() }
+local b = {} local a = { b, b.a, b[a], b:a() }
+local c local a = { b[c] }
+local a = function() end a()
+local a, b = 1, a
+local a, b = 1, function() b = 2 end
+local a, b for i, a, b in c do end
+local a, b, c for i, a, b in c do end
+local a = {} function a:b() return self end self = nil
+repeat local a = true until a
+local a = function (b) end b = 0
+for a = 1, 5 do end a = 0
     """.trimIndent()
     )
 
@@ -26,7 +41,7 @@ fun main(args: Array<String>) {
     val rootNode = parser.parse(source)
 
 
-    val globalScope = SemanticAnalyzer().analyze(rootNode)
+   /* val globalScope = SemanticAnalyzer().analyze(rootNode)
 
     val localScope = globalScope.resolveScope(Position(1, 1))
 
@@ -35,14 +50,15 @@ fun main(args: Array<String>) {
     println(localScope.resolveSymbol("c"))
     println(localScope.resolveSymbol("d"))
     println(localScope.resolveSymbol("e"))
-
+*/
     println(
         GsonBuilder()
-            //.setPrettyPrinting()
+            .setPrettyPrinting()
             .create()
             .toJson(rootNode)
     )
 
+    println(AST2Lua().asCode(rootNode))
 
 }
 /*

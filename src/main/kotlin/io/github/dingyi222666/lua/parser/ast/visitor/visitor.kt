@@ -10,7 +10,7 @@ import io.github.dingyi222666.lua.parser.ast.node.*
 
 interface ASTVisitor<T> {
 
-    fun visitIfStatement(node: IfStatement, value: T) {
+    fun visitIfStatement(node: IfStatement, value: T): Unit {
         node.causes.forEach {
             when (it) {
                 is ElseClause -> visitElseClause(it, value)
@@ -20,15 +20,15 @@ interface ASTVisitor<T> {
         }
     }
 
-    fun visitGotoStatement(node: GotoStatement, value: T) {
+    fun visitGotoStatement(node: GotoStatement, value: T): Unit {
         visitIdentifier(node.identifier, value)
     }
 
-    fun visitLabelStatement(node: LabelStatement, value: T) {
+    fun visitLabelStatement(node: LabelStatement, value: T): Unit {
         visitIdentifier(node.identifier, value)
     }
 
-    fun visitBreakStatement(node: BreakStatement, value: T) {
+    fun visitBreakStatement(node: BreakStatement, value: T): Unit {
 
     }
 

@@ -4,7 +4,6 @@ import io.github.dingyi222666.lua.parser.ast.node.*
 import io.github.dingyi222666.lua.parser.ast.visitor.ASTVisitor
 import io.github.dingyi222666.lua.semantic.symbol.*
 import io.github.dingyi222666.lua.semantic.typesystem.*
-import io.github.dingyi222666.lua.typesystem.*
 
 /**
  * @author: dingyi

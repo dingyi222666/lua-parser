@@ -9,7 +9,6 @@ import io.github.dingyi222666.lua.util.equalsMore
 import io.github.dingyi222666.lua.util.requireNotNull
 import java.io.InputStream
 import java.io.Reader
-import java.io.StringReader
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.math.max
 import kotlin.properties.Delegates
@@ -36,12 +35,12 @@ class LuaParser {
     }
 
     fun parse(reader: Reader): ChunkNode {
-        val lexer = LuaLexer(reader)
+        val lexer = LuaLexer(reader.readText())
         return parse(lexer)
     }
 
     fun parse(source: String): ChunkNode {
-        return parse(StringReader(source))
+        return parse(LuaLexer(source))
     }
 
     private fun parse(lexer: LuaLexer): ChunkNode {
@@ -65,7 +64,7 @@ class LuaParser {
         advance()
         val needConsume = func.invoke(currentToken)
         if (needConsume is Boolean && !needConsume) {
-            lexer.yypushback(lexer.yylength())
+            lexer.pushback(lexer.length())
         }
         return needConsume
     }
@@ -77,7 +76,7 @@ class LuaParser {
     private inline fun <T> peek(crossinline func: (LuaTokenTypes) -> T): T {
         advance()
         val result = func.invoke(currentToken)
-        lexer.yypushback(lexer.yylength())
+        lexer.pushback(lexer.length())
         cacheText = null
         return result
     }
@@ -116,7 +115,7 @@ class LuaParser {
         if (nextToken) {
             advance()
         }
-        return cacheText ?: lexer.yytext().apply {
+        return cacheText ?: lexer.text().apply {
             cacheText = this
         }
     }
@@ -134,7 +133,7 @@ class LuaParser {
             currentSize++
         }
 
-        lexer.yyback(backSize)
+        lexer.back(backSize)
 
         return result
     }
@@ -153,11 +152,11 @@ class LuaParser {
         return true
     }
 
-    private fun error(message: String): Nothing = kotlin.error("(${lexer.yyline()},${lexer.yycolumn()}): " + message)
+    private fun error(message: String): Nothing = kotlin.error("(${lexer.line()},${lexer.column()}): " + message)
 
     private fun warning(message: String) {
         if (ignoreWarningMessage) {
-            System.err.println("(${lexer.yyline()},${lexer.yycolumn()}): " + message + ". This error is ignored now.")
+            System.err.println("(${lexer.line()},${lexer.column()}): " + message + ". This error is ignored now.")
         } else error(message)
     }
 
@@ -165,16 +164,16 @@ class LuaParser {
         //Exception("6").printStackTrace()
         locations.addFirst(
             Position(
-                line = lexer.yyline(),
-                column = max(lexer.yycolumn(), 1)
+                line = lexer.line(),
+                column = max(lexer.column(), 1)
             )
         )
     }
 
     private fun <T : BaseASTNode> finishNode(node: T): T {
         val end = Position(
-            line = lexer.yyline(),
-            column = max(lexer.yycolumn() + lexer.yylength(), 1)
+            line = lexer.line(),
+            column = max(lexer.column() + lexer.length(), 1)
         )
         val start = locations.removeFirst()
         node.range = Range(start, end)
@@ -292,7 +291,7 @@ class LuaParser {
         expectToken(LuaTokenTypes.SWITCH) { "<switch> expected near ${lexerText(true)}" }
         markLocation()
         val result = SwitchStatement()
-        val currentLine = lexer.yyline()
+        val currentLine = lexer.line()
         result.parent = parent
 
         result.condition = parseExp(result)
@@ -396,7 +395,7 @@ class LuaParser {
     private fun parseIfStatement(parent: BaseASTNode): IfStatement {
         markLocation()
         val result = IfStatement()
-        val currentLine = lexer.yyline()
+        val currentLine = lexer.line()
         result.parent = parent
 
         result.causes.add(finishNode(parseIfCause(result)))
@@ -483,7 +482,7 @@ class LuaParser {
     //             for namelist in explist do block end |
     private fun parseForGenericStatement(variable: Identifier, parent: BaseASTNode): ForGenericStatement {
         val result = ForGenericStatement()
-        val currentLine = lexer.yyline()
+        val currentLine = lexer.line()
         result.parent = parent
         result.variables.add(variable)
 
@@ -512,7 +511,7 @@ class LuaParser {
     //  for Name ‘=’ exp ‘,’ exp [‘,’ exp] do block end |
     private fun parseForNumericStatement(variable: Identifier, parent: BaseASTNode): ForNumericStatement {
         val result = ForNumericStatement()
-        val currentLine = lexer.yyline()
+        val currentLine = lexer.line()
         result.variable = variable
         result.parent = parent
 
@@ -591,7 +590,7 @@ class LuaParser {
 
         result.identifier = nameExp
 
-        return parseFunctionBody(result, parent, lexer.yyline())
+        return parseFunctionBody(result, parent, lexer.line())
     }
 
     //		 repeat block until exp |
@@ -613,7 +612,7 @@ class LuaParser {
     private fun parseWhileStatement(parent: BaseASTNode): WhileStatement {
         markLocation()
         val result = WhileStatement()
-        val currentLine = lexer.yyline()
+        val currentLine = lexer.line()
         result.parent = parent
         result.condition = parseExp(result)
 
@@ -680,7 +679,7 @@ class LuaParser {
     private fun parseDoStatement(parent: BaseASTNode): DoStatement {
         markLocation()
         val result = DoStatement()
-        val currentLine = lexer.yyline()
+        val currentLine = lexer.line()
 
         result.body = parseBlockNode(result)
         result.parent = parent
@@ -720,7 +719,7 @@ class LuaParser {
     private fun parseLocalFunctionDeclaration(parent: BaseASTNode): FunctionDeclaration {
         markLocation()
         val result = FunctionDeclaration()
-        val currentLine = lexer.yyline()
+        val currentLine = lexer.line()
         result.parent = parent
         result.isLocal = true
 
@@ -808,7 +807,7 @@ class LuaParser {
     //          functiondef ::= function funcbody
     private fun parseFunctionExp(parent: BaseASTNode): FunctionDeclaration {
         val result = FunctionDeclaration()
-        return parseFunctionBody(result, parent, lexer.yyline())
+        return parseFunctionBody(result, parent, lexer.line())
     }
 
     //
@@ -973,7 +972,7 @@ class LuaParser {
     //  tableconstructor ::= ‘{’ [fieldlist] ‘}’
     private fun parseTableConstructorExpression(parent: BaseASTNode): TableConstructorExpression {
         val result = TableConstructorExpression()
-        val currentLine = lexer.yyline()
+        val currentLine = lexer.line()
         result.parent = parent
         expectToken(LuaTokenTypes.LCURLY) { "'{' expected near ${lexerText()}" }
         //markLocation()

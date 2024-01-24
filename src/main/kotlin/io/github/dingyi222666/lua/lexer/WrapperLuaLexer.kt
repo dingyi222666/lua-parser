@@ -12,22 +12,21 @@ class WrapperLuaLexer(
     private val lastStates = ArrayDeque<LexerState>()
     private val currentStates = ArrayDeque<LexerState>(5)
     private var currentState = LexerState(
-
-        yycolumn = currentLexer.yycolumn(),
-        yylength = currentLexer.yylength(),
-        yyline = currentLexer.yyline(),
-        yytext = currentLexer.yytext(),
+        column = currentLexer.tokenColumn,
+        length = currentLexer.tokenLength,
+        line = currentLexer.tokenLine,
+        text = currentLexer.tokenText.toString(),
         type = LuaTokenTypes.WHITE_SPACE
     )
 
-    fun yytext() = currentState.yytext
+    fun text() = currentState.text
 
-    fun yylength() = currentState.yylength
+    fun length() = currentState.length
 
 
-    fun yyline() = currentState.yyline + 1
+    fun line() = currentState.line + 1
 
-    fun yycolumn() = currentState.yycolumn + 1
+    fun column() = currentState.column + 1
 
     fun advance(): LuaTokenTypes {
         if (currentStates.isNotEmpty()) {
@@ -41,12 +40,12 @@ class WrapperLuaLexer(
         return currentState.type
     }
 
-    fun yypushback(size: Int) {
+    fun pushback(size: Int) {
         if (currentStates.isNotEmpty()) {
             currentStates.addFirst(currentState)
             return
         }
-        currentLexer.yypushback(size)
+        currentLexer.pushBack(size)
         doAdvance()
 
         if (currentStates.isEmpty()) {
@@ -55,7 +54,7 @@ class WrapperLuaLexer(
     }
 
 
-    fun yyback(tokenSize: Int) {
+    fun back(tokenSize: Int) {
         for (i in 0 until tokenSize) {
             val state = lastStates.removeFirst()
             currentStates.addFirst(state)
@@ -64,17 +63,14 @@ class WrapperLuaLexer(
 
 
     private fun doAdvance() {
-        var type = currentLexer.advance()
+        val type = currentLexer.nextToken()
 
-        if (type == null) {
-            type = LuaTokenTypes.EOF
-        }
 
         val newState = LexerState(
-            yycolumn = currentLexer.yycolumn(),
-            yylength = currentLexer.yylength(),
-            yyline = currentLexer.yyline(),
-            yytext = currentLexer.yytext(),
+            column = currentLexer.tokenColumn,
+            length = currentLexer.tokenLength,
+            line = currentLexer.tokenLine,
+            text = currentLexer.tokenText.toString(),
             type = type
         )
         currentState = newState
@@ -82,7 +78,7 @@ class WrapperLuaLexer(
 
 
     fun close() {
-        currentLexer.yyclose()
+        //currentLexer.yyclose()
         lastStates.clear()
         currentStates.clear()
     }
@@ -95,10 +91,9 @@ class WrapperLuaLexer(
 }
 
 internal data class LexerState(
-
-    val yytext: String,
-    val yyline: Int,
-    val yycolumn: Int,
+    val text: String,
+    val line: Int,
+    val column: Int,
     val type: LuaTokenTypes,
-    val yylength: Int
+    val length: Int
 )

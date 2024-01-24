@@ -12,15 +12,18 @@ class AST2Lua : ASTVisitor<StringBuilder> {
 
     private var currentDepth = -1
 
+    var indentSize = 4
+
+
     private fun indent(): String {
-        return "    ".repeat(currentDepth)
+        return " ".repeat(indentSize).repeat(currentDepth)
     }
 
     private fun indent(sb: StringBuilder) {
         sb.append(indent())
     }
 
-    fun toLua(node: ChunkNode): String {
+    fun asCode(node: ChunkNode): String {
         val builder = StringBuilder()
         visitChunkNode(node, builder)
         return builder.toString()
@@ -28,11 +31,16 @@ class AST2Lua : ASTVisitor<StringBuilder> {
 
     override fun visitBlockNode(node: BlockNode, value: StringBuilder) {
         currentDepth++
+        indent(value)
         super.visitBlockNode(node, value)
         currentDepth--
+        if (currentDepth >= 0)
+            indent(value)
     }
 
+
     override fun visitAssignmentStatement(node: AssignmentStatement, value: StringBuilder) {
+        value.appendLine()
         indent(value)
         node.init.forEachIndexed { index, baseASTNode ->
             if (index != 0) {
@@ -47,7 +55,7 @@ class AST2Lua : ASTVisitor<StringBuilder> {
             }
             visitExpressionNode(baseASTNode, value)
         }
-        value.appendLine()
+
     }
 
     override fun visitConstantNode(node: ConstantNode, value: StringBuilder) {
@@ -90,10 +98,10 @@ class AST2Lua : ASTVisitor<StringBuilder> {
         }
         value.append(")")
         value.appendLine()
+        indent(value)
         node.body?.let { visitBlockNode(it, value) }
         indent(value)
         value.append("end")
-        value.appendLine()
     }
 
     override fun visitArrayConstructorExpression(node: ArrayConstructorExpression, value: StringBuilder) {
@@ -140,6 +148,7 @@ class AST2Lua : ASTVisitor<StringBuilder> {
         indent(value)
         value.append("default")
         visitBlockNode(node.body, value)
+        indent(value)
     }
 
     override fun visitDoStatement(node: DoStatement, value: StringBuilder) {
@@ -154,6 +163,7 @@ class AST2Lua : ASTVisitor<StringBuilder> {
         indent(value)
         value.append("else")
         visitBlockNode(node.body, value)
+        indent(value)
     }
 
     override fun visitElseIfClause(node: ElseIfClause, value: StringBuilder) {
@@ -162,6 +172,7 @@ class AST2Lua : ASTVisitor<StringBuilder> {
         visitExpressionNode(node.condition, value)
         value.append(" then")
         visitBlockNode(node.body, value)
+        indent(value)
     }
 
     override fun visitForGenericStatement(node: ForGenericStatement, value: StringBuilder) {
@@ -202,6 +213,7 @@ class AST2Lua : ASTVisitor<StringBuilder> {
         value.append("if ")
         visitExpressionNode(node.condition, value)
         value.append(" then")
+        indent(value)
         visitBlockNode(node.body, value)
     }
 
@@ -242,10 +254,10 @@ class AST2Lua : ASTVisitor<StringBuilder> {
             value.append(", ")
             visitExpressionNode(it, value)
         }
-        value.append(" do")
+        value.append(" do ")
         visitBlockNode(node.body, value)
         indent(value)
-        value.append("end")
+        value.appendLine("end")
     }
 
 
@@ -334,7 +346,7 @@ class AST2Lua : ASTVisitor<StringBuilder> {
         value.append(" do")
         visitBlockNode(node.body, value)
         indent(value)
-        value.append("end")
+        value.appendLine("end")
     }
 
     override fun visitLocalStatement(node: LocalStatement, value: StringBuilder) {

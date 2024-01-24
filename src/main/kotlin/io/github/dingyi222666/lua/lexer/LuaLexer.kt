@@ -3,16 +3,16 @@ package io.github.dingyi222666.lua.lexer
 import io.github.dingyi222666.lua.util.TrieTree
 
 
-class TestLuaLexer(
+class LuaLexer(
     private val source: CharSequence
-) : Iterator<Pair<LuaTokenTypesTest, String>> {
+) : Iterator<Pair<LuaTokenTypes, String>> {
 
 
     private val bufferLen = source.length;
 
     private var offset = 0
 
-    var tokenType: LuaTokenTypesTest = LuaTokenTypesTest.WHITE_SPACE
+    var tokenType: LuaTokenTypes = LuaTokenTypes.WHITE_SPACE
         private set
 
     var tokenLine = 0
@@ -30,11 +30,11 @@ class TestLuaLexer(
             return source.subSequence(index, index + tokenLength)
         }
 
-    fun nextToken(): LuaTokenTypesTest {
+    fun nextToken(): LuaTokenTypes {
         return nextTokenInternal().also { tokenType = it }
     }
 
-    private fun nextTokenInternal(): LuaTokenTypesTest {
+    private fun nextTokenInternal(): LuaTokenTypes {
         run {
             var r = false
             for (i in offset until offset + tokenLength) {
@@ -57,118 +57,243 @@ class TestLuaLexer(
             }
         }
 
+
+
+
         index += tokenLength
         offset += tokenLength
 
         if (offset >= bufferLen) {
-            return LuaTokenTypesTest.EOF
+            tokenLength = 0
+            return LuaTokenTypes.EOF
         }
+
         val ch = source[offset]
         tokenLength = 1
 
-        //
-        if (ch == '\n') {
-            return LuaTokenTypesTest.NEW_LINE
-        } else if (ch == '\r') {
-            scanNewline()
-            return LuaTokenTypesTest.NEW_LINE
-        } else if (ch == ';') {
-            // semicolon
-            return LuaTokenTypesTest.SEMI
-        } else if (ch == '(') {
-            // left paren
-            return LuaTokenTypesTest.LPAREN
-        } else if (ch == ')') {
-            // right paren
-            return LuaTokenTypesTest.RPAREN
-        } else if (ch == '[') {
-            // left bracket
-            return LuaTokenTypesTest.LBRACK
-        } else if (ch == ']') {
-            // right bracket
-            return LuaTokenTypesTest.RBRACK
-        } else if (ch == '{') {
-            // left brace
-            return LuaTokenTypesTest.LCURLY
-        } else if (ch == '}') {
-            // right brace
-            return LuaTokenTypesTest.RCURLY
-        } else if (ch == ',') {
-            // comma
-            return LuaTokenTypesTest.COMMA
-        } else if (ch == '!') {
-            // not
-            // androlua+ grammar
-            return LuaTokenTypesTest.NOT
-        } else if (ch == '+') {
-            return scanTwoOperator(LuaTokenTypesTest.PLUS, LuaTokenTypesTest.ADD_ASSIGN, '=')
-        } else if (ch == '-') {
-            return scanTwoOperator(LuaTokenTypesTest.MINUS, LuaTokenTypesTest.SUB_ASSIGN, '=')
-        } else if (ch == '*') {
-            return scanTwoOperator(LuaTokenTypesTest.MULT, LuaTokenTypesTest.MUL_ASSIGN, '=')
-        } else if (ch == '/') {
-            return scanDIV()
-        } else if (ch == '=') {
-            return scanTwoOperator(LuaTokenTypesTest.ASSIGN, LuaTokenTypesTest.EQ, '=')
-        } else if (isWhitespace(ch)) {
-            var chLocal = '\t'
-            while (offset + tokenLength < bufferLen && isWhitespace(charAt(offset + tokenLength).also {
-                    chLocal = it
-                })) {
-                if (chLocal == '\r' || chLocal == '\n') {
-                    break
-                }
-                tokenLength++
-            }
-            return LuaTokenTypesTest.WHITE_SPACE
 
-        } else if (isIdentifierStart(ch)) {
-            // identifier or keyword
-            return scanIdentifier(ch)
-        } else if (isPrimeDigit(ch)) {
-            // number
-            return scanNumber(ch)
+        return when {
+            isWhitespace(ch) -> {
+                var chLocal = '\t'
+                while (offset + tokenLength < bufferLen && isWhitespace(charAt(offset + tokenLength).also {
+                        chLocal = it
+                    })) {
+                    if (chLocal == '\r' || chLocal == '\n') {
+                        break
+                    }
+                    tokenLength++
+                }
+                LuaTokenTypes.WHITE_SPACE
+            }
+
+            isIdentifierStart(ch) -> scanIdentifier(ch)
+            isPrimeDigit(ch) -> scanNumber(ch)
+            ch == '\n' -> LuaTokenTypes.NEW_LINE
+            ch == '\r' -> {
+                scanNewline()
+                LuaTokenTypes.NEW_LINE
+            }
+
+            ch == ';' -> LuaTokenTypes.SEMI
+            ch == '(' -> LuaTokenTypes.LPAREN
+            ch == ')' -> LuaTokenTypes.RPAREN
+            ch == '[' -> {
+                val next = charAt()
+
+                if (next != '=' && next != '[') {
+                    return LuaTokenTypes.LBRACK
+                }
+
+
+                return scanLongString()
+
+            }
+
+            ch == ']' -> LuaTokenTypes.RBRACK
+            ch == '{' -> LuaTokenTypes.LCURLY
+            ch == '}' -> LuaTokenTypes.RCURLY
+            ch == ',' -> LuaTokenTypes.COMMA
+            ch == '!' -> LuaTokenTypes.NOT
+            ch == '+' -> scanTwoOperator(LuaTokenTypes.PLUS, LuaTokenTypes.ADD_ASSIGN, '=')
+            ch == '*' -> scanTwoOperator(LuaTokenTypes.MULT, LuaTokenTypes.MUL_ASSIGN, '=')
+            ch == '/' -> scanDIV()
+            ch == '=' -> scanTwoOperator(LuaTokenTypes.ASSIGN, LuaTokenTypes.EQ, '=')
+            ch == '^' -> LuaTokenTypes.EXP
+            ch == '%' -> LuaTokenTypes.MOD
+            ch == '~' -> LuaTokenTypes.BIT_TILDE
+            ch == '&' -> LuaTokenTypes.BIT_AND
+            ch == '|' -> LuaTokenTypes.BIT_OR
+            ch == '>' -> scanTwoOperator(LuaTokenTypes.GT, LuaTokenTypes.GE, '=')
+            ch == '<' -> scanTwoOperator(LuaTokenTypes.LT, LuaTokenTypes.LE, '=')
+            ch == '.' -> when {
+                isPrimeDigit(charAt()) -> {
+                    scanPrimeDigit()
+                    LuaTokenTypes.NUMBER
+                }
+
+                else -> LuaTokenTypes.DOT
+            }
+
+            ch == '"' || ch == '\'' -> scanString(ch)
+            ch == '#' -> LuaTokenTypes.GETN
+            ch == ':' -> scanTwoOperator(LuaTokenTypes.COLON, LuaTokenTypes.DOUBLE_COLON, ':')
+            ch == '-' -> when (charAt()) {
+                '-' -> {
+                    tokenLength++
+                    scanComment()
+                }
+
+                '=' -> {
+                    tokenLength++
+                    LuaTokenTypes.SUB_ASSIGN
+                }
+
+                else -> LuaTokenTypes.MINUS
+            }
+
+            else -> LuaTokenTypes.BAD_CHARACTER
         }
 
-        return LuaTokenTypesTest.BAD_CHARACTER
     }
 
-    private fun scanIdentifier(char: Char): LuaTokenTypesTest {
+    private fun scanIdentifier(char: Char): LuaTokenTypes {
         var ch = char
-        var n: TrieTree.Node<LuaTokenTypesTest>? = keywords.root.map.get(ch)
+        var n: TrieTree.Node<LuaTokenTypes>? = keywords.root.map.get(ch)
         while (offset + tokenLength < bufferLen && isIdentifierPart(charAt(offset + tokenLength).also { ch = it })) {
             tokenLength++
             n = n?.map?.get(ch)
         }
-        return n?.token ?: LuaTokenTypesTest.NAME
+        return n?.token ?: LuaTokenTypes.NAME
     }
 
 
-    private fun scanDIV(): LuaTokenTypesTest {
+    private fun scanString(start: Char): LuaTokenTypes {
+        var finish = false
+
+        while (offset + tokenLength < bufferLen) {
+            val ch = charAt()
+
+            when (ch) {
+                start -> {
+                    finish = true
+                    break
+                }
+                // escape
+                '\\' -> {
+                    val next = charAt(offset + tokenLength + 1)
+
+                    when (next) {
+                        'a', 'b', 'f', 'n', 'r', 't', 'v', '\'', '"', '\\', '\n', '\r' -> {
+                            tokenLength++
+                        }
+
+                        'z' -> {
+                            tokenLength += 2
+                        }
+
+                        'x' -> {
+                            tokenLength += 3
+                        }
+                    }
+                }
+
+                '\n', '\r' -> throw IllegalStateException("Unfinished string at <$tokenLine, ${tokenColumn}>")
+
+            }
+
+            tokenLength++
+        }
+
+        if (!finish) {
+            throw IllegalStateException("Unfinished string at <$tokenLine, ${tokenColumn}>")
+        }
+
+        return LuaTokenTypes.STRING
+    }
+
+
+    private fun scanComment(): LuaTokenTypes {
+        if (tokenLength + offset == bufferLen) {
+            // The operator is the last token in the buffer
+            return LuaTokenTypes.SHORT_COMMENT
+        }
+
+        // check next is '['
+
+        var isDocComment = false
+        val next = charAt()
+
+        when (next) {
+            '[' -> {
+                scanLongString()
+                return LuaTokenTypes.BLOCK_COMMENT
+            }
+
+            '-' -> {
+                isDocComment = true
+                tokenLength++
+            }
+        }
+
+
+
+        while (offset + tokenLength < bufferLen && charAt() != '\n') {
+            tokenLength++
+        }
+
+        return if (isDocComment) LuaTokenTypes.DOC_COMMENT else LuaTokenTypes.SHORT_COMMENT
+    }
+
+    private fun scanLongString(): LuaTokenTypes {
+        tokenLength++
+        val skipCount = scanLongStringSkipComment()
+
+        while (offset + tokenLength < bufferLen && charAt() != ']') {
+            tokenLength++
+        }
+
+        tokenLength++
+
+        if (scanLongStringSkipComment() != skipCount) {
+            throw IllegalStateException("Unfinished long string at <$tokenLine, ${tokenColumn}>")
+        }
+
+        return LuaTokenTypes.LONG_STRING
+    }
+
+    private fun scanLongStringSkipComment(): Int {
+        var count = 0
+
+        while (offset + tokenLength < bufferLen && charAt() == '=') {
+            tokenLength++
+            count++
+        }
+
+        return count
+    }
+
+    private fun scanDIV(): LuaTokenTypes {
         val next = charAt()
 
         return when (next) {
             '=' -> {
                 tokenLength++
-                LuaTokenTypesTest.DIV_ASSIGN
+                LuaTokenTypes.DIV_ASSIGN
             }
 
             '/' -> {
                 tokenLength++
-                scanTwoOperator(LuaTokenTypesTest.DOUBLE_DIV, LuaTokenTypesTest.DOUBLE_DIV_ASSIGN, '=')
+                scanTwoOperator(LuaTokenTypes.DOUBLE_DIV, LuaTokenTypes.DOUBLE_DIV_ASSIGN, '=')
             }
 
-            else ->
-                LuaTokenTypesTest.DIV
+            else -> LuaTokenTypes.DIV
 
         }
     }
 
     private fun scanTwoOperator(
-        first: LuaTokenTypesTest,
-        second: LuaTokenTypesTest,
-        operator: Char
-    ): LuaTokenTypesTest {
+        first: LuaTokenTypes, second: LuaTokenTypes, operator: Char
+    ): LuaTokenTypes {
         if (tokenLength + offset == bufferLen) {
             // The operator is the last token in the buffer
             return first
@@ -183,46 +308,51 @@ class TestLuaLexer(
     }
 
     @Suppress("SameReturnValue")
-    private fun scanNumber(char: Char): LuaTokenTypesTest {
+    private fun scanNumber(char: Char): LuaTokenTypes {
         if (tokenLength + offset == bufferLen) {
             // The number is the last token in the buffer
-            return LuaTokenTypesTest.NUMBER
+            return LuaTokenTypes.NUMBER
         }
 
         // check hex number
 
         var ch = char
 
-        if (ch == '0') {
-            if (charAt() == 'x') {
-                tokenLength++
-            }
+        if (ch == '0' && charAt() == 'x') {
+            tokenLength++
+
         }
 
         scanDigit()
 
         if (offset + tokenLength == bufferLen) {
             // if the number is the last token, return it
-            return LuaTokenTypesTest.NUMBER
+            return LuaTokenTypes.NUMBER
         }
 
         ch = charAt()
 
         if (ch != '.') {
             // not a decimal point
-            return LuaTokenTypesTest.NUMBER
+            return LuaTokenTypes.NUMBER
         }
 
         throwIfNeeded()
 
         scanDigit()
 
-        return LuaTokenTypesTest.NUMBER
+        return LuaTokenTypes.NUMBER
     }
 
     private fun scanDigit() {
         while (offset + tokenLength < bufferLen && isDigit(charAt())) {
             tokenLength++;
+        }
+    }
+
+    private fun scanPrimeDigit() {
+        while (offset + tokenLength < bufferLen && isPrimeDigit(charAt(offset + tokenLength))) {
+            tokenLength++
         }
     }
 
@@ -253,36 +383,36 @@ class TestLuaLexer(
     }
 
     companion object {
-        val keywords = TrieTree<LuaTokenTypesTest>()
+        val keywords = TrieTree<LuaTokenTypes>()
 
         init {
-            keywords.put("and", LuaTokenTypesTest.AND)
-            keywords.put("or", LuaTokenTypesTest.OR)
-            keywords.put("default", LuaTokenTypesTest.DEFAULT)
-            keywords.put("switch", LuaTokenTypesTest.SWITCH)
-            keywords.put("if", LuaTokenTypesTest.IF)
-            keywords.put("break", LuaTokenTypesTest.BREAK)
-            keywords.put("else", LuaTokenTypesTest.ELSE)
-            keywords.put("while", LuaTokenTypesTest.WHILE)
-            keywords.put("do", LuaTokenTypesTest.DO)
-            keywords.put("return", LuaTokenTypesTest.RETURN)
-            keywords.put("for", LuaTokenTypesTest.FOR)
-            keywords.put("function", LuaTokenTypesTest.FUNCTION)
-            keywords.put("local", LuaTokenTypesTest.LOCAL)
-            keywords.put("true", LuaTokenTypesTest.TRUE)
-            keywords.put("false", LuaTokenTypesTest.FALSE)
-            keywords.put("nil", LuaTokenTypesTest.NIL)
-            keywords.put("continue", LuaTokenTypesTest.CONTINUE)
-            keywords.put("not", LuaTokenTypesTest.NOT)
-            keywords.put("in", LuaTokenTypesTest.IN)
-            keywords.put("then", LuaTokenTypesTest.THEN)
-            keywords.put("end", LuaTokenTypesTest.END)
-            keywords.put("repeat", LuaTokenTypesTest.REPEAT)
-            keywords.put("elseif", LuaTokenTypesTest.ELSEIF)
-            keywords.put("until", LuaTokenTypesTest.UNTIL)
-            keywords.put("goto", LuaTokenTypesTest.GOTO)
-            keywords.put("case", LuaTokenTypesTest.CASE)
-            keywords.put("when", LuaTokenTypesTest.WHEN)
+            keywords.put("and", LuaTokenTypes.AND)
+            keywords.put("or", LuaTokenTypes.OR)
+            keywords.put("default", LuaTokenTypes.DEFAULT)
+            keywords.put("switch", LuaTokenTypes.SWITCH)
+            keywords.put("if", LuaTokenTypes.IF)
+            keywords.put("break", LuaTokenTypes.BREAK)
+            keywords.put("else", LuaTokenTypes.ELSE)
+            keywords.put("while", LuaTokenTypes.WHILE)
+            keywords.put("do", LuaTokenTypes.DO)
+            keywords.put("return", LuaTokenTypes.RETURN)
+            keywords.put("for", LuaTokenTypes.FOR)
+            keywords.put("function", LuaTokenTypes.FUNCTION)
+            keywords.put("local", LuaTokenTypes.LOCAL)
+            keywords.put("true", LuaTokenTypes.TRUE)
+            keywords.put("false", LuaTokenTypes.FALSE)
+            keywords.put("nil", LuaTokenTypes.NIL)
+            keywords.put("continue", LuaTokenTypes.CONTINUE)
+            keywords.put("not", LuaTokenTypes.NOT)
+            keywords.put("in", LuaTokenTypes.IN)
+            keywords.put("then", LuaTokenTypes.THEN)
+            keywords.put("end", LuaTokenTypes.END)
+            keywords.put("repeat", LuaTokenTypes.REPEAT)
+            keywords.put("elseif", LuaTokenTypes.ELSEIF)
+            keywords.put("until", LuaTokenTypes.UNTIL)
+            keywords.put("goto", LuaTokenTypes.GOTO)
+            keywords.put("case", LuaTokenTypes.CASE)
+            keywords.put("when", LuaTokenTypes.WHEN)
         }
 
         private fun isDigit(c: Char): Boolean {
@@ -300,8 +430,7 @@ class TestLuaLexer(
 
         private fun isIdentifierStart(c: Char): Boolean {
 
-            return (c in 'a'..'z') || (c in 'A'..'Z') || (c == '_') ||
-                    (c == '$') || (c >= '\u0080')
+            return (c in 'a'..'z') || (c in 'A'..'Z') || (c == '_') || (c == '$') || (c >= '\u0080')
         }
 
         private fun isIdentifierPart(c: Char): Boolean {
@@ -314,7 +443,7 @@ class TestLuaLexer(
         return offset + tokenLength < bufferLen
     }
 
-    override fun next(): Pair<LuaTokenTypesTest, String> {
+    override fun next(): Pair<LuaTokenTypes, String> {
         val currentToken = nextToken()
 
         return Pair(currentToken, tokenText.toString())
@@ -323,96 +452,19 @@ class TestLuaLexer(
 }
 
 
-enum class LuaTokenTypesTest {
-    SHEBANG_CONTENT,
-    NEW_LINE,
-    WHITE_SPACE,
-    BAD_CHARACTER,
+enum class LuaTokenTypes {
+    SHEBANG_CONTENT, NEW_LINE, WHITE_SPACE, BAD_CHARACTER,
 
-    ADD_ASSIGN,
-    SUB_ASSIGN,
-    MUL_ASSIGN,
-    DIV_ASSIGN,
-    AND_ASSIGN,
-    OR_ASSIGN,
-    XOR_ASSIGN,
-    MOD_ASSIGN,
-    LSHIFT_ASSIGN,
-    RSHIFT_ASSIGN,
-    URSHIFT_ASSIGN,
+    ADD_ASSIGN, SUB_ASSIGN, MUL_ASSIGN, DIV_ASSIGN,
+
+    /* AND_ASSIGN,
+     OR_ASSIGN,
+     XOR_ASSIGN,
+     MOD_ASSIGN,
+     LSHIFT_ASSIGN,
+     RSHIFT_ASSIGN,
+     URSHIFT_ASSIGN,*/
     DOUBLE_DIV_ASSIGN,
 
-    NAME,
-    NUMBER,
-    PLUS,
-    DOT,
-    MINUS,
-    LBRACK,
-    ASSIGN,
-    RBRACK,
-    GETN,
-    NOT,
-    GT,
-    LT,
-    BIT_TILDE,
-    MULT,
-    MOD,
-    DIV,
-    LPAREN,
-    RPAREN,
-    LCURLY,
-    RCURLY,
-    COMMA,
-    SEMI,
-    COLON,
-    EXP,
-    BIT_AND,
-    BIT_OR,
-    STRING,
-    LONG_STRING,
-    CONCAT,
-    IN,
-    IF,
-    OR,
-    DO,
-    EQ,
-    SHEBANG,
-    NE,
-    GE,
-    BIT_RTRT,
-    LE,
-    BIT_LTLT,
-    DOUBLE_DIV,
-    DOUBLE_COLON,
-    AND,
-    SHORT_COMMENT,
-    ELLIPSIS,
-    END,
-    NIL,
-    LEF,
-    MEAN,
-    FOR,
-    DOC_COMMENT,
-    ELSE,
-    GOTO,
-    CASE,
-    TRUE,
-    THEN,
-    BLOCK_COMMENT,
-    BREAK,
-    LOCAL,
-    FALSE,
-    UNTIL,
-    WHILE,
-    RETURN,
-    REPEAT,
-    ELSEIF,
-    CONTINUE,
-    SWITCH,
-    DEFAULT,
-    FUNCTION,
-    LABEL,
-    WHEN,
-    LAMBDA,
-    EOF
+    NAME, NUMBER, PLUS, DOT, MINUS, LBRACK, ASSIGN, RBRACK, GETN, NOT, GT, LT, BIT_TILDE, MULT, MOD, DIV, LPAREN, RPAREN, LCURLY, RCURLY, COMMA, SEMI, COLON, EXP, BIT_AND, BIT_OR, STRING, LONG_STRING, CONCAT, IN, IF, OR, DO, EQ, SHEBANG, NE, GE, BIT_RTRT, LE, BIT_LTLT, DOUBLE_DIV, DOUBLE_COLON, AND, SHORT_COMMENT, ELLIPSIS, END, NIL, LEF, MEAN, FOR, DOC_COMMENT, ELSE, GOTO, CASE, TRUE, THEN, BLOCK_COMMENT, BREAK, LOCAL, FALSE, UNTIL, WHILE, RETURN, REPEAT, ELSEIF, CONTINUE, SWITCH, DEFAULT, FUNCTION, LABEL, WHEN, LAMBDA, EOF
 }
