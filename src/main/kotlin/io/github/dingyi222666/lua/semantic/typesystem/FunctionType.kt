@@ -1,4 +1,4 @@
-package io.github.dingyi222666.lua.typesystem
+package io.github.dingyi222666.lua.semantic.typesystem
 
 /**
  * @author: dingyi
@@ -24,7 +24,7 @@ class FunctionType(
 
     private fun wrapReturnTypesToString(): String {
         return if (returnTypes.size == 0) {
-            "void?"
+            "void"
         } else if (returnTypes.size == 1) {
             returnTypes[0].getTypeName()
         } else {

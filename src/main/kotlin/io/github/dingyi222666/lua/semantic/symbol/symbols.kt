@@ -1,10 +1,10 @@
 package io.github.dingyi222666.lua.semantic.symbol
 
 import io.github.dingyi222666.lua.parser.ast.node.*
-import io.github.dingyi222666.lua.typesystem.FunctionType
-import io.github.dingyi222666.lua.typesystem.ParameterType
-import io.github.dingyi222666.lua.typesystem.Type
-import io.github.dingyi222666.lua.typesystem.UnknownLikeTableType
+import io.github.dingyi222666.lua.semantic.typesystem.FunctionType
+import io.github.dingyi222666.lua.semantic.typesystem.ParameterType
+import io.github.dingyi222666.lua.semantic.typesystem.Type
+import io.github.dingyi222666.lua.semantic.typesystem.UnknownLikeTableType
 
 /**
  * @author: dingyi

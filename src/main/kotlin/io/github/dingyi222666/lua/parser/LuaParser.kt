@@ -6,7 +6,7 @@ import io.github.dingyi222666.lua.lexer.WrapperLuaLexer
 import io.github.dingyi222666.lua.parser.ast.node.*
 import io.github.dingyi222666.lua.semantic.symbol.Scope
 import io.github.dingyi222666.lua.util.equalsMore
-import io.github.dingyi222666.lua.util.require
+import io.github.dingyi222666.lua.util.requireNotNull
 import java.io.InputStream
 import java.io.Reader
 import java.io.StringReader
@@ -126,7 +126,7 @@ class LuaParser {
         var currentSize = 0
         var backSize = 0
         while (currentSize < size) {
-            result = lexer.advance().require()
+            result = lexer.advance().requireNotNull()
             backSize++
             if (ignoreToken(result)) {
                 continue
@@ -775,7 +775,7 @@ class LuaParser {
     //
     //
     private fun parseExp(parent: BaseASTNode): ExpressionNode {
-        return parseSubExp(parent, 0).require()
+        return parseSubExp(parent, 0).requireNotNull()
     }
 
     private fun binaryPrecedence(tokenTypes: LuaTokenTypes): Int {
@@ -872,7 +872,7 @@ class LuaParser {
                 val result = BinaryExpression().apply {
                     this.parent = parent
                     left = parent as ExpressionNode
-                    operator = findExpressionOperator(lexerText()).require()
+                    operator = findExpressionOperator(lexerText()).requireNotNull()
                 }
 
                 precedence = binaryPrecedence(currentToken)
@@ -884,7 +884,7 @@ class LuaParser {
 
         }
 
-        node = finishNode(node.require())
+        node = finishNode(node.requireNotNull())
 
         precedence = binaryPrecedence(peek())
 
@@ -899,7 +899,7 @@ class LuaParser {
             node = BinaryExpression().apply {
                 this.parent = parent
                 left = node
-                operator = findExpressionOperator(lexerText()).require()
+                operator = findExpressionOperator(lexerText()).requireNotNull()
             }
 
             node.right = parseSubExp(node, precedence)
@@ -911,7 +911,7 @@ class LuaParser {
             error("unexpected symbol ${lexerText()} near ${lastToken.name.lowercase()}")
         }
 
-        return node.require()
+        return node.requireNotNull()
     }
 
     //   arrayconstructor ::= '[' [explist] ']'
@@ -993,7 +993,7 @@ class LuaParser {
         val result = mutableListOf<TableKey>()
 
         val index = AtomicInteger(1)
-        result.add(finishNode(parseField(parent, index).require()))
+        result.add(finishNode(parseField(parent, index).requireNotNull()))
 
         while (true) {
             // , :
@@ -1229,7 +1229,7 @@ class LuaParser {
         advance()
         val result = UnaryExpression()
         result.parent = parent
-        result.operator = findExpressionOperator(lexerText()).require()
+        result.operator = findExpressionOperator(lexerText()).requireNotNull()
         result.arg = parseSubExp(result, 11);
         return result
     }

@@ -6,8 +6,8 @@ package io.github.dingyi222666.lua.util
  * @description:
  **/
 
-inline fun <T> T?.require(): T {
-    return this!!
+fun <T> T?.requireNotNull(): T {
+    return requireNotNull(this)
 }
 
 fun <T> equalsMore(origin: T, vararg arg: T): Boolean {

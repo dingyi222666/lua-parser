@@ -2,8 +2,7 @@ package io.github.dingyi222666.lua.semantic.symbol
 
 import io.github.dingyi222666.lua.parser.ast.node.Position
 import io.github.dingyi222666.lua.parser.ast.node.Range
-import io.github.dingyi222666.lua.typesystem.Type
-import io.github.dingyi222666.lua.util.require
+import io.github.dingyi222666.lua.semantic.typesystem.Type
 
 /**
  * @author: dingyi

@@ -1,7 +1,5 @@
 package io.github.dingyi222666.lua.lexer
 
-import io.github.dingyi222666.lua.util.require
-
 /**
  * @author: dingyi
  * @date: 2023/2/3
@@ -14,7 +12,7 @@ class WrapperLuaLexer(
     private val lastStates = ArrayDeque<LexerState>()
     private val currentStates = ArrayDeque<LexerState>(5)
     private var currentState = LexerState(
-        yychar = currentLexer.yychar(),
+
         yycolumn = currentLexer.yycolumn(),
         yylength = currentLexer.yylength(),
         yyline = currentLexer.yyline(),
@@ -23,10 +21,10 @@ class WrapperLuaLexer(
     )
 
     fun yytext() = currentState.yytext
-    fun yychar() = currentState.yychar
+
     fun yylength() = currentState.yylength
 
-    //粗暴加1，无所谓，需要的时候自己记得换算
+
     fun yyline() = currentState.yyline + 1
 
     fun yycolumn() = currentState.yycolumn + 1
@@ -44,7 +42,6 @@ class WrapperLuaLexer(
     }
 
     fun yypushback(size: Int) {
-
         if (currentStates.isNotEmpty()) {
             currentStates.addFirst(currentState)
             return
@@ -56,7 +53,6 @@ class WrapperLuaLexer(
             currentStates.addFirst(currentState)
         }
     }
-
 
 
     fun yyback(tokenSize: Int) {
@@ -75,7 +71,6 @@ class WrapperLuaLexer(
         }
 
         val newState = LexerState(
-            yychar = currentLexer.yychar(),
             yycolumn = currentLexer.yycolumn(),
             yylength = currentLexer.yylength(),
             yyline = currentLexer.yyline(),
@@ -100,7 +95,7 @@ class WrapperLuaLexer(
 }
 
 internal data class LexerState(
-    val yychar: Int,
+
     val yytext: String,
     val yyline: Int,
     val yycolumn: Int,

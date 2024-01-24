@@ -1,4 +1,4 @@
-package io.github.dingyi222666.lua.typesystem
+package io.github.dingyi222666.lua.semantic.typesystem
 
 import io.github.dingyi222666.lua.parser.ast.node.ConstantNode
 import io.github.dingyi222666.lua.semantic.symbol.Symbol
