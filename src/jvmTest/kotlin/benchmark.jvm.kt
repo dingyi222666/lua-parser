@@ -1,6 +1,4 @@
-import io.github.dingyi222666.luaparser.util.Character
 import org.junit.Test
-import java.io.File
 import kotlin.time.measureTime
 
 class JvmPlatformBenchmark {
@@ -22,12 +20,11 @@ class JvmPlatformBenchmark {
                 len += lexer.yytext().length
             }
 
-
-
+            println("source length $len")
             lexer.yyclose()
         }.inWholeMilliseconds
 
-        Character.initMap()
+
         val nativeAdvanceTime = measureTime {
             val lexer = io.github.dingyi222666.luaparser.lexer.LuaLexer(text)
             var len = 0

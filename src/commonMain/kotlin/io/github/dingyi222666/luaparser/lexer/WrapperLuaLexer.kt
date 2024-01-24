@@ -24,7 +24,7 @@ class WrapperLuaLexer(
     fun length() = currentState.length
 
 
-    fun line() = currentState.line + 1
+    fun line() = currentState.line
 
     fun column() = currentState.column + 1
 
@@ -55,7 +55,7 @@ class WrapperLuaLexer(
 
 
     fun back(tokenSize: Int) {
-        for (i in 0 until tokenSize) {
+        for (i in 0..<tokenSize) {
             val state = lastStates.removeFirst()
             currentStates.addFirst(state)
         }

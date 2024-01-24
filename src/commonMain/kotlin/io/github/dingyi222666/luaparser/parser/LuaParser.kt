@@ -5,7 +5,6 @@ import io.github.dingyi222666.luaparser.lexer.LuaLexer
 import io.github.dingyi222666.luaparser.lexer.LuaTokenTypes
 import io.github.dingyi222666.luaparser.lexer.WrapperLuaLexer
 import io.github.dingyi222666.luaparser.parser.ast.node.*
-import io.github.dingyi222666.luaparser.semantic.symbol.Scope
 import io.github.dingyi222666.luaparser.util.AtomicInt
 import io.github.dingyi222666.luaparser.util.atomic
 import io.github.dingyi222666.luaparser.util.equalsMore
@@ -23,9 +22,8 @@ class LuaParser {
 
     private var currentToken = LuaTokenTypes.WHITE_SPACE
     private var lastToken = LuaTokenTypes.WHITE_SPACE
-    private var cacheText: CharSequence? = null
+    private var tokenText: CharSequence? = null
     private val locations = ArrayDeque<Position>()
-    private val scopes = ArrayDeque<Scope>()
 
     var ignoreWarningMessage = true
 
@@ -45,9 +43,8 @@ class LuaParser {
     fun reset() {
         currentToken = LuaTokenTypes.WHITE_SPACE
         lastToken = LuaTokenTypes.WHITE_SPACE
-        cacheText = null
+        tokenText = null
         locations.clear()
-        scopes.clear()
     }
 
     private inline fun <T> consume(crossinline func: (LuaTokenTypes) -> T): T {
@@ -67,18 +64,18 @@ class LuaParser {
         advance()
         val result = func.invoke(currentToken)
         lexer.pushback(lexer.length())
-        cacheText = null
+        tokenText = null
         return result
     }
 
-    private fun peekToken(tokenTypes: LuaTokenTypes): Boolean {
+    private inline fun peekToken(tokenTypes: LuaTokenTypes): Boolean {
         return peek { it == tokenTypes }
     }
 
     private fun ignoreToken(advanceToken: LuaTokenTypes): Boolean {
         return when (advanceToken) {
-            LuaTokenTypes.WHITE_SPACE, LuaTokenTypes.NEW_LINE -> true
-            //TODO: collect comment to scope
+            LuaTokenTypes.WHITE_SPACE, LuaTokenTypes.NEW_LINE,
+                //TODO: collect comment to scope
             LuaTokenTypes.BLOCK_COMMENT, LuaTokenTypes.DOC_COMMENT,
             LuaTokenTypes.SHORT_COMMENT -> true
 
@@ -90,11 +87,10 @@ class LuaParser {
         var advanceToken: LuaTokenTypes
         while (true) {
             advanceToken = lexer.advance()
-            cacheText = null
+            tokenText = null
             if (ignoreToken(advanceToken)) {
                 continue
             } else break
-
         }
         lastToken = currentToken
         currentToken = advanceToken
@@ -105,8 +101,8 @@ class LuaParser {
         if (nextToken) {
             advance()
         }
-        return cacheText ?: lexer.text().apply {
-            cacheText = this
+        return tokenText ?: lexer.text().apply {
+            tokenText = this
         }
     }
 
@@ -128,7 +124,7 @@ class LuaParser {
         return result
     }
 
-    private fun consumeToken(target: LuaTokenTypes): Boolean {
+    private inline fun consumeToken(target: LuaTokenTypes): Boolean {
         return consume { token ->
             target == token
         }
@@ -136,6 +132,7 @@ class LuaParser {
 
     private inline fun expectToken(target: LuaTokenTypes, crossinline messageBuilder: () -> String): Boolean {
         advance()
+        println("$currentToken $tokenText")
         if (currentToken != target) {
             error(messageBuilder())
         }
@@ -151,7 +148,6 @@ class LuaParser {
     }
 
     private fun markLocation() {
-        //Exception("6").printStackTrace()
         locations.addFirst(
             Position(
                 line = lexer.line(),

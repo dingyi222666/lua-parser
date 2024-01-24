@@ -1,6 +1,5 @@
 package io.github.dingyi222666.luaparser.lexer
 
-import io.github.dingyi222666.luaparser.util.Character
 import io.github.dingyi222666.luaparser.util.TrieTree
 
 
@@ -379,7 +378,7 @@ class LuaLexer(
                 charAt()
             )
         ) {
-            tokenLength++;
+            tokenLength++
         }
     }
 
@@ -532,7 +531,7 @@ class LuaLexer(
                     LuaTokenTypes.WHEN
                 )
             }
-            Character.initMap()
+
         }
 
         private fun isDigit(c: Char): Boolean {
@@ -544,15 +543,15 @@ class LuaLexer(
         }
 
         private fun isWhitespace(c: Char): Boolean {
-            return (c == '\t' || c == ' ' || c == '\u000c' || c == '\n' || c == '\r')
+            return (c == '\n' || c == '\r' || c == '\t' || c == ' ' || c == '\u000c')
         }
 
         private fun isIdentifierStart(c: Char): Boolean {
-            return Character.isJavaIdentifierStart(c)
+            return (c >= '\u0080') || (c in 'a'..'z') || (c in 'A'..'Z') || (c == '_') || (c == '$')
         }
 
         private fun isIdentifierPart(c: Char): Boolean {
-            return Character.isJavaIdentifierPart(c)
+            return (c in '0'..'9') || isIdentifierStart(c)
         }
 
     }
