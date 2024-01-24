@@ -1,52 +1,82 @@
 plugins {
-    kotlin("jvm") version "1.8.0"
-    java
-    application
+    kotlin("multiplatform").version("2.0.0-Beta3")
 }
 
-// do the same for group
-group = "io.githubdingyi222666"
-version = "1.0-SNAPSHOT"
-
-
-// you can also use a jitpack version:
-//val antlrKotlinVersion = "86a86f1968"
-
-repositories {
-    // used for local development and while building by travis ci and jitpack.io
-    mavenLocal()
-    // used to download antlr4
-    mavenCentral()
-    // used to download antlr-kotlin-runtime
-    maven("https://jitpack.io")
-}
-
-
-
-dependencies {
-    implementation(kotlin("stdlib-jdk8"))
-    implementation(kotlin("reflect"))
-    implementation ("com.google.code.gson:gson:2.10.1")
-    testImplementation(kotlin("test-junit5"))
-
-}
-
-repositories {
-    mavenCentral()
-}
-
-dependencies {
-    testImplementation(kotlin("test"))
-}
-
-tasks.test {
-    useJUnitPlatform()
-}
+group = "io.github.dingyi222666.luaparser"
+version = "1.0.0"
 
 kotlin {
+    jvm {
+        compilations.all {
+            kotlinOptions.jvmTarget = "11"
+        }
+    }
+
+    macosX64()
+    macosArm64()
+    linuxArm64()
+    linuxX64()
+    mingwX64()
+
+    js {
+        browser {
+            testTask {
+                useKarma {
+                    useChromeHeadless()
+                    webpackConfig.cssSupport {
+                        enabled.set(true)
+                    }
+                }
+            }
+        }
+    }
+
+    sourceSets {
+        commonMain {
+            dependencies {
+                implementation(kotlin("stdlib"))
+                compileOnly("org.jetbrains.kotlinx:atomicfu:0.23.2")
+                implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.3")
+            }
+        }
+        commonTest {
+            dependencies {
+                implementation(kotlin("test-common"))
+                implementation(kotlin("test-annotations-common"))
+
+            }
+        }
+
+        jvmTest {
+            dependencies {
+                implementation(kotlin("test-junit"))
+            }
+        }
+
+        jsTest {
+            dependencies {
+                implementation(kotlin("test-js"))
+            }
+        }
+
+        nativeTest {
+            dependencies {
+              //  implementation(kotlin("test-native"))
+            }
+        }
+    }
+
     jvmToolchain(11)
 }
 
-application {
-    mainClass.set("MainKt")
+buildscript {
+    repositories {
+        mavenCentral()
+    }
+
+    dependencies {
+        classpath("org.jetbrains.kotlinx:atomicfu-gradle-plugin:0.23.2")
+    }
 }
+
+apply(plugin = "kotlinx-atomicfu")
