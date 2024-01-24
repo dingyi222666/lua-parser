@@ -44,3 +44,5 @@ bin/
 src/main/kotlin-antlr
 
 .kotlin
+/kotlin-js-store/yarn.lock
+.idea/artifacts

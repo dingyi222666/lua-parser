@@ -62,6 +62,8 @@ class ConstantNode(
                 newValue.toString().toFloatOrNull() ?: newValue
             }
 
+            TYPE.NIL -> "nil"
+
             //TODO： STRING/LONG STRING
             else -> newValue
         }

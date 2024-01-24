@@ -35,7 +35,8 @@ kotlin {
         commonMain {
             dependencies {
                 implementation(kotlin("stdlib"))
-                compileOnly("org.jetbrains.kotlinx:atomicfu:0.23.2")
+                implementation(kotlin("test"))
+
                 implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.3")
             }
         }
@@ -68,15 +69,3 @@ kotlin {
 
     jvmToolchain(11)
 }
-
-buildscript {
-    repositories {
-        mavenCentral()
-    }
-
-    dependencies {
-        classpath("org.jetbrains.kotlinx:atomicfu-gradle-plugin:0.23.2")
-    }
-}
-
-apply(plugin = "kotlinx-atomicfu")

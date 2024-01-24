@@ -6,7 +6,7 @@ package io.github.dingyi222666.luaparser.lexer
  * @description:
  **/
 class WrapperLuaLexer(
-    private val currentLexer: io.github.dingyi222666.luaparser.lexer.LuaLexer
+    private val currentLexer: LuaLexer
 ) {
 
     private val lastStates = ArrayDeque<LexerState>()
@@ -16,7 +16,7 @@ class WrapperLuaLexer(
         length = currentLexer.tokenLength,
         line = currentLexer.tokenLine,
         text = currentLexer.tokenText.toString(),
-        type = io.github.dingyi222666.luaparser.lexer.LuaTokenTypes.WHITE_SPACE
+        type = LuaTokenTypes.WHITE_SPACE
     )
 
     fun text() = currentState.text
@@ -28,7 +28,7 @@ class WrapperLuaLexer(
 
     fun column() = currentState.column + 1
 
-    fun advance(): io.github.dingyi222666.luaparser.lexer.LuaTokenTypes {
+    fun advance(): LuaTokenTypes {
         if (currentStates.isNotEmpty()) {
             currentState = currentStates.removeFirst()
         } else {
@@ -94,6 +94,6 @@ internal data class LexerState(
     val text: String,
     val line: Int,
     val column: Int,
-    val type: io.github.dingyi222666.luaparser.lexer.LuaTokenTypes,
+    val type: LuaTokenTypes,
     val length: Int
 )
