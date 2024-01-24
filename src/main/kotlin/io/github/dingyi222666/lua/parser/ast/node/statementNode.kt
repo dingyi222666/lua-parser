@@ -19,6 +19,17 @@ class LocalStatement : StatementNode, ASTNode() {
     override fun <T> accept(visitor: ASTVisitor<T>, value: T) {
         visitor.visitLocalStatement(this, value)
     }
+
+    override fun clone(): LocalStatement {
+        return LocalStatement().also { stat ->
+            variables.forEach {
+                stat.variables.add(it.clone())
+            }
+            init.forEach {
+                stat.init.add(it.clone())
+            }
+        }
+    }
 }
 
 
@@ -32,6 +43,17 @@ class AssignmentStatement : StatementNode, ASTNode() {
 
     override fun <T> accept(visitor: ASTVisitor<T>, value: T) {
         visitor.visitAssignmentStatement(this, value)
+    }
+
+    override fun clone(): AssignmentStatement {
+        return AssignmentStatement().also { stat ->
+            variables.forEach {
+                stat.variables.add(it.clone())
+            }
+            init.forEach {
+                stat.init.add(it.clone())
+            }
+        }
     }
 }
 
@@ -47,6 +69,18 @@ class ForGenericStatement : StatementNode, ASTNode() {
 
     override fun <T> accept(visitor: ASTVisitor<T>, value: T) {
         visitor.visitForGenericStatement(this, value)
+    }
+
+    override fun clone(): ForGenericStatement {
+        return ForGenericStatement().also { stat ->
+            variables.forEach {
+                stat.variables.add(it.clone())
+            }
+            iterators.forEach {
+                stat.iterators.add(it.clone())
+            }
+            stat.body = body.clone()
+        }
     }
 }
 
@@ -64,6 +98,16 @@ class ForNumericStatement : StatementNode, ASTNode() {
     override fun <T> accept(visitor: ASTVisitor<T>, value: T) {
         visitor.visitForNumericStatement(this, value)
     }
+
+    override fun clone(): ForNumericStatement {
+        return ForNumericStatement().also { stat ->
+            stat.variable = variable.clone()
+            stat.start = start.clone()
+            stat.end = end.clone()
+            stat.step = step?.clone()
+            stat.body = body.clone()
+        }
+    }
 }
 
 /**
@@ -80,6 +124,12 @@ class CallStatement : StatementNode, ASTNode() {
 
     override fun <T> accept(visitor: ASTVisitor<T>, value: T) {
         visitor.visitCallStatement(this, value)
+    }
+
+    override fun clone(): CallStatement {
+        return CallStatement().also { stat ->
+            stat.expression = expression.clone()
+        }
     }
 }
 
@@ -99,6 +149,13 @@ class WhileStatement : StatementNode, ASTNode() {
     override fun <T> accept(visitor: ASTVisitor<T>, value: T) {
         visitor.visitWhileStatement(this, value)
     }
+
+    override fun clone(): WhileStatement {
+        return WhileStatement().also { stat ->
+            stat.condition = condition.clone()
+            stat.body = body.clone()
+        }
+    }
 }
 
 class RepeatStatement : StatementNode, ASTNode() {
@@ -111,6 +168,13 @@ class RepeatStatement : StatementNode, ASTNode() {
     override fun <T> accept(visitor: ASTVisitor<T>, value: T) {
         visitor.visitRepeatStatement(this, value)
     }
+
+    override fun clone(): RepeatStatement {
+        return RepeatStatement().also { stat ->
+            stat.condition = condition.clone()
+            stat.body = body.clone()
+        }
+    }
 }
 
 
@@ -121,6 +185,10 @@ class BreakStatement : StatementNode, ASTNode() {
 
     override fun <T> accept(visitor: ASTVisitor<T>, value: T) {
         visitor.visitBreakStatement(this, value)
+    }
+
+    override fun clone(): BreakStatement {
+        return BreakStatement()
     }
 }
 
@@ -133,6 +201,12 @@ class LabelStatement : StatementNode, ASTNode() {
     override fun <T> accept(visitor: ASTVisitor<T>, value: T) {
         visitor.visitLabelStatement(this, value)
     }
+
+    override fun clone(): LabelStatement {
+        return LabelStatement().also { stat ->
+            stat.identifier = identifier.clone()
+        }
+    }
 }
 
 class GotoStatement : StatementNode, ASTNode() {
@@ -143,6 +217,12 @@ class GotoStatement : StatementNode, ASTNode() {
 
     override fun <T> accept(visitor: ASTVisitor<T>, value: T) {
         visitor.visitGotoStatement(this, value)
+    }
+
+    override fun clone(): GotoStatement {
+        return GotoStatement().also { stat ->
+            stat.identifier = identifier.clone()
+        }
     }
 }
 
@@ -155,6 +235,10 @@ class ContinueStatement : StatementNode, ASTNode() {
     override fun <T> accept(visitor: ASTVisitor<T>, value: T) {
         visitor.visitContinueStatement(this, value)
     }
+
+    override fun clone(): ContinueStatement {
+        return ContinueStatement()
+    }
 }
 
 class ReturnStatement : StatementNode, ASTNode() {
@@ -166,6 +250,14 @@ class ReturnStatement : StatementNode, ASTNode() {
 
     override fun <T> accept(visitor: ASTVisitor<T>, value: T) {
         visitor.visitReturnStatement(this, value)
+    }
+
+    override fun clone(): ReturnStatement {
+        return ReturnStatement().also { stat ->
+            arguments.forEach {
+                stat.arguments.add(it.clone())
+            }
+        }
     }
 }
 
@@ -181,6 +273,14 @@ class WhenStatement : StatementNode, ASTNode() {
     override fun <T> accept(visitor: ASTVisitor<T>, value: T) {
         visitor.visitWhenStatement(this, value)
     }
+
+    override fun clone(): WhenStatement {
+        return WhenStatement().also { stat ->
+            stat.condition = condition.clone()
+            stat.ifCause = ifCause.clone()
+            stat.elseCause = elseCause?.clone()
+        }
+    }
 }
 
 class SwitchStatement : StatementNode, ASTNode() {
@@ -194,9 +294,21 @@ class SwitchStatement : StatementNode, ASTNode() {
     override fun <T> accept(visitor: ASTVisitor<T>, value: T) {
         visitor.visitSwitchStatement(this, value)
     }
+
+
+    override fun clone(): SwitchStatement {
+        return SwitchStatement().also { stat ->
+            stat.condition = condition.clone()
+            stat.causes.forEach {
+                stat.causes.add(it.clone())
+            }
+        }
+    }
 }
 
-abstract class AbsSwitchCause : StatementNode, ASTNode()
+abstract class AbsSwitchCause : StatementNode, ASTNode() {
+    abstract override fun clone(): AbsSwitchCause
+}
 
 class CaseCause : AbsSwitchCause() {
     val conditions = mutableListOf<ExpressionNode>()
@@ -208,6 +320,15 @@ class CaseCause : AbsSwitchCause() {
 
     override fun <T> accept(visitor: ASTVisitor<T>, value: T) {
         visitor.visitCaseCause(this, value)
+    }
+
+    override fun clone(): CaseCause {
+        return CaseCause().also { stat ->
+            conditions.forEach {
+                stat.conditions.add(it.clone())
+            }
+            stat.body = body.clone()
+        }
     }
 }
 
@@ -221,6 +342,12 @@ class DefaultCause : AbsSwitchCause() {
     override fun <T> accept(visitor: ASTVisitor<T>, value: T) {
         visitor.visitDefaultCause(this, value)
     }
+
+    override fun clone(): DefaultCause {
+        return DefaultCause().also { stat ->
+            stat.body = body.clone()
+        }
+    }
 }
 
 open class IfClause : StatementNode, ASTNode() {
@@ -233,6 +360,13 @@ open class IfClause : StatementNode, ASTNode() {
 
     override fun <T> accept(visitor: ASTVisitor<T>, value: T) {
         visitor.visitIfClause(this, value)
+    }
+
+    override fun clone(): IfClause {
+        return IfClause().also { stat ->
+            stat.condition = condition.clone()
+            stat.body = body.clone()
+        }
     }
 }
 
@@ -269,6 +403,13 @@ open class TableKey : ExpressionNode, ASTNode() {
     override fun <T> accept(visitor: ASTVisitor<T>, value: T) {
         visitor.visitTableKey(this, value)
     }
+
+    override fun clone(): TableKey {
+        return TableKey().also {
+            it.key = key.clone()
+            it.value = value.clone()
+        }
+    }
 }
 
 open class TableKeyString : TableKey() {
@@ -292,6 +433,14 @@ class IfStatement : StatementNode, ASTNode() {
     override fun <T> accept(visitor: ASTVisitor<T>, value: T) {
         visitor.visitIfStatement(this, value)
     }
+
+    override fun clone(): IfStatement {
+        return IfStatement().also { stat ->
+            stat.causes.forEach {
+                stat.causes.add(it.clone())
+            }
+        }
+    }
 }
 
 /**
@@ -307,5 +456,11 @@ class DoStatement : StatementNode, ASTNode() {
 
     override fun <T> accept(visitor: ASTVisitor<T>, value: T) {
         visitor.visitDoStatement(this, value)
+    }
+
+    override fun clone(): DoStatement {
+        return DoStatement().also { stat ->
+            stat.body = body.clone()
+        }
     }
 }

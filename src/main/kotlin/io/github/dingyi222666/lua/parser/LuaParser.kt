@@ -835,7 +835,7 @@ class LuaParser {
 
             // primary
             currentToken == LuaTokenTypes.ELLIPSIS -> consume { VarargLiteral() }
-            currentToken == LuaTokenTypes.NIL -> consume { ConstantNode.NIL.copy() }
+            currentToken == LuaTokenTypes.NIL -> consume { ConstantNode.NIL.clone() }
 
             equalsMore(
                 currentToken, LuaTokenTypes.FALSE, LuaTokenTypes.TRUE

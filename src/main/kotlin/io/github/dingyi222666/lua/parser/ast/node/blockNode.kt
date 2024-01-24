@@ -26,6 +26,13 @@ class BlockNode : ASTNode() {
         return "BlockNode(statements=$statements, returnStatement=$returnStatement)"
     }
 
+    override fun clone(): BlockNode {
+        val thisStatements = statements.map { it.clone() }
+        return BlockNode().apply {
+            statements.addAll(thisStatements)
+            returnStatement = returnStatement?.clone() as ReturnStatement?
+        }
+    }
 
 }
 
@@ -44,6 +51,12 @@ class ChunkNode : ASTNode() {
 
     override fun toString(): String {
         return "ChunkNode(body=$body)"
+    }
+
+    override fun clone(): ChunkNode {
+        return ChunkNode().apply {
+            body = body.clone()
+        }
     }
 
 }

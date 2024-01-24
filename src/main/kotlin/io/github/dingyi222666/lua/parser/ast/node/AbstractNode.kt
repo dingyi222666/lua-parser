@@ -15,7 +15,9 @@ interface BaseASTNode {
     var range: Range
 }
 
-interface StatementNode : BaseASTNode
+interface StatementNode : BaseASTNode {
+    fun clone(): StatementNode
+}
 
 interface ExpressionNode : BaseASTNode {
     companion object {
@@ -25,8 +27,14 @@ interface ExpressionNode : BaseASTNode {
             override fun <T> accept(visitor: ASTVisitor<T>, value: T) {
                 visitor.visitExpressionNode(this, value)
             }
+
+            override fun clone(): ExpressionNode {
+                return EMPTY
+            }
         }
     }
+
+    fun clone(): ExpressionNode
 }
 
 
@@ -38,6 +46,8 @@ abstract class ASTNode : BaseASTNode {
     override var range = Range.EMPTY
 
     abstract fun <T> accept(visitor: ASTVisitor<T>, value: T)
+
+    abstract fun clone(): BaseASTNode
 }
 
 data class Range(
@@ -53,7 +63,7 @@ data class Range(
 data class Position(
     val line: Int,
     val column: Int
-):Comparable<Position> {
+) : Comparable<Position> {
     override operator fun compareTo(other: Position): Int {
         if (other.line > line) {
             return other.line - line

@@ -11,6 +11,8 @@ import kotlin.properties.Delegates
  * @description:
  **/
 class Identifier(var name: String = "") : ExpressionNode, ASTNode() {
+    var isLocal = false
+
     override fun toString(): String {
         return "Identifier(name='$name')"
     }
@@ -19,7 +21,12 @@ class Identifier(var name: String = "") : ExpressionNode, ASTNode() {
         visitor.visitIdentifier(this, value)
     }
 
-    var isLocal = false
+    override fun clone(): Identifier {
+        return Identifier(name = name).also {
+            it.isLocal = isLocal
+        }
+    }
+
 }
 
 
@@ -87,7 +94,7 @@ class ConstantNode(
         return "ConstantsNode(type=$constantType, value=$_value)"
     }
 
-    fun copy(): ConstantNode = ConstantNode(constantType = this.constantType, value = this.rawValue)
+    override fun clone(): ConstantNode = ConstantNode(constantType = this.constantType, value = this.rawValue)
 
     override fun <T> accept(visitor: ASTVisitor<T>, value: T) {
         visitor.visitConstantNode(this, value)
@@ -133,6 +140,15 @@ open class CallExpression : ExpressionNode, ASTNode() {
     override fun <T> accept(visitor: ASTVisitor<T>, value: T) {
         visitor.visitCallExpression(this, value)
     }
+
+    override fun clone(): CallExpression {
+        return CallExpression().also {
+            it.base = base.clone()
+            for (argument in arguments) {
+                it.arguments.add(argument.clone())
+            }
+        }
+    }
 }
 
 class StringCallExpression : CallExpression() {
@@ -171,6 +187,13 @@ class MemberExpression : ExpressionNode, ASTNode() {
         visitor.visitMemberExpression(this, value)
     }
 
+    override fun clone(): MemberExpression {
+        return MemberExpression().also {
+            it.identifier = identifier.clone()
+            it.base = base.clone()
+            it.indexer = indexer
+        }
+    }
 }
 
 class IndexExpression : ExpressionNode, ASTNode() {
@@ -185,6 +208,13 @@ class IndexExpression : ExpressionNode, ASTNode() {
     override fun <T> accept(visitor: ASTVisitor<T>, value: T) {
         visitor.visitIndexExpression(this, value)
     }
+
+    override fun clone(): IndexExpression {
+        return IndexExpression().also {
+            it.base = base.clone()
+            it.index = index.clone()
+        }
+    }
 }
 
 class VarargLiteral : ExpressionNode, ASTNode() {
@@ -195,6 +225,10 @@ class VarargLiteral : ExpressionNode, ASTNode() {
 
     override fun <T> accept(visitor: ASTVisitor<T>, value: T) {
         visitor.visitVarargLiteral(this, value)
+    }
+
+    override fun clone(): VarargLiteral {
+        return VarargLiteral()
     }
 }
 
@@ -208,6 +242,14 @@ class UnaryExpression : ExpressionNode, ASTNode() {
     override fun <T> accept(visitor: ASTVisitor<T>, value: T) {
         visitor.visitUnaryExpression(this, value)
     }
+
+    override fun clone(): UnaryExpression {
+        return UnaryExpression().also {
+            it.operator = operator
+            it.arg = arg.clone()
+        }
+    }
+
 
 }
 
@@ -224,6 +266,14 @@ class BinaryExpression : ExpressionNode, ASTNode() {
     override fun <T> accept(visitor: ASTVisitor<T>, value: T) {
         visitor.visitBinaryExpression(this, value)
     }
+
+    override fun clone(): BinaryExpression {
+        return BinaryExpression().also {
+            it.operator = operator
+            it.left = left?.clone()
+            it.right = right?.clone()
+        }
+    }
 }
 
 class TableConstructorExpression : ExpressionNode, ASTNode() {
@@ -236,6 +286,14 @@ class TableConstructorExpression : ExpressionNode, ASTNode() {
     override fun <T> accept(visitor: ASTVisitor<T>, value: T) {
         visitor.visitTableConstructorExpression(this, value)
     }
+
+    override fun clone(): TableConstructorExpression {
+        return TableConstructorExpression().also {
+            for (field in fields) {
+                it.fields.add(field.clone())
+            }
+        }
+    }
 }
 
 class ArrayConstructorExpression : ExpressionNode, ASTNode() {
@@ -247,6 +305,14 @@ class ArrayConstructorExpression : ExpressionNode, ASTNode() {
 
     override fun <T> accept(visitor: ASTVisitor<T>, value: T) {
         visitor.visitArrayConstructorExpression(this, value)
+    }
+
+    override fun clone(): ArrayConstructorExpression {
+        return ArrayConstructorExpression().also {
+            for (value in values) {
+                it.values.add(value.clone())
+            }
+        }
     }
 }
 
@@ -273,6 +339,14 @@ class LambdaDeclaration : ExpressionNode, ASTNode() {
     override fun <T> accept(visitor: ASTVisitor<T>, value: T) {
         visitor.visitLambdaDeclaration(this, value)
     }
+
+    override fun clone(): LambdaDeclaration {
+        return LambdaDeclaration().also { declaration ->
+            declaration.params.addAll(params.map { it.clone() })
+
+            declaration.expression = expression.clone()
+        }
+    }
 }
 
 
@@ -287,6 +361,15 @@ class FunctionDeclaration : ExpressionNode, StatementNode, ASTNode() {
 
     override fun <T> accept(visitor: ASTVisitor<T>, value: T) {
         visitor.visitFunctionDeclaration(this, value)
+    }
+
+    override fun clone(): FunctionDeclaration {
+        return FunctionDeclaration().also { declaration ->
+            declaration.body = body?.clone()
+            declaration.params.addAll(params.map { it.clone() })
+            declaration.identifier = identifier?.clone()
+            declaration.isLocal = isLocal
+        }
     }
 }
 
