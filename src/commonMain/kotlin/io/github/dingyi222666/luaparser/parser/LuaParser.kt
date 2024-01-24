@@ -1,13 +1,13 @@
 package io.github.dingyi222666.luaparser.parser
 
 
-import AtomicInt
-import atomic
 import io.github.dingyi222666.luaparser.lexer.LuaLexer
 import io.github.dingyi222666.luaparser.lexer.LuaTokenTypes
 import io.github.dingyi222666.luaparser.lexer.WrapperLuaLexer
 import io.github.dingyi222666.luaparser.parser.ast.node.*
 import io.github.dingyi222666.luaparser.semantic.symbol.Scope
+import io.github.dingyi222666.luaparser.util.AtomicInt
+import io.github.dingyi222666.luaparser.util.atomic
 import io.github.dingyi222666.luaparser.util.equalsMore
 import io.github.dingyi222666.luaparser.util.requireNotNull
 import kotlin.math.max
@@ -23,7 +23,7 @@ class LuaParser {
 
     private var currentToken = LuaTokenTypes.WHITE_SPACE
     private var lastToken = LuaTokenTypes.WHITE_SPACE
-    private var cacheText: String? = null
+    private var cacheText: CharSequence? = null
     private val locations = ArrayDeque<Position>()
     private val scopes = ArrayDeque<Scope>()
 
@@ -101,7 +101,7 @@ class LuaParser {
         return currentToken
     }
 
-    private fun lexerText(nextToken: Boolean = false): String {
+    private fun lexerText(nextToken: Boolean = false): CharSequence {
         if (nextToken) {
             advance()
         }
@@ -730,7 +730,7 @@ class LuaParser {
             }
             name = name.substring(1)
         }
-        val identifier = Identifier(name)
+        val identifier = Identifier(name.toString())
         identifier.parent = parent
         return finishNode(identifier)
     }
@@ -787,7 +787,7 @@ class LuaParser {
     }
 
 
-    private fun findExpressionOperator(text: String): ExpressionOperator? {
+    private fun findExpressionOperator(text: CharSequence): ExpressionOperator? {
         return ExpressionOperator.entries.find {
             it.value == text
         }
@@ -1204,7 +1204,7 @@ class LuaParser {
         val result = MemberExpression()
         advance()
         markLocation()
-        result.indexer = lexerText()
+        result.indexer = lexerText().toString()
 
         result.base = base
 

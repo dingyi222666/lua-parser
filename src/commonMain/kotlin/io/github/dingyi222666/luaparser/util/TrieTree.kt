@@ -109,8 +109,9 @@ class TrieTree<T> {
             }
             var p = get(first, position)
             if (p == null) {
-                ends[position]!!.next = LinkedPair()
-                p = ends[position]!!.next
+                val end = ends[position]!!
+                end.next = LinkedPair()
+                p = end.next
                 ends[position] = p
             }
             p!!.first = first

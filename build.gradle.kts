@@ -1,5 +1,6 @@
 plugins {
     kotlin("multiplatform").version("2.0.0-Beta3")
+    java
 }
 
 group = "io.github.dingyi222666.luaparser"
@@ -10,6 +11,7 @@ kotlin {
         compilations.all {
             kotlinOptions.jvmTarget = "11"
         }
+        withJava()
     }
 
     macosX64()
@@ -37,12 +39,11 @@ kotlin {
                 implementation(kotlin("stdlib"))
                 implementation(kotlin("test"))
 
-                implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.3")
             }
         }
         commonTest {
             dependencies {
-                implementation(kotlin("test-common"))
+
                 implementation(kotlin("test-annotations-common"))
 
             }
@@ -52,6 +53,7 @@ kotlin {
             dependencies {
                 implementation(kotlin("test-junit"))
             }
+            // add java to src
         }
 
         jsTest {
@@ -62,7 +64,7 @@ kotlin {
 
         nativeTest {
             dependencies {
-              //  implementation(kotlin("test-native"))
+                //  implementation(kotlin("test-native"))
             }
         }
     }

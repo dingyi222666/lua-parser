@@ -1,3 +1,5 @@
+package io.github.dingyi222666.luaparser.util
+
 fun atomic(value: Int): AtomicInt {
     return AtomicInt(value)
 }

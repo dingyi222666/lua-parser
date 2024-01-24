@@ -29,7 +29,7 @@ class BlockNode : ASTNode() {
         val thisStatements = statements.map { it.clone() }
         return BlockNode().apply {
             statements.addAll(thisStatements)
-            returnStatement = returnStatement?.clone() as ReturnStatement?
+            returnStatement = returnStatement?.clone()
         }
     }
 

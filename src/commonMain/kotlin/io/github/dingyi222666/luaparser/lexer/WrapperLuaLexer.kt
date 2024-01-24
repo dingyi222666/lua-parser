@@ -15,7 +15,7 @@ class WrapperLuaLexer(
         column = currentLexer.tokenColumn,
         length = currentLexer.tokenLength,
         line = currentLexer.tokenLine,
-        text = currentLexer.tokenText.toString(),
+        text = currentLexer.tokenText,
         type = LuaTokenTypes.WHITE_SPACE
     )
 
@@ -70,7 +70,7 @@ class WrapperLuaLexer(
             column = currentLexer.tokenColumn,
             length = currentLexer.tokenLength,
             line = currentLexer.tokenLine,
-            text = currentLexer.tokenText.toString(),
+            text = currentLexer.tokenText,
             type = type
         )
         currentState = newState
@@ -91,7 +91,7 @@ class WrapperLuaLexer(
 }
 
 internal data class LexerState(
-    val text: String,
+    val text: CharSequence,
     val line: Int,
     val column: Int,
     val type: LuaTokenTypes,

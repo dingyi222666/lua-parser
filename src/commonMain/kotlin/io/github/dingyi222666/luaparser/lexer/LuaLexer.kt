@@ -1,5 +1,6 @@
 package io.github.dingyi222666.luaparser.lexer
 
+import io.github.dingyi222666.luaparser.util.Character
 import io.github.dingyi222666.luaparser.util.TrieTree
 
 
@@ -12,11 +13,10 @@ class LuaLexer(
 
     private var offset = 0
 
-    var tokenType: LuaTokenTypes =
+    private var tokenType: LuaTokenTypes =
         LuaTokenTypes.WHITE_SPACE
-        private set
 
-    var tokenLine = 0
+    var tokenLine = 1
         private set
     var tokenColumn = 0
         private set
@@ -38,7 +38,7 @@ class LuaLexer(
     private fun nextTokenInternal(): LuaTokenTypes {
         run {
             var r = false
-            for (i in offset until offset + tokenLength) {
+            for (i in offset..<offset + tokenLength) {
                 val ch = charAt(i)
                 if (ch == '\r') {
                     r = true
@@ -59,8 +59,6 @@ class LuaLexer(
         }
 
 
-
-
         index += tokenLength
         offset += tokenLength
 
@@ -71,7 +69,6 @@ class LuaLexer(
 
         val ch = source[offset]
         tokenLength = 1
-
 
         return when {
             isWhitespace(ch) -> {
@@ -119,14 +116,20 @@ class LuaLexer(
             ch == '!' -> LuaTokenTypes.NOT
             ch == '+' -> scanTwoOperator(
                 LuaTokenTypes.PLUS,
-                LuaTokenTypes.ADD_ASSIGN, '=')
+                LuaTokenTypes.ADD_ASSIGN, '='
+            )
+
             ch == '*' -> scanTwoOperator(
                 LuaTokenTypes.MULT,
-                LuaTokenTypes.MUL_ASSIGN, '=')
+                LuaTokenTypes.MUL_ASSIGN, '='
+            )
+
             ch == '/' -> scanDIV()
             ch == '=' -> scanTwoOperator(
                 LuaTokenTypes.ASSIGN,
-                LuaTokenTypes.EQ, '=')
+                LuaTokenTypes.EQ, '='
+            )
+
             ch == '^' -> LuaTokenTypes.EXP
             ch == '%' -> LuaTokenTypes.MOD
             ch == '~' -> LuaTokenTypes.BIT_TILDE
@@ -134,10 +137,14 @@ class LuaLexer(
             ch == '|' -> LuaTokenTypes.BIT_OR
             ch == '>' -> scanTwoOperator(
                 LuaTokenTypes.GT,
-                LuaTokenTypes.GE, '=')
+                LuaTokenTypes.GE, '='
+            )
+
             ch == '<' -> scanTwoOperator(
                 LuaTokenTypes.LT,
-                LuaTokenTypes.LE, '=')
+                LuaTokenTypes.LE, '='
+            )
+
             ch == '.' -> when {
                 isPrimeDigit(charAt()) -> {
                     scanPrimeDigit()
@@ -151,7 +158,9 @@ class LuaLexer(
             ch == '#' -> LuaTokenTypes.GETN
             ch == ':' -> scanTwoOperator(
                 LuaTokenTypes.COLON,
-                LuaTokenTypes.DOUBLE_COLON, ':')
+                LuaTokenTypes.DOUBLE_COLON, ':'
+            )
+
             ch == '-' -> when (charAt()) {
                 '-' -> {
                     tokenLength++
@@ -189,7 +198,6 @@ class LuaLexer(
 
         while (offset + tokenLength < bufferLen) {
             val ch = charAt()
-
             when (ch) {
                 start -> {
                     finish = true
@@ -224,6 +232,8 @@ class LuaLexer(
         if (!finish) {
             throw IllegalStateException("Unfinished string at <$tokenLine, ${tokenColumn}>")
         }
+
+        tokenLength++
 
         return LuaTokenTypes.STRING
     }
@@ -302,7 +312,8 @@ class LuaLexer(
                 tokenLength++
                 scanTwoOperator(
                     LuaTokenTypes.DOUBLE_DIV,
-                    LuaTokenTypes.DOUBLE_DIV_ASSIGN, '=')
+                    LuaTokenTypes.DOUBLE_DIV_ASSIGN, '='
+                )
             }
 
             else -> LuaTokenTypes.DIV
@@ -411,87 +422,117 @@ class LuaLexer(
         val keywords = TrieTree<LuaTokenTypes>()
 
         init {
-            keywords.put("and",
-                LuaTokenTypes.AND
-            )
-            keywords.put("or",
-                LuaTokenTypes.OR
-            )
-            keywords.put("default",
-                LuaTokenTypes.DEFAULT
-            )
-            keywords.put("switch",
-                LuaTokenTypes.SWITCH
-            )
-            keywords.put("if",
-                LuaTokenTypes.IF
-            )
-            keywords.put("break",
-                LuaTokenTypes.BREAK
-            )
-            keywords.put("else",
-                LuaTokenTypes.ELSE
-            )
-            keywords.put("while",
-                LuaTokenTypes.WHILE
-            )
-            keywords.put("do",
-                LuaTokenTypes.DO
-            )
-            keywords.put("return",
-                LuaTokenTypes.RETURN
-            )
-            keywords.put("for",
-                LuaTokenTypes.FOR
-            )
-            keywords.put("function",
-                LuaTokenTypes.FUNCTION
-            )
-            keywords.put("local",
-                LuaTokenTypes.LOCAL
-            )
-            keywords.put("true",
-                LuaTokenTypes.TRUE
-            )
-            keywords.put("false",
-                LuaTokenTypes.FALSE
-            )
-            keywords.put("nil",
-                LuaTokenTypes.NIL
-            )
-            keywords.put("continue",
-                LuaTokenTypes.CONTINUE
-            )
-            keywords.put("not",
-                LuaTokenTypes.NOT
-            )
-            keywords.put("in",
-                LuaTokenTypes.IN
-            )
-            keywords.put("then",
-                LuaTokenTypes.THEN
-            )
-            keywords.put("end",
-                LuaTokenTypes.END
-            )
-            keywords.put("repeat",
-                LuaTokenTypes.REPEAT
-            )
-            keywords.put("elseif",
-                LuaTokenTypes.ELSEIF
-            )
-            keywords.put("until",
-                LuaTokenTypes.UNTIL
-            )
-            keywords.put("goto",
-                LuaTokenTypes.GOTO
-            )
-            keywords.put("case",
-                LuaTokenTypes.CASE
-            )
-            keywords.put("when",
-                LuaTokenTypes.WHEN
-            )
+            run {
+                keywords.put(
+                    "and",
+                    LuaTokenTypes.AND
+                )
+                keywords.put(
+                    "or",
+                    LuaTokenTypes.OR
+                )
+                keywords.put(
+                    "default",
+                    LuaTokenTypes.DEFAULT
+                )
+                keywords.put(
+                    "switch",
+                    LuaTokenTypes.SWITCH
+                )
+                keywords.put(
+                    "if",
+                    LuaTokenTypes.IF
+                )
+                keywords.put(
+                    "break",
+                    LuaTokenTypes.BREAK
+                )
+                keywords.put(
+                    "else",
+                    LuaTokenTypes.ELSE
+                )
+                keywords.put(
+                    "while",
+                    LuaTokenTypes.WHILE
+                )
+                keywords.put(
+                    "do",
+                    LuaTokenTypes.DO
+                )
+                keywords.put(
+                    "return",
+                    LuaTokenTypes.RETURN
+                )
+                keywords.put(
+                    "for",
+                    LuaTokenTypes.FOR
+                )
+                keywords.put(
+                    "function",
+                    LuaTokenTypes.FUNCTION
+                )
+                keywords.put(
+                    "local",
+                    LuaTokenTypes.LOCAL
+                )
+                keywords.put(
+                    "true",
+                    LuaTokenTypes.TRUE
+                )
+                keywords.put(
+                    "false",
+                    LuaTokenTypes.FALSE
+                )
+                keywords.put(
+                    "nil",
+                    LuaTokenTypes.NIL
+                )
+                keywords.put(
+                    "continue",
+                    LuaTokenTypes.CONTINUE
+                )
+                keywords.put(
+                    "not",
+                    LuaTokenTypes.NOT
+                )
+                keywords.put(
+                    "in",
+                    LuaTokenTypes.IN
+                )
+                keywords.put(
+                    "then",
+                    LuaTokenTypes.THEN
+                )
+                keywords.put(
+                    "end",
+                    LuaTokenTypes.END
+                )
+                keywords.put(
+                    "repeat",
+                    LuaTokenTypes.REPEAT
+                )
+                keywords.put(
+                    "elseif",
+                    LuaTokenTypes.ELSEIF
+                )
+                keywords.put(
+                    "until",
+                    LuaTokenTypes.UNTIL
+                )
+                keywords.put(
+                    "goto",
+                    LuaTokenTypes.GOTO
+                )
+                keywords.put(
+                    "case",
+                    LuaTokenTypes.CASE
+                )
+                keywords.put(
+                    "when",
+                    LuaTokenTypes.WHEN
+                )
+            }
+            Character.initMap()
         }
 
         private fun isDigit(c: Char): Boolean {
@@ -506,14 +547,12 @@ class LuaLexer(
             return (c == '\t' || c == ' ' || c == '\u000c' || c == '\n' || c == '\r')
         }
 
-
         private fun isIdentifierStart(c: Char): Boolean {
-
-            return (c in 'a'..'z') || (c in 'A'..'Z') || (c == '_') || (c == '$') || (c >= '\u0080')
+            return Character.isJavaIdentifierStart(c)
         }
 
         private fun isIdentifierPart(c: Char): Boolean {
-            return isIdentifierStart(c) || (c in '0'..'9')
+            return Character.isJavaIdentifierPart(c)
         }
 
     }
