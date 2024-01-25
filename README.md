@@ -1,21 +1,30 @@
-## lua-parser
+# lua-parser
 
-### _work in progress_
+## _work in progress_
 
 A Lua 5.3 parser written in pure kotlin.
 
-### Features
+## Features
 
 - [X] Kotlin Multiplatform support (JVM/JS/Native)
 - [x] Parse Source To AST
+- [x] Transform AST to source code
 - [ ] Semantic Analysis. Provide type information (Work in progress)
-- [ ] Transform AST to source code (Work in progress)
 
-### Usage
+#  # Usage
 
-_Work in progress_
+```kotlin
+val lexer = LuaLexer(source)
+val parser = LuaParser()
 
-### Special thanks
+val root = parser.parse(lexer)
+
+println(AST2Lua().asCode(root))
+```
+
+More usage coming soon.
+
+## Special thanks
 
 [GavinHigham/lpil53](https://github.com/GavinHigham/lpil53)
 

@@ -31,14 +31,13 @@ class LuaParser {
         return parse(LuaLexer(source))
     }
 
-    private fun parse(lexer: LuaLexer): ChunkNode {
+    fun parse(lexer: LuaLexer): ChunkNode {
         reset()
         this.lexer = WrapperLuaLexer(lexer)
         val chunk = parseChunk()
         this.lexer.close()
         return chunk
     }
-
 
     fun reset() {
         currentToken = LuaTokenTypes.WHITE_SPACE
@@ -132,7 +131,6 @@ class LuaParser {
 
     private inline fun expectToken(target: LuaTokenTypes, crossinline messageBuilder: () -> String): Boolean {
         advance()
-        println("$currentToken $tokenText")
         if (currentToken != target) {
             error(messageBuilder())
         }
@@ -176,7 +174,6 @@ class LuaParser {
         expectToken(LuaTokenTypes.EOF) {
             "unexpected ${lexerText()} near '<eof>"
         }
-        println(locations)
         return chunkNode
     }
 

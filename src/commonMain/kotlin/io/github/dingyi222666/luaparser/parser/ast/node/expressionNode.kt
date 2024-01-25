@@ -62,6 +62,10 @@ class ConstantNode(
                 newValue.toString().toFloatOrNull() ?: newValue
             }
 
+            TYPE.BOOLEAN -> {
+                newValue.toString()
+            }
+
             TYPE.NIL -> "nil"
 
             //TODO： STRING/LONG STRING
@@ -122,7 +126,7 @@ class ConstantNode(
     }
 
     companion object {
-        val NIL = ConstantNode(value = Any(), constantType = TYPE.NIL)
+        val NIL = ConstantNode(value = "nil", constantType = TYPE.NIL)
     }
 
 
