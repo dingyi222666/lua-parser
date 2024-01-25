@@ -11,7 +11,7 @@ A Lua 5.3 parser written in pure kotlin.
 - [x] Transform AST to source code
 - [ ] Semantic Analysis. Provide type information (Work in progress)
 
-#  # Usage
+## Usage
 
 ```kotlin
 val lexer = LuaLexer(source)
