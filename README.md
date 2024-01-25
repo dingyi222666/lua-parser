@@ -2,14 +2,14 @@
 
 ## _work in progress_
 
-A Lua 5.3 lexer & parser written in pure kotlin.
+A Lua 5.3 Lexer & Parser written in pure Kotlin.
 
 ## Features
 
 - [X] Kotlin Multiplatform support (JVM / JS / Native)
-- [x] Parse Source To AST
+- [x] Parse source to AST
 - [x] Transform AST to source code
-- [ ] Semantic Analysis. Provide type information (Work in progress)
+- [ ] Semantic analysis. Provide type information (Work in progress)
 
 ## Usage
 
