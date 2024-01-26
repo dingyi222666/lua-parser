@@ -13,9 +13,16 @@ A Lua 5.3 Lexer & Parser written in pure Kotlin.
 
 ## Usage
 
+- Add the dependency to your gradle file
 
 ```kotlin
-val lexer = LuaLexer(source)
+implementation("io.github.dingyi222666:luaparser:1.0.0")
+```
+
+Ok. Use it like this:
+
+```kotlin
+val lexer = LuaLexer("print('hello world')")
 val parser = LuaParser()
 
 val root = parser.parse(lexer)
