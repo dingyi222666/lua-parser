@@ -1,11 +1,17 @@
 import io.github.dingyi222666.luaparser.parser.LuaParser
 import io.github.dingyi222666.luaparser.source.AST2Lua
+import io.github.dingyi222666.luaparser.util.parseLuaString
 import kotlin.test.Test
 
  class ParserTest {
 
     @Test
     fun parse() {
+        println(parseLuaString("""[==[xxx]==]"""))
+        println(parseLuaString(""" "xxxx" """))
+        println(parseLuaString("""'xxxx'"""))
+        println(parseLuaString("""'\u6578\x01\n\r\t'"""))
+        println(parseLuaString("""[[\u6578]]"""))
         val parser = LuaParser()
 
         val root = parser.parse(source)

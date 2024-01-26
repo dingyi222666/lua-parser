@@ -1,6 +1,7 @@
 package io.github.dingyi222666.luaparser.parser.ast.node
 
 import io.github.dingyi222666.luaparser.parser.ast.visitor.ASTVisitor
+import io.github.dingyi222666.luaparser.util.parseLuaString
 import kotlin.jvm.Transient
 import kotlin.properties.Delegates
 
@@ -68,7 +69,6 @@ class ConstantNode(
 
             TYPE.NIL -> "nil"
 
-            //TODO： STRING/LONG STRING
             else -> newValue
         }
     }
@@ -80,6 +80,10 @@ class ConstantNode(
 
     enum class TYPE {
         FLOAT, INTERGER, BOOLEAN, STRING, NIL, UNKNOWN
+    }
+
+    fun stringOf(): String {
+        return parseLuaString(rawValue.toString())
     }
 
     fun intOf(): Int {

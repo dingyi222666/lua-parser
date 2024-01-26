@@ -85,7 +85,7 @@ mavenPublishing {
 
     signAllPublications()
 
-    coordinates("io.github.dingyi222666", "luaparser", "1.0.0")
+    coordinates("io.github.dingyi222666", "luaparser", "1.0.1")
 
     pom {
         name.set("luaparser")
