@@ -15,5 +15,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "lua-parser"
+rootProject.name = "luaparser"
 

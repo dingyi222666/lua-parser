@@ -13,9 +13,6 @@ A Lua 5.3 Lexer & Parser written in pure Kotlin.
 
 ## Usage
 
-Now the project isn't publish to maven central, so you need to clone and build it by yourself.
-
-In the future, we will publish it to maven central.
 
 ```kotlin
 val lexer = LuaLexer(source)
