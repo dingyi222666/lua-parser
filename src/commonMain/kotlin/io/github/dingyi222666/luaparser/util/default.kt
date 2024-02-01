@@ -6,17 +6,12 @@ package io.github.dingyi222666.luaparser.util
  * @description:
  **/
 
-fun <T> T?.requireNotNull(): T {
+inline fun <T> T?.requireNotNull(): T {
     return requireNotNull(this)
 }
 
-fun <T> equalsMore(origin: T, vararg arg: T): Boolean {
-    for (v in arg) {
-        if (origin == v) {
-            return true
-        }
-    }
-    return false
+inline fun <T> equalsMore(origin: T, vararg arg: T): Boolean {
+    return arg.any { it == origin }
 }
 
 

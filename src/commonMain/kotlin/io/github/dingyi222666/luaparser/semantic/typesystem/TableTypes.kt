@@ -76,13 +76,24 @@ open class TableType(
     }
 
     override fun hashCode(): Int {
-        var result = fields.hashCode()
+        var result = fields.map {
+            val (key, value) = it
+            if (value === this) {
+                key to TableType(TypeKind.Table, "self")
+            } else key to value
+        }.hashCode()
         result = 31 * result + indexType.hashCode()
         result = 31 * result + valueType.hashCode()
         return result
     }
 
     override fun toString(): String {
+        val fields = fields.map {
+            val (key, value) = it
+            if (value === this) {
+                key to TableType(TypeKind.Table, "self")
+            } else key to value
+        }.toMap()
         return "TableType(fields=$fields, indexType=$indexType, valueType=$valueType)"
     }
 }

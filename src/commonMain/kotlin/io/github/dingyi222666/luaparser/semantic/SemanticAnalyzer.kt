@@ -69,6 +69,11 @@ class SemanticAnalyzer : ASTVisitor<BaseASTNode> {
         destroyScope()
     }
 
+    override fun visitDoStatement(node: DoStatement, value: BaseASTNode) {
+        createFunctionScope(node)
+        super.visitDoStatement(node, value)
+    }
+
     override fun visitStatementNode(node: StatementNode, value: BaseASTNode) {
         super.visitStatementNode(node, node)
     }
@@ -184,7 +189,7 @@ class SemanticAnalyzer : ASTVisitor<BaseASTNode> {
     override fun visitIdentifier(node: Identifier, value: BaseASTNode) {
         val currentScope = scopeStack.first()
         when (value) {
-            // params?
+            // params: function(a)
             is FunctionDeclaration -> {
                 val parameterSymbol = createParamsVariable(node, currentScope)
                 if (node.name == "self" && value.params.indexOf(node) == 0 &&
@@ -193,7 +198,8 @@ class SemanticAnalyzer : ASTVisitor<BaseASTNode> {
                     setSelfType(value, parameterSymbol, currentScope)
                 }
             }
-            // identifier
+
+            // identifier: a = b
             is Identifier -> {
                 //  val symbolForVariableName = currentScope.resolveSymbol(value.name, node.range.start)
                 val symbolForValue = currentScope.resolveSymbol(node.name, node.range.start)
@@ -203,6 +209,14 @@ class SemanticAnalyzer : ASTVisitor<BaseASTNode> {
                 setIdentifierType(value, type, currentScope)
             }
 
+            // member: a.b = c
+            is MemberExpression -> {
+                val symbolForValue = currentScope.resolveSymbol(node.name, node.range.start) ?: return
+
+                setMemberExpressionType(value, symbolForValue.type, currentScope)
+            }
+
+            // return: return a
             is ReturnStatement -> setReturnStatementType(
                 value,
                 node,
@@ -630,8 +644,18 @@ class SemanticAnalyzer : ASTVisitor<BaseASTNode> {
             is BinaryExpression -> when (node.operator) {
                 ExpressionOperator.CONCAT -> Type.STRING
                 ExpressionOperator.AND, ExpressionOperator.OR, ExpressionOperator.NOT -> Type.BOOLEAN
+                else -> {
+                    val leftType = node.left?.let { resolveExpressionNodeType(it, scope) }
+                    val rightType = node.right?.let { resolveExpressionNodeType(it, scope) }
 
-                else -> Type.NUMBER
+                    println("$leftType $rightType")
+
+                    if (leftType?.kind == TypeKind.Number && rightType?.kind == TypeKind.Number) {
+                        Type.NUMBER
+                    } else {
+                        (leftType ?: Type.ANY).union(rightType ?: Type.ANY)
+                    }
+                }
             }
 
 

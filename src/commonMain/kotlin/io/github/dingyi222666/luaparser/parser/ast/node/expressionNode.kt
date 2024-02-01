@@ -266,7 +266,6 @@ class UnaryExpression : ExpressionNode, ASTNode() {
 
 class BinaryExpression : ExpressionNode, ASTNode() {
 
-
     var left /*by Delegates.notNull<*/: ExpressionNode? = null
     var right: ExpressionNode? = null
     lateinit var operator: ExpressionOperator/*? = null*/

@@ -36,7 +36,19 @@ abstract class BaseScope(
 ) : Scope {
     protected val symbolMap = mutableMapOf<String, Symbol<Type>>()
     override fun resolveSymbol(symbolName: String): Symbol<Type>? {
-        return symbolMap[symbolName]
+        val scope = symbolMap[symbolName]
+
+        if (scope != null) {
+            return scope
+        }
+
+        return if (parent is GlobalScope) {
+            (parent as GlobalScope).resolveSymbol(symbolName)
+        } else {
+            parent?.resolveSymbol(
+                symbolName
+            )
+        }
     }
 
     override fun resolveSymbol(
@@ -117,6 +129,10 @@ class GlobalScope(
 
     fun resolveScope(position: Position): Scope {
         return binarySearchScope(position) ?: this
+    }
+
+    override fun resolveSymbol(symbolName: String): Symbol<Type>? {
+        return symbolMap[symbolName]
     }
 
     override fun resolveSymbol(

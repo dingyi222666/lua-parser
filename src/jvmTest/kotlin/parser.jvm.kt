@@ -12,12 +12,14 @@ class JvmPlatformParserTest {
 
         val root = parser.parse(testSource)
 
-         println(root)
-       // val analyzer = SemanticAnalyzer()
+        val analyzer = SemanticAnalyzer()
 
-      //  val scope = analyzer.analyze(root)
+        val scope = analyzer.analyze(root)
 
-      //  println(scope.resolveSymbol("s").toString())
+        println(scope.resolveSymbol("c").toString())
+        println(scope.resolveScope(Position(15, 1)).resolveSymbol("c").toString())
+        println(scope.resolveSymbol("d").toString())
+        println(scope.resolveSymbol("print").toString())
 
     }
 }
@@ -30,8 +32,18 @@ val testSource = """
       return { a = b.s }
     end
     
+    d = b
     
     local s = b:a()
     
-    s.
+    local c = 12
+    
+    do
+        local c = ""
+        d.c = 1 + ""
+    end
+    
+    for i = 1, 10 do
+        print(i)
+    end
 """.trimIndent()
