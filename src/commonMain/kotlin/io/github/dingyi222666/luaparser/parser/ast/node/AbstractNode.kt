@@ -13,6 +13,7 @@ import kotlin.properties.Delegates
 interface BaseASTNode {
     var parent: BaseASTNode
     var range: Range
+    var bad: Boolean
 }
 
 interface StatementNode : BaseASTNode {
@@ -31,6 +32,8 @@ interface ExpressionNode : BaseASTNode {
             override fun clone(): ExpressionNode {
                 return EMPTY
             }
+
+            override var bad = false
         }
     }
 
@@ -47,6 +50,8 @@ abstract class ASTNode : BaseASTNode {
     abstract fun <T> accept(visitor: ASTVisitor<T>, value: T)
 
     abstract fun clone(): BaseASTNode
+
+    override var bad = false
 }
 
 data class Range(

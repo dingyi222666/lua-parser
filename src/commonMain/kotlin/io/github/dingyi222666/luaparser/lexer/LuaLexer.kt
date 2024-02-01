@@ -72,10 +72,12 @@ class LuaLexer(
         return when {
             isWhitespace(ch) -> {
                 var chLocal = '\t'
-                while (offset + tokenLength < bufferLen && isWhitespace(
-                        charAt(offset + tokenLength).also {
+                while (offset + tokenLength < bufferLen && chatAtOrNull(offset + tokenLength)
+                        ?.also {
                             chLocal = it
-                        })
+                        }?.let {
+                            isWhitespace(it)
+                        } == true
                 ) {
                     if (chLocal == '\r' || chLocal == '\n') {
                         break
@@ -97,7 +99,7 @@ class LuaLexer(
             ch == '(' -> LuaTokenTypes.LPAREN
             ch == ')' -> LuaTokenTypes.RPAREN
             ch == '[' -> {
-                val next = charAt()
+                val next = chatAtOrNull() ?: return LuaTokenTypes.RBRACK
 
                 if (next != '=' && next != '[') {
                     return LuaTokenTypes.LBRACK
@@ -144,13 +146,12 @@ class LuaLexer(
                 LuaTokenTypes.LE, '='
             )
 
-            ch == '.' -> when {
-                isPrimeDigit(charAt()) -> {
+            ch == '.' -> {
+                val next = chatAtOrNull() ?: return LuaTokenTypes.DOT
+                if (isPrimeDigit(next)) {
                     scanPrimeDigit()
                     LuaTokenTypes.NUMBER
-                }
-
-                else -> LuaTokenTypes.DOT
+                } else LuaTokenTypes.DOT
             }
 
             ch == '"' || ch == '\'' -> scanString(ch)
@@ -160,18 +161,21 @@ class LuaLexer(
                 LuaTokenTypes.DOUBLE_COLON, ':'
             )
 
-            ch == '-' -> when (charAt()) {
-                '-' -> {
-                    tokenLength++
-                    scanComment()
-                }
+            ch == '-' -> {
+                val next = chatAtOrNull() ?: return LuaTokenTypes.MINUS
+                when (next) {
+                    '-' -> {
+                        tokenLength++
+                        scanComment()
+                    }
 
-                '=' -> {
-                    tokenLength++
-                    LuaTokenTypes.SUB_ASSIGN
-                }
+                    '=' -> {
+                        tokenLength++
+                        LuaTokenTypes.SUB_ASSIGN
+                    }
 
-                else -> LuaTokenTypes.MINUS
+                    else -> LuaTokenTypes.MINUS
+                }
             }
 
             else -> LuaTokenTypes.BAD_CHARACTER
@@ -366,7 +370,11 @@ class LuaLexer(
             return LuaTokenTypes.NUMBER
         }
 
-        throwIfNeeded()
+        try {
+            throwIfNeeded()
+        } catch (e: IllegalStateException) {
+            return LuaTokenTypes.BAD_CHARACTER
+        }
 
         scanDigit()
 
@@ -415,6 +423,14 @@ class LuaLexer(
 
     private fun charAt(): Char {
         return source[offset + tokenLength]
+    }
+
+    private fun chatAtOrNull(): Char? {
+        return chatAtOrNull(offset + tokenLength)
+    }
+
+    private fun chatAtOrNull(i: Int): Char? {
+        return if (i < bufferLen) source[i] else null
     }
 
     companion object {

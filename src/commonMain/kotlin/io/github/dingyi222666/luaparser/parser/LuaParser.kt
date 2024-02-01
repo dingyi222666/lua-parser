@@ -17,7 +17,9 @@ import kotlin.properties.Delegates
  * @date: 2023/2/2
  * @description:
  **/
-class LuaParser {
+class LuaParser(
+    private val errorRecovery: Boolean = true,
+) {
     private var lexer by Delegates.notNull<WrapperLuaLexer>()
 
     private var currentToken = LuaTokenTypes.WHITE_SPACE
@@ -640,7 +642,21 @@ class LuaParser {
             CallStatement().apply {
                 this.parent = parent
                 suffix.parent = this
-                expression = suffix as CallExpression
+
+                if (suffix !is CallExpression) {
+                    if (!errorRecovery) {
+                        error("The assignment statement is incorrect near ${lexerText()}")
+                    }
+
+                    expression = CallExpression().apply {
+                        this.base = suffix
+                        bad = true
+                    }
+                } else {
+                    expression = suffix
+                }
+
+
             }
         }
     }
@@ -1104,7 +1120,10 @@ class LuaParser {
                 LuaTokenTypes.COLON -> {
                     val fieldSet = parseFieldSet(parent, result)
                     finishNode(fieldSet)
-                    parseCallExpression(parent, fieldSet)
+
+                    kotlin.runCatching {
+                        parseCallExpression(parent, fieldSet)
+                    }.getOrNull() ?: break
                 }
 
                 else -> break
@@ -1209,7 +1228,15 @@ class LuaParser {
 
         result.base = base
 
-        result.identifier = parseName(result)
+        result.identifier = kotlin.runCatching {
+            parseName(result)
+        }
+            .onFailure {
+                if (!errorRecovery) {
+                    throw it
+                }
+            }
+            .getOrElse { Identifier("") }
         result.parent = parent
         return result
     }
