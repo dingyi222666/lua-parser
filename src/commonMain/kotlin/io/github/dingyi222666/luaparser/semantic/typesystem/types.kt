@@ -161,6 +161,11 @@ class UnDefinedType : Type {
     override fun subTypeOf(type: Type): Boolean {
         return false
     }
+
+    override fun union(type: Type): Type {
+        // union a known type
+        return type
+    }
 }
 
 fun ConstantNode.asType(): Type {

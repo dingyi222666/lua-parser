@@ -1,5 +1,7 @@
 package io.github.dingyi222666.luaparser.semantic.typesystem
 
+import kotlin.properties.Delegates
+
 /**
  * @author: dingyi
  * @date: 2023/2/6
@@ -16,8 +18,8 @@ open class TableType(
 
     val fields = mutableMapOf<String, Type>()
 
-    var indexType: Type = Type.ANY
-    var valueType: Type = Type.ANY
+    var indexType: Type = Type.UnDefined
+    var valueType: Type = Type.UnDefined
 
     override fun getTypeName(): String {
         return "table<${indexType.getSimpleTypeName()},${valueType.getSimpleTypeName()}>"
