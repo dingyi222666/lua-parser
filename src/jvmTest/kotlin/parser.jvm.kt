@@ -19,8 +19,8 @@ class JvmPlatformParserTest {
         println(scope.resolveSymbol("c").toString())
         println(scope.resolveScope(Position(15, 1)).resolveSymbol("c").toString())
         println(scope.resolveSymbol("d").toString())
-        println(scope.resolveSymbol("print").toString())
-
+        println(scope.resolveSymbol("sb").toString())
+        println(scope.resolveSymbol("x").toString())
     }
 }
 
@@ -32,6 +32,10 @@ val testSource = """
       return { a = b.s }
     end
     
+    local function ss() return 1,"" end
+    
+    sb,x = ss()
+    
     d = b
     
     local s = b:a()
@@ -41,6 +45,10 @@ val testSource = """
     do
         local c = ""
         d.c = 1 + ""
+    end
+    
+    function pairs1(t)
+       return 1, ""
     end
     
     for i = 1, 10 do

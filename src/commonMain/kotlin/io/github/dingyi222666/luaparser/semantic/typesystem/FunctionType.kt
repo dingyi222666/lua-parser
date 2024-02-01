@@ -23,12 +23,16 @@ class FunctionType(
     }
 
     private fun wrapReturnTypesToString(): String {
-        return if (returnTypes.size == 0) {
-            "void"
-        } else if (returnTypes.size == 1) {
-            returnTypes[0].getTypeName()
-        } else {
-            "(${returnTypes.joinToString(",") { it.getTypeName() }})"
+        return when (returnTypes.size) {
+            0 -> {
+                "void"
+            }
+            1 -> {
+                returnTypes[0].getTypeName()
+            }
+            else -> {
+                "(${returnTypes.joinToString(",") { it.getTypeName() }})"
+            }
         }
     }
 

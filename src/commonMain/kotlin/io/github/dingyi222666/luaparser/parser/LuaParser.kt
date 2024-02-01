@@ -569,7 +569,8 @@ class LuaParser(
 
         //   funcname ::= Name {‘.’ Name} [‘:’ Name]
         while (true) {
-            nameExp = when (peek()) {
+            val next = peek()
+            nameExp = when (next) {
                 // '.' NAME
                 //  ':' NAME
                 LuaTokenTypes.DOT, LuaTokenTypes.COLON -> {
@@ -579,6 +580,11 @@ class LuaParser(
                 else -> break
             }
             parentNode = finishNode(nameExp)
+
+            // [':' Name]
+            if (next === LuaTokenTypes.COLON) {
+                break
+            }
         }
 
         result.identifier = nameExp
