@@ -5,7 +5,7 @@ package io.github.dingyi222666.luaparser.semantic.typesystem
  * @date: 2023/2/6
  * @description:
  **/
-class FunctionType(
+open class FunctionType(
     override var typeVariableName: String
 ) : Type {
 
@@ -27,9 +27,11 @@ class FunctionType(
             0 -> {
                 "void"
             }
+
             1 -> {
                 returnTypes[0].getTypeName()
             }
+
             else -> {
                 "(${returnTypes.joinToString(",") { it.getTypeName() }})"
             }
@@ -44,12 +46,28 @@ class FunctionType(
         parameterTypes.add(type)
     }
 
+    fun setParamType(index: Int, type: Type) {
+        parameterTypes[index] = type
+    }
+
+    fun setReturnType(index: Int, type: Type) {
+        returnTypes[index] = type
+    }
+
     fun addReturnType(type: Type) {
         returnTypes.add(type)
     }
 
     fun getParamType(index: Int): Type {
         return parameterTypes[index]
+    }
+
+    fun getParamTypeOrNull(index: Int): Type? {
+        return parameterTypes.getOrNull(index)
+    }
+
+    fun getReturnTypeOrNull(index: Int): Type? {
+        return returnTypes.getOrNull(index)
     }
 
     fun getReturnType(index: Int): Type {
@@ -86,5 +104,11 @@ class FunctionType(
         return getTypeName()
     }
 
+
+}
+
+class LikeFunctionType(
+    typeVariableName: String = "anonymous"
+) : FunctionType(typeVariableName) {
 
 }

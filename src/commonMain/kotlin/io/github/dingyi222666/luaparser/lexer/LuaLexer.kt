@@ -148,10 +148,22 @@ class LuaLexer(
 
             ch == '.' -> {
                 val next = chatAtOrNull() ?: return LuaTokenTypes.DOT
-                if (isPrimeDigit(next)) {
-                    scanPrimeDigit()
-                    LuaTokenTypes.NUMBER
-                } else LuaTokenTypes.DOT
+
+                when {
+                    isPrimeDigit(next) -> {
+                        scanPrimeDigit()
+                        LuaTokenTypes.NUMBER
+                    }
+
+                    next == '.' -> {
+                        tokenLength++
+                        LuaTokenTypes.CONCAT
+                    }
+
+                    else -> LuaTokenTypes.DOT
+                }
+
+
             }
 
             ch == '"' || ch == '\'' -> scanString(ch)

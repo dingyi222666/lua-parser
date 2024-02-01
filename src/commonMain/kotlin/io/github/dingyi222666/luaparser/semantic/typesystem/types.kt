@@ -82,7 +82,7 @@ interface Type {
                 set.addAll(t2.types)
             else set.add(t2)
 
-            if (set.size > 2) {
+            if (set.size > 4) {
                 return ANY
             }
             return UnionType(set)

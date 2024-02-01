@@ -21,6 +21,7 @@ class JvmPlatformParserTest {
         println(scope.resolveSymbol("d").toString())
         println(scope.resolveSymbol("sb").toString())
         println(scope.resolveSymbol("x").toString())
+        println(scope.resolveSymbol("print").toString())
     }
 }
 
@@ -53,5 +54,9 @@ val testSource = """
     
     for i = 1, 10 do
         print(i)
+        print(""..2)
+        print(ss)
+        print(b)
+       
     end
 """.trimIndent()

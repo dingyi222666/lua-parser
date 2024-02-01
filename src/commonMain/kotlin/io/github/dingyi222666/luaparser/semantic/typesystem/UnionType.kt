@@ -18,7 +18,7 @@ class UnionType(
         get() = getTypeName()
 
     override fun getTypeName(): String {
-        return types.joinToString("|") { it.getSimpleTypeName() }
+        return types.joinToString("|") { it.getTypeName() }
     }
 
     override fun subTypeOf(type: Type): Boolean {
