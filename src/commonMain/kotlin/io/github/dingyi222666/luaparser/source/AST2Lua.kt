@@ -140,6 +140,11 @@ class AST2Lua : ASTVisitor<StringBuilder> {
 
     }
 
+
+    override fun visitCommentStatement(commentStatement: CommentStatement, value: StringBuilder) {
+        value.append(commentStatement.comment)
+    }
+
     override fun visitCallStatement(node: CallStatement, value: StringBuilder) {
         visitExpressionNode(node.expression, value)
     }

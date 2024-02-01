@@ -38,5 +38,6 @@ local a, b, c for i, a, b in c do end
 local a = {} function a:b() return self end self = nil
 repeat local a = true until a
 local a = function (b) end b = 0
+-- hello
 for a = 1, 5 do end a = 0
 """

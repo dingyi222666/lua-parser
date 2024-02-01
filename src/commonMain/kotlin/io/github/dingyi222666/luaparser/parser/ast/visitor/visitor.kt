@@ -172,6 +172,7 @@ interface ASTVisitor<T> {
             is SwitchStatement -> visitSwitchStatement(node, value)
             is LocalStatement -> visitLocalStatement(node, value)
             is FunctionDeclaration -> visitFunctionDeclaration(node, value)
+            is CommentStatement -> visitCommentStatement(node, value)
         }
 
     }
@@ -295,6 +296,10 @@ interface ASTVisitor<T> {
             visitStatementNode(it, value)
         }
         node.returnStatement?.let { visitStatementNode(it, value) }
+    }
+
+    fun visitCommentStatement(commentStatement: CommentStatement, value: T) {
+
     }
 }
 
@@ -576,6 +581,7 @@ interface ASTModifier<T> {
             is SwitchStatement -> visitSwitchStatement(node, value)
             is LocalStatement -> visitLocalStatement(node, value)
             is FunctionDeclaration -> visitFunctionDeclaration(node, value)
+            is CommentStatement -> visitCommentStatement(node, value)
             else -> throw Exception("Unknown statement type $node")
         }
 
@@ -601,6 +607,10 @@ interface ASTModifier<T> {
         }
     }
 
+
+    fun visitCommentStatement(node: CommentStatement, value: T): CommentStatement {
+        return node
+    }
 
     fun visitCallExpression(node: CallExpression, value: T): CallExpression {
         when (node) {

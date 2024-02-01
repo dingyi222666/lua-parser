@@ -73,10 +73,8 @@ class LuaParser {
 
     private fun ignoreToken(advanceToken: LuaTokenTypes): Boolean {
         return when (advanceToken) {
-            LuaTokenTypes.WHITE_SPACE, LuaTokenTypes.NEW_LINE,
-                //TODO: collect comment to scope
-            LuaTokenTypes.BLOCK_COMMENT, LuaTokenTypes.DOC_COMMENT,
-            LuaTokenTypes.SHORT_COMMENT -> true
+            LuaTokenTypes.WHITE_SPACE, LuaTokenTypes.NEW_LINE
+            -> true
 
             else -> false
         }
@@ -223,12 +221,21 @@ class LuaParser {
                     ContinueStatement()
                 }
 
+                consume {
+                    it == LuaTokenTypes.DOC_COMMENT || it == LuaTokenTypes.SHORT_COMMENT
+                            || it == LuaTokenTypes.BLOCK_COMMENT || it == LuaTokenTypes.SHEBANG_CONTENT
+                } -> {
+                    CommentStatement().apply {
+                        comment = lexerText().toString()
+                        markLocation()
+                    }
+                }
+
                 peekToken(LuaTokenTypes.WHEN) -> parseWhenStatement(blockNode)
                 peekToken(LuaTokenTypes.IF) -> parseIfStatement(blockNode)
                 peekToken(LuaTokenTypes.SWITCH) -> parseSwitchStatement(blockNode)
                 consumeToken(LuaTokenTypes.GOTO) -> parseGotoStatement(blockNode)
                 consumeToken(LuaTokenTypes.DOUBLE_COLON) -> parseLabelStatement(blockNode)
-
                 consumeToken(LuaTokenTypes.SEMI) -> continue
                 consumeToken(LuaTokenTypes.DO) -> parseDoStatement(blockNode)
                 // function call, varlist = explist, $(localvarlist)
@@ -241,6 +248,7 @@ class LuaParser {
                 }
 
                 peekToken(LuaTokenTypes.RETURN) -> parseReturnStatement(blockNode)
+
                 else -> break
             }
 

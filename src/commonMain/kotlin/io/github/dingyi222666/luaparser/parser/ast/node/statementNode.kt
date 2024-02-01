@@ -392,6 +392,7 @@ class ElseClause : IfClause() {
 }
 
 
+
 open class TableKey : ExpressionNode, ASTNode() {
     lateinit var key: ExpressionNode
     lateinit var value: ExpressionNode
@@ -461,6 +462,23 @@ class DoStatement : StatementNode, ASTNode() {
     override fun clone(): DoStatement {
         return DoStatement().also { stat ->
             stat.body = body.clone()
+        }
+    }
+}
+
+class CommentStatement : StatementNode, ASTNode() {
+    var comment by Delegates.notNull<String>()
+    override fun toString(): String {
+        return "CommmentStatement(comment=$comment)"
+    }
+
+    override fun <T> accept(visitor: ASTVisitor<T>, value: T) {
+        visitor.visitCommentStatement(this, value)
+    }
+
+    override fun clone(): CommentStatement {
+        return CommentStatement().also { stat ->
+            stat.comment = comment
         }
     }
 }
