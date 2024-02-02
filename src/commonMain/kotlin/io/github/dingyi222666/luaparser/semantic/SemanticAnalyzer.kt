@@ -16,14 +16,6 @@ class SemanticAnalyzer : ASTVisitor<BaseASTNode> {
 
     private val globalScope = GlobalScope(range = Range.EMPTY)
 
-    private fun createLocalScope(node: BaseASTNode): LocalScope {
-        val parent = currentScope
-        val localScope = LocalScope(parent, node.range)
-        scopeStack.addFirst(localScope)
-        globalScope.addScope(localScope)
-        return localScope
-    }
-
     private fun createFunctionScope(node: BaseASTNode): FunctionScope {
         val parent = currentScope
         val localScope = FunctionScope(parent, node.range)
@@ -146,15 +138,15 @@ class SemanticAnalyzer : ASTVisitor<BaseASTNode> {
             is Identifier -> setIdentifierType(
                 value,
 
-                resolveExpressionNodeType(node, currentScope) ?: Type.ANY, currentScope
+                resolveExpressionNodeType(node, currentScope), currentScope
             )
 
             is MemberExpression -> setMemberExpressionType(
-                value, resolveExpressionNodeType(node, currentScope) ?: Type.ANY, currentScope
+                value, resolveExpressionNodeType(node, currentScope), currentScope
             )
 
             is ReturnStatement -> setReturnStatementType(
-                value, node, resolveExpressionNodeType(node, currentScope) ?: Type.ANY, currentScope
+                value, node, resolveExpressionNodeType(node, currentScope), currentScope
             )
         }
     }
@@ -211,7 +203,7 @@ class SemanticAnalyzer : ASTVisitor<BaseASTNode> {
 
             // return: return a
             is ReturnStatement -> setReturnStatementType(
-                value, node, resolveExpressionNodeType(node) ?: Type.ANY, currentScope
+                value, node, resolveExpressionNodeType(node), currentScope
             )
         }
     }
@@ -469,12 +461,12 @@ class SemanticAnalyzer : ASTVisitor<BaseASTNode> {
 
                 if (value is TableConstructorExpression) {
                     val valueType = TableType(TypeKind.Table, keyValue.toString())
-                    currentType.setMember(keyValue.toString(), keyType ?: Type.ANY, valueType)
+                    currentType.setMember(keyValue.toString(), keyType, valueType)
                     tableConstructorStack.addLast(value to valueType)
                     currentType = valueType
                 } else {
                     val valueType = resolveExpressionNodeType(value, scope)
-                    currentType.setMember(keyValue.toString(), keyType ?: Type.ANY, valueType)
+                    currentType.setMember(keyValue.toString(), keyType, valueType)
                 }
 
             }
