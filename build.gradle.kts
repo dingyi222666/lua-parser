@@ -1,10 +1,7 @@
-import com.vanniktech.maven.publish.JavadocJar
-import com.vanniktech.maven.publish.KotlinMultiplatform
-
 plugins {
-    kotlin("multiplatform").version("2.0.0-Beta3")
+    kotlin("multiplatform") version "2.0.20"
     java
-    id("com.vanniktech.maven.publish") version "0.27.0"
+    id("com.vanniktech.maven.publish") version "0.29.0"
     id("maven-publish")
     signing
 }

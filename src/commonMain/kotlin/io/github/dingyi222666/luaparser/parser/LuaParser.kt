@@ -18,6 +18,7 @@ import kotlin.properties.Delegates
  * @description:
  **/
 class LuaParser(
+    private val luaVersion: LuaVersion = LuaVersion.LUA_5_4,
     private val errorRecovery: Boolean = true,
 ) {
     private var lexer by Delegates.notNull<WrapperLuaLexer>()

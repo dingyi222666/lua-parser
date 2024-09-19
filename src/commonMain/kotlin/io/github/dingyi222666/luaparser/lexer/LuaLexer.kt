@@ -7,7 +7,6 @@ class LuaLexer(
     private val source: CharSequence
 ) : Iterator<Pair<LuaTokenTypes, String>> {
 
-
     private val bufferLen = source.length;
 
     private var offset = 0
