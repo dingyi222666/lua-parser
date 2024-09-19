@@ -1,4 +1,5 @@
 import io.github.dingyi222666.luaparser.parser.LuaParser
+import io.github.dingyi222666.luaparser.parser.LuaVersion
 import io.github.dingyi222666.luaparser.source.AST2Lua
 import io.github.dingyi222666.luaparser.util.parseLuaString
 import kotlin.test.Test
@@ -18,6 +19,17 @@ import kotlin.test.Test
 
         println(AST2Lua().asCode(root))
     }
+
+     @Test
+     fun parseLua54() {
+         val parser = LuaParser(LuaVersion.LUA_5_4)
+
+         val root = parser.parse("""
+             local apple <const>, carrot = 'fruit', 'vegetable'
+         """.trimIndent())
+
+         println(AST2Lua().asCode(root))
+     }
 }
 
 const val source = """

@@ -18,7 +18,7 @@ import kotlin.properties.Delegates
  * @description:
  **/
 class LuaParser(
-    private val luaVersion: LuaVersion = LuaVersion.LUA_5_4,
+    private val luaVersion: LuaVersion = LuaVersion.ANDROLUA_5_3,
     private val errorRecovery: Boolean = true,
 ) {
     private var lexer by Delegates.notNull<WrapperLuaLexer>()
@@ -77,7 +77,7 @@ class LuaParser(
     private fun ignoreToken(advanceToken: LuaTokenTypes): Boolean {
         return when (advanceToken) {
             LuaTokenTypes.WHITE_SPACE, LuaTokenTypes.NEW_LINE
-            -> true
+                -> true
 
             else -> false
         }
@@ -144,6 +144,12 @@ class LuaParser(
         if (ignoreWarningMessage) {
             println("(${lexer.line()},${lexer.column()}): " + message + ". This error is ignored now.")
         } else error(message)
+    }
+
+    private inline fun assertVersion(version: LuaVersion, crossinline messageBuilder: () -> String) {
+        if (luaVersion != version) {
+            error(messageBuilder())
+        }
     }
 
     private fun markLocation() {
@@ -234,9 +240,21 @@ class LuaParser(
                     }
                 }
 
-                peekToken(LuaTokenTypes.WHEN) -> parseWhenStatement(blockNode)
+                peekToken(LuaTokenTypes.WHEN) -> {
+                    assertVersion(LuaVersion.ANDROLUA_5_3) {
+                        "when statement is only supported in androlua 5.3"
+                    }
+                    parseWhenStatement(blockNode)
+                }
+
                 peekToken(LuaTokenTypes.IF) -> parseIfStatement(blockNode)
-                peekToken(LuaTokenTypes.SWITCH) -> parseSwitchStatement(blockNode)
+                peekToken(LuaTokenTypes.SWITCH) -> {
+                    assertVersion(LuaVersion.ANDROLUA_5_3) {
+                        "switch statement is only supported in androlua 5.3"
+                    }
+                    parseSwitchStatement(blockNode)
+                }
+
                 consumeToken(LuaTokenTypes.GOTO) -> parseGotoStatement(blockNode)
                 consumeToken(LuaTokenTypes.DOUBLE_COLON) -> parseLabelStatement(blockNode)
                 consumeToken(LuaTokenTypes.SEMI) -> continue
@@ -244,10 +262,14 @@ class LuaParser(
                 // function call, varlist = explist, $(localvarlist)
                 peekToken(LuaTokenTypes.NAME) -> {
                     val name = peek { lexerText() }
-                    if (name.startsWith('$'))
+                    if (name.startsWith('$')) {
+                        assertVersion(LuaVersion.ANDROLUA_5_3) {
+                            "local variables with prefix $ are not supported in this version"
+                        }
                         parseLocalVarList(blockNode)
-                    else
+                    } else {
                         parseExpStatement(blockNode)
+                    }
                 }
 
                 peekToken(LuaTokenTypes.RETURN) -> parseReturnStatement(blockNode)
@@ -757,6 +779,52 @@ class LuaParser(
         val identifier = Identifier(name.toString())
         identifier.parent = parent
         return finishNode(identifier)
+    }
+
+    // attrib ::= [‘<’ Name ‘>’]
+    // Name attrib
+    private fun parseAttribute(parent: BaseASTNode): AttributeIdentifier {
+        val result = AttributeIdentifier()
+        result.parent = parent
+
+        // parse name
+        val name = parseName(result)
+
+        result.name = name.name
+
+        // check <
+        if (!consumeToken(LuaTokenTypes.LT)) {
+            return result
+        }
+
+        val attributeName = parseName(result)
+
+        result.attributeName = attributeName.name
+
+        expectToken(LuaTokenTypes.GT) { "'>' expected near ${lexerText()}" }
+
+        return result
+    }
+
+    // attnamelist ::=  Name attrib {‘,’ Name attrib}
+    private fun parseAttrNameList(parent: BaseASTNode): List<AttributeIdentifier> {
+        val result = mutableListOf<AttributeIdentifier>()
+
+        result.add(parseAttribute(parent))
+
+        val hasComma = consumeToken(LuaTokenTypes.COMMA)
+
+        if (!hasComma) {
+            return result
+        }
+        var nameNode = parseAttribute(parent)
+        while (true) {
+            result.add(nameNode)
+            if (!consumeToken(LuaTokenTypes.COMMA)) break
+            nameNode = parseAttribute(parent)
+        }
+
+        return result
     }
 
     // namelist ::= Name {‘,’ Name}
@@ -1280,12 +1348,18 @@ class LuaParser(
         return result
     }
 
-    // local namelist [‘=’ explist]
+    // local namelist [‘=’ explist] (lua 5.3)
+    // local attnamelist [‘=’ explist] (lua 5.4)
     private fun parseLocalVarList(parent: BaseASTNode): LocalStatement {
         val localStatement = LocalStatement()
         localStatement.parent = parent
         markLocation()
-        localStatement.init.addAll(parseNameList(localStatement, true))
+
+        localStatement.init.addAll(
+            if (luaVersion === LuaVersion.LUA_5_4)
+                parseAttrNameList(localStatement)
+            else parseNameList(localStatement, luaVersion === LuaVersion.ANDROLUA_5_3)
+        )
         localStatement.init.forEach {
             it.isLocal = true
         }

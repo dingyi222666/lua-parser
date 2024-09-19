@@ -182,6 +182,7 @@ interface ASTVisitor<T> {
             is CallExpression -> visitCallExpression(node, value)
             is BinaryExpression -> visitBinaryExpression(node, value)
             is UnaryExpression -> visitUnaryExpression(node, value)
+            is AttributeIdentifier -> visitAttributeIdentifier(node, value)
             is Identifier -> visitIdentifier(node, value)
             is ConstantNode -> visitConstantNode(node, value)
             is LambdaDeclaration -> visitLambdaDeclaration(node, value)
@@ -198,7 +199,9 @@ interface ASTVisitor<T> {
 
     fun visitIdentifiers(list: List<Identifier>, value: T) {
         list.forEach {
-            visitIdentifier(it, value)
+            if (it is AttributeIdentifier)
+                visitAttributeIdentifier(it, value)
+            else visitIdentifier(it, value)
         }
     }
 
@@ -301,6 +304,8 @@ interface ASTVisitor<T> {
     fun visitCommentStatement(commentStatement: CommentStatement, value: T) {
 
     }
+
+    fun visitAttributeIdentifier(identifier: AttributeIdentifier, value: T)
 }
 
 interface ASTModifier<T> {
@@ -473,7 +478,11 @@ interface ASTModifier<T> {
 
     fun visitLocalStatement(node: LocalStatement, value: T): LocalStatement {
         node.init.forEachIndexed { index, identifier ->
-            node.init[index] = visitIdentifier(identifier, value).also {
+            node.init[index] = run {
+                if (identifier is AttributeIdentifier)
+                    visitIdentifier(identifier, value)
+                else visitIdentifier(identifier, value)
+            }.also {
                 it.parent = node
             }
         }
@@ -592,6 +601,7 @@ interface ASTModifier<T> {
             is CallExpression -> visitCallExpression(node, value)
             is BinaryExpression -> visitBinaryExpression(node, value)
             is UnaryExpression -> visitUnaryExpression(node, value)
+            is AttributeIdentifier -> visitAttributeIdentifier(node, value)
             is Identifier -> visitIdentifier(node, value)
             is ConstantNode -> visitConstantNode(node, value)
             is LambdaDeclaration -> visitLambdaDeclaration(node, value)
@@ -774,6 +784,10 @@ interface ASTModifier<T> {
             }
         }
 
+        return node
+    }
+
+    fun visitAttributeIdentifier(node: AttributeIdentifier, value: T): AttributeIdentifier {
         return node
     }
 }

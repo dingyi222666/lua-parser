@@ -61,6 +61,13 @@ class SemanticAnalyzer : ASTVisitor<BaseASTNode> {
         destroyScope()
     }
 
+    override fun visitAttributeIdentifier(
+        identifier: AttributeIdentifier,
+        value: BaseASTNode
+    ) {
+        TODO("Lua 5.4 attribute")
+    }
+
     override fun visitDoStatement(node: DoStatement, value: BaseASTNode) {
         createFunctionScope(node)
         super.visitDoStatement(node, value)

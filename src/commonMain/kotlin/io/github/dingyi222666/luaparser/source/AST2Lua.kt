@@ -16,7 +16,7 @@ class AST2Lua : ASTVisitor<StringBuilder> {
     var indentSize = 4
 
     private fun indent(): String {
-        return " ".repeat(indentSize).repeat(max(currentDepth,0))
+        return " ".repeat(indentSize).repeat(max(currentDepth, 0))
     }
 
     private fun indent(sb: StringBuilder) {
@@ -89,7 +89,6 @@ class AST2Lua : ASTVisitor<StringBuilder> {
         }
         value.append(")")
     }
-
 
 
     override fun visitFunctionDeclaration(node: FunctionDeclaration, value: StringBuilder) {
@@ -412,6 +411,19 @@ class AST2Lua : ASTVisitor<StringBuilder> {
             ExpressionOperator.BIT_EXP -> "^"
             ExpressionOperator.CONCAT -> ".."
             ExpressionOperator.GETLEN -> "#"
+        }
+    }
+
+    override fun visitAttributeIdentifier(identifier: AttributeIdentifier, value: StringBuilder) {
+        value.append(identifier.name)
+
+        val attributeName = identifier.attributeName
+
+        if (attributeName != null) {
+            value.append(" ")
+            value.append("<")
+            value.append(attributeName)
+            value.append(">")
         }
     }
 }

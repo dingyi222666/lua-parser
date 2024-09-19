@@ -11,8 +11,8 @@ import kotlin.properties.Delegates
  * @date: 2021/10/7 10:48
  * @description:
  **/
-class Identifier(var name: String = "") : ExpressionNode, ASTNode() {
-    var isLocal = false
+open class Identifier(open var name: String = "") : ExpressionNode, ASTNode() {
+    open var isLocal = false
 
     override fun toString(): String {
         return "Identifier(name='$name')"
@@ -30,6 +30,26 @@ class Identifier(var name: String = "") : ExpressionNode, ASTNode() {
 
 }
 
+/**
+ * @author: dingyi
+ * @date: 2024/9/19 18:04
+ * @description:
+ **/
+class AttributeIdentifier(
+    override var name: String = "",
+    var attributeName: String? = null
+) : Identifier(name) {
+    override var isLocal = true
+    override fun <T> accept(visitor: ASTVisitor<T>, value: T) {
+        visitor.visitAttributeIdentifier(this, value)
+    }
+
+    override fun clone(): AttributeIdentifier {
+        return AttributeIdentifier(name = name, attributeName = attributeName).also {
+            it.isLocal = true
+        }
+    }
+}
 
 /**
  * @author: dingyi
