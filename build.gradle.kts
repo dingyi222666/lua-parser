@@ -7,7 +7,7 @@ plugins {
 }
 
 group = "io.github.dingyi222666"
-version = "1.0.2"
+version = "1.0.3"
 
 kotlin {
     jvm {
@@ -82,7 +82,7 @@ mavenPublishing {
 
     signAllPublications()
 
-    coordinates("io.github.dingyi222666", "luaparser", "1.0.2")
+    coordinates("io.github.dingyi222666", "luaparser", "1.0.3")
 
     pom {
         name.set("luaparser")
