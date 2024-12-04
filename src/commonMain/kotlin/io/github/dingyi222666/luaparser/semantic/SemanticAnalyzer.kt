@@ -2,857 +2,394 @@ package io.github.dingyi222666.luaparser.semantic
 
 import io.github.dingyi222666.luaparser.parser.ast.node.*
 import io.github.dingyi222666.luaparser.parser.ast.visitor.ASTVisitor
-import io.github.dingyi222666.luaparser.semantic.symbol.*
-import io.github.dingyi222666.luaparser.semantic.typesystem.*
+import io.github.dingyi222666.luaparser.semantic.comment.ClassTag
+import io.github.dingyi222666.luaparser.semantic.types.*
+import io.github.dingyi222666.luaparser.semantic.symbol.SymbolTable
+import io.github.dingyi222666.luaparser.semantic.comment.CommentProcessor
+import io.github.dingyi222666.luaparser.semantic.comment.FieldTag
+import io.github.dingyi222666.luaparser.semantic.comment.GenericTag
+import io.github.dingyi222666.luaparser.semantic.comment.MethodTag
+import io.github.dingyi222666.luaparser.semantic.comment.ParamTag
+import io.github.dingyi222666.luaparser.semantic.comment.ReturnTag
+import io.github.dingyi222666.luaparser.semantic.comment.TypeTag
+import io.github.dingyi222666.luaparser.semantic.symbol.Symbol
 
-/**
- * @author: dingyi
- * @date: 2023/2/5
- * @description:
- **/
-class SemanticAnalyzer : ASTVisitor<BaseASTNode> {
+class SemanticAnalyzer : ASTVisitor<TypeContext> {
+    private val typeInferer = TypeInferer()
+    private val typeAnnotationParser = TypeAnnotationParser()
+    private val commentProcessor = CommentProcessor(typeAnnotationParser)
+    private val diagnostics = mutableListOf<Diagnostic>()
+    private var currentSymbolTable: SymbolTable = SymbolTable()
+    
+    private val globalSymbols = mutableMapOf<String, Symbol>()
 
-    private val scopeStack = ArrayDeque<Scope>()
+    init {
+        defineGlobalSymbol("print", FunctionType(
+            parameters = listOf(ParameterType("...", PrimitiveType.ANY, vararg = true)),
+            returnType = PrimitiveType.NIL
+        ))
+    }
 
-    private val globalScope = GlobalScope(range = Range.EMPTY)
+    private fun defineGlobalSymbol(name: String, type: Type) {
+        globalSymbols[name] = Symbol(name, type, Symbol.Kind.VARIABLE)
+    }
 
-    private fun createFunctionScope(node: BaseASTNode): FunctionScope {
-        val parent = currentScope
-        val localScope = FunctionScope(parent, node.range)
-        scopeStack.addFirst(localScope)
-        globalScope.addScope(localScope)
-        return localScope
+    fun analyze(ast: ChunkNode): AnalysisResult {
+        diagnostics.clear()
+        currentSymbolTable = SymbolTable()
+        
+
+        visitChunkNode(ast, TypeContext())
+        
+        return AnalysisResult(
+            diagnostics = diagnostics,
+            symbolTable = currentSymbolTable,
+            globalSymbols = globalSymbols.toMap()
+        )
+    }
+
+    override fun visitBlockNode(node: BlockNode, context: TypeContext) {
+        val previousTable = currentSymbolTable
+        currentSymbolTable = currentSymbolTable.createChild(node.range)
+        
+        commentProcessor.processComments(node.statements)
+        
+        processClassDefinitions(node.statements)
+        
+        super.visitBlockNode(node, context)
+        
+        currentSymbolTable = previousTable
     }
 
 
-    private fun createLoopScope(node: BaseASTNode): LoopScope {
-        val parent = currentScope
-        val loopScope = LoopScope(parent, node.range)
-        scopeStack.addFirst(loopScope)
-        globalScope.addScope(loopScope)
-        return loopScope
-    }
+    private fun processClassDefinitions(statements: List<StatementNode>) {
+        // 第一遍：收集所有类定义
+        statements.forEach { stmt ->
+            if (stmt is LocalStatement || stmt is AssignmentStatement) {
+                val comments = commentProcessor.getAdjacentComments(stmt)
+                val classTag = comments.findLast { comment ->
+                    comment.isDocComment && comment.comment.contains("@class")
+                }?.let { comment ->
+                    commentProcessor.parseDocComment(comment, comment.range.start.line)
+                        .tags.firstOrNull { it is ClassTag } as? ClassTag
+                }
 
-    private fun destroyScope() {
-        scopeStack.removeFirst()
-    }
+                if (classTag != null) {
+                    val fields = mutableMapOf<String, Type>()
+                    val methods = mutableMapOf<String, FunctionType>()
+                    
+                    // 处理类的字段和基本方法
+                    comments.forEach { comment ->
+                        if (comment.isDocComment) {
+                            val docComment = commentProcessor.parseDocComment(
+                                comment, 
+                                comment.range.start.line
+                            )
+                            
+                            docComment.tags.forEach { tag ->
+                                when (tag) {
+                                    is FieldTag -> fields[tag.name] = tag.type
+                                    is MethodTag -> methods[tag.methodName] = tag.type
+                                    is ClassTag -> TODO()
+                                    is GenericTag -> TODO()
+                                    is ParamTag -> TODO()
+                                    is ReturnTag -> TODO()
+                                    is TypeTag -> TODO()
+                                }
+                            }
+                        }
+                    }
+                    
+                    // 添加动态声明的方法
+                    methods.putAll(commentProcessor.getClassMethods(classTag.name))
 
-    private inline fun error(node: BaseASTNode, crossinline messageBuilder: () -> String) {
-        error("${node.range.start}: ${messageBuilder()}")
-    }
+                    val classType = typeAnnotationParser.defineClass(
+                        name = classTag.name,
+                        fields = fields,
+                        methods = methods
+                    )
 
-    fun analyze(node: ChunkNode): GlobalScope {
-        globalScope.range = node.range
-        scopeStack.addFirst(globalScope)
-        visitChunkNode(node, node)
-        return globalScope
-    }
-
-
-    override fun visitChunkNode(node: ChunkNode, value: BaseASTNode) {
-        globalScope.range = node.range
-        //createFunctionScope(node)
-        super.visitChunkNode(node, value)
-        //destroyScope()
-    }
-
-    override fun visitBlockNode(node: BlockNode, value: BaseASTNode) {
-        super.visitBlockNode(node, node)
-        destroyScope()
+                    if (stmt is LocalStatement) {
+                        stmt.init.forEach { id ->
+                            currentSymbolTable.define(
+                                id.name,
+                                classType,
+                                Symbol.Kind.CLASS,
+                                id.range
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        
+        // 第二遍：处理方法实现和类型检查
+        statements.forEach { stmt ->
+            if (stmt is AssignmentStatement) {
+                val target = stmt.init.firstOrNull()
+                if (target is MemberExpression) {
+                    val baseType = typeInferer.inferType(target.base, TypeContext())
+                    if (baseType is ClassType) {
+                        // 检查是否是方法赋值
+                        val methodName = target.identifier.name
+                        val methodType = baseType.methods[methodName]
+                        if (methodType != null) {
+                            // 验证方法实现的类型
+                            val implementation = stmt.variables.firstOrNull()
+                            if (implementation != null) {
+                                val implType = typeInferer.inferType(implementation, TypeContext())
+                                if (!methodType.isAssignableFrom(implType)) {
+                                    diagnostics.add(Diagnostic(
+                                        range = stmt.range,
+                                        message = "Method implementation type mismatch: expected ${methodType.name}, got ${implType.name}",
+                                        severity = Diagnostic.Severity.ERROR
+                                    ))
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     override fun visitAttributeIdentifier(
         identifier: AttributeIdentifier,
-        value: BaseASTNode
+        value: TypeContext
     ) {
-        TODO("Lua 5.4 attribute")
+        TODO("Not yet implemented")
     }
 
-    override fun visitDoStatement(node: DoStatement, value: BaseASTNode) {
-        createFunctionScope(node)
-        super.visitDoStatement(node, value)
-    }
-
-    override fun visitStatementNode(node: StatementNode, value: BaseASTNode) {
-        super.visitStatementNode(node, node)
-    }
-
-    override fun visitLocalStatement(node: LocalStatement, value: BaseASTNode) {
-        node.init.forEach {
-            createLocalVariable(it)
-        }
-
-        for (index in node.variables.indices) {
-            val varNode = node.variables[index]
-            val initNode = node.init.getOrNull(index)
-            if (initNode != null) {
-                visitExpressionNode(varNode, initNode)
-            }
-        }
-    }
-
-
-    override fun visitCallExpression(node: CallExpression, value: BaseASTNode) {
-        when (node) {
-            is StringCallExpression -> return visitStringCallExpression(node, value)
-            is TableCallExpression -> return visitTableCallExpression(node, value)
-        }
-
-        val type = getCallExpressionType(node, currentScope)
-
-        when (value) {
-            is Identifier -> setIdentifierType(
-                value, type, currentScope
-            )
-
-            is MemberExpression -> setMemberExpressionType(
-                value, type, currentScope
-            )
-        }
-    }
-
-
-    override fun visitConstantNode(node: ConstantNode, value: BaseASTNode) {
-        when (value) {
-            is Identifier -> setIdentifierType(value, node.asType(), currentScope)
-
-            is MemberExpression -> setMemberExpressionType(value, node.asType(), currentScope)
-
-            // return value
-            is ReturnStatement -> setReturnStatementType(value, node, node.asType(), currentScope)
-        }
-    }
-
-    override fun visitWhileStatement(node: WhileStatement, value: BaseASTNode) {
-        createLoopScope(node.body)
-        super.visitWhileStatement(node, node)
-    }
-
-    override fun visitBreakStatement(node: BreakStatement, value: BaseASTNode) {
-        if (currentScope !is LoopScope) {
-            error(node) { "no loop to break" }
-        }
-    }
-
-    override fun visitContinueStatement(node: ContinueStatement, value: BaseASTNode) {
-        if (currentScope !is LoopScope) {
-            error(node) { "no loop to continue" }
-        }
-    }
-
-    override fun visitBinaryExpression(node: BinaryExpression, value: BaseASTNode) {
-        when (value) {
-            is Identifier -> setIdentifierType(
-                value,
-
-                resolveExpressionNodeType(node, currentScope), currentScope
-            )
-
-            is MemberExpression -> setMemberExpressionType(
-                value, resolveExpressionNodeType(node, currentScope), currentScope
-            )
-
-            is ReturnStatement -> setReturnStatementType(
-                value, node, resolveExpressionNodeType(node, currentScope), currentScope
-            )
-        }
-    }
-
-
-    override fun visitReturnStatement(node: ReturnStatement, value: BaseASTNode) {
-        val tupleType = TupleType(node.arguments.map { Type.ANY })
-        val symbol = createStatementSymbol(
-            "return", node, tupleType
-        )
-
-        currentScope.addSymbol(symbol)
-        super.visitReturnStatement(node, node)
-    }
-
-    override fun visitMemberExpression(node: MemberExpression, value: BaseASTNode) {
-        val currentType = resolveMemberExpressionType(node, currentScope)
-        when (value) {
-            is Identifier -> setIdentifierType(value, currentType, currentScope)
-
-            is MemberExpression -> setMemberExpressionType(value, currentType, currentScope)
-
-            is ReturnStatement -> setReturnStatementType(value, node, currentType, currentScope)
-        }
-    }
-
-    override fun visitIdentifier(node: Identifier, value: BaseASTNode) {
-
-        when (value) {
-            // params: function(a)
-            is FunctionDeclaration -> {
-                val parameterSymbol = createParamsVariable(node, currentScope)
-                if (node.name == "self" && value.params.indexOf(node) == 0 && value.identifier is MemberExpression) {
-                    setSelfType(value, parameterSymbol, currentScope)
-                }
-            }
-
-            // identifier: a = b
-            is Identifier -> {
-                //  val symbolForVariableName = currentScope.resolveSymbol(value.name, node.range.start)
-                val symbolForValue = currentScope.resolveSymbol(node.name, node.range.start)
-
-                val type = unpackType(symbolForValue?.type ?: Type.ANY)
-
-                setIdentifierType(value, type, currentScope)
-            }
-
-            // member: a.b = c
-            is MemberExpression -> {
-                val symbolForValue = currentScope.resolveSymbol(node.name, node.range.start) ?: return
-
-                setMemberExpressionType(value, symbolForValue.type, currentScope)
-            }
-
-            // return: return a
-            is ReturnStatement -> setReturnStatementType(
-                value, node, resolveExpressionNodeType(node), currentScope
-            )
-        }
-    }
-
-    override fun visitTableConstructorExpression(node: TableConstructorExpression, value: BaseASTNode) {
-        // make parent as table
-        super.visitTableConstructorExpression(node, node)
-
-        when (value) {
-            is Identifier -> setIdentifierType(
-                value,
-                getTableConstructorExpressionType(node, value.name),
-                currentScope,
-            )
-
-            is MemberExpression -> setMemberExpressionType(
-                value, getTableConstructorExpressionType(node), currentScope
-            )
-
-            is ReturnStatement -> setReturnStatementType(
-                value, node, getTableConstructorExpressionType(node), currentScope
-            )
-        }
-    }
-
-
-    override fun visitAssignmentStatement(node: AssignmentStatement, value: BaseASTNode) {
-        val initSymbols = node.init.map { initNode ->
-            when (initNode) {
-                is Identifier -> {
-                    val symbol = currentScope.resolveSymbol(initNode.name, initNode.range.start)
-                    if (symbol != null) {
-                        return@map symbol
+    override fun visitLocalStatement(node: LocalStatement, context: TypeContext) {
+        node.init.forEachIndexed { index, identifier ->
+            val valueExpr = node.variables.getOrNull(index)
+            
+            val declaredType = commentProcessor.findTypeAnnotation(node) ?: run {
+                if (valueExpr != null) {
+                    val inferredType = typeInferer.inferType(valueExpr, context)
+                    when (valueExpr) {
+                        is CallExpression -> {
+                            val funcType = typeInferer.inferType(valueExpr.base, context)
+                            if (funcType is FunctionType) funcType.returnType else inferredType
+                        }
+                        else -> inferredType
                     }
-                    createGlobalVariable(initNode)
+                } else {
+                    PrimitiveType.ANY
                 }
-
-                is MemberExpression -> {
-                    val list = transformMemberExpressionToList(initNode)
-
-                    val first = list.first()
-
-                    val assignedSymbol = currentScope.resolveSymbol(first.name, first.range.start)
-
-                    if (assignedSymbol != null) {
-                        return@map assignedSymbol
-                    }
-                    createUnknownLikeTableSymbol(list)
+            }
+            
+            currentSymbolTable.define(
+                identifier.name,
+                declaredType,
+                Symbol.Kind.LOCAL,
+                identifier.range
+            )
+            
+            context.defineType(identifier.name, declaredType)
+            
+            if (valueExpr != null) {
+                val inferredType = typeInferer.inferType(valueExpr, context)
+                diagnostics.addAll(typeInferer.getDiagnostics())
+                
+                if (!declaredType.isAssignableFrom(inferredType)) {
+                    diagnostics.add(Diagnostic(
+                        range = node.range,
+                        message = "Type '${inferredType.name}' is not assignable to type '${declaredType.name}'",
+                        severity = Diagnostic.Severity.ERROR
+                    ))
                 }
-
-                else -> null
             }
-        }
-
-        // TODO: check var > init
-
-        var tupleType: TupleType? = null
-        var lastTupleTypeIndex = 0
-        for (index in node.init.indices) {
-            val varNode = node.variables.getOrNull(index)
-            val initNode = node.init[index]
-
-            varNode?.let { visitExpressionNode(it, initNode) }
-
-            val initSymbol = initSymbols.getOrNull(index) ?: break
-
-            if (initSymbol.type is TupleType) {
-                lastTupleTypeIndex = index
-                tupleType = initSymbol.type as TupleType
-            }
-
-            if (tupleType != null) {
-                initSymbol.type = tupleType.get(index - lastTupleTypeIndex)
-            }
-
         }
     }
 
-    override fun visitForNumericStatement(node: ForNumericStatement, value: BaseASTNode) {
-        createLoopScope(node.body)
-
-        createLocalVariable(node.variable)
-
-        visitExpressionNode(node.start, node.variable)
-        visitExpressionNode(node.end, node.variable)
-        node.step?.let { visitExpressionNode(it, node) }
-
-        visitBlockNode(node.body, node)
-    }
-
-    override fun visitForGenericStatement(node: ForGenericStatement, value: BaseASTNode) {
-        super.visitForGenericStatement(node, value)
-    }
-
-
-    override fun visitFunctionDeclaration(node: FunctionDeclaration, value: BaseASTNode) {
-
-        val funcType = FunctionType("anonymous")
-
-        if (node.isLocal) {
-            visitLocalFunctionDeclaration(node, funcType)
+    override fun visitFunctionDeclaration(node: FunctionDeclaration, context: TypeContext) {
+        val functionScope = currentSymbolTable.createChild(node.range)
+        val previousTable = currentSymbolTable
+        currentSymbolTable = functionScope
+        
+        val declaredType = commentProcessor.findTypeAnnotation(node)
+        
+        val functionType = if (declaredType is FunctionType) {
+            node.params.forEachIndexed { index, param ->
+                val paramType = declaredType.parameters.getOrNull(index)?.type ?: PrimitiveType.ANY
+                currentSymbolTable.define(
+                    param.name,
+                    paramType,
+                    Symbol.Kind.PARAMETER,
+                    param.range
+                )
+                context.defineType(param.name, paramType)
+            }
+            declaredType
         } else {
-            visitGlobalFunctionDeclaration(node, value, funcType)
-        }
-
-        val funcScope = createFunctionScope(node)
-
-        visitIdentifiers(node.params, node)
-
-        node.params.forEach {
-            funcScope.resolveSymbol(it.name, it.range.start)?.let { paramSymbol ->
-                val paramType = paramSymbol.type
-                funcType.addParamType(paramType)
+            val inferredType = typeInferer.inferType(node, context)
+            node.params.forEach { param ->
+                currentSymbolTable.define(
+                    param.name,
+                    PrimitiveType.ANY,
+                    Symbol.Kind.PARAMETER,
+                    param.range
+                )
+                context.defineType(param.name, PrimitiveType.ANY)
             }
+            inferredType as FunctionType
         }
-
-        node.body?.let {
-            visitBlockNode(it, value)
-            it.returnStatement?.let {
-                val returnSymbol = funcScope.resolveSymbol("return", funcScope.range.start, true)
-
-                val returnTupleType = returnSymbol?.type as TupleType
-
-                returnTupleType.list().forEach { type ->
-                    funcType.addReturnType(type)
-                }
-                funcScope.removeSymbol(returnSymbol)
-            }
-        }
-
-    }
-
-
-    private fun transformMemberExpressionToList(node: MemberExpression): ArrayDeque<Identifier> {
-        val result = ArrayDeque<Identifier>()
-
-        var currentNode: ExpressionNode = node
-
-        while (currentNode !is Identifier) {
-            val memberExpression = currentNode as MemberExpression
-            result.addFirst(memberExpression.identifier)
-            currentNode = memberExpression.base
-        }
-
-        result.addFirst(currentNode)
-
-        return result
-    }
-
-
-    private fun visitGlobalFunctionDeclaration(
-        node: FunctionDeclaration, value: BaseASTNode, functionType: FunctionType
-    ) {
-        val identifier = node.identifier
-        val variable: String
-
-        // function xx() end
-        if (identifier is Identifier) {
-            variable = identifier.name
-            val symbol = currentScope.resolveSymbol(variable, identifier.range.start)
-            if (symbol != null) {
-                createGlobalFunctionSymbol(identifier, node, functionType)
-            }
-        }
-
-
-        if (identifier is MemberExpression) {
-            val list = transformMemberExpressionToList(identifier)
-            val isCallSelf = identifier.indexer == ":"
-
-            val last = list.first()
-            val selfSymbol = currentScope.resolveSymbol(last.name, last.range.start)
-
-            if (selfSymbol == null) {
-                createUnknownLikeTableSymbol(list)
-            }
-
-            functionType.isSelf = isCallSelf
-
-            if (isCallSelf) {
-                currentScope.addSymbol(createSelfVariableSymbol(node, selfSymbol?.type))
-            }
-
-            setMemberExpressionType(identifier, functionType, currentScope, list)
-        }
-
-
-        if (value is MemberExpression) {
-            setMemberExpressionType(value, functionType, currentScope)
-        }
-    }
-
-
-    private fun visitLocalFunctionDeclaration(
-        node: FunctionDeclaration, functionType: FunctionType
-    ) {
-
-
-        // local function
-        if (node.identifier is Identifier && node.isLocal) {
-            createLocalFunctionSymbol(node, currentScope, functionType)
-        }
-
-    }
-
-
-    private fun setIdentifierType(identifier: Identifier, targetType: Type, currentScope: Scope) {
-        currentScope.resolveSymbol(identifier.name, identifier.range.start)?.let { symbol ->
-            symbol.type = targetType.union(symbol.type)
-        }
-    }
-
-    private fun setReturnStatementType(
-        returnStatement: ReturnStatement, node: ExpressionNode, targetType: Type, currentScope: Scope
-    ) {
-        currentScope.resolveSymbol("return", returnStatement.range.start)?.let {
-            val type = it.type as TupleType
-            val indexOfParent = returnStatement.arguments.indexOf(node)
-            type.set(indexOfParent, targetType)
-        }
-    }
-
-
-    private fun getTableConstructorExpressionType(
-        node: TableConstructorExpression, name: String = "anonymous"
-    ): Type {
-        val scope = currentScope
-        val rootType = TableType(TypeKind.Table, name)
-        val tableConstructorStack = ArrayDeque<Pair<TableConstructorExpression, TableType>>()
-        var currentType: TableType
-
-        tableConstructorStack.addFirst(node to rootType)
-
-        while (tableConstructorStack.isNotEmpty()) {
-
-            val pair = tableConstructorStack.removeFirst()
-            val currentTableConstructor = pair.first
-            currentType = pair.second
-
-            for (field in currentTableConstructor.fields) {
-
-                val key = field.key
-                val value = field.value
-
-                var keyValue = if (field is TableKeyString) (key as Identifier).name
-                else resolveExpressionNodeValue(key)
-
-                val keyType = if (field is TableKeyString) Type.STRING else resolveExpressionNodeType(key)
-
-
-                if (keyValue is ConstantNode) {
-                    keyValue = keyValue.rawValue
-                }
-
-
-                if (value is TableConstructorExpression) {
-                    val valueType = TableType(TypeKind.Table, keyValue.toString())
-                    currentType.setMember(keyValue.toString(), keyType, valueType)
-                    tableConstructorStack.addLast(value to valueType)
-                    currentType = valueType
-                } else {
-                    val valueType = resolveExpressionNodeType(value, scope)
-                    currentType.setMember(keyValue.toString(), keyType, valueType)
-                }
-
-            }
-
-        }
-
-        return rootType
-    }
-
-    private fun getCallExpressionType(
-        callExpression: CallExpression,
-        currentScope: Scope,
-    ): Type {
-
-        val base = callExpression.base
-        val args = callExpression.arguments
-
-        val baseType = resolveExpressionNodeType(base, currentScope)
-
-        val callSelf = if (base is MemberExpression) {
-            base.indexer == ":"
-        } else false
-
-
-        if (baseType is FunctionType || ((baseType is UnionType) && baseType.types.any { it is FunctionType })) {
-            val funcType =
-                if (baseType is FunctionType) baseType else (baseType as UnionType).types.filterIsInstance<FunctionType>()
-                    .getOrNull(0) ?: return Type.ANY
-            val params = funcType.parameterTypes
-            val paramsSize = params.size
-
-
-            if (!callSelf && funcType.isSelf && args.isEmpty()) {
-                println("need add : to call with self")
-            }
-
-            for (i in 0..<paramsSize) {
-                val paramType = params[i]
-                val argNode = args.getOrNull(i) ?: break
-                val argType = resolveExpressionNodeType(argNode)
-
-                if (paramType is ParameterType) {
-                    paramType.realType = paramType.realType.union(argType)
-                } else {
-                    funcType.setParamType(i, paramType.union(argType))
+        
+        node.body?.let { visitBlockNode(it, context) }
+        
+        currentSymbolTable = previousTable
+        
+        node.identifier?.let {
+            when (it) {
+                is Identifier -> {
+                    currentSymbolTable.define(
+                        it.name,
+                        functionType,
+                        Symbol.Kind.FUNCTION,
+                        it.range
+                    )
+                    context.defineType(it.name, functionType)
                 }
             }
-
-            return createTupleType(funcType.returnTypes)
         }
-
-        if (base is Identifier && (baseType is UnDefinedType || baseType is AnyType) && args.isNotEmpty()) {
-            val symbol = currentScope.resolveSymbol(base.name, base.range.start) ?: return Type.ANY
-
-            val functionType = LikeFunctionType()
-
-            functionType.addReturnType(Type.ANY)
-
-            for (argIndex in 0..<args.size) {
-                val argType = resolveExpressionNodeType(args[argIndex])
-                val rawParamType = functionType.getParamTypeOrNull(argIndex)
-                val paramType = (rawParamType ?: argType).union(argType)
-                if (rawParamType == null) functionType.addParamType(paramType)
-                else functionType.setParamType(argIndex, paramType)
-            }
-
-            symbol.type = symbol.type.union(Type.ANY).union(functionType)
-
-            return createTupleType(functionType.returnTypes)
-        }
-
-        return Type.ANY
     }
 
-    private fun createTupleType(types: List<Type>): Type {
-        if (types.size == 1) {
-            return types[0]
-        }
-
-        return TupleType(types.distinct())
-    }
-
-    private fun setSelfType(declaration: FunctionDeclaration, symbol: ParameterSymbol, currentScope: Scope) {
-        val identifier = declaration.identifier as MemberExpression
-        val list = transformMemberExpressionToList(identifier)
-        val last = list.first()
-        val selfSymbol = currentScope.resolveSymbol(last.name, last.range.start)
-        val currentType = resolveMemberExpressionType(identifier, currentScope)
-        if (currentType is FunctionType) {
-            currentType.isSelf = true
-        }
-        symbol.type.isSelf = true
-        symbol.type.realType = selfSymbol?.type ?: Type.ANY
-    }
-
-    private fun resolveMemberExpressionType(
-        node: MemberExpression, currentScope: Scope
-    ): Type {
-        val list = transformMemberExpressionToList(node)
-        var last = list.removeFirst()
-        val symbol = currentScope.resolveSymbol(last.name, last.range.start)
-        var currentType: Type? = unpackType(symbol?.type ?: Type.ANY)
-
-        while (list.isNotEmpty()) {
-            last = list.removeFirstOrNull() ?: break
-
-            val lastType = currentType
-            currentType = when (currentType) {
-                is TableType -> currentType.searchMember(last.name)
-
-                else -> null
-            }
-
-            currentType = if (currentType is ParameterType) currentType.realType else currentType
-
-            if (currentType != null) {
-                continue
-            }
-
-            currentType = when (lastType) {
-                is UnknownLikeTableType, is TableType -> {
-                    // Why not find the key? Maybe it isn't assigned yet.
-                    // So we create a new UnknownLikeTableType and set it to the parent.
-                    if (list.size > 0) {
-                        Type.ANY
-                    } else UnknownLikeTableType(last.name)
-                }
-
-                else -> break
-            }
-
-            if (lastType is TableType) {
-                lastType.setMember(last.name, currentType)
-            }
-
-        }
-
-        return unpackType(currentType ?: Type.ANY)
-    }
-
-    private fun resolveExpressionNodeType(node: ExpressionNode, scope: Scope = currentScope): Type {
-        val resultType = when (node) {
-            is ConstantNode -> node.asType()
-            is TableConstructorExpression -> getTableConstructorExpressionType(node)
-
-            is Identifier -> {
-                val symbol = scope.resolveSymbol(node.name, node.range.start)
-                // unknown symbol, create a global symbol
-                symbol?.type ?: createGlobalVariable(node).type
-            }
-
-            is CallExpression -> getCallExpressionType(node, scope)
-
-            is BinaryExpression -> when (node.operator) {
-                ExpressionOperator.CONCAT -> Type.STRING
-                ExpressionOperator.AND, ExpressionOperator.OR, ExpressionOperator.NOT -> Type.BOOLEAN
-                else -> {
-                    val leftType = node.left?.let { resolveExpressionNodeType(it, scope) }
-                    val rightType = node.right?.let { resolveExpressionNodeType(it, scope) }
-
-                    if (leftType?.kind == TypeKind.Number && rightType?.kind == TypeKind.Number) {
-                        Type.NUMBER
-                    } else {
-                        (leftType ?: Type.ANY).union(rightType ?: Type.ANY)
+    override fun visitAssignmentStatement(node: AssignmentStatement, context: TypeContext) {
+        node.init.forEachIndexed { index, target ->
+            val valueExpr = node.variables.getOrNull(index)
+            if (valueExpr != null) {
+                val targetType = when (target) {
+                    is Identifier -> {
+                        if (!target.isLocal) {
+                            val inferredType = typeInferer.inferType(valueExpr, context)
+                            val declaredType = commentProcessor.findTypeAnnotation(node) ?: inferredType
+                            
+                            defineGlobalSymbol(target.name, declaredType)
+                            
+                            if (!declaredType.isAssignableFrom(inferredType)) {
+                                diagnostics.add(Diagnostic(
+                                    range = node.range,
+                                    message = "Global variable '${target.name}' of type '${declaredType.name}' is not assignable from type '${inferredType.name}'",
+                                    severity = Diagnostic.Severity.ERROR
+                                ))
+                            }
+                            
+                            declaredType
+                        } else {
+                            val inferredType = typeInferer.inferType(valueExpr, context)
+                            currentSymbolTable.define(
+                                target.name,
+                                inferredType,
+                                Symbol.Kind.VARIABLE,
+                                target.range
+                            )
+                            context.defineType(target.name, inferredType)
+                            inferredType
+                        }
                     }
+                    is MemberExpression -> {
+                        val baseType = typeInferer.inferType(target.base, context)
+                        when (baseType) {
+                            is TableType -> baseType.fields[target.identifier.name] ?: PrimitiveType.ANY
+                            else -> PrimitiveType.ANY
+                        }
+                    }
+                    else -> PrimitiveType.ANY
+                }
+                
+                val valueType = typeInferer.inferType(valueExpr, context)
+                if (!targetType.isAssignableFrom(valueType)) {
+                    diagnostics.add(Diagnostic(
+                        range = node.range,
+                        message = "Type '${valueType.name}' is not assignable to type '${targetType.name}'",
+                        severity = Diagnostic.Severity.ERROR
+                    ))
+                }
+            }
+        }
+    }
+
+    override fun visitMemberExpression(node: MemberExpression, context: TypeContext) {
+        val baseType = typeInferer.inferType(node.base, context)
+        when (baseType) {
+            is TableType -> {
+                val fieldType = baseType.fields[node.identifier.name]
+                print(fieldType)
+                if (fieldType != null) {
+                    val fullPath = buildMemberPath(node)
+                    context.defineType(fullPath, fieldType)
+                    
+                    context.defineType(node.toString(), fieldType)
                 }
             }
 
-
-            is MemberExpression -> resolveMemberExpressionType(node, scope)
-
-            else -> null
-        }
-
-
-        return unpackType(resultType ?: Type.ANY)
-    }
-
-    private fun resolveExpressionNodeValue(node: ExpressionNode): Any? {
-        return when (node) {
-            is ConstantNode -> node.rawValue
-            else -> null
-        }
-    }
-
-    private fun setMemberExpressionType(
-        expression: MemberExpression,
-        targetType: Type,
-        currentScope: Scope,
-        list: ArrayDeque<Identifier> = transformMemberExpressionToList(expression)
-    ) {
-        var last = list.removeFirst()
-
-        val currentSymbol = currentScope.resolveSymbol(last.name, last.range.start)
-
-        var currentType = currentSymbol?.type
-
-        while (list.size > 1) {
-            last = list.removeFirstOrNull() ?: break
-
-            val lastType = currentType
-            currentType = when (currentType) {
-                is UnknownLikeTableType -> currentType.searchMember(last.name)
-                is TableType -> currentType.searchMember(last.name)
-                else -> break
-            }
-
-            if (currentType != null) {
-                continue
-            }
-
-            currentType = when (lastType) {
-                is UnknownLikeTableType, is TableType -> {
-                    // Why not find the key? Maybe it isn't assigned yet.
-                    // So we create a new UnknownLikeTableType and set it to the parent.
-                    if (list.size > 0) {
-                        Type.ANY
-                    } else UnknownLikeTableType(last.name)
+            is FunctionType -> TODO()
+            NeverType -> TODO()
+            is PrimitiveType -> TODO()
+            is UnionType -> TODO()
+            is ArrayType -> TODO()
+            is CustomType -> TODO()
+            is GenericType -> TODO()
+            is ClassType -> {
+                val member = if (node.indexer == ":") {
+                    baseType.getAllMethods()[node.identifier.name]
+                } else {
+                    baseType.getAllFields()[node.identifier.name]
                 }
-
-                else -> break
-            }
-
-            if (lastType is TableType) {
-                lastType.setMember(last.name, currentType)
-            }
-
-        }
-
-
-        last = list.removeFirst()
-        when (currentType) {
-            is TableType -> currentType.setMember(last.name, targetType)
-        }
-
-    }
-
-    private fun createUnknownLikeTableSymbol(list: ArrayDeque<Identifier>): Symbol<Type>? {
-        var identifier = list.removeFirst()
-        var mainSymbol = globalScope.resolveSymbol(identifier.name, identifier.range.start)
-
-        if (mainSymbol == null) {
-            mainSymbol = createUnknownLikeTableSymbol(identifier) as Symbol<Type>?
-        }
-        var parentType = mainSymbol?.type
-
-        for (index in list.indices) {
-            identifier = list[index]
-
-            var currentType: Type?
-
-            if (parentType is UnknownLikeTableType) {
-                currentType = parentType.searchMember(identifier.name)
-
-                if (index < list.lastIndex && currentType is TableType) {
-                    parentType = currentType
-                    continue
+                
+                if (member != null) {
+                    context.defineType(buildMemberPath(node), member)
+                    context.defineType(node.toString(), member)
+                } else {
+                    diagnostics.add(Diagnostic(
+                        range = node.range,
+                        message = "Member '${node.identifier.name}' not found in class '${baseType.name}'",
+                        severity = Diagnostic.Severity.ERROR
+                    ))
                 }
             }
-
-            currentType = if (index == list.lastIndex) {
-                Type.ANY
-            } else {
-                UnknownLikeTableType(identifier.name)
-            }
-
-            if (parentType is UnknownLikeTableType) {
-                parentType.setMember(identifier.name, currentType)
-            }
-
-            parentType = currentType
-        }
-        return mainSymbol
-    }
-
-    private fun unpackType(type: Type): Type {
-        if (type is ParameterType) {
-            return type.realType
-        }
-        return type
-    }
-
-    private fun createSelfVariableSymbol(node: FunctionDeclaration, type: Type?): VariableSymbol {
-        return VariableSymbol(
-            variable = "self",
-            range = node.body?.range ?: node.range,
-            type = type ?: UnknownLikeTableType("self"),
-            isLocal = true,
-            node = node.identifier ?: node
-        )
-    }
-
-    private fun createUnknownLikeTableSymbol(identifier: Identifier): UnknownLikeTableSymbol {
-        return UnknownLikeTableSymbol(
-            variable = identifier.name,
-            range = Range(
-                identifier.range.start, globalScope.range.end
-            ),
-            node = identifier,
-        )
-    }
-
-    private fun createStatementSymbol(name: String, node: StatementNode, type: Type): StatementSymbol {
-        return StatementSymbol(
-            variable = name, range = Range(
-                node.range.start, globalScope.range.end
-            ), node = node, type = type
-        )
-    }
-
-    private fun createVariableSymbol(identifier: Identifier, scope: Scope): VariableSymbol {
-        return VariableSymbol(
-            variable = identifier.name, range = Range(
-                identifier.range.start, scope.range.end
-            ), node = identifier, type = Type.UnDefined, isLocal = true
-        )
-    }
-
-    private fun createGlobalFunctionSymbol(
-        identifier: Identifier, node: FunctionDeclaration, targetType: FunctionType
-    ): FunctionSymbol {
-        return FunctionSymbol(
-            variable = identifier.name,
-            range = Range(
-                identifier.range.start, globalScope.range.end
-            ),
-            node = node,
-            type = targetType,
-        ).apply {
-            isLocal = false
         }
     }
 
-    private fun createParamsVariable(node: Identifier, currentScope: Scope): ParameterSymbol {
-        // val indexOfParent = value.params.indexOf(node)
-        val symbol = ParameterSymbol(
-            variable = node.name,
-            range = currentScope.range,
-            node = node,
-        )
-        currentScope.addSymbol(symbol)
-        return symbol
+    private fun buildMemberPath(node: MemberExpression): String {
+        return when (val base = node.base) {
+            is MemberExpression -> "${buildMemberPath(base)}.${node.identifier.name}"
+            else -> "${base}.${node.identifier.name}"
+        }
     }
 
-    private fun createLocalVariable(identifier: Identifier): VariableSymbol {
-
-
-        val symbol = createVariableSymbol(identifier, currentScope)
-        currentScope.addSymbol(symbol)
-        return symbol
+    override fun visitCommentStatement(commentStatement: CommentStatement, value: TypeContext) {
+        super.visitCommentStatement(commentStatement, value)
     }
 
-    private fun createGlobalVariable(identifier: Identifier): VariableSymbol {
-        val symbol = VariableSymbol(
-            variable = identifier.name,
-            range = globalScope.range,
-            node = identifier,
-            type = Type.UnDefined,
-            isLocal = false
-        )
-        globalScope.addSymbol(symbol)
-        return symbol
+    private fun resolveSymbol(name: String, position: Position): Symbol? {
+        return currentSymbolTable.resolveAtPosition(name, position) 
+            ?: globalSymbols[name]
     }
 
-    private fun createLocalFunctionSymbol(
-        node: FunctionDeclaration, currentScope: Scope, functionType: FunctionType
-    ): FunctionSymbol {
-        val identifier = node.identifier as Identifier
 
-        functionType.typeVariableName = identifier.name
-        val symbol = FunctionSymbol(
-            variable = identifier.name, range = Range(
-                identifier.range.start, currentScope.range.end
-            ), node = node, type = functionType
-        )
-        currentScope.addSymbol(symbol)
-        return symbol
+    private fun parseType(typeStr: String?): Type {
+        if (typeStr == null) return PrimitiveType.ANY
+        
+        return typeAnnotationParser.parse(typeStr)
     }
+}
 
-    private val currentScope
-        get() = scopeStack.first()
+data class AnalysisResult(
+    val diagnostics: List<Diagnostic>,
+    val symbolTable: SymbolTable,
+    val globalSymbols: Map<String, Symbol>
+)
+
+data class Diagnostic(
+    val range: Range,
+    val message: String,
+    val severity: Severity = Severity.ERROR
+) {
+    enum class Severity {
+        ERROR,
+        WARNING,
+        INFO
+    }
 }

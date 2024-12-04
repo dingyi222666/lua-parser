@@ -237,6 +237,7 @@ class LuaParser(
                     CommentStatement().apply {
                         comment = lexerText().toString()
                         markLocation()
+                        isDocComment = it == LuaTokenTypes.DOC_COMMENT
                     }
                 }
 

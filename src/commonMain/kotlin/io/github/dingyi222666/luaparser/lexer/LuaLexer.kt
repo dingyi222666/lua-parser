@@ -255,11 +255,8 @@ class LuaLexer(
 
     private fun scanComment(): LuaTokenTypes {
         if (tokenLength + offset == bufferLen) {
-            // The operator is the last token in the buffer
             return LuaTokenTypes.SHORT_COMMENT
         }
-
-        // check next is '['
 
         var isDocComment = false
         val next = charAt()
@@ -269,16 +266,21 @@ class LuaLexer(
                 scanLongString()
                 return LuaTokenTypes.BLOCK_COMMENT
             }
-
             '-' -> {
-                isDocComment = true
-                tokenLength++
+                if (offset + tokenLength + 1 < bufferLen && 
+                    charAt(offset + tokenLength + 1) == '-') {
+                    isDocComment = true
+                    tokenLength += 2
+                } else {
+                    isDocComment = true
+                    tokenLength++
+                }
             }
         }
 
-
-
-        while (offset + tokenLength < bufferLen && charAt() != '\n') {
+        while (offset + tokenLength < bufferLen) {
+            val ch = charAt()
+            if (ch == '\n') break
             tokenLength++
         }
 

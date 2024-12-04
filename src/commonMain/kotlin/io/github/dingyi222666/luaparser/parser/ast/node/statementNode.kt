@@ -468,8 +468,11 @@ class DoStatement : StatementNode, ASTNode() {
 
 class CommentStatement : StatementNode, ASTNode() {
     var comment by Delegates.notNull<String>()
+
+    var isDocComment = false
+
     override fun toString(): String {
-        return "CommmentStatement(comment=$comment)"
+        return "CommentStatement(comment=$comment)"
     }
 
     override fun <T> accept(visitor: ASTVisitor<T>, value: T) {
