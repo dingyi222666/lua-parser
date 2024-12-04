@@ -164,15 +164,37 @@ class SemanticAnalyzer : ASTVisitor<TypeContext> {
         node.init.forEachIndexed { index, identifier ->
             val valueExpr = node.variables.getOrNull(index)
             
+            // 获取声明的类型注释
             val declaredType = commentProcessor.findTypeAnnotation(node) ?: run {
                 if (valueExpr != null) {
-                    val inferredType = typeInferer.inferType(valueExpr, context)
                     when (valueExpr) {
-                        is CallExpression -> {
-                            val funcType = typeInferer.inferType(valueExpr.base, context)
-                            if (funcType is FunctionType) funcType.returnType else inferredType
+                        is FunctionDeclaration -> {
+                            // 对于函数声明，获取其文档注释
+                            val docComment = commentProcessor.getFunctionDocComment(valueExpr)
+                            if (docComment != null) {
+                                try {
+                                    val params = mutableListOf<ParameterType>()
+                                    var returnType: Type = PrimitiveType.NIL
+                                    
+                                    docComment.tags.forEach { tag ->
+                                        when (tag) {
+                                            is ParamTag -> {
+                                                params.add(ParameterType(tag.name, tag.type))
+                                            }
+                                            is ReturnTag -> returnType = tag.type
+                                            else -> {} // 忽略其他标签
+                                        }
+                                    }
+                                    
+                                    FunctionType(params, returnType)
+                                } catch (e: Exception) {
+                                    typeInferer.inferType(valueExpr, context)
+                                }
+                            } else {
+                                typeInferer.inferType(valueExpr, context)
+                            }
                         }
-                        else -> inferredType
+                        else -> typeInferer.inferType(valueExpr, context)
                     }
                 } else {
                     PrimitiveType.ANY
@@ -208,51 +230,115 @@ class SemanticAnalyzer : ASTVisitor<TypeContext> {
         val previousTable = currentSymbolTable
         currentSymbolTable = functionScope
         
-        val declaredType = commentProcessor.findTypeAnnotation(node)
+        // 获取函数的文档注释
+        val docComment = commentProcessor.getFunctionDocComment(node)
         
-        val functionType = if (declaredType is FunctionType) {
-            node.params.forEachIndexed { index, param ->
-                val paramType = declaredType.parameters.getOrNull(index)?.type ?: PrimitiveType.ANY
-                currentSymbolTable.define(
-                    param.name,
-                    paramType,
-                    Symbol.Kind.PARAMETER,
-                    param.range
+        // 获取推导的类型
+        val inferredType = typeInferer.inferType(node, context) as? FunctionType
+
+        // 处理函数类型
+        val functionType = if (docComment != null) {
+            try {
+                val params = mutableListOf<ParameterType>()
+                var returnType: Type = inferredType?.returnType ?: PrimitiveType.NIL
+                val genericParams = mutableListOf<GenericTag>()
+
+                // 创建参数映射
+                val paramMap = node.params.associateBy { it.name }
+                
+                // 处理参数和返回类型标注
+                docComment.tags.forEach { tag ->
+                    when (tag) {
+                        is ParamTag -> {
+                            println(tag)
+                            // 只处理存在的参数
+                            if (paramMap.containsKey(tag.name)) {
+                                params.add(ParameterType(tag.name, tag.type))
+                            }
+                        }
+                        is GenericTag -> {
+                            genericParams.add(tag)
+                            context.defineType(tag.name, GenericType(tag.name, emptyList()))
+                        }
+
+                        is ReturnTag -> returnType = tag.type
+                        else -> {} // 忽略其他标签
+                    }
+                }
+                
+                // 如果有参数没有类型注释，使用推导的类型或 ANY
+                node.params.forEach { param ->
+                    if (!params.any { it.name == param.name }) {
+                        val inferredParamType = inferredType?.parameters?.find { it.name == param.name }?.type
+                        params.add(ParameterType(param.name, inferredParamType ?: PrimitiveType.ANY))
+                    }
+                }
+                
+                FunctionType(params, returnType)
+            } catch (e: Exception) {
+                inferredType ?: FunctionType(
+                    parameters = node.params.map { ParameterType(it.name, PrimitiveType.ANY) },
+                    returnType = PrimitiveType.ANY
                 )
-                context.defineType(param.name, paramType)
             }
-            declaredType
         } else {
-            val inferredType = typeInferer.inferType(node, context)
-            node.params.forEach { param ->
-                currentSymbolTable.define(
-                    param.name,
-                    PrimitiveType.ANY,
-                    Symbol.Kind.PARAMETER,
-                    param.range
-                )
-                context.defineType(param.name, PrimitiveType.ANY)
-            }
-            inferredType as FunctionType
+            inferredType ?: FunctionType(
+                parameters = node.params.map { ParameterType(it.name, PrimitiveType.ANY) },
+                returnType = PrimitiveType.ANY
+            )
         }
         
-        node.body?.let { visitBlockNode(it, context) }
-        
-        currentSymbolTable = previousTable
-        
-        node.identifier?.let {
-            when (it) {
-                is Identifier -> {
+        // 处理函数标识符
+        when (val identifier = node.identifier) {
+            is Identifier -> {
+                if (!node.isLocal) {
+                    // 全局函数
+                    defineGlobalSymbol(identifier.name, functionType)
+                    context.defineType(identifier.name, functionType)
+                } else {
+                    // 局部函数
                     currentSymbolTable.define(
-                        it.name,
+                        identifier.name,
                         functionType,
                         Symbol.Kind.FUNCTION,
-                        it.range
+                        identifier.range
                     )
-                    context.defineType(it.name, functionType)
+                    context.defineType(identifier.name, functionType)
+                }
+            }
+            is MemberExpression -> {
+                // 处理方法声明
+                val baseType = typeInferer.inferType(identifier.base, context)
+                if (baseType is ClassType) {
+                    val methodName = identifier.identifier.name
+                    // 更新类的方法
+                    val updatedMethods = baseType.methods + (methodName to functionType)
+                    typeAnnotationParser.defineClass(
+                        baseType.name,
+                        baseType.fields,
+                        updatedMethods,
+                        baseType.parent?.name
+                    )
                 }
             }
         }
+        
+        // 处理参数
+        node.params.forEach { param ->
+            val paramType = functionType.parameters.find { it.name == param.name }?.type ?: PrimitiveType.ANY
+            currentSymbolTable.define(
+                param.name,
+                paramType,
+                Symbol.Kind.PARAMETER,
+                param.range
+            )
+            context.defineType(param.name, paramType)
+        }
+        
+        // 处理函数体
+        node.body?.let { visitBlockNode(it, context) }
+        
+        currentSymbolTable = previousTable
     }
 
     override fun visitAssignmentStatement(node: AssignmentStatement, context: TypeContext) {
@@ -331,6 +417,7 @@ class SemanticAnalyzer : ASTVisitor<TypeContext> {
             is ArrayType -> TODO()
             is CustomType -> TODO()
             is GenericType -> TODO()
+            is VarArgType -> TODO()
             is ClassType -> {
                 val member = if (node.indexer == ":") {
                     baseType.getAllMethods()[node.identifier.name]

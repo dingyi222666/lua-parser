@@ -65,7 +65,6 @@ class WrapperLuaLexer(
     private fun doAdvance() {
         val type = currentLexer.nextToken()
 
-
         val newState = LexerState(
             column = currentLexer.tokenColumn,
             length = currentLexer.tokenLength,

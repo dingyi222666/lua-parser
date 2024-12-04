@@ -258,7 +258,6 @@ class LuaLexer(
             return LuaTokenTypes.SHORT_COMMENT
         }
 
-        var isDocComment = false
         val next = charAt()
 
         when (next) {
@@ -267,24 +266,79 @@ class LuaLexer(
                 return LuaTokenTypes.BLOCK_COMMENT
             }
             '-' -> {
-                if (offset + tokenLength + 1 < bufferLen && 
-                    charAt(offset + tokenLength + 1) == '-') {
-                    isDocComment = true
-                    tokenLength += 2
-                } else {
-                    isDocComment = true
+                // This is the third dash, so it's a doc comment
+                tokenLength++
+                
+                // Scan first line content until newline
+                while (offset + tokenLength < bufferLen) {
+                    val ch = charAt()
+                    if (ch == '\n' || ch == '\r') {
+                        if (ch == '\r' && offset + tokenLength + 1 < bufferLen && source[offset + tokenLength + 1] == '\n') {
+                            tokenLength += 2
+                        } else {
+                            tokenLength++
+                        }
+                        break
+                    }
                     tokenLength++
                 }
+                
+                // Look for continuation lines
+                while (offset + tokenLength < bufferLen) {
+                    var pos = offset + tokenLength
+                    
+                    // Skip whitespace at start of line
+                    while (pos < bufferLen && source[pos] != '\n' && source[pos] != '\r' && isNotNewLineWhiteSpace(source[pos])) {
+                        pos++
+                    }
+                    
+                    // Check for doc comment continuation (---)
+                    if (pos + 2 < bufferLen &&
+                        source[pos] == '-' && 
+                        source[pos + 1] == '-' &&
+                        source[pos + 2] == '-') {
+                        
+                        pos += 3
+                        
+                        // Include this line in token
+                        while (pos < bufferLen) {
+                            if (source[pos] == '\n' || source[pos] == '\r') {
+                                if (source[pos] == '\r' && pos + 1 < bufferLen && source[pos + 1] == '\n') {
+                                    pos += 2
+                                } else {
+                                    pos++
+                                }
+                                break
+                            }
+                            pos++
+                        }
+                        
+                        tokenLength = pos - offset
+                    } else {
+                        println()
+                        break
+                    }
+                }
+                
+                return LuaTokenTypes.DOC_COMMENT
+            }
+            else -> {
+                // Regular comment
+                while (offset + tokenLength < bufferLen) {
+                    val ch = charAt()
+                    if (ch == '\n' || ch == '\r') {
+                        if (ch == '\r' && offset + tokenLength + 1 < bufferLen && source[offset + tokenLength + 1] == '\n') {
+                            tokenLength += 2
+                        } else {
+                            tokenLength++
+                        }
+                        break
+                    }
+                    tokenLength++
+                }
+                return LuaTokenTypes.SHORT_COMMENT
             }
         }
-
-        while (offset + tokenLength < bufferLen) {
-            val ch = charAt()
-            if (ch == '\n') break
-            tokenLength++
-        }
-
-        return if (isDocComment) LuaTokenTypes.DOC_COMMENT else LuaTokenTypes.SHORT_COMMENT
     }
 
     private fun scanLongString(): LuaTokenTypes {
@@ -300,6 +354,9 @@ class LuaLexer(
         if (scanLongStringSkipComment() != skipCount) {
             throw IllegalStateException("Unfinished long string at <$tokenLine, ${tokenColumn}>")
         }
+
+        // add \]
+        tokenLength++
 
         return LuaTokenTypes.LONG_STRING
     }
@@ -573,6 +630,10 @@ class LuaLexer(
 
         private fun isWhitespace(c: Char): Boolean {
             return (c == '\n' || c == '\r' || c == '\t' || c == ' ' || c == '\u000c')
+        }
+
+        private fun isNotNewLineWhiteSpace(c: Char): Boolean {
+            return (c == '\t' || c == ' ' || c == '\u000c')
         }
 
         private fun isIdentifierStart(c: Char): Boolean {

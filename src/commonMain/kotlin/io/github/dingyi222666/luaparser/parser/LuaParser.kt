@@ -207,6 +207,7 @@ class LuaParser(
     private fun parseBlockNode(parent: BaseASTNode? = null): BlockNode {
         markLocation()
         val blockNode = BlockNode()
+
         while (!peekToken(LuaTokenTypes.EOF)) {
             val stat = when {
                 consumeToken(LuaTokenTypes.LOCAL) -> {
@@ -231,13 +232,21 @@ class LuaParser(
                 }
 
                 consume {
-                    it == LuaTokenTypes.DOC_COMMENT || it == LuaTokenTypes.SHORT_COMMENT
+                    it == LuaTokenTypes.SHORT_COMMENT
                             || it == LuaTokenTypes.BLOCK_COMMENT || it == LuaTokenTypes.SHEBANG_CONTENT
                 } -> {
+                    markLocation()
                     CommentStatement().apply {
                         comment = lexerText().toString()
-                        markLocation()
-                        isDocComment = it == LuaTokenTypes.DOC_COMMENT
+                        isDocComment = false
+                    }
+                }
+
+                consumeToken(LuaTokenTypes.DOC_COMMENT) -> {
+                    markLocation()
+                    CommentStatement().apply {
+                        comment = lexerText().toString()
+                        isDocComment = true
                     }
                 }
 
@@ -278,7 +287,18 @@ class LuaParser(
                 else -> break
             }
 
-            finishNode(stat)
+            if (stat is CommentStatement) {
+                // next token
+                peek {
+                    val node = finishNode(stat)
+                    node.range = Range(node.range.start, Position(
+                        node.range.end.line,
+                        node.range.end.column - lexer.length()
+                    ))
+                }
+            } else {
+                finishNode(stat)
+            }
 
             stat.parent = blockNode
             if (stat is ReturnStatement) {

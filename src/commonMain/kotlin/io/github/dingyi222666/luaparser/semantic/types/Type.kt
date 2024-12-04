@@ -138,6 +138,31 @@ data class ParameterType(
     val vararg: Boolean = false
 )
 
+// 添加 VarArgType 类型
+data class VarArgType(
+    val types: List<Type>,
+    override val name: String = "vararg<${types.joinToString(", ") { it.name }}>"
+) : Type {
+    override fun isAssignableFrom(other: Type): Boolean {
+        return when (other) {
+            is VarArgType -> {
+                if (types.size != other.types.size) return false
+                types.zip(other.types).all { (a, b) -> a.isAssignableFrom(b) }
+            }
+
+            else -> false
+        }
+    }
+
+    override fun union(other: Type): Type = UnionType(setOf(this, other))
+
+    override fun intersection(other: Type): Type = when {
+        isAssignableFrom(other) -> other
+        other.isAssignableFrom(this) -> this
+        else -> NeverType
+    }
+}
+
 // 泛型类型
 data class GenericType(
     val baseName: String,

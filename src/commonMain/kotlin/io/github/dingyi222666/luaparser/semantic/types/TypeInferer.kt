@@ -5,12 +5,12 @@ import io.github.dingyi222666.luaparser.semantic.Diagnostic
 
 class TypeInferer {
     private val diagnostics = mutableListOf<Diagnostic>()
-    
+
     fun inferType(node: ExpressionNode, context: TypeContext): Type {
         diagnostics.clear()
         return doInferType(node, context)
     }
-    
+
     fun getDiagnostics(): List<Diagnostic> = diagnostics.toList()
 
     private fun doInferType(node: ExpressionNode, context: TypeContext): Type {
@@ -74,6 +74,7 @@ class TypeInferer {
                         ?: PrimitiveType.ANY
                 }
             }
+
             else -> PrimitiveType.ANY
         }
     }
@@ -136,11 +137,13 @@ class TypeInferer {
             ExpressionOperator.DIV,
             ExpressionOperator.MOD -> {
                 if (leftType != PrimitiveType.NUMBER || rightType != PrimitiveType.NUMBER) {
-                    diagnostics.add(Diagnostic(
-                        range = node.range,
-                        message = "Operator '${node.operator}' cannot be applied to types '${leftType.name}' and '${rightType.name}'",
-                        severity = Diagnostic.Severity.ERROR
-                    ))
+                    diagnostics.add(
+                        Diagnostic(
+                            range = node.range,
+                            message = "Operator '${node.operator}' cannot be applied to types '${leftType.name}' and '${rightType.name}'",
+                            severity = Diagnostic.Severity.ERROR
+                        )
+                    )
                 }
                 PrimitiveType.NUMBER
             }
@@ -179,32 +182,40 @@ class TypeInferer {
                         if (methodType is FunctionType) {
                             methodType
                         } else {
-                            diagnostics.add(Diagnostic(
-                                range = base.range,
-                                message = "Member '${base.identifier.name}' is not a function",
-                                severity = Diagnostic.Severity.ERROR
-                            ))
+                            diagnostics.add(
+                                Diagnostic(
+                                    range = base.range,
+                                    message = "Member '${base.identifier.name}' is not a function",
+                                    severity = Diagnostic.Severity.ERROR
+                                )
+                            )
                             return PrimitiveType.ANY
                         }
                     }
+
                     else -> {
-                        diagnostics.add(Diagnostic(
-                            range = base.base.range,
-                            message = "Cannot read property '${base.identifier.name}' of type '${baseType.name}'",
-                            severity = Diagnostic.Severity.ERROR
-                        ))
+                        diagnostics.add(
+                            Diagnostic(
+                                range = base.base.range,
+                                message = "Cannot read property '${base.identifier.name}' of type '${baseType.name}'",
+                                severity = Diagnostic.Severity.ERROR
+                            )
+                        )
                         return PrimitiveType.ANY
                     }
                 }
             }
+
             else -> {
                 val type = inferType(base, context)
                 if (type !is FunctionType) {
-                    diagnostics.add(Diagnostic(
-                        range = base.range,
-                        message = "Value of type '${type.name}' is not callable",
-                        severity = Diagnostic.Severity.ERROR
-                    ))
+                    diagnostics.add(
+                        Diagnostic(
+                            range = base.range,
+                            message = "Value of type '${type.name}' is not callable",
+                            severity = Diagnostic.Severity.ERROR
+                        )
+                    )
                     return PrimitiveType.ANY
                 }
                 type
@@ -213,21 +224,25 @@ class TypeInferer {
 
         val argumentTypes = node.arguments.map { inferType(it, context) }
         if (argumentTypes.size != funcType.parameters.size) {
-            diagnostics.add(Diagnostic(
-                range = node.range,
-                message = "Expected ${funcType.parameters.size} arguments, but got ${argumentTypes.size}",
-                severity = Diagnostic.Severity.ERROR
-            ))
+            diagnostics.add(
+                Diagnostic(
+                    range = node.range,
+                    message = "Expected ${funcType.parameters.size} arguments, but got ${argumentTypes.size}",
+                    severity = Diagnostic.Severity.ERROR
+                )
+            )
             return PrimitiveType.ANY
         }
 
         argumentTypes.zip(funcType.parameters).forEachIndexed { index, (argType, param) ->
             if (!param.type.isAssignableFrom(argType)) {
-                diagnostics.add(Diagnostic(
-                    range = node.arguments[index].range,
-                    message = "Argument of type '${argType.name}' is not assignable to parameter of type '${param.type.name}'",
-                    severity = Diagnostic.Severity.ERROR
-                ))
+                diagnostics.add(
+                    Diagnostic(
+                        range = node.arguments[index].range,
+                        message = "Argument of type '${argType.name}' is not assignable to parameter of type '${param.type.name}'",
+                        severity = Diagnostic.Severity.ERROR
+                    )
+                )
             }
         }
 
@@ -239,32 +254,36 @@ class TypeInferer {
         context: TypeContext
     ): TableType {
         val fields = mutableMapOf<String, Type>()
-        
+
         node.fields.forEach { field ->
             when (field) {
                 is TableKeyString -> {
                     val key = field.key
                     val valueExpr = field.value
-                    
+
                     when (key) {
                         is Identifier -> {
                             val valueType = when (valueExpr) {
                                 is Identifier -> {
                                     context.getType(valueExpr.name)
                                 }
+
                                 is MemberExpression -> {
                                     inferMemberExpression(valueExpr, context)
                                 }
+
                                 else -> inferType(valueExpr, context)
                             }
-                            
+
                             fields[key.name] = valueType
                         }
+
                         is ConstantNode -> {
                             fields[key.stringOf()] = inferType(valueExpr, context)
                         }
                     }
                 }
+
                 is TableKey -> {
                     when (val key = field.key) {
                         is ConstantNode -> {
@@ -272,9 +291,11 @@ class TypeInferer {
                                 ConstantNode.TYPE.INTERGER -> {
                                     fields[key.intOf().toString()] = inferType(field.value, context)
                                 }
+
                                 ConstantNode.TYPE.STRING -> {
                                     fields[key.stringOf()] = inferType(field.value, context)
                                 }
+
                                 else -> {}
                             }
                         }
@@ -282,7 +303,7 @@ class TypeInferer {
                 }
             }
         }
-        
+
         return TableType(fields)
     }
 
@@ -291,38 +312,36 @@ class TypeInferer {
         context: TypeContext
     ): FunctionType {
         val functionContext = TypeContext(parent = context)
-
+        
+        // 处理参数
         val paramTypes = node.params.map { param ->
-            val paramType = PrimitiveType.ANY
+            val paramType = context.getType(param.name).takeIf { it != PrimitiveType.ANY }
+                ?: PrimitiveType.ANY
             functionContext.defineType(param.name, paramType)
             ParameterType(param.name, paramType)
         }
-
-        val returnType = node.body?.let { node ->
-            inferFunctionReturnType(node, functionContext)
-        } ?: PrimitiveType.ANY
-
+        
+        // 推导返回类型
+        val returnType = node.body?.let { body ->
+            inferFunctionReturnType(body, functionContext)
+        } ?: PrimitiveType.NIL
+        
         return FunctionType(paramTypes, returnType)
     }
 
     private fun inferFunctionReturnType(body: BlockNode, context: TypeContext): Type {
-        val returnTypes = mutableSetOf<Type>()
-
-        body.statements.forEach { stmt ->
-            if (stmt is ReturnStatement) {
-                if (stmt.arguments.isEmpty()) {
-                    returnTypes.add(PrimitiveType.NIL)
-                } else {
-                    val firstReturnType = inferType(stmt.arguments.first(), context)
-                    returnTypes.add(firstReturnType)
-                }
-            }
-        }
+        val returnStatement = body.returnStatement
 
         return when {
-            returnTypes.isEmpty() -> PrimitiveType.NIL
-            returnTypes.size == 1 -> returnTypes.first()
-            else -> UnionType(returnTypes)
+            returnStatement == null -> PrimitiveType.NIL
+            returnStatement.arguments.isEmpty() -> PrimitiveType.NIL
+            returnStatement.arguments.size == 1 -> inferType(returnStatement.arguments[0], context)
+            else -> {
+                // 多个返回值，创建 VarArgType
+                val returnTypes = returnStatement.arguments.map { inferType(it, context) }
+                VarArgType(returnTypes)
+            }
         }
     }
-} 
+}
+
