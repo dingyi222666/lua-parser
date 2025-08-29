@@ -9,8 +9,6 @@ class JvmPlatformParserTest {
 
     @Test
     fun parse() {
-
-
         val code = """
             ---@type string
             local name = "test"
@@ -38,6 +36,13 @@ class JvmPlatformParserTest {
                 return multiply(x, y)
             end
             
+            local function s()
+               local function q()
+               end
+               
+               local sss = 12
+            end
+            
             local tab = {
                 name = name,
                 age = age
@@ -58,14 +63,13 @@ class JvmPlatformParserTest {
         val result = analyzer.analyze(ast)
 
         // 检查全局变量
-        val stringType = result.globalSymbols["STRING"]?.type  // string
-        val globalVarType = result.globalSymbols["GLOBAL_VAR"]?.type  // string
-        val addType = result.symbolTable.resolveAtPosition("add", Position(20, 1))?.type
-        val concatType = result.symbolTable.resolveAtPosition("concat", Position(4, 1))?.type
-        val multiplyType = result.symbolTable.resolveAtPosition("multiply", Position(20, 1))?.type
+        val stringType = result.globalSymbolTable.getGlobalSymbols()["STRING"]?.type  // string
+        val globalVarType = result.globalSymbolTable.getGlobalSymbols()["GLOBAL_VAR"]?.type  // string
+        val addType = result.globalSymbolTable.resolveAtPosition("add", Position(20, 1))?.type
+        val concatType = result.globalSymbolTable.resolveAtPosition("concat", Position(20, 1))?.type
+        val multiplyType = result.globalSymbolTable.resolveAtPosition("multiply", Position(20, 1))?.type
 
-        val pairs = result.globalSymbols["ipairs"]?.type
-
+        val pairs = result.globalSymbolTable.getGlobalSymbols()["ipairs"]?.type
 
         println("Global STRING type: $stringType")
         println("add type: $addType")
@@ -73,7 +77,7 @@ class JvmPlatformParserTest {
         println("Global GLOBAL_VAR type: $globalVarType")
         println("multiply type: $multiplyType")
         println("ipairs type: $pairs")
-        println("all: ${result.symbolTable.toString()}")
+        println("all: ${result.symbolTable}")
 
         // 检查诊断信息
         result.diagnostics.forEach { diagnostic ->
@@ -81,6 +85,8 @@ class JvmPlatformParserTest {
         }
     }
 }
+
+
 
 val testSource = """
     local a  = 12

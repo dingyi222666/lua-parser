@@ -5,6 +5,7 @@ import io.github.dingyi222666.luaparser.parser.ast.visitor.ASTVisitor
 import io.github.dingyi222666.luaparser.semantic.comment.ClassTag
 import io.github.dingyi222666.luaparser.semantic.types.*
 import io.github.dingyi222666.luaparser.semantic.symbol.SymbolTable
+import io.github.dingyi222666.luaparser.semantic.symbol.GlobalSymbolTable
 import io.github.dingyi222666.luaparser.semantic.comment.CommentProcessor
 import io.github.dingyi222666.luaparser.semantic.comment.FieldTag
 import io.github.dingyi222666.luaparser.semantic.comment.GenericTag
@@ -20,11 +21,10 @@ class SemanticAnalyzer : ASTVisitor<TypeContext> {
     private val commentProcessor = CommentProcessor(typeAnnotationParser)
     private val diagnostics = mutableListOf<Diagnostic>()
     private lateinit var currentSymbolTable: SymbolTable
-
-    private val globalSymbols = mutableMapOf<String, Symbol>()
+    private val globalSymbolTable = GlobalSymbolTable()
 
     init {
-        defineGlobalSymbol(
+        globalSymbolTable.defineGlobal(
             "print", FunctionType(
                 parameters = listOf(ParameterType("...", PrimitiveType.ANY, vararg = true)),
                 returnType = PrimitiveType.NIL
@@ -32,35 +32,34 @@ class SemanticAnalyzer : ASTVisitor<TypeContext> {
         )
     }
 
-    private fun defineGlobalSymbol(name: String, type: Type) {
-        globalSymbols[name] = Symbol(name, type, Symbol.Kind.VARIABLE)
-    }
-
     fun analyze(ast: ChunkNode): AnalysisResult {
         diagnostics.clear()
         currentSymbolTable = SymbolTable(null, ast.range)
+        globalSymbolTable.setRoot(currentSymbolTable)
 
         visitChunkNode(ast, TypeContext())
 
         return AnalysisResult(
             diagnostics = diagnostics,
             symbolTable = currentSymbolTable,
-            globalSymbols = globalSymbols.toMap()
+            globalSymbolTable = globalSymbolTable
         )
     }
 
     override fun visitBlockNode(node: BlockNode, context: TypeContext) {
         val previousTable = currentSymbolTable
 
-        if (currentSymbolTable.range.end != node.range.end) {
+        // 只为真正不同的块创建新作用域
+        if (currentSymbolTable.range != node.range) {
             currentSymbolTable = currentSymbolTable.createChild(node.range)
+            globalSymbolTable.rebuildIntervalTree()
         }
 
         processClassDefinitions(node.statements)
-
         super.visitBlockNode(node, context)
 
-        if (currentSymbolTable !== previousTable) {
+        // 恢复上级作用域
+        if (currentSymbolTable != previousTable) {
             currentSymbolTable = previousTable
         }
     }
@@ -300,16 +299,11 @@ class SemanticAnalyzer : ASTVisitor<TypeContext> {
             is Identifier -> {
                 if (!node.isLocal) {
                     // 全局函数
-                    defineGlobalSymbol(identifier.name, functionType)
+                    globalSymbolTable.defineGlobal(identifier.name, functionType, Symbol.Kind.FUNCTION, identifier.range)
                     context.defineType(identifier.name, functionType)
                 } else {
-                    // 局部函数
-                    currentSymbolTable.define(
-                        identifier.name,
-                        functionType,
-                        Symbol.Kind.FUNCTION,
-                        identifier.range
-                    )
+                    // 局部函数：在当前作用域中定义，从定义位置开始可见
+                    currentSymbolTable.define(identifier.name, functionType, Symbol.Kind.FUNCTION, identifier.range)
                     context.defineType(identifier.name, functionType)
                 }
             }
@@ -319,39 +313,34 @@ class SemanticAnalyzer : ASTVisitor<TypeContext> {
                 val baseType = typeInferer.inferType(identifier.base, context)
                 if (baseType is ClassType) {
                     val methodName = identifier.identifier.name
-                    // 更新类的方法
                     val updatedMethods = baseType.methods + (methodName to functionType)
-                    typeAnnotationParser.defineClass(
-                        baseType.name,
-                        baseType.fields,
-                        updatedMethods,
-                        baseType.parent?.name
-                    )
+                    typeAnnotationParser.defineClass(baseType.name, baseType.fields, updatedMethods, baseType.parent?.name)
                 }
             }
         }
 
-        // 在这里才创建函数作用域，是因为前面的函数定义应该在上一个作用域
-        val functionScope = currentSymbolTable.createChild(node.range)
-        val previousTable = currentSymbolTable
-        currentSymbolTable = functionScope
-
-        // 处理参数
-        node.params.forEach { param ->
-            val paramType = functionType.parameters.find { it.name == param.name }?.type ?: PrimitiveType.ANY
-            currentSymbolTable.define(
-                param.name,
-                paramType,
-                Symbol.Kind.PARAMETER,
-                param.range
-            )
-            context.defineType(param.name, paramType)
+        // 为函数体创建参数作用域
+        val functionBodyScope = node.body?.let { currentSymbolTable.createChild(it.range) }
+        
+        if (functionBodyScope != null) {
+            currentSymbolTable = functionBodyScope
+            
+            // 定义参数
+            node.params.forEach { param ->
+                val paramType = functionType.parameters.find { it.name == param.name }?.type ?: PrimitiveType.ANY
+                currentSymbolTable.define(param.name, paramType, Symbol.Kind.PARAMETER, param.range)
+                context.defineType(param.name, paramType)
+            }
+            
+            // 重建区间树
+            globalSymbolTable.rebuildIntervalTree()
         }
 
         // 处理函数体
         node.body?.let { visitBlockNode(it, context) }
 
-        currentSymbolTable = previousTable
+        // 恢复父作用域
+        functionBodyScope?.let { currentSymbolTable = currentSymbolTable.getParent() ?: currentSymbolTable }
     }
 
     override fun visitAssignmentStatement(node: AssignmentStatement, context: TypeContext) {
@@ -364,7 +353,7 @@ class SemanticAnalyzer : ASTVisitor<TypeContext> {
                             val inferredType = typeInferer.inferType(valueExpr, context)
                             val declaredType = commentProcessor.findTypeAnnotation(node) ?: inferredType
 
-                            defineGlobalSymbol(target.name, declaredType)
+                            globalSymbolTable.defineGlobal(target.name, declaredType, Symbol.Kind.VARIABLE, target.range)
 
                             if (!declaredType.isAssignableFrom(inferredType)) {
                                 diagnostics.add(
@@ -379,12 +368,7 @@ class SemanticAnalyzer : ASTVisitor<TypeContext> {
                             declaredType
                         } else {
                             val inferredType = typeInferer.inferType(valueExpr, context)
-                            currentSymbolTable.define(
-                                target.name,
-                                inferredType,
-                                Symbol.Kind.VARIABLE,
-                                target.range
-                            )
+                            currentSymbolTable.define(target.name, inferredType, Symbol.Kind.VARIABLE, target.range)
                             context.defineType(target.name, inferredType)
                             inferredType
                         }
@@ -470,10 +454,8 @@ class SemanticAnalyzer : ASTVisitor<TypeContext> {
         commentProcessor.processCommentStatement(commentStatement)
     }
 
-    private fun resolveSymbol(name: String, position: Position): Symbol? {
-        return currentSymbolTable.resolveAtPosition(name, position)
-            ?: globalSymbols[name]
-    }
+    private fun resolveSymbol(name: String, position: Position): Symbol? =
+        globalSymbolTable.resolveAtPosition(name, position)
 
 
     private fun parseType(typeStr: String?): Type {
@@ -486,7 +468,7 @@ class SemanticAnalyzer : ASTVisitor<TypeContext> {
 data class AnalysisResult(
     val diagnostics: List<Diagnostic>,
     val symbolTable: SymbolTable,
-    val globalSymbols: Map<String, Symbol>
+    val globalSymbolTable: GlobalSymbolTable
 )
 
 data class Diagnostic(

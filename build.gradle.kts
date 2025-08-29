@@ -4,8 +4,7 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.ExperimentalKotlinGradlePluginApi
 
 plugins {
-    kotlin("multiplatform") version "2.0.20"
-    java
+    kotlin("multiplatform") version "2.2.0"
     id("com.vanniktech.maven.publish") version "0.29.0"
     id("maven-publish")
     signing
@@ -19,7 +18,6 @@ kotlin {
         compilerOptions {
             jvmTarget.set(JvmTarget.JVM_11)
         }
-        withJava()
     }
 
     macosX64()
@@ -51,9 +49,7 @@ kotlin {
         }
         commonTest {
             dependencies {
-
                 implementation(kotlin("test-annotations-common"))
-
             }
         }
 

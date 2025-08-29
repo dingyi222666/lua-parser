@@ -4,6 +4,7 @@ import io.github.dingyi222666.luaparser.parser.ast.node.Position
 import io.github.dingyi222666.luaparser.parser.ast.node.Range
 import io.github.dingyi222666.luaparser.semantic.types.Type
 
+
 class SymbolTable(
     private val parent: SymbolTable? = null,
     val range: Range
@@ -11,122 +12,58 @@ class SymbolTable(
     private val symbols = mutableMapOf<String, Symbol>()
     private val children = mutableListOf<SymbolTable>()
 
-    fun define(
-        name: String, 
-        type: Type, 
-        kind: Symbol.Kind = Symbol.Kind.VARIABLE,
-        range: Range
-    ): Symbol {
-        val symbol = Symbol(name, type, kind, range)
-        symbols[name] = symbol
-        return symbol
-    }
+    fun define(name: String, type: Type, kind: Symbol.Kind = Symbol.Kind.VARIABLE, range: Range? = null): Symbol =
+        Symbol(name, type, kind, range).also { symbols[name] = it }
 
-    // 基于位置查找最合适的符号表，优先匹配最近的作用域
-    fun findTableAtPosition(position: Position): SymbolTable? {
-        // 如果当前范围不包含该位置，直接返回null
-        if (!range.contains(position)) {
-            return null
-        }
-
-        // 查找所有匹配的子作用域
-        val matchingChildren = children
-            .mapNotNull { it.findTableAtPosition(position) }
-            .sortedBy { it.range?.let { range -> 
-                // 计算范围大小，范围越小越精确
-                (range.end.line - range.start.line) * 1000 + 
-                    (range.end.column - range.start.column)
-            } ?: Int.MAX_VALUE }
-
-        // 返回范围最小的匹配作用域，如果没有则返回当前作用域
-        return matchingChildren.firstOrNull() ?: this
-    }
-
-    // 在指定位置解析符号，优先从最近的作用域开始查找
+    // 在指定位置解析符号
     fun resolveAtPosition(name: String, position: Position): Symbol? {
-        var currentTable = findTableAtPosition(position) ?: return parent?.resolveAtPosition(name, position)
-        
-        // 如果找不到匹配的作用域，从父作用域查找
-
-        // 在当前作用域中查找
-        var symbol = currentTable.symbols[name]
-        
-        // 如果当前作用域没找到，继续查找父作用域
-        while (symbol == null && currentTable.parent != null) {
-            currentTable = currentTable.parent
-            symbol = currentTable.symbols[name]
-        }
-
-        return symbol
+        return symbols[name] ?: parent?.resolveAtPosition(name, position)
     }
 
     // 从当前作用域解析符号
-    fun resolve(name: String): Symbol? {
-        return symbols[name] ?: parent?.resolve(name)
+    fun resolve(name: String): Symbol? = symbols[name] ?: parent?.resolve(name)
+
+    // 获取所有可见的符号
+    fun getAllVisibleSymbols(position: Position? = null): List<Symbol> = buildList {
+        addAll(symbols.values)
+        parent?.getAllVisibleSymbols(position)?.let(::addAll)
     }
 
-    // 获取所有可见的符号，按作用域距离排序
-    fun getAllVisibleSymbols(position: Position? = null): List<Symbol> {
-        val result = mutableListOf<Symbol>()
-        
-        if (position != null) {
-            // 找到最近的作用域
-            var currentTable = findTableAtPosition(position)
-            
-            // 收集从最近作用域到根作用域的所有符号
-            while (currentTable != null) {
-                result.addAll(currentTable.symbols.values)
-                currentTable = currentTable.parent
-            }
-        } else {
-            // 如果没有指定位置，收集当前作用域及其父作用域的所有符号
-            result.addAll(symbols.values)
-            parent?.getAllVisibleSymbols()?.let { result.addAll(it) }
-        }
-        
-        return result
-    }
+    fun createChild(range: Range): SymbolTable = 
+        SymbolTable(this, range).also { children.add(it) }
 
-    fun createChild(range: Range): SymbolTable {
-        val child = SymbolTable(this, range)
-        children.add(child)
-        return child
-    }
-
+    fun getChildren(): List<SymbolTable> = children
     fun getParent(): SymbolTable? = parent
 
     override fun toString(): String = toString(0)
     
-    private fun toString(indent: Int): String {
+    private fun toString(indent: Int): String = buildString {
         val indentStr = "  ".repeat(indent)
         val innerIndentStr = "  ".repeat(indent + 1)
         
-        return buildString {
-            appendLine("${indentStr}SymbolTable {")
-
-            appendLine("${innerIndentStr}range: $range,")
-            
-            if (symbols.isNotEmpty()) {
-                appendLine("${innerIndentStr}symbols: [")
-                symbols.values.forEachIndexed { index, symbol ->
-                    val comma = if (index < symbols.size - 1) "," else ""
-                    appendLine("$innerIndentStr  ${symbol.name}: ${symbol.type} (${symbol.kind})$comma")
-                }
-                appendLine("${innerIndentStr}],")
+        appendLine("${indentStr}SymbolTable {")
+        appendLine("${innerIndentStr}range: $range,")
+        
+        if (symbols.isNotEmpty()) {
+            appendLine("${innerIndentStr}symbols: [")
+            symbols.values.forEachIndexed { index, symbol ->
+                val comma = if (index < symbols.size - 1) "," else ""
+                appendLine("$innerIndentStr  ${symbol.name}: ${symbol.type} (${symbol.kind})$comma")
             }
-            
-            if (children.isNotEmpty()) {
-                appendLine("${innerIndentStr}children: [")
-                children.forEachIndexed { index, child ->
-                    val comma = if (index < children.size - 1) "," else ""
-                    append(child.toString(indent + 2))
-                    appendLine(comma)
-                }
-                appendLine("${innerIndentStr}]")
-            }
-            
-            append("${indentStr}}")
+            appendLine("${innerIndentStr}],")
         }
+        
+        if (children.isNotEmpty()) {
+            appendLine("${innerIndentStr}children: [")
+            children.forEachIndexed { index, child ->
+                val comma = if (index < children.size - 1) "," else ""
+                append(child.toString(indent + 2))
+                appendLine(comma)
+            }
+            appendLine("${innerIndentStr}]")
+        }
+        
+        append("${indentStr}}")
     }
 }
 
@@ -144,18 +81,14 @@ data class Symbol(
         CLASS
     }
 
-    override fun toString(): String {
-        return "$name: ${type.name} (${kind.name})"
-    }
+    override fun toString(): String = "$name: ${type.name} (${kind.name})"
 }
 
 // Range 扩展函数
-fun Range.contains(position: Position): Boolean {
-    return when {
-        position.line < start.line -> false
-        position.line > end.line -> false
-        position.line == start.line && position.column < start.column -> false
-        position.line == end.line && position.column > end.column -> false
-        else -> true
-    }
-} 
+fun Range.contains(position: Position): Boolean = when {
+    position.line < start.line -> false
+    position.line > end.line -> false
+    position.line == start.line && position.column < start.column -> false
+    position.line == end.line && position.column > end.column -> false
+    else -> true
+}
