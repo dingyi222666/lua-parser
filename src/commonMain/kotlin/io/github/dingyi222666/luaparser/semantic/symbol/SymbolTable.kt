@@ -6,7 +6,7 @@ import io.github.dingyi222666.luaparser.semantic.types.Type
 
 class SymbolTable(
     private val parent: SymbolTable? = null,
-    val range: Range? = null
+    val range: Range
 ) {
     private val symbols = mutableMapOf<String, Symbol>()
     private val children = mutableListOf<SymbolTable>()
@@ -15,7 +15,7 @@ class SymbolTable(
         name: String, 
         type: Type, 
         kind: Symbol.Kind = Symbol.Kind.VARIABLE,
-        range: Range? = null
+        range: Range
     ): Symbol {
         val symbol = Symbol(name, type, kind, range)
         symbols[name] = symbol
@@ -25,7 +25,7 @@ class SymbolTable(
     // 基于位置查找最合适的符号表，优先匹配最近的作用域
     fun findTableAtPosition(position: Position): SymbolTable? {
         // 如果当前范围不包含该位置，直接返回null
-        if (range != null && !range.contains(position)) {
+        if (!range.contains(position)) {
             return null
         }
 
@@ -44,18 +44,15 @@ class SymbolTable(
 
     // 在指定位置解析符号，优先从最近的作用域开始查找
     fun resolveAtPosition(name: String, position: Position): Symbol? {
-        var currentTable = findTableAtPosition(position)
+        var currentTable = findTableAtPosition(position) ?: return parent?.resolveAtPosition(name, position)
         
         // 如果找不到匹配的作用域，从父作用域查找
-        if (currentTable == null) {
-            return parent?.resolveAtPosition(name, position)
-        }
 
         // 在当前作用域中查找
         var symbol = currentTable.symbols[name]
         
         // 如果当前作用域没找到，继续查找父作用域
-        while (symbol == null && currentTable?.parent != null) {
+        while (symbol == null && currentTable.parent != null) {
             currentTable = currentTable.parent
             symbol = currentTable.symbols[name]
         }
@@ -90,7 +87,7 @@ class SymbolTable(
         return result
     }
 
-    fun createChild(range: Range? = null): SymbolTable {
+    fun createChild(range: Range): SymbolTable {
         val child = SymbolTable(this, range)
         children.add(child)
         return child
@@ -98,17 +95,37 @@ class SymbolTable(
 
     fun getParent(): SymbolTable? = parent
 
-    override fun toString(): String {
+    override fun toString(): String = toString(0)
+    
+    private fun toString(indent: Int): String {
+        val indentStr = "  ".repeat(indent)
+        val innerIndentStr = "  ".repeat(indent + 1)
+        
         return buildString {
-            append("SymbolTable(")
-            append("range=$range, ")
-            append("symbols=${symbols.values.joinToString { "${it.name}: ${it.type.name}" }}, ")
-            append("children=[")
-            children.forEachIndexed { index, child ->
-                if (index > 0) append(", ")
-                append(child.toString())
+            appendLine("${indentStr}SymbolTable {")
+
+            appendLine("${innerIndentStr}range: $range,")
+            
+            if (symbols.isNotEmpty()) {
+                appendLine("${innerIndentStr}symbols: [")
+                symbols.values.forEachIndexed { index, symbol ->
+                    val comma = if (index < symbols.size - 1) "," else ""
+                    appendLine("$innerIndentStr  ${symbol.name}: ${symbol.type} (${symbol.kind})$comma")
+                }
+                appendLine("${innerIndentStr}],")
             }
-            append("])")
+            
+            if (children.isNotEmpty()) {
+                appendLine("${innerIndentStr}children: [")
+                children.forEachIndexed { index, child ->
+                    val comma = if (index < children.size - 1) "," else ""
+                    append(child.toString(indent + 2))
+                    appendLine(comma)
+                }
+                appendLine("${innerIndentStr}]")
+            }
+            
+            append("${indentStr}}")
         }
     }
 }

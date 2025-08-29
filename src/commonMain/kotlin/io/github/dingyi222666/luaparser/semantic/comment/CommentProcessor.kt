@@ -26,56 +26,50 @@ class CommentProcessor(
         return classMethods[className] ?: emptyMap()
     }
 
-    // 处理并索引所有注释
-    fun processComments(statements: List<StatementNode>) {
-        commentsByLine.clear()
-        docComments.clear()
 
-        // 收集所有注释并按行号索引
-        statements.forEach { stmt ->
-            if (stmt is CommentStatement) {
-                val line = stmt.range.end.line
-                commentsByLine.getOrPut(line) { mutableListOf() }.add(stmt)
+    fun processCommentStatement(stmt: CommentStatement) {
+        val line = stmt.range.end.line
 
-                // 如果是文档注释，解析它
-                if (stmt.isDocComment) {
-                    val docComment = parseDocComment(stmt, line)
+        commentsByLine.getOrPut(line) { mutableListOf() }.add(stmt)
 
-                    // 处理类定义
-                    docComment.tags.filterIsInstance<ClassTag>().forEach { classTag ->
-                        // 收集类的字段和方法
-                        val fields = mutableMapOf<String, Type>()
-                        val methods = mutableMapOf<String, FunctionType>()
+        // 如果是文档注释，解析它
+        if (stmt.isDocComment) {
+            val docComment = parseDocComment(stmt, line)
 
-                        docComment.tags.forEach { tag ->
-                            when (tag) {
-                                is FieldTag -> fields[tag.name] = tag.type
-                                is MethodTag -> methods[tag.methodName] = tag.type
-                                is ClassTag -> TODO()
-                                is GenericTag -> TODO()
-                                is ParamTag -> TODO()
-                                is ReturnTag -> TODO()
-                                is TypeTag -> TODO()
-                            }
-                        }
+            // 处理类定义
+            docComment.tags.filterIsInstance<ClassTag>().forEach { classTag ->
+                // 收集类的字段和方法
+                val fields = mutableMapOf<String, Type>()
+                val methods = mutableMapOf<String, FunctionType>()
 
-                        // 注册类定义
-                        typeAnnotationParser.defineClass(
-                            name = classTag.name,
-                            fields = fields,
-                            methods = methods
-                        )
+                docComment.tags.forEach { tag ->
+                    when (tag) {
+                        is FieldTag -> fields[tag.name] = tag.type
+                        is MethodTag -> methods[tag.methodName] = tag.type
+                        is ClassTag -> TODO()
+                        is GenericTag -> TODO()
+                        is ParamTag -> TODO()
+                        is ReturnTag -> TODO()
+                        is TypeTag -> TODO()
                     }
                 }
+
+                // 注册类定义
+                typeAnnotationParser.defineClass(
+                    name = classTag.name,
+                    fields = fields,
+                    methods = methods
+                )
             }
         }
+
     }
 
     internal fun parseDocComment(comment: CommentStatement, line: Int): DocComment {
         val lines = comment.comment.lines()
         val description = StringBuilder()
         val tags = mutableListOf<DocTag>()
-        
+
         var currentTag: DocTag? = null
         var isInDescription = true
         for (lineText in lines) {
@@ -113,7 +107,7 @@ class CommentProcessor(
                 val paramParts = parts.getOrNull(1)?.split(Regex("\\s+"), 2)
                 val paramName = paramParts?.getOrNull(0) ?: ""
                 val paramTypeStr = paramParts?.getOrNull(1)
-                
+
                 // 处理参数类型，保留完整的类型字符串
                 val paramType = if (paramTypeStr != null) {
                     parseType(paramTypeStr)
@@ -215,9 +209,9 @@ class CommentProcessor(
 
     private fun parseType(typeStr: String?): Type {
         if (typeStr == null) return PrimitiveType.ANY
-        
+
         val trimmed = typeStr.trim()
-        
+
         // 保持完整的类型字符串传递给 typeAnnotationParser
         return typeAnnotationParser.parse(trimmed)
     }
@@ -225,17 +219,17 @@ class CommentProcessor(
     // 获取函数的文档注释
     fun getFunctionDocComment(node: FunctionDeclaration): DocComment? {
         val nodeLine = node.range.start.line
-        return docComments[nodeLine]
+        return docComments[nodeLine] ?: docComments[nodeLine - 1]
     }
 
     // 获取节点的类型注释
     fun findTypeAnnotation(node: BaseASTNode): Type? {
         val nodeLine = node.range.start.line
         var currentLine = nodeLine
-        
+
         while (currentLine > 0) {
             // 先检查是否有文档注释
-            val docComment = docComments[currentLine]
+            val docComment = docComments[currentLine] ?: docComments[currentLine - 1]
             if (docComment != null) {
                 // 1. 检查是否有直接的类型标签
                 val typeTag = docComment.tags.firstOrNull { it is TypeTag } as? TypeTag
@@ -247,19 +241,19 @@ class CommentProcessor(
                 if (node is FunctionDeclaration) {
                     val paramTags = docComment.tags.filterIsInstance<ParamTag>()
                     val returnTag = docComment.tags.firstOrNull { it is ReturnTag } as? ReturnTag
-                    
+
                     if (paramTags.isNotEmpty() || returnTag != null) {
                         val params = paramTags.map { ParameterType(it.name, it.type) }
                         val returnType = returnTag?.type ?: PrimitiveType.NIL
                         return FunctionType(params, returnType)
                     }
                 }
-                
+
                 break
             }
 
             // 然后检查是否有类型注释
-            val comments = commentsByLine[currentLine]
+            val comments = commentsByLine[currentLine] ?: commentsByLine[currentLine - 1]
             if (comments != null) {
                 val typeComment = comments.findLast { comment ->
                     comment.comment.trim().startsWith("---@type")

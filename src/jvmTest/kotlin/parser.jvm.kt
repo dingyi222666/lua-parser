@@ -61,7 +61,7 @@ class JvmPlatformParserTest {
         val stringType = result.globalSymbols["STRING"]?.type  // string
         val globalVarType = result.globalSymbols["GLOBAL_VAR"]?.type  // string
         val addType = result.symbolTable.resolveAtPosition("add", Position(20, 1))?.type
-        val concatType = result.symbolTable.resolveAtPosition("concat", Position(20, 1))?.type
+        val concatType = result.symbolTable.resolveAtPosition("concat", Position(4, 1))?.type
         val multiplyType = result.symbolTable.resolveAtPosition("multiply", Position(20, 1))?.type
 
         val pairs = result.globalSymbols["ipairs"]?.type
@@ -73,6 +73,7 @@ class JvmPlatformParserTest {
         println("Global GLOBAL_VAR type: $globalVarType")
         println("multiply type: $multiplyType")
         println("ipairs type: $pairs")
+        println("all: ${result.symbolTable.toString()}")
 
         // 检查诊断信息
         result.diagnostics.forEach { diagnostic ->

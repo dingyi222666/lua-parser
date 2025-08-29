@@ -62,6 +62,23 @@ data class Range(
         val EMPTY = Range(Position.EMPTY, Position.EMPTY)
     }
 
+    override fun toString(): String {
+        return "($start, $end)"
+    }
+
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (other !is Range) return false
+        if (start != other.start) return false
+        if (end != other.end) return false
+        return true
+    }
+
+    override fun hashCode(): Int {
+        var result = start.hashCode()
+        result = 31 * result + end.hashCode()
+        return result
+    }
 }
 
 data class Position(
@@ -88,7 +105,23 @@ data class Position(
         val EMPTY = Position(1, 1)
     }
 
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (other !is Position) return false
+
+        if (line != other.line) return false
+        if (column != other.column) return false
+
+        return true
+    }
+
     override fun toString(): String {
         return "($line, $column)"
+    }
+
+    override fun hashCode(): Int {
+        var result = line
+        result = 31 * result + column
+        return result
     }
 }

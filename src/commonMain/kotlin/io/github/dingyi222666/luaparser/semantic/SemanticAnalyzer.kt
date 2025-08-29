@@ -19,15 +19,17 @@ class SemanticAnalyzer : ASTVisitor<TypeContext> {
     private val typeAnnotationParser = TypeAnnotationParser()
     private val commentProcessor = CommentProcessor(typeAnnotationParser)
     private val diagnostics = mutableListOf<Diagnostic>()
-    private var currentSymbolTable: SymbolTable = SymbolTable()
-    
+    private lateinit var currentSymbolTable: SymbolTable
+
     private val globalSymbols = mutableMapOf<String, Symbol>()
 
     init {
-        defineGlobalSymbol("print", FunctionType(
-            parameters = listOf(ParameterType("...", PrimitiveType.ANY, vararg = true)),
-            returnType = PrimitiveType.NIL
-        ))
+        defineGlobalSymbol(
+            "print", FunctionType(
+                parameters = listOf(ParameterType("...", PrimitiveType.ANY, vararg = true)),
+                returnType = PrimitiveType.NIL
+            )
+        )
     }
 
     private fun defineGlobalSymbol(name: String, type: Type) {
@@ -36,11 +38,10 @@ class SemanticAnalyzer : ASTVisitor<TypeContext> {
 
     fun analyze(ast: ChunkNode): AnalysisResult {
         diagnostics.clear()
-        currentSymbolTable = SymbolTable()
-        
+        currentSymbolTable = SymbolTable(null, ast.range)
 
         visitChunkNode(ast, TypeContext())
-        
+
         return AnalysisResult(
             diagnostics = diagnostics,
             symbolTable = currentSymbolTable,
@@ -50,15 +51,18 @@ class SemanticAnalyzer : ASTVisitor<TypeContext> {
 
     override fun visitBlockNode(node: BlockNode, context: TypeContext) {
         val previousTable = currentSymbolTable
-        currentSymbolTable = currentSymbolTable.createChild(node.range)
-        
-        commentProcessor.processComments(node.statements)
-        
+
+        if (currentSymbolTable.range.end != node.range.end) {
+            currentSymbolTable = currentSymbolTable.createChild(node.range)
+        }
+
         processClassDefinitions(node.statements)
-        
+
         super.visitBlockNode(node, context)
-        
-        currentSymbolTable = previousTable
+
+        if (currentSymbolTable !== previousTable) {
+            currentSymbolTable = previousTable
+        }
     }
 
 
@@ -77,15 +81,15 @@ class SemanticAnalyzer : ASTVisitor<TypeContext> {
                 if (classTag != null) {
                     val fields = mutableMapOf<String, Type>()
                     val methods = mutableMapOf<String, FunctionType>()
-                    
+
                     // 处理类的字段和基本方法
                     comments.forEach { comment ->
                         if (comment.isDocComment) {
                             val docComment = commentProcessor.parseDocComment(
-                                comment, 
+                                comment,
                                 comment.range.start.line
                             )
-                            
+
                             docComment.tags.forEach { tag ->
                                 when (tag) {
                                     is FieldTag -> fields[tag.name] = tag.type
@@ -99,7 +103,7 @@ class SemanticAnalyzer : ASTVisitor<TypeContext> {
                             }
                         }
                     }
-                    
+
                     // 添加动态声明的方法
                     methods.putAll(commentProcessor.getClassMethods(classTag.name))
 
@@ -122,7 +126,7 @@ class SemanticAnalyzer : ASTVisitor<TypeContext> {
                 }
             }
         }
-        
+
         // 第二遍：处理方法实现和类型检查
         statements.forEach { stmt ->
             if (stmt is AssignmentStatement) {
@@ -139,11 +143,13 @@ class SemanticAnalyzer : ASTVisitor<TypeContext> {
                             if (implementation != null) {
                                 val implType = typeInferer.inferType(implementation, TypeContext())
                                 if (!methodType.isAssignableFrom(implType)) {
-                                    diagnostics.add(Diagnostic(
-                                        range = stmt.range,
-                                        message = "Method implementation type mismatch: expected ${methodType.name}, got ${implType.name}",
-                                        severity = Diagnostic.Severity.ERROR
-                                    ))
+                                    diagnostics.add(
+                                        Diagnostic(
+                                            range = stmt.range,
+                                            message = "Method implementation type mismatch: expected ${methodType.name}, got ${implType.name}",
+                                            severity = Diagnostic.Severity.ERROR
+                                        )
+                                    )
                                 }
                             }
                         }
@@ -163,7 +169,7 @@ class SemanticAnalyzer : ASTVisitor<TypeContext> {
     override fun visitLocalStatement(node: LocalStatement, context: TypeContext) {
         node.init.forEachIndexed { index, identifier ->
             val valueExpr = node.variables.getOrNull(index)
-            
+
             // 获取声明的类型注释
             val declaredType = commentProcessor.findTypeAnnotation(node) ?: run {
                 if (valueExpr != null) {
@@ -175,17 +181,18 @@ class SemanticAnalyzer : ASTVisitor<TypeContext> {
                                 try {
                                     val params = mutableListOf<ParameterType>()
                                     var returnType: Type = PrimitiveType.NIL
-                                    
+
                                     docComment.tags.forEach { tag ->
                                         when (tag) {
                                             is ParamTag -> {
                                                 params.add(ParameterType(tag.name, tag.type))
                                             }
+
                                             is ReturnTag -> returnType = tag.type
                                             else -> {} // 忽略其他标签
                                         }
                                     }
-                                    
+
                                     FunctionType(params, returnType)
                                 } catch (e: Exception) {
                                     typeInferer.inferType(valueExpr, context)
@@ -194,45 +201,45 @@ class SemanticAnalyzer : ASTVisitor<TypeContext> {
                                 typeInferer.inferType(valueExpr, context)
                             }
                         }
+
                         else -> typeInferer.inferType(valueExpr, context)
                     }
                 } else {
                     PrimitiveType.ANY
                 }
             }
-            
+
             currentSymbolTable.define(
                 identifier.name,
                 declaredType,
                 Symbol.Kind.LOCAL,
                 identifier.range
             )
-            
+
             context.defineType(identifier.name, declaredType)
-            
+
             if (valueExpr != null) {
                 val inferredType = typeInferer.inferType(valueExpr, context)
                 diagnostics.addAll(typeInferer.getDiagnostics())
-                
+
                 if (!declaredType.isAssignableFrom(inferredType)) {
-                    diagnostics.add(Diagnostic(
-                        range = node.range,
-                        message = "Type '${inferredType.name}' is not assignable to type '${declaredType.name}'",
-                        severity = Diagnostic.Severity.ERROR
-                    ))
+                    diagnostics.add(
+                        Diagnostic(
+                            range = node.range,
+                            message = "Type '${inferredType.name}' is not assignable to type '${declaredType.name}'",
+                            severity = Diagnostic.Severity.ERROR
+                        )
+                    )
                 }
             }
         }
     }
 
     override fun visitFunctionDeclaration(node: FunctionDeclaration, context: TypeContext) {
-        val functionScope = currentSymbolTable.createChild(node.range)
-        val previousTable = currentSymbolTable
-        currentSymbolTable = functionScope
-        
+
         // 获取函数的文档注释
         val docComment = commentProcessor.getFunctionDocComment(node)
-        
+
         // 获取推导的类型
         val inferredType = typeInferer.inferType(node, context) as? FunctionType
 
@@ -245,17 +252,17 @@ class SemanticAnalyzer : ASTVisitor<TypeContext> {
 
                 // 创建参数映射
                 val paramMap = node.params.associateBy { it.name }
-                
+
                 // 处理参数和返回类型标注
                 docComment.tags.forEach { tag ->
                     when (tag) {
                         is ParamTag -> {
-                            println(tag)
                             // 只处理存在的参数
                             if (paramMap.containsKey(tag.name)) {
                                 params.add(ParameterType(tag.name, tag.type))
                             }
                         }
+
                         is GenericTag -> {
                             genericParams.add(tag)
                             context.defineType(tag.name, GenericType(tag.name, emptyList()))
@@ -265,7 +272,7 @@ class SemanticAnalyzer : ASTVisitor<TypeContext> {
                         else -> {} // 忽略其他标签
                     }
                 }
-                
+
                 // 如果有参数没有类型注释，使用推导的类型或 ANY
                 node.params.forEach { param ->
                     if (!params.any { it.name == param.name }) {
@@ -273,7 +280,7 @@ class SemanticAnalyzer : ASTVisitor<TypeContext> {
                         params.add(ParameterType(param.name, inferredParamType ?: PrimitiveType.ANY))
                     }
                 }
-                
+
                 FunctionType(params, returnType)
             } catch (e: Exception) {
                 inferredType ?: FunctionType(
@@ -287,7 +294,7 @@ class SemanticAnalyzer : ASTVisitor<TypeContext> {
                 returnType = PrimitiveType.ANY
             )
         }
-        
+
         // 处理函数标识符
         when (val identifier = node.identifier) {
             is Identifier -> {
@@ -306,6 +313,7 @@ class SemanticAnalyzer : ASTVisitor<TypeContext> {
                     context.defineType(identifier.name, functionType)
                 }
             }
+
             is MemberExpression -> {
                 // 处理方法声明
                 val baseType = typeInferer.inferType(identifier.base, context)
@@ -322,7 +330,12 @@ class SemanticAnalyzer : ASTVisitor<TypeContext> {
                 }
             }
         }
-        
+
+        // 在这里才创建函数作用域，是因为前面的函数定义应该在上一个作用域
+        val functionScope = currentSymbolTable.createChild(node.range)
+        val previousTable = currentSymbolTable
+        currentSymbolTable = functionScope
+
         // 处理参数
         node.params.forEach { param ->
             val paramType = functionType.parameters.find { it.name == param.name }?.type ?: PrimitiveType.ANY
@@ -334,10 +347,10 @@ class SemanticAnalyzer : ASTVisitor<TypeContext> {
             )
             context.defineType(param.name, paramType)
         }
-        
+
         // 处理函数体
         node.body?.let { visitBlockNode(it, context) }
-        
+
         currentSymbolTable = previousTable
     }
 
@@ -350,17 +363,19 @@ class SemanticAnalyzer : ASTVisitor<TypeContext> {
                         if (!target.isLocal) {
                             val inferredType = typeInferer.inferType(valueExpr, context)
                             val declaredType = commentProcessor.findTypeAnnotation(node) ?: inferredType
-                            
+
                             defineGlobalSymbol(target.name, declaredType)
-                            
+
                             if (!declaredType.isAssignableFrom(inferredType)) {
-                                diagnostics.add(Diagnostic(
-                                    range = node.range,
-                                    message = "Global variable '${target.name}' of type '${declaredType.name}' is not assignable from type '${inferredType.name}'",
-                                    severity = Diagnostic.Severity.ERROR
-                                ))
+                                diagnostics.add(
+                                    Diagnostic(
+                                        range = node.range,
+                                        message = "Global variable '${target.name}' of type '${declaredType.name}' is not assignable from type '${inferredType.name}'",
+                                        severity = Diagnostic.Severity.ERROR
+                                    )
+                                )
                             }
-                            
+
                             declaredType
                         } else {
                             val inferredType = typeInferer.inferType(valueExpr, context)
@@ -374,6 +389,7 @@ class SemanticAnalyzer : ASTVisitor<TypeContext> {
                             inferredType
                         }
                     }
+
                     is MemberExpression -> {
                         val baseType = typeInferer.inferType(target.base, context)
                         when (baseType) {
@@ -381,31 +397,33 @@ class SemanticAnalyzer : ASTVisitor<TypeContext> {
                             else -> PrimitiveType.ANY
                         }
                     }
+
                     else -> PrimitiveType.ANY
                 }
-                
+
                 val valueType = typeInferer.inferType(valueExpr, context)
                 if (!targetType.isAssignableFrom(valueType)) {
-                    diagnostics.add(Diagnostic(
-                        range = node.range,
-                        message = "Type '${valueType.name}' is not assignable to type '${targetType.name}'",
-                        severity = Diagnostic.Severity.ERROR
-                    ))
+                    diagnostics.add(
+                        Diagnostic(
+                            range = node.range,
+                            message = "Type '${valueType.name}' is not assignable to type '${targetType.name}'",
+                            severity = Diagnostic.Severity.ERROR
+                        )
+                    )
                 }
             }
         }
     }
 
     override fun visitMemberExpression(node: MemberExpression, context: TypeContext) {
-        val baseType = typeInferer.inferType(node.base, context)
-        when (baseType) {
+        when (val baseType = typeInferer.inferType(node.base, context)) {
             is TableType -> {
                 val fieldType = baseType.fields[node.identifier.name]
                 print(fieldType)
                 if (fieldType != null) {
                     val fullPath = buildMemberPath(node)
                     context.defineType(fullPath, fieldType)
-                    
+
                     context.defineType(node.toString(), fieldType)
                 }
             }
@@ -424,16 +442,18 @@ class SemanticAnalyzer : ASTVisitor<TypeContext> {
                 } else {
                     baseType.getAllFields()[node.identifier.name]
                 }
-                
+
                 if (member != null) {
                     context.defineType(buildMemberPath(node), member)
                     context.defineType(node.toString(), member)
                 } else {
-                    diagnostics.add(Diagnostic(
-                        range = node.range,
-                        message = "Member '${node.identifier.name}' not found in class '${baseType.name}'",
-                        severity = Diagnostic.Severity.ERROR
-                    ))
+                    diagnostics.add(
+                        Diagnostic(
+                            range = node.range,
+                            message = "Member '${node.identifier.name}' not found in class '${baseType.name}'",
+                            severity = Diagnostic.Severity.ERROR
+                        )
+                    )
                 }
             }
         }
@@ -447,18 +467,18 @@ class SemanticAnalyzer : ASTVisitor<TypeContext> {
     }
 
     override fun visitCommentStatement(commentStatement: CommentStatement, value: TypeContext) {
-        super.visitCommentStatement(commentStatement, value)
+        commentProcessor.processCommentStatement(commentStatement)
     }
 
     private fun resolveSymbol(name: String, position: Position): Symbol? {
-        return currentSymbolTable.resolveAtPosition(name, position) 
+        return currentSymbolTable.resolveAtPosition(name, position)
             ?: globalSymbols[name]
     }
 
 
     private fun parseType(typeStr: String?): Type {
         if (typeStr == null) return PrimitiveType.ANY
-        
+
         return typeAnnotationParser.parse(typeStr)
     }
 }
