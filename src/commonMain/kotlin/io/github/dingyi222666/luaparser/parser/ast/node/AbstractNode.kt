@@ -116,7 +116,7 @@ data class Position(
     }
 
     override fun toString(): String {
-        return "($line, $column)"
+        return "[$line, $column]"
     }
 
     override fun hashCode(): Int {
