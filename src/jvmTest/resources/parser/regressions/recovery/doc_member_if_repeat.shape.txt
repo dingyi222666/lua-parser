@@ -1,0 +1,1 @@
+Chunk(Block[Comment(doc:---@type fun());CallStmt(Call(Member(Id(obj).):));If(Clause(Id(ready):Block[Local(Id(value)=Const(1))]));Repeat(Block[Local(Id(fallback)=Const(2))]:ExpressionNodeSupport)])

@@ -1,0 +1,1 @@
+Chunk(Block[While(Id(ready):Block[Continue]);Local(Id(mapper)=Lambda(Id(value):Id(value)));When(Id(ready)?CallStmt(Call(Id(print):Array(Const(1),Const(2)))):CallStmt(Call(Id(fallback):)));Return(Array(Call(Id(mapper):Const(1)),Lambda(Id(x):Binary(+,Id(x),Const(1))),Array(Const(3),Const(4))))])

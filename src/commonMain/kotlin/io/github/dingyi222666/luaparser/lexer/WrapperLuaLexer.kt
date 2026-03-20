@@ -12,6 +12,7 @@ class WrapperLuaLexer(
     private val lastStates = ArrayDeque<LexerState>()
     private val currentStates = ArrayDeque<LexerState>(5)
     private var currentState = LexerState(
+        index = currentLexer.index,
         column = currentLexer.tokenColumn,
         length = currentLexer.tokenLength,
         line = currentLexer.tokenLine,
@@ -27,6 +28,10 @@ class WrapperLuaLexer(
     fun line() = currentState.line
 
     fun column() = currentState.column + 1
+
+    fun hasLineBreakBeforeNextSignificantToken(): Boolean {
+        return currentLexer.hasLineBreakBeforeNextSignificantToken(currentState.index + currentState.length)
+    }
 
     fun advance(): LuaTokenTypes {
         if (currentStates.isNotEmpty()) {
@@ -66,6 +71,7 @@ class WrapperLuaLexer(
         val type = currentLexer.nextToken()
 
         val newState = LexerState(
+            index = currentLexer.index,
             column = currentLexer.tokenColumn,
             length = currentLexer.tokenLength,
             line = currentLexer.tokenLine,
@@ -90,6 +96,7 @@ class WrapperLuaLexer(
 }
 
 internal data class LexerState(
+    val index: Int,
     val text: CharSequence,
     val line: Int,
     val column: Int,

@@ -138,10 +138,14 @@ class LuaParser(
         return true
     }
 
+    private fun hasLineBreakBeforeNextSignificantToken(): Boolean {
+        return lexer.hasLineBreakBeforeNextSignificantToken()
+    }
+
     private fun error(message: String): Nothing = kotlin.error("(${lexer.line()},${lexer.column()}): " + message)
 
     private fun warning(message: String) {
-        if (ignoreWarningMessage) {
+        if (errorRecovery && ignoreWarningMessage) {
             println("(${lexer.line()},${lexer.column()}): " + message + ". This error is ignored now.")
         } else error(message)
     }
@@ -226,7 +230,9 @@ class LuaParser(
                 consumeToken(LuaTokenTypes.FOR) -> parseForStatement(blockNode)
                 consumeToken(LuaTokenTypes.FUNCTION) -> parseGlobalFunctionDeclaration(blockNode)
                 consumeToken(LuaTokenTypes.CONTINUE) -> {
-                    // check the syntax when traversing the tree
+                    assertVersion(LuaVersion.ANDROLUA_5_3) {
+                        "continue statement is only supported in androlua 5.3"
+                    }
                     markLocation()
                     ContinueStatement()
                 }
@@ -291,10 +297,16 @@ class LuaParser(
                 // next token
                 peek {
                     val node = finishNode(stat)
-                    node.range = Range(node.range.start, Position(
-                        node.range.end.line,
-                        node.range.end.column - lexer.length()
-                    ))
+                    val visibleComment = stat.comment.trimEnd('\r', '\n')
+                    val commentLines = visibleComment.split("\r\n", "\n", "\r")
+                    val endLine = node.range.start.line + commentLines.lastIndex
+                    val endColumn = if (commentLines.size == 1) {
+                        node.range.start.column + commentLines.last().length
+                    } else {
+                        commentLines.last().length + 1
+                    }
+
+                    node.range = Range(node.range.start, Position(endLine, endColumn))
                 }
             } else {
                 finishNode(stat)
@@ -346,7 +358,12 @@ class LuaParser(
             result.causes.add(finishNode(parseSwitchDefaultCaseStatement(result)))
         }
 
-        expectToken(LuaTokenTypes.END) { "<end> expected (to close 'switch' at line $currentLine) near ${lexerText()}" }
+        if (!consumeToken(LuaTokenTypes.END)) {
+            if (!errorRecovery) {
+                error("<end> expected (to close 'switch' at line $currentLine) near ${lexerText()}")
+            }
+            warning("<end> expected (to close 'switch' at line $currentLine) near ${lexerText()}")
+        }
 
         return result
     }
@@ -446,7 +463,12 @@ class LuaParser(
             result.causes.add(finishNode(cause))
         }
 
-        expectToken(LuaTokenTypes.END) { "<end> expected (to close 'do' at line $currentLine) near ${lexerText(true)}" }
+        if (!consumeToken(LuaTokenTypes.END)) {
+            if (!errorRecovery) {
+                error("<end> expected (to close 'do' at line $currentLine) near ${lexerText(true)}")
+            }
+            warning("<end> expected (to close 'do' at line $currentLine) near ${lexerText(true)}")
+        }
 
         return result
     }
@@ -644,7 +666,16 @@ class LuaParser(
 
         result.body = parseBlockNode(result)
 
-        expectToken(LuaTokenTypes.UNTIL) { "'until' expected near '${lexerText()}'" }
+        if (!consumeToken(LuaTokenTypes.UNTIL)) {
+            if (!errorRecovery) {
+                error("'until' expected near '${lexerText()}'")
+            }
+            warning("'until' expected near '${lexerText()}'")
+            result.condition = ExpressionNode.EMPTY
+            result.condition.parent = result
+            result.condition.bad = true
+            return result
+        }
 
         result.condition = parseExp(result)
 
@@ -661,12 +692,17 @@ class LuaParser(
 
         val findDoToken = consumeToken(LuaTokenTypes.DO)
         if (!findDoToken) {
-            warning("The <do> expected near ${lexerText(true)}")
+            warning("The <do> expected near ${lexerText()}")
         }
 
         result.body = parseBlockNode(result)
 
-        expectToken(LuaTokenTypes.END) { "<end> expected (to close 'do' at line $currentLine) near ${lexerText(true)}" }
+        if (!consumeToken(LuaTokenTypes.END)) {
+            if (!errorRecovery) {
+                error("<end> expected (to close 'do' at line $currentLine) near ${lexerText(true)}")
+            }
+            warning("<end> expected (to close 'do' at line $currentLine) near ${lexerText(true)}")
+        }
 
         return result
     }
@@ -679,7 +715,28 @@ class LuaParser(
         val peekToken = peek()
 
         return if (suffix is Identifier || equalsMore(peekToken, LuaTokenTypes.ASSIGN, LuaTokenTypes.COMMA)) {
-            parseAssignmentStatement(parent, suffix)
+            if (suffix is Identifier && !equalsMore(peekToken, LuaTokenTypes.ASSIGN, LuaTokenTypes.COMMA)) {
+                if (!errorRecovery) {
+                    parseAssignmentStatement(parent, suffix)
+                }
+
+                val recoveredExpression = if (binaryPrecedence(peekToken) > 0) {
+                    parseSubExpTail(parent, suffix, 0)
+                } else {
+                    suffix
+                }
+
+                CallStatement().apply {
+                    this.parent = parent
+                    expression = CallExpression().apply {
+                        this.parent = this@apply
+                        base = recoveredExpression
+                        bad = true
+                    }
+                }
+            } else {
+                parseAssignmentStatement(parent, suffix)
+            }
         } else {
 
             /*  if (suffix is Identifier) {
@@ -741,7 +798,12 @@ class LuaParser(
         result.body = parseBlockNode(result)
         result.parent = parent
 
-        expectToken(LuaTokenTypes.END) { "<end> expected (to close 'do' at line $currentLine) near ${lexerText()}" }
+        if (!consumeToken(LuaTokenTypes.END)) {
+            if (!errorRecovery) {
+                error("<end> expected (to close 'do' at line $currentLine) near ${lexerText()}")
+            }
+            warning("<end> expected (to close 'do' at line $currentLine) near ${lexerText()}")
+        }
 
         return result
     }
@@ -760,7 +822,7 @@ class LuaParser(
 
         // empty arg
         if (!findRight) {
-            node.params.addAll(parseNameList(parent))
+            node.params.addAll(parseFunctionParameterList(parent))
         }
 
         expectToken(LuaTokenTypes.RPAREN) { ") expected near '${lexerText()}'" }
@@ -770,6 +832,29 @@ class LuaParser(
         expectToken(LuaTokenTypes.END) { "<end> expected (to close 'function' at line $currentLine) near ${lexerText()}" }
 
         return node
+    }
+
+    private fun parseFunctionParameterList(parent: BaseASTNode): List<Identifier> {
+        val result = mutableListOf<Identifier>()
+
+        fun parseParameter(): Identifier {
+            if (consumeToken(LuaTokenTypes.ELLIPSIS)) {
+                return Identifier("...").also { it.parent = parent }
+            }
+            return parseName(parent)
+        }
+
+        result.add(parseParameter())
+
+        while (consumeToken(LuaTokenTypes.COMMA)) {
+            val parameter = parseParameter()
+            result.add(parameter)
+            if (parameter.name == "...") {
+                break
+            }
+        }
+
+        return result
     }
 
     //		 local function Name funcbody
@@ -822,7 +907,12 @@ class LuaParser(
 
         result.attributeName = attributeName.name
 
-        expectToken(LuaTokenTypes.GT) { "'>' expected near ${lexerText()}" }
+        if (!consumeToken(LuaTokenTypes.GT)) {
+            if (!errorRecovery) {
+                error("'>' expected near ${lexerText()}")
+            }
+            warning("'>' expected near ${lexerText()}")
+        }
 
         return result
     }
@@ -899,6 +989,10 @@ class LuaParser(
         }
     }
 
+    private fun isRightAssociative(tokenTypes: LuaTokenTypes): Boolean {
+        return tokenTypes == LuaTokenTypes.CONCAT || tokenTypes == LuaTokenTypes.EXP
+    }
+
 
     private fun findExpressionOperator(text: CharSequence): ExpressionOperator? {
         return ExpressionOperator.entries.find {
@@ -915,15 +1009,11 @@ class LuaParser(
 
     //
     private fun parseSubExp(parent: BaseASTNode, minPrecedence: Int): ExpressionNode {
-
-        var precedence: Int
-
         val currentToken = peek {
             markLocation()
             it
         }
-        var node: ExpressionNode
-        node = when {
+        var node: ExpressionNode = when {
 
             equalsMore(
                 currentToken, LuaTokenTypes.MINUS, LuaTokenTypes.GETN,
@@ -956,46 +1046,44 @@ class LuaParser(
                 }
             }
 
-            currentToken == LuaTokenTypes.LAMBDA -> parseLambdaExp(parent)
+            currentToken == LuaTokenTypes.LAMBDA -> {
+                assertVersion(LuaVersion.ANDROLUA_5_3) {
+                    "lambda expression is only supported in androlua 5.3"
+                }
+                parseLambdaExp(parent)
+            }
 
             currentToken == LuaTokenTypes.FUNCTION -> consume {
                 parseFunctionExp(parent)
             }
 
-            currentToken == LuaTokenTypes.LBRACK -> parseArrayConstructorExpression(parent)
+            currentToken == LuaTokenTypes.LBRACK -> {
+                assertVersion(LuaVersion.ANDROLUA_5_3) {
+                    "array constructor is only supported in androlua 5.3"
+                }
+                parseArrayConstructorExpression(parent)
+            }
 
             currentToken == LuaTokenTypes.LCURLY -> parseTableConstructorExpression(parent)
-
-            binaryPrecedence(currentToken).also {
-                precedence = it
-            } > 0 -> consume {
-
-                precedence = binaryPrecedence(currentToken)
-                val result = BinaryExpression().apply {
-                    this.parent = parent
-                    left = parent as ExpressionNode
-                    operator = findExpressionOperator(lexerText()).requireNotNull()
-                }
-
-                precedence = binaryPrecedence(currentToken)
-                result.right = parseSubExp(result, precedence)
-                result
-            }
 
             else -> parsePrefixExp(parent)
 
         }
 
         node = finishNode(node.requireNotNull())
+        return parseSubExpTail(parent, node, minPrecedence)
+    }
 
-        precedence = binaryPrecedence(peek())
+    private fun parseSubExpTail(parent: BaseASTNode, initial: ExpressionNode, minPrecedence: Int): ExpressionNode {
+        var node = initial
+        while (true) {
+            val operatorToken = peek()
+            val precedence = binaryPrecedence(operatorToken)
+            if (precedence <= 0 || precedence < minPrecedence) {
+                node.parent = parent
+                return node
+            }
 
-        if (precedence <= 0) {
-            node.parent = parent
-            return node
-        }
-
-        while (precedence > minPrecedence) {
             advance()
             markLocation()
             node = BinaryExpression().apply {
@@ -1004,22 +1092,15 @@ class LuaParser(
                 operator = findExpressionOperator(lexerText()).requireNotNull()
             }
 
-            node.right = parseSubExp(node, precedence)
-            precedence = binaryPrecedence(peek())
+            val nextMinPrecedence = if (isRightAssociative(operatorToken)) precedence else precedence + 1
+            node.right = parseSubExp(node, nextMinPrecedence)
             finishNode(node)
         }
-
-        if (node == parent) {
-            error("unexpected symbol ${lexerText()} near ${lastToken.name.lowercase()}")
-        }
-
-        return node.requireNotNull()
     }
 
     //   arrayconstructor ::= '[' [explist] ']'
     private fun parseArrayConstructorExpression(parent: BaseASTNode): ArrayConstructorExpression {
         expectToken(LuaTokenTypes.LBRACK) { "'[' expected near ${lexerText()}" }
-        // markLocation()
         val result = ArrayConstructorExpression()
         result.parent = parent
 
@@ -1028,9 +1109,10 @@ class LuaParser(
             return result
         }
 
-        result.values.addAll(parseExpList(parent))
+        result.values.addAll(parseExpList(result))
+        expectToken(LuaTokenTypes.RBRACK) { "']' expected near ${lexerText()}" }
 
-        return finishNode(result)
+        return result
     }
 
     //   lambdadef ::= lambda ( [parlist] | ['(' [parlist] ')'] ) (':'|'=>','->') exp
@@ -1058,17 +1140,34 @@ class LuaParser(
         (func@{
             if (consumeToken(LuaTokenTypes.COLON)) return@func
             if (consumeToken(LuaTokenTypes.MINUS)) {
-                expectToken(LuaTokenTypes.GT) { "'->' expected near ${lexerText()}" }
+                if (!consumeToken(LuaTokenTypes.GT)) {
+                    if (!errorRecovery) {
+                        error("'->' expected near ${lexerText()}")
+                    }
+                    warning("'->' expected near ${lexerText()}")
+                }
                 return@func
             }
             if (consumeToken(LuaTokenTypes.ASSIGN)) {
-                expectToken(LuaTokenTypes.GT) { "'=>' expected near ${lexerText()}" }
+                if (!consumeToken(LuaTokenTypes.GT)) {
+                    if (!errorRecovery) {
+                        error("'=>' expected near ${lexerText()}")
+                    }
+                    warning("'=>' expected near ${lexerText()}")
+                }
                 return@func
             }
             error("':' expected near ${lexerText()}")
         }).invoke()
 
-        result.expression = parseExp(result)
+        result.expression = if (errorRecovery && peekToken(LuaTokenTypes.EOF)) {
+            ExpressionNode.EMPTY.also {
+                it.parent = result
+                it.bad = true
+            }
+        } else {
+            parseExp(result)
+        }
         return finishNode(result)
     }
 
@@ -1197,12 +1296,17 @@ class LuaParser(
         var result = parsePrimaryExp(parent)
 
         var parentNode = parent
+        var stopAfterRecovery = false
 
         while (true) {
             result = when (peek()) {
                 // '.' fieldset*
                 LuaTokenTypes.DOT ->
-                    parseFieldSet(parentNode, result)
+                    parseFieldSet(parentNode, result).also {
+                        if (errorRecovery && it.bad) {
+                            stopAfterRecovery = true
+                        }
+                    }
 
                 // [' exp ']'
                 LuaTokenTypes.LBRACK ->
@@ -1215,17 +1319,26 @@ class LuaParser(
                 //  ':' NAME funcargs
                 LuaTokenTypes.COLON -> {
                     val fieldSet = parseFieldSet(parent, result)
-                    finishNode(fieldSet)
 
-                    kotlin.runCatching {
-                        parseCallExpression(parent, fieldSet)
-                    }.getOrNull() ?: break
+                    if (errorRecovery && fieldSet.bad) {
+                        stopAfterRecovery = true
+                        fieldSet
+                    } else {
+                        finishNode(fieldSet)
+                        kotlin.runCatching {
+                            parseCallExpression(parent, fieldSet)
+                        }.getOrNull() ?: break
+                    }
+
                 }
 
                 else -> break
             }
             finishNode(result)
             parentNode = result
+            if (stopAfterRecovery) {
+                break
+            }
         }
 
         return result
@@ -1325,6 +1438,9 @@ class LuaParser(
         result.base = base
 
         result.identifier = kotlin.runCatching {
+            if (hasLineBreakBeforeNextSignificantToken()) {
+                error("<name> expected near ${lexerText()}")
+            }
             parseName(result)
         }
             .onFailure {
@@ -1332,7 +1448,10 @@ class LuaParser(
                     throw it
                 }
             }
-            .getOrElse { Identifier("") }
+            .getOrElse {
+                result.bad = true
+                Identifier("")
+            }
         result.parent = parent
         return result
     }

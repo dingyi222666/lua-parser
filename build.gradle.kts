@@ -13,6 +13,10 @@ plugins {
 group = "io.github.dingyi222666"
 version = "1.0.3"
 
+val runNativeHostTests = providers.gradleProperty("runNativeHostTests")
+    .map { it.equals("true", ignoreCase = true) }
+    .orElse(false)
+
 kotlin {
     jvm {
         compilerOptions {
@@ -49,6 +53,7 @@ kotlin {
         }
         commonTest {
             dependencies {
+                implementation(kotlin("test"))
                 implementation(kotlin("test-annotations-common"))
             }
         }
@@ -74,6 +79,12 @@ kotlin {
     }
 
     jvmToolchain(11)
+}
+
+tasks.named("mingwX64Test") {
+    onlyIf("Enable Windows Kotlin/Native host test execution with -PrunNativeHostTests=true") {
+        runNativeHostTests.get()
+    }
 }
 
 

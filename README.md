@@ -4,6 +4,8 @@
 
 A Lua 5.3 Lexer & Parser written in pure Kotlin.
 
+Semantic analysis now uses the `SemanticPipeline` API. Legacy analyzer entry points remain available as compatibility wrappers over the pipeline.
+
 ## Features
 
 - [X] Kotlin Multiplatform support (JVM / JS / Native)
@@ -30,7 +32,37 @@ val root = parser.parse(lexer)
 println(AST2Lua().asCode(root))
 ```
 
+### Semantic analysis
+
+Use `SemanticPipeline` as the primary file-local semantic entry point. For workspace-level module resolution and path-based queries, use `LuaWorkspaceEngine` plus `LuaWorkspaceQueryFacade`.
+
+```kotlin
+val chunk = LuaParser().parse(
+    """
+    ---@type string
+    local name = "lua"
+    """.trimIndent()
+)
+
+val result = SemanticPipeline().analyze(chunk)
+val symbol = result.model.getSymbolAt(Position(2, 11))
+
+println(symbol?.name)
+println(result.summary.diagnosticCount)
+```
+
+The returned `SemanticAnalysisResult` exposes the `SemanticModel` plus a lightweight summary.
+
+If you still depend on `SemanticAnalyzer`, `AnalysisResult`, or legacy symbol tables, they are kept as pipeline-backed compatibility APIs. See `docs/semantic-compat.md`.
+
 More usage coming soon.
+
+## Validation
+
+- `./gradlew check` is the supported default local validation path.
+- Semantic validation now lives in shared `commonTest` coverage, including workspace query flows.
+- Native host test execution is opt-in with `-PrunNativeHostTests=true`.
+- Run Windows Kotlin/Native host tests explicitly with `./gradlew -PrunNativeHostTests=true mingwX64Test`.
 
 ## Special thanks
 

@@ -1,0 +1,1 @@
+Chunk(Block[Do(Block[Local(AttrId(config<const>)=Id(defaults));Local(AttrId(handle<close>)=Call(Id(open):))]);ForNumeric(Id(i)=Const(1),Const(2),null:Block[Local(AttrId(step<const>)=Id(i))]);Repeat(Block[Local(AttrId(resource<close>)=Call(Id(open):))]:Id(done))])

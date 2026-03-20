@@ -1,69 +1,113 @@
 package io.github.dingyi222666.luaparser.semantic.symbol
 
+import io.github.dingyi222666.luaparser.parser.ast.node.BaseASTNode
 import io.github.dingyi222666.luaparser.parser.ast.node.Position
 import io.github.dingyi222666.luaparser.parser.ast.node.Range
 import io.github.dingyi222666.luaparser.semantic.types.Type
 
-
+/**
+ * Legacy symbol table facade retained for compatibility with [io.github.dingyi222666.luaparser.semantic.SemanticAnalyzer].
+ *
+ * New semantic consumers should prefer [io.github.dingyi222666.luaparser.semantic.model.SemanticModel]
+ * and [io.github.dingyi222666.luaparser.semantic.api.Scope].
+ */
 class SymbolTable(
     private val parent: SymbolTable? = null,
-    val range: Range
+    val range: Range,
+    val kind: ScopeKind = ScopeKind.BLOCK,
+    val owner: BaseASTNode? = null
 ) {
-    private val symbols = mutableMapOf<String, Symbol>()
+    private val symbols = linkedMapOf<String, MutableList<Symbol>>()
     private val children = mutableListOf<SymbolTable>()
 
-    fun define(name: String, type: Type, kind: Symbol.Kind = Symbol.Kind.VARIABLE, range: Range? = null): Symbol =
-        Symbol(name, type, kind, range).also { symbols[name] = it }
+    fun define(
+        name: String,
+        type: Type,
+        kind: Symbol.Kind = Symbol.Kind.VARIABLE,
+        range: Range? = null,
+        declaration: BaseASTNode? = null
+    ): Symbol {
+        val symbol = Symbol(name, type, kind, range, declaration)
+        symbols.getOrPut(name) { mutableListOf() }.add(symbol)
+        return symbol
+    }
 
-    // 在指定位置解析符号
     fun resolveAtPosition(name: String, position: Position): Symbol? {
-        return symbols[name] ?: parent?.resolveAtPosition(name, position)
+        val local = symbols[name]
+            ?.filter { symbol -> symbol.range?.start?.isBeforeOrEqual(position) ?: true }
+            ?.lastOrNull()
+
+        return local ?: parent?.resolveAtPosition(name, position)
     }
 
-    // 从当前作用域解析符号
-    fun resolve(name: String): Symbol? = symbols[name] ?: parent?.resolve(name)
+    fun resolve(name: String): Symbol? = symbols[name]?.lastOrNull() ?: parent?.resolve(name)
 
-    // 获取所有可见的符号
-    fun getAllVisibleSymbols(position: Position? = null): List<Symbol> = buildList {
-        addAll(symbols.values)
-        parent?.getAllVisibleSymbols(position)?.let(::addAll)
+    fun getAllVisibleSymbols(position: Position? = null): List<Symbol> {
+        val visible = linkedMapOf<String, Symbol>()
+
+        symbols.forEach { (name, entries) ->
+            val symbol = if (position == null) {
+                entries.lastOrNull()
+            } else {
+                entries.filter { it.range?.start?.isBeforeOrEqual(position) ?: true }.lastOrNull()
+            }
+            if (symbol != null) {
+                visible[name] = symbol
+            }
+        }
+
+        parent?.getAllVisibleSymbols(position)?.forEach { symbol ->
+            if (symbol.name !in visible) {
+                visible[symbol.name] = symbol
+            }
+        }
+
+        return visible.values.toList()
     }
 
-    fun createChild(range: Range): SymbolTable = 
-        SymbolTable(this, range).also { children.add(it) }
+    fun createChild(range: Range, kind: ScopeKind = ScopeKind.BLOCK, owner: BaseASTNode? = null): SymbolTable =
+        SymbolTable(this, range, kind, owner).also { children.add(it) }
 
     fun getChildren(): List<SymbolTable> = children
+
     fun getParent(): SymbolTable? = parent
 
     override fun toString(): String = toString(0)
-    
+
     private fun toString(indent: Int): String = buildString {
         val indentStr = "  ".repeat(indent)
-        val innerIndentStr = "  ".repeat(indent + 1)
-        
-        appendLine("${indentStr}SymbolTable {")
-        appendLine("${innerIndentStr}range: $range,")
-        
+        val innerIndent = "  ".repeat(indent + 1)
+
+        appendLine("${indentStr}SymbolTable(kind=$kind) {")
+        appendLine("${innerIndent}range: $range,")
+
         if (symbols.isNotEmpty()) {
-            appendLine("${innerIndentStr}symbols: [")
-            symbols.values.forEachIndexed { index, symbol ->
-                val comma = if (index < symbols.size - 1) "," else ""
-                appendLine("$innerIndentStr  ${symbol.name}: ${symbol.type} (${symbol.kind})$comma")
+            appendLine("${innerIndent}symbols: [")
+            symbols.values.flatten().forEach { symbol ->
+                appendLine("${innerIndent}  ${symbol.name}: ${symbol.type.name} (${symbol.kind})")
             }
-            appendLine("${innerIndentStr}],")
+            appendLine("${innerIndent}],")
         }
-        
+
         if (children.isNotEmpty()) {
-            appendLine("${innerIndentStr}children: [")
-            children.forEachIndexed { index, child ->
-                val comma = if (index < children.size - 1) "," else ""
+            appendLine("${innerIndent}children: [")
+            children.forEach { child ->
                 append(child.toString(indent + 2))
-                appendLine(comma)
+                appendLine()
             }
-            appendLine("${innerIndentStr}]")
+            appendLine("${innerIndent}]")
         }
-        
+
         append("${indentStr}}")
+    }
+
+    enum class ScopeKind {
+        CHUNK,
+        BLOCK,
+        FUNCTION,
+        MODULE,
+        LOOP,
+        CONDITIONAL
     }
 }
 
@@ -71,24 +115,31 @@ data class Symbol(
     val name: String,
     val type: Type,
     val kind: Kind,
-    val range: Range? = null
+    val range: Range? = null,
+    val declaration: BaseASTNode? = null
 ) {
     enum class Kind {
         VARIABLE,
         FUNCTION,
+        MODULE,
         PARAMETER,
         LOCAL,
-        CLASS
+        CLASS,
+        TYPE_ALIAS,
+        FIELD,
+        METHOD
     }
 
     override fun toString(): String = "$name: ${type.name} (${kind.name})"
 }
 
-// Range 扩展函数
-fun Range.contains(position: Position): Boolean = when {
-    position.line < start.line -> false
-    position.line > end.line -> false
-    position.line == start.line && position.column < start.column -> false
-    position.line == end.line && position.column > end.column -> false
-    else -> true
+fun Range.contains(position: Position): Boolean =
+    start.isBeforeOrEqual(position) && position.isBeforeOrEqual(end)
+
+fun Position.isBeforeOrEqual(other: Position): Boolean {
+    return when {
+        line < other.line -> true
+        line > other.line -> false
+        else -> column <= other.column
+    }
 }

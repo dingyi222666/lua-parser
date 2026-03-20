@@ -29,6 +29,18 @@ class LuaLexer(
             return source.subSequence(index, index + tokenLength)
         }
 
+    fun hasLineBreakBeforeNextSignificantToken(fromIndex: Int): Boolean {
+        var offset = fromIndex
+        while (offset < bufferLen) {
+            when (val ch = source[offset]) {
+                ' ', '\t', '\u000C' -> offset++
+                '\r', '\n' -> return true
+                else -> return isWhitespace(ch)
+            }
+        }
+        return false
+    }
+
     fun nextToken(): LuaTokenTypes {
         return nextTokenInternal().also { tokenType = it }
     }
@@ -135,14 +147,18 @@ class LuaLexer(
             ch == '~' -> LuaTokenTypes.BIT_TILDE
             ch == '&' -> LuaTokenTypes.BIT_AND
             ch == '|' -> LuaTokenTypes.BIT_OR
-            ch == '>' -> scanTwoOperator(
-                LuaTokenTypes.GT,
-                LuaTokenTypes.GE, '='
+            ch == '>' -> scanAngleOperator(
+                single = LuaTokenTypes.GT,
+                assign = LuaTokenTypes.GE,
+                repeated = LuaTokenTypes.BIT_RTRT,
+                operator = '>'
             )
 
-            ch == '<' -> scanTwoOperator(
-                LuaTokenTypes.LT,
-                LuaTokenTypes.LE, '='
+            ch == '<' -> scanAngleOperator(
+                single = LuaTokenTypes.LT,
+                assign = LuaTokenTypes.LE,
+                repeated = LuaTokenTypes.BIT_LTLT,
+                operator = '<'
             )
 
             ch == '.' -> {
@@ -155,8 +171,13 @@ class LuaLexer(
                     }
 
                     next == '.' -> {
-                        tokenLength++
-                        LuaTokenTypes.CONCAT
+                        if (chatAtOrNull(offset + tokenLength + 1) == '.') {
+                            tokenLength += 2
+                            LuaTokenTypes.ELLIPSIS
+                        } else {
+                            tokenLength++
+                            LuaTokenTypes.CONCAT
+                        }
                     }
 
                     else -> LuaTokenTypes.DOT
@@ -166,7 +187,21 @@ class LuaLexer(
             }
 
             ch == '"' || ch == '\'' -> scanString(ch)
-            ch == '#' -> LuaTokenTypes.GETN
+            ch == '#' -> {
+                if (offset == 0 && chatAtOrNull() == '!') {
+                    tokenLength++
+                    while (offset + tokenLength < bufferLen) {
+                        val shebangChar = charAt()
+                        if (shebangChar == '\n' || shebangChar == '\r') {
+                            break
+                        }
+                        tokenLength++
+                    }
+                    LuaTokenTypes.SHEBANG_CONTENT
+                } else {
+                    LuaTokenTypes.GETN
+                }
+            }
             ch == ':' -> scanTwoOperator(
                 LuaTokenTypes.COLON,
                 LuaTokenTypes.DOUBLE_COLON, ':'
@@ -315,7 +350,6 @@ class LuaLexer(
                         
                         tokenLength = pos - offset
                     } else {
-                        println()
                         break
                     }
                 }
@@ -408,6 +442,31 @@ class LuaLexer(
         }
 
         return first
+    }
+
+    private fun scanAngleOperator(
+        single: LuaTokenTypes,
+        assign: LuaTokenTypes,
+        repeated: LuaTokenTypes,
+        operator: Char
+    ): LuaTokenTypes {
+        if (tokenLength + offset == bufferLen) {
+            return single
+        }
+
+        return when (charAt()) {
+            '=' -> {
+                tokenLength++
+                assign
+            }
+
+            operator -> {
+                tokenLength++
+                repeated
+            }
+
+            else -> single
+        }
     }
 
     @Suppress("SameReturnValue")
@@ -615,6 +674,10 @@ class LuaLexer(
                 keywords.put(
                     "when",
                     LuaTokenTypes.WHEN
+                )
+                keywords.put(
+                    "lambda",
+                    LuaTokenTypes.LAMBDA
                 )
             }
 
