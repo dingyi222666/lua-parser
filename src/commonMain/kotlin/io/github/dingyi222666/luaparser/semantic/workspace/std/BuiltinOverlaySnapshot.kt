@@ -29,24 +29,25 @@ data class BuiltinOverlaySnapshot(
                 globalNames: Set<String>,
                 moduleFieldNames: Map<String, Set<String>>
             ): GlobalsSnapshot {
-                val normalizedGlobals = globalNames.toSortedSet()
+                val normalizedGlobals = globalNames.toList().sorted()
                 val normalizedModuleFields = moduleFieldNames
-                    .mapValues { (_, fields) -> fields.toSortedSet() }
-                    .toSortedMap()
+                    .entries
+                    .sortedBy { it.key }
+                    .associate { entry -> entry.key to entry.value.toList().sorted() }
                 val fingerprint = buildString {
                     append("globals=")
                     append(normalizedGlobals.joinToString("|"))
                     append('\n')
                     append("modules=")
-                    append(normalizedModuleFields.entries.joinToString("|") { (moduleName, fields) ->
-                        "$moduleName:${fields.joinToString(",")}"
+                    append(normalizedModuleFields.entries.joinToString("|") { entry ->
+                        "${entry.key}:${entry.value.joinToString(",")}"
                     })
                 }
                 return GlobalsSnapshot(
                     path = path,
                     file = file,
                     globalNames = normalizedGlobals.toCollection(linkedSetOf()),
-                    moduleFieldNames = normalizedModuleFields.mapValues { it.value.toCollection(linkedSetOf()) },
+                    moduleFieldNames = normalizedModuleFields.mapValues { entry -> entry.value.toCollection(linkedSetOf()) },
                     metadataFingerprint = workspaceFingerprintHash(fingerprint)
                 )
             }

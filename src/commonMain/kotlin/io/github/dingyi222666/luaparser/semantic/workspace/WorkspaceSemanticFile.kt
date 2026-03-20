@@ -10,6 +10,7 @@ import io.github.dingyi222666.luaparser.semantic.model.SemanticModel
 
 class WorkspaceSemanticFile internal constructor(
     val path: VirtualPath,
+    val source: String,
     val chunk: ChunkNode,
     val model: SemanticModel,
     internal val snapshot: SemanticPipelineSnapshot

@@ -4,6 +4,8 @@ import io.github.dingyi222666.luaparser.semantic.workspace.std.BuiltinOverlaySna
 
 data class WorkspaceSnapshot(
     val files: Map<VirtualPath, FileSnapshot> = emptyMap(),
+    val metadata: Map<String, String> = emptyMap(),
+    val extraProviders: Map<VirtualPath, FileSnapshot> = emptyMap(),
     val builtinOverlay: BuiltinOverlaySnapshot = BuiltinOverlaySnapshot.EMPTY,
     val graph: WorkspaceModuleGraph = WorkspaceModuleGraph.EMPTY
 ) {

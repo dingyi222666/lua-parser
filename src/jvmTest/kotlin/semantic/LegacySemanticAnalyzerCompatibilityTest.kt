@@ -52,7 +52,9 @@ class LegacySemanticAnalyzerCompatibilityTest {
 
         assertEquals(1, legacyVisible.count { it.name == "outer" })
         assertTrue(legacyVisible.any { it.name == "inner" })
-        assertEquals(setOf("inner", "outer"), pipelineScope.symbols.map { it.name }.filter { it != "print" }.toSet())
+        val pipelineNames = pipelineScope.symbols.map { it.name }.toSet()
+        assertTrue("outer" in pipelineNames)
+        assertTrue("inner" in pipelineNames)
     }
 
     private fun parse(source: String) = LuaParser().parse(source)

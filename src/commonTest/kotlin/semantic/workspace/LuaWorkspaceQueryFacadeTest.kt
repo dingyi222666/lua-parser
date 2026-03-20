@@ -28,7 +28,7 @@ class LuaWorkspaceQueryFacadeTest {
         val definitions = harness.queries.gotoDefinition(mainPath, harness.positionOf("main.lua", "value", occurrence = 1))
         val references = harness.queries.references(mainPath, harness.positionOf("main.lua", "value", occurrence = 1))
 
-        assertTrue(diagnostics.isNotEmpty())
+        assertTrue(diagnostics.any { it.code == "checker.function.return.typeMismatch" })
         assertNotNull(module.provider)
         assertEquals(depPath, module.provider.path)
         assertEquals(depPath, resolved.provider?.path)

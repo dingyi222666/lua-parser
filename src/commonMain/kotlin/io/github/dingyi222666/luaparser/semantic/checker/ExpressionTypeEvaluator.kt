@@ -35,6 +35,7 @@ import io.github.dingyi222666.luaparser.parser.ast.node.WhenStatement
 import io.github.dingyi222666.luaparser.parser.ast.node.WhileStatement
 import io.github.dingyi222666.luaparser.parser.ast.node.ArrayConstructorExpression
 import io.github.dingyi222666.luaparser.semantic.SemanticWorkspaceContext
+import io.github.dingyi222666.luaparser.semantic.WorkspaceImportedSymbol
 import io.github.dingyi222666.luaparser.semantic.binder.BinderDeclaration
 import io.github.dingyi222666.luaparser.semantic.binder.BinderPassResult
 import io.github.dingyi222666.luaparser.semantic.binder.DeclarationId
@@ -145,6 +146,8 @@ class ExpressionTypeEvaluator internal constructor(
     }
 
     private fun evaluateIdentifier(node: Identifier, context: Context): Type {
+        workspaceContext.importedSymbols[node.name]?.let { return it.moduleType }
+        workspaceContext.resolveImportedSymbol?.invoke(node.name)?.let { return it.moduleType }
         context.localOverrides[node.name]?.let { return it }
         val declaration = findVisibleValueDeclaration(node.name, node.range.start, context) ?: return UnknownType
         return typeOfDeclaration(declaration, context)
@@ -233,28 +236,76 @@ class ExpressionTypeEvaluator internal constructor(
 
     private fun evaluateCallExpression(node: CallExpression, context: Context): Type {
         resolveBuiltinRequire(node, context)?.let { return it }
+        resolveDynamicImportCall(node, context)?.let { return it }
+        resolveBindClassCall(node)?.let { return it }
         val declaration = callableDeclaration(node.base, context)
         val callableType = evaluateReferenceBaseType(node.base, context)
         val argumentSequences = buildCallArgumentSequences(node, context)
         return callChecker.checkCallValues(callableType, argumentSequences, context.lexicalScopeId, declaration).returnType ?: UnknownType
     }
 
+    private fun resolveDynamicImportCall(node: CallExpression, context: Context): ModuleType? {
+        val identifier = node.base as? Identifier ?: return null
+        val declaration = callableDeclaration(identifier, context)
+        if (identifier.name != "import" && !isRequireImportAlias(declaration, context)) {
+            return null
+        }
+        val target = (node.arguments.singleOrNull() as? ConstantNode)
+            ?.takeIf { it.constantType == ConstantNode.TYPE.STRING }
+            ?.stringOf()
+            ?: return null
+        return workspaceContext.resolveImportTarget?.invoke(target)?.moduleType
+    }
+
+    private fun isRequireImportAlias(declaration: BinderDeclaration?, context: Context): Boolean {
+        if (declaration?.kind != DeclarationKind.LOCAL) {
+            return false
+        }
+        val localStatement = declaration.anchorNode?.parent as? LocalStatement ?: return false
+        val initializerIndex = localStatement.init.indexOf(declaration.anchorNode)
+        if (initializerIndex < 0) {
+            return false
+        }
+        val initializer = localStatement.variables.getOrNull(initializerIndex) as? CallExpression ?: return false
+        return isBuiltinRequireImportCall(initializer, context)
+    }
+
+    private fun resolveBindClassCall(node: CallExpression): ModuleType? {
+        val member = node.base as? MemberExpression ?: return null
+        val owner = member.base as? Identifier ?: return null
+        if (owner.name != "luajava" || member.identifier.name != "bindClass") {
+            return null
+        }
+        val target = (node.arguments.singleOrNull() as? ConstantNode)
+            ?.takeIf { it.constantType == ConstantNode.TYPE.STRING }
+            ?.stringOf()
+            ?: return null
+        return workspaceContext.resolveImportTarget?.invoke(target)?.moduleType
+    }
+
     private fun resolveBuiltinRequire(node: CallExpression, context: Context): ModuleType? {
+        val moduleName = builtinRequireModuleName(node, context) ?: return null
+        val currentPath = workspaceContext.currentPath ?: return null
+        val resolver = workspaceContext.workspaceResolver ?: return null
+        return resolver.resolveRequire(currentPath, moduleName)?.surface?.moduleType
+    }
+
+    private fun builtinRequireModuleName(node: CallExpression, context: Context): String? {
         val identifier = node.base as? Identifier ?: return null
         if (identifier.name != "require") {
             return null
         }
-        val currentPath = workspaceContext.currentPath ?: return null
-        val resolver = workspaceContext.workspaceResolver ?: return null
         val declaration = findVisibleValueDeclaration(identifier.name, identifier.range.start, context) ?: return null
         if (declaration.origin != DeclarationOrigin.BUILTIN || declaration.name != "require") {
             return null
         }
-        val moduleName = (node.arguments.singleOrNull() as? ConstantNode)
+        return (node.arguments.singleOrNull() as? ConstantNode)
             ?.takeIf { it.constantType == ConstantNode.TYPE.STRING }
             ?.stringOf()
-            ?: return null
-        return resolver.resolveRequire(currentPath, moduleName)?.surface?.moduleType
+    }
+
+    private fun isBuiltinRequireImportCall(node: CallExpression, context: Context): Boolean {
+        return builtinRequireModuleName(node, context) == "import"
     }
 
     private fun evaluateFunctionDeclaration(node: FunctionDeclaration, context: Context): Type {

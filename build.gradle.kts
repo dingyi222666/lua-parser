@@ -58,6 +58,13 @@ kotlin {
             }
         }
 
+        jvmMain {
+            dependencies {
+                implementation("org.eclipse.lsp4j:org.eclipse.lsp4j:0.23.1")
+                implementation("org.eclipse.lsp4j:org.eclipse.lsp4j.jsonrpc:0.23.1")
+            }
+        }
+
         jvmTest {
             dependencies {
                 implementation(kotlin("test-junit"))
@@ -81,13 +88,23 @@ kotlin {
     jvmToolchain(11)
 }
 
+tasks.named("linkDebugTestMingwX64") {
+    onlyIf("Enable Windows Kotlin/Native host test linking with -PrunNativeHostTests=true") {
+        runNativeHostTests.get()
+    }
+}
+
 tasks.named("mingwX64Test") {
     onlyIf("Enable Windows Kotlin/Native host test execution with -PrunNativeHostTests=true") {
         runNativeHostTests.get()
     }
 }
-
-
+tasks.register<JavaExec>("runLuaLanguageServer") {
+    group = "application"
+    description = "Run the Lua language server over stdio"
+    classpath = files(tasks.named("jvmJar"), configurations.getByName("jvmRuntimeClasspath"))
+    mainClass.set("io.github.dingyi222666.luaparser.lsp.LuaLanguageServerLauncherKt")
+}
 
 mavenPublishing {
     publishToMavenCentral(com.vanniktech.maven.publish.SonatypeHost.S01)

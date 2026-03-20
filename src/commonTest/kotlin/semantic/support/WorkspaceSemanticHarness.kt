@@ -39,12 +39,15 @@ class WorkspaceSemanticHarness private constructor(
     companion object {
         fun build(
             vararg files: Pair<String, String>,
-            standardLibraryOverlayVersion: LuaVersion = LuaVersion.LUA_5_3
+            standardLibraryOverlayVersion: LuaVersion = LuaVersion.LUA_5_3,
+            metadata: Map<String, String> = emptyMap(),
+            engine: LuaWorkspaceEngine = LuaWorkspaceEngine()
         ): WorkspaceSemanticHarness {
             val mapped = files.associate { (path, source) -> VirtualPath.of(path) to source }
-            val snapshot = LuaWorkspaceEngine().build(
+            val snapshot = engine.build(
                 LuaWorkspaceInput(
                     files = mapped,
+                    metadata = metadata,
                     standardLibraryOverlayVersion = standardLibraryOverlayVersion
                 )
             ).snapshot

@@ -317,14 +317,13 @@ object DocumentFactsCollector {
             range: Range? = null
         ) {
             val key = ModuleNameCandidateKey(moduleName = moduleName, source = source)
-            moduleNameCandidates.putIfAbsent(
-                key,
-                DocumentFacts.ModuleNameCandidate(
+            if (key !in moduleNameCandidates) {
+                moduleNameCandidates[key] = DocumentFacts.ModuleNameCandidate(
                     moduleName = moduleName,
                     source = source,
                     range = range
                 )
-            )
+            }
         }
 
         private fun extractLegacyModuleCall(

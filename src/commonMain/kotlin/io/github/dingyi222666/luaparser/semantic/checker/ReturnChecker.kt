@@ -8,6 +8,7 @@ import io.github.dingyi222666.luaparser.parser.ast.node.StatementNode
 import io.github.dingyi222666.luaparser.parser.ast.node.BlockNode
 import io.github.dingyi222666.luaparser.parser.ast.node.ElseClause
 import io.github.dingyi222666.luaparser.parser.ast.node.WhenStatement
+import io.github.dingyi222666.luaparser.semantic.SemanticWorkspaceContext
 import io.github.dingyi222666.luaparser.semantic.api.Diagnostic
 import io.github.dingyi222666.luaparser.semantic.binder.BinderDeclaration
 import io.github.dingyi222666.luaparser.semantic.binder.BinderPassResult
@@ -17,12 +18,13 @@ import io.github.dingyi222666.luaparser.semantic.types.model.PrimitiveType
 import io.github.dingyi222666.luaparser.semantic.types.model.UnknownType
 import io.github.dingyi222666.luaparser.semantic.types.resolve.isAssignableFrom
 
-class ReturnChecker(
+class ReturnChecker internal constructor(
     private val binder: BinderPassResult,
-    private val evaluator: ExpressionTypeEvaluator = ExpressionTypeEvaluator(binder)
+    workspaceContext: SemanticWorkspaceContext = SemanticWorkspaceContext(),
+    private val evaluator: ExpressionTypeEvaluator = ExpressionTypeEvaluator(binder, workspaceContext)
 ) {
 
-    fun checkDeclaration(declaration: BinderDeclaration): List<Diagnostic> {
+    internal fun checkDeclaration(declaration: BinderDeclaration): List<Diagnostic> {
         if (declaration.kind != DeclarationKind.FUNCTION && declaration.kind != DeclarationKind.GLOBAL) {
             return emptyList()
         }

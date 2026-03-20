@@ -6,7 +6,7 @@ import io.github.dingyi222666.luaparser.semantic.SemanticPipeline
 import io.github.dingyi222666.luaparser.semantic.SemanticWorkspaceContext
 import io.github.dingyi222666.luaparser.semantic.workspace.std.BuiltinOverlayLoader
 
-class LuaWorkspaceEngine(
+open class LuaWorkspaceEngine(
     private val parserFactory: () -> LuaParser = { LuaParser() }
 ) {
     private val semanticPipeline = SemanticPipeline()
@@ -18,6 +18,7 @@ class LuaWorkspaceEngine(
         val sortedFiles = input.files.keys.sortedBy { it.value }
         val baseSnapshots = linkedMapOf<VirtualPath, WorkspaceSnapshot.FileSnapshot>()
         val builtinOverlay = BuiltinOverlayLoader.load(input.standardLibraryOverlayVersion, ::analyzeFile)
+        val extraProviders = extraProviders(input)
         val totalFiles = sortedFiles.size * 2
 
         sortedFiles.forEachIndexed { index, path ->
@@ -42,8 +43,10 @@ class LuaWorkspaceEngine(
 
         val baseSnapshot = WorkspaceSnapshot(
             files = baseSnapshots,
+            metadata = input.metadata,
+            extraProviders = extraProviders,
             builtinOverlay = builtinOverlay,
-            graph = WorkspaceModuleGraphBuilder.build(baseSnapshots, builtinOverlay)
+            graph = WorkspaceModuleGraphBuilder.build(baseSnapshots, builtinOverlay, extraProviders)
         )
         val snapshot = attachSemanticState(
             baseSnapshot = baseSnapshot,
@@ -73,8 +76,16 @@ class LuaWorkspaceEngine(
         reporter: ProgressReporter = ProgressReporter.NONE
     ): WorkspaceUpdateResult {
         val builtinOverlay = BuiltinOverlayLoader.load(standardLibraryOverlayVersion, ::analyzeFile)
+        val nextMetadata = delta.metadata ?: previous.metadata
+        val extraProviders = extraProviders(
+            LuaWorkspaceInput(
+                files = delta.upserts,
+                metadata = nextMetadata,
+                standardLibraryOverlayVersion = standardLibraryOverlayVersion
+            )
+        )
 
-        if (delta.isEmpty() && builtinOverlay == previous.builtinOverlay) {
+        if (delta.isEmpty() && builtinOverlay == previous.builtinOverlay && extraProviders == previous.extraProviders) {
             reporter.report(AnalysisProgress(AnalysisProgress.Phase.COMPLETE, completedFiles = 0, totalFiles = 0))
             return WorkspaceUpdateResult(
                 snapshot = previous,
@@ -96,8 +107,10 @@ class LuaWorkspaceEngine(
 
         val baseSnapshot = WorkspaceSnapshot(
             files = nextFiles,
+            metadata = nextMetadata,
+            extraProviders = extraProviders,
             builtinOverlay = builtinOverlay,
-            graph = WorkspaceModuleGraphBuilder.build(nextFiles, builtinOverlay)
+            graph = WorkspaceModuleGraphBuilder.build(nextFiles, builtinOverlay, extraProviders)
         )
         val dirtyPlan = WorkspaceDirtySetPlanner.plan(previous, baseSnapshot)
         val totalFiles = parsingTargets.size + dirtyPlan.affectedDocuments.size
@@ -133,6 +146,20 @@ class LuaWorkspaceEngine(
         )
     }
 
+    protected open fun extraProviders(input: LuaWorkspaceInput): Map<VirtualPath, WorkspaceSnapshot.FileSnapshot> = emptyMap()
+
+    internal open fun workspaceContext(
+        input: LuaWorkspaceInput,
+        path: VirtualPath,
+        snapshot: WorkspaceSnapshot
+    ): SemanticWorkspaceContext {
+        return SemanticWorkspaceContext(
+            currentPath = path,
+            workspaceResolver = WorkspaceModuleResolver(snapshot),
+            overlayGlobals = snapshot.builtinOverlay.globals
+        )
+    }
+
     private fun attachSemanticState(
         baseSnapshot: WorkspaceSnapshot,
         sources: Map<VirtualPath, String>,
@@ -152,15 +179,22 @@ class LuaWorkspaceEngine(
                 ?: parserFactory().parse("")
             val semanticSnapshot = semanticPipeline.analyzeSnapshot(
                 chunk,
-                SemanticWorkspaceContext(
-                    currentPath = path,
-                    workspaceResolver = resolver,
-                    overlayGlobals = baseSnapshot.builtinOverlay.globals
+                workspaceContext(
+                    LuaWorkspaceInput(
+                        files = sources,
+                        metadata = baseSnapshot.metadata,
+                        standardLibraryOverlayVersion = baseSnapshot.builtinOverlay.version
+                    ),
+                    path,
+                    baseSnapshot
                 )
             )
             fileSnapshot.copy(
                 semanticFile = WorkspaceSemanticFile(
                     path = path,
+                    source = sources[path]
+                        ?: previous?.files?.get(path)?.semanticFile?.source
+                        ?: "",
                     chunk = chunk,
                     model = semanticSnapshot.model,
                     snapshot = semanticSnapshot

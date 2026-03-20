@@ -5,6 +5,7 @@ import io.github.dingyi222666.luaparser.parser.ast.node.Identifier
 import io.github.dingyi222666.luaparser.parser.ast.node.MemberExpression
 import io.github.dingyi222666.luaparser.parser.ast.node.Position
 import io.github.dingyi222666.luaparser.semantic.SemanticWorkspaceContext
+import io.github.dingyi222666.luaparser.semantic.WorkspaceImportedSymbol
 import io.github.dingyi222666.luaparser.semantic.api.Symbol
 import io.github.dingyi222666.luaparser.semantic.binder.BinderDeclaration
 import io.github.dingyi222666.luaparser.semantic.binder.BinderPassResult
@@ -54,6 +55,7 @@ internal class ReferenceQueries(
     )
 
     fun getSymbolAt(position: Position, node: BaseASTNode?): Symbol? {
+        val importedSymbol = importedSymbolAt(position, node)
         val declarationSymbol = resolveDeclarationTokenStartAt(position)
             ?.let { adapters.toDeclarationSymbol(it) }
             ?: resolveExactNodeDeclaration(node)
@@ -76,12 +78,13 @@ internal class ReferenceQueries(
                 if (parent is MemberExpression && parent.identifier === node) {
                     resolveMemberUsage(parent)
                 } else {
-                    findNearestVisibleValueDeclaration(node.name, position)?.let { adapters.toDeclarationSymbol(it) }
+                    importedSymbol?.let(::toImportedSymbol)
+                        ?: findNearestVisibleValueDeclaration(node.name, position)?.let { adapters.toDeclarationSymbol(it) }
                 }
             }
 
             is MemberExpression -> resolveMemberUsage(node)
-            else -> null
+            else -> importedSymbol?.let(::toImportedSymbol)
         }
     }
 
@@ -107,7 +110,8 @@ internal class ReferenceQueries(
     }
 
     fun visibleValueDeclarations(position: Position): List<VisibleDeclaration> {
-        val scope = binder.positionQueries.getScopeAt(position) ?: return emptyList()
+        val importedVisible = importedVisibleDeclarations(position)
+        val scope = binder.positionQueries.getScopeAt(position) ?: return importedVisible
         val results = mutableListOf<VisibleDeclaration>()
         val seenNames = linkedSetOf<String>()
 
@@ -129,6 +133,13 @@ internal class ReferenceQueries(
                 }
             current = current.parentId?.let(binder.scopeGraph::getScope)
             lexicalDepth += 1
+        }
+
+        importedVisible.forEach { visible ->
+            if (visible.declaration.name !in seenNames) {
+                seenNames += visible.declaration.name
+                results += visible
+            }
         }
 
         return results
@@ -444,6 +455,56 @@ internal class ReferenceQueries(
             io.github.dingyi222666.luaparser.semantic.binder.DeclarationOrigin.SYNTHETIC -> 2
             io.github.dingyi222666.luaparser.semantic.binder.DeclarationOrigin.BUILTIN -> 3
         }
+    }
+
+    private fun importedVisibleDeclarations(position: Position): List<VisibleDeclaration> {
+        return importedSymbolsAt(position)
+            .values
+            .sortedBy { it.alias }
+            .map { imported ->
+                VisibleDeclaration(
+                    declaration = io.github.dingyi222666.luaparser.semantic.binder.globalDeclaration(
+                        id = io.github.dingyi222666.luaparser.semantic.binder.DeclarationId(-1000000 - imported.alias.hashCode()),
+                        name = imported.alias,
+                        origin = io.github.dingyi222666.luaparser.semantic.binder.DeclarationOrigin.BUILTIN,
+                        declaredType = imported.moduleType
+                    ),
+                    lexicalDepth = 0
+                )
+            }
+    }
+
+    private fun importedSymbolsAt(position: Position): Map<String, WorkspaceImportedSymbol> {
+        val imported = linkedMapOf<String, WorkspaceImportedSymbol>()
+        workspaceContext.importedSymbols.forEach { (alias, symbol) ->
+            imported[alias] = symbol
+        }
+        return imported
+    }
+
+    private fun importedSymbolAt(position: Position, node: BaseASTNode?): WorkspaceImportedSymbol? {
+        val identifier = when (node) {
+            is Identifier -> node.name
+            else -> null
+        } ?: return null
+        return importedSymbolsAt(position)[identifier]
+            ?: workspaceContext.resolveImportedSymbol?.invoke(identifier)
+    }
+
+    private fun toImportedSymbol(imported: WorkspaceImportedSymbol): Symbol {
+        return Symbol(
+            name = imported.alias,
+            kind = io.github.dingyi222666.luaparser.semantic.api.SymbolKind.MODULE,
+            range = null,
+            type = adapters.toTypeInfo(imported.moduleType),
+            declaredType = adapters.toTypeInfo(imported.moduleType),
+            detail = imported.moduleType.displayName,
+            symbolId = importedSymbolHandle(imported)
+        )
+    }
+
+    private fun importedSymbolHandle(imported: WorkspaceImportedSymbol): String {
+        return "imported:${imported.providerPath.value}:${imported.alias}"
     }
 
     private fun rangeSpan(range: io.github.dingyi222666.luaparser.parser.ast.node.Range): Int {

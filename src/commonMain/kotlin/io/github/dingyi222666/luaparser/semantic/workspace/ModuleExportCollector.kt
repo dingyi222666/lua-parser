@@ -166,13 +166,16 @@ object ModuleExportCollector {
         }
 
         fun membersFromTableLiteral(table: TableConstructorExpression): List<ModuleExportSurface.MemberExport> {
-            val builder = ExportTableBuilder()
-            table.fields.forEach { field ->
-                val key = staticFieldName(field) ?: return@forEach
-                builder.put(listOf(key), inferValueType(field.value), isMethod = false, range = field.key.range)
-            }
-            val tableType = builder.toTableType()
-            return builder.toMembers(tableType)
+            val tableType = tableLiteralType(table)
+            return tableType.fields.map { (name, type) ->
+                ModuleExportSurface.MemberExport(
+                    name = name,
+                    exportPath = listOf(name),
+                    kind = if (type is FunctionType) SymbolKind.METHOD else SymbolKind.FIELD,
+                    type = type,
+                    range = table.fields.firstOrNull { staticFieldName(it) == name }?.key?.range
+                )
+            }.sortedWith(compareBy<ModuleExportSurface.MemberExport>({ if (it.kind == SymbolKind.FIELD) 0 else 1 }, { it.name }))
         }
 
         private fun visitStatement(statement: StatementNode) {
@@ -354,7 +357,9 @@ object ModuleExportCollector {
                 return
             }
 
-            memberRanges.putIfAbsent(path.first(), range)
+            if (path.first() !in memberRanges) {
+                memberRanges[path.first()] = range
+            }
 
             if (path.size == 1) {
                 val name = path.first()
@@ -383,7 +388,11 @@ object ModuleExportCollector {
         }
 
         fun putTable(table: TableType, members: List<ModuleExportSurface.MemberExport> = emptyList()) {
-            members.forEach { member -> memberRanges.putIfAbsent(member.name, member.range) }
+            members.forEach { member ->
+                if (member.name !in memberRanges) {
+                    memberRanges[member.name] = member.range
+                }
+            }
             table.fields.forEach { (name, type) ->
                 when (type) {
                     is TableType -> {

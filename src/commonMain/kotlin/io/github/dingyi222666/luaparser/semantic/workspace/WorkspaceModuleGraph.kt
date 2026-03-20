@@ -22,7 +22,8 @@ data class WorkspaceModuleGraph(
     enum class ProviderSource {
         LEGACY_TOP_LEVEL,
         VIRTUAL_PATH,
-        STANDARD_LIBRARY_OVERLAY
+        STANDARD_LIBRARY_OVERLAY,
+        EXTRA_WORKSPACE_PROVIDER
     }
 
     data class ResolvedDependency(

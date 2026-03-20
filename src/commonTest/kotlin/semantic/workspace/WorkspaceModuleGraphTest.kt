@@ -138,9 +138,10 @@ class WorkspaceModuleGraphTest {
     }
 
     private fun buildGraphWithOverlay(files: Map<String, String>): WorkspaceModuleGraph {
-        val snapshots = files.associate { (path, source) ->
+        val snapshots = linkedMapOf<VirtualPath, WorkspaceSnapshot.FileSnapshot>()
+        files.forEach { (path, source) ->
             val virtualPath = VirtualPath.of(path)
-            virtualPath to WorkspaceSnapshot.FileSnapshot(
+            snapshots[virtualPath] = WorkspaceSnapshot.FileSnapshot(
                 documentFacts = DocumentFactsCollector.collect(virtualPath, LuaParser().parse(source))
             )
         }

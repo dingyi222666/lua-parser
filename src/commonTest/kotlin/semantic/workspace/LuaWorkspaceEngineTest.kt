@@ -7,6 +7,7 @@ import io.github.dingyi222666.luaparser.semantic.workspace.LuaWorkspaceInput
 import io.github.dingyi222666.luaparser.semantic.workspace.ProgressReporter
 import io.github.dingyi222666.luaparser.semantic.workspace.VirtualPath
 import io.github.dingyi222666.luaparser.semantic.workspace.WorkspaceDelta
+import io.github.dingyi222666.luaparser.semantic.workspace.WorkspaceSnapshot
 import io.github.dingyi222666.luaparser.semantic.workspace.WorkspaceUpdateResult
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -15,6 +16,7 @@ import kotlin.test.assertTrue
 
 class LuaWorkspaceEngineTest {
     private val engine = LuaWorkspaceEngine()
+    private val metadataAwareEngine = MetadataAwareWorkspaceEngine()
 
     @Test
     fun build_returns_file_snapshots_and_graph_payload() {
@@ -152,10 +154,10 @@ class LuaWorkspaceEngineTest {
     }
 
     @Test
-    fun switching_from_lua53_to_lua54_invalidates_bit32_consumers() {
+    fun switching_from_lua53_to_lua54_removes_bit32_from_builtin_globals_without_provider_rewiring() {
         val initial = build(
             *(arrayOf(
-                "main.lua" to "local bit32 = require(\"bit32\")\nreturn bit32"
+                "main.lua" to "local current = bit32\nreturn current"
             )),
             standardLibraryOverlayVersion = LuaVersion.LUA_5_3
         )
@@ -165,10 +167,10 @@ class LuaWorkspaceEngineTest {
             standardLibraryOverlayVersion = LuaVersion.LUA_5_4
         )
 
-        assertTrue("bit32" in result.activeProviderChangedModuleNames)
-        assertTrue(VirtualPath.of("main.lua") in result.filesWithRequireResolutionChanged)
-        assertEquals(setOf(VirtualPath.of("main.lua")), result.affectedDocuments)
-        assertFalse(result.snapshot.graph.activeProviders.containsKey("bit32"))
+        assertFalse("bit32" in result.activeProviderChangedModuleNames)
+        assertFalse(VirtualPath.of("main.lua") in result.filesWithRequireResolutionChanged)
+        assertEquals(emptySet(), result.affectedDocuments)
+        assertFalse("bit32" in result.snapshot.builtinOverlay.globals.globalNames)
     }
 
     @Test
@@ -193,6 +195,48 @@ class LuaWorkspaceEngineTest {
                 .orEmpty()
                 .any { it.hasSeeAllFallback }
         )
+    }
+
+    @Test
+    fun update_recomputes_metadata_driven_extra_providers() {
+        val initial = buildWithMetadataAwareEngine(
+            metadata = mapOf("mounted.module" to "Mounted"),
+            "main.lua" to "local mounted = require(\"Mounted\")\nreturn mounted.value"
+        )
+
+        val result = updateWithMetadataAwareEngine(
+            previous = initial,
+            metadata = mapOf("mounted.module" to "Renamed"),
+            upserts = mapOf(
+                "main.lua" to "local renamed = require(\"Renamed\")\nreturn renamed.value"
+            )
+        )
+
+        assertFalse(result.snapshot.graph.activeProviders.containsKey("Mounted"))
+        assertEquals(VirtualPath.of("__meta__/Renamed.lua"), result.snapshot.graph.activeProviders.getValue("Renamed").path)
+        assertEquals(setOf("Mounted", "Renamed"), result.activeProviderChangedModuleNames)
+        assertEquals(setOf(VirtualPath.of("main.lua")), result.affectedDocuments)
+        assertEquals("Renamed", result.snapshot.metadata.getValue("mounted.module"))
+    }
+
+    @Test
+    fun extra_provider_public_surface_change_dirties_current_consumers() {
+        val initial = buildWithMetadataAwareEngine(
+            metadata = mapOf("mounted.module" to "Mounted"),
+            "main.lua" to "local mounted = require(\"Mounted\")\nreturn mounted.value"
+        )
+
+        val result = updateWithMetadataAwareEngine(
+            previous = initial,
+            metadata = mapOf("mounted.module" to "MountedV2"),
+            upserts = mapOf(
+                "main.lua" to "local mounted = require(\"Mounted\")\nreturn mounted.value"
+            )
+        )
+
+        assertTrue(VirtualPath.of("main.lua") in result.affectedDocuments)
+        assertTrue("Mounted" in result.affectedModuleNames)
+        assertEquals(VirtualPath.of("__meta__/Mounted.lua"), result.snapshot.graph.activeProviders.getValue("Mounted").path)
     }
 
     @Test
@@ -240,5 +284,94 @@ class LuaWorkspaceEngineTest {
             ),
             standardLibraryOverlayVersion = standardLibraryOverlayVersion
         )
+    }
+
+    private fun buildWithMetadataAwareEngine(
+        metadata: Map<String, String>,
+        vararg files: Pair<String, String>,
+        standardLibraryOverlayVersion: LuaVersion = LuaVersion.LUA_5_3
+    ): WorkspaceUpdateResult {
+        return metadataAwareEngine.build(
+            LuaWorkspaceInput(
+                files = files.associate { (path, source) -> VirtualPath.of(path) to source },
+                metadata = metadata,
+                standardLibraryOverlayVersion = standardLibraryOverlayVersion
+            )
+        )
+    }
+
+    private fun updateWithMetadataAwareEngine(
+        previous: WorkspaceUpdateResult,
+        metadata: Map<String, String>,
+        upserts: Map<String, String> = emptyMap(),
+        removals: Set<String> = emptySet(),
+        standardLibraryOverlayVersion: LuaVersion = previous.snapshot.builtinOverlay.version
+    ): WorkspaceUpdateResult {
+        return metadataAwareEngine.update(
+            previous = previous.snapshot.copy(metadata = metadata),
+            delta = WorkspaceDelta(
+                upserts = upserts.mapKeys { (path, _) -> VirtualPath.of(path) },
+                removals = removals.mapTo(linkedSetOf()) { VirtualPath.of(it) }
+            ),
+            standardLibraryOverlayVersion = standardLibraryOverlayVersion
+        )
+    }
+
+    private class MetadataAwareWorkspaceEngine : LuaWorkspaceEngine() {
+        override fun extraProviders(input: LuaWorkspaceInput): Map<VirtualPath, WorkspaceSnapshot.FileSnapshot> {
+            val moduleName = input.metadata["mounted.module"] ?: return emptyMap()
+            val version = if (moduleName.endsWith("V2")) 2 else 1
+            val stableName = moduleName.removeSuffix("V2")
+            val path = VirtualPath.of("__meta__/$stableName.lua")
+            return mapOf(
+                path to WorkspaceSnapshot.FileSnapshot(
+                    cacheKey = "extra-$moduleName-$version",
+                    moduleExportSurface = io.github.dingyi222666.luaparser.semantic.workspace.ModuleExportSurface(
+                        moduleType = io.github.dingyi222666.luaparser.semantic.types.model.ModuleType(
+                            moduleName = stableName,
+                            fields = mapOf("value" to io.github.dingyi222666.luaparser.semantic.types.model.PrimitiveType.NUMBER),
+                            methods = if (version == 1) {
+                                emptyMap()
+                            } else {
+                                mapOf(
+                                    "refresh" to io.github.dingyi222666.luaparser.semantic.types.model.FunctionType(
+                                        returnType = io.github.dingyi222666.luaparser.semantic.types.model.PrimitiveType.BOOLEAN
+                                    )
+                                )
+                            }
+                        ),
+                        sourceForm = io.github.dingyi222666.luaparser.semantic.workspace.ModuleExportSurface.SourceForm.RETURN_TABLE_LITERAL,
+                        members = buildList {
+                            add(
+                                io.github.dingyi222666.luaparser.semantic.workspace.ModuleExportSurface.MemberExport(
+                                    name = "value",
+                                    exportPath = listOf("value"),
+                                    kind = io.github.dingyi222666.luaparser.semantic.api.SymbolKind.FIELD,
+                                    type = io.github.dingyi222666.luaparser.semantic.types.model.PrimitiveType.NUMBER,
+                                    range = null
+                                )
+                            )
+                            if (version == 2) {
+                                add(
+                                    io.github.dingyi222666.luaparser.semantic.workspace.ModuleExportSurface.MemberExport(
+                                        name = "refresh",
+                                        exportPath = listOf("refresh"),
+                                        kind = io.github.dingyi222666.luaparser.semantic.api.SymbolKind.METHOD,
+                                        type = io.github.dingyi222666.luaparser.semantic.types.model.FunctionType(
+                                            returnType = io.github.dingyi222666.luaparser.semantic.types.model.PrimitiveType.BOOLEAN
+                                        ),
+                                        range = null
+                                    )
+                                )
+                            }
+                        }
+                    ),
+                    publicFingerprint = io.github.dingyi222666.luaparser.semantic.workspace.WorkspacePublicFingerprint(
+                        providedModuleNames = setOf(stableName),
+                        value = "fingerprint-$moduleName-$version"
+                    )
+                )
+            )
+        }
     }
 }

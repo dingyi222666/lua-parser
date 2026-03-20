@@ -27,9 +27,9 @@ class SemanticPipeline(
     private val commentAttachPass: CommentAttachPass = CommentAttachPass(),
     private val binderPass: BinderPass = BinderPass(),
     private val typeResolver: TypeResolver = TypeResolver(),
-    private val checkerPass: CheckerPass = CheckerPass(),
     private val semanticModelBuilder: SemanticModelBuilder = SemanticModelBuilder()
 ) {
+    private val checkerPass = CheckerPass()
     /**
      * Runs the semantic pipeline and returns the public semantic result model.
      */
@@ -47,7 +47,7 @@ class SemanticPipeline(
         val comments = commentAttachPass.attach(chunk)
         val bound = binderPass.bind(chunk, comments, context.overlayGlobals)
         val resolvedBinder = typeResolver.resolve(bound)
-        val checker = checkerPass.check(chunk, resolvedBinder)
+        val checker = checkerPass.check(chunk, resolvedBinder, context)
         val model = semanticModelBuilder.build(chunk, checker.binder, checker.diagnostics, context)
         val result = SemanticAnalysisResult(
             model = model,
@@ -68,7 +68,17 @@ class SemanticPipeline(
 internal data class SemanticWorkspaceContext(
     val currentPath: VirtualPath? = null,
     val workspaceResolver: WorkspaceModuleResolver? = null,
-    val overlayGlobals: BuiltinOverlaySnapshot.GlobalsSnapshot = BuiltinOverlayLoader.standaloneGlobals()
+    val overlayGlobals: BuiltinOverlaySnapshot.GlobalsSnapshot = BuiltinOverlayLoader.standaloneGlobals(),
+    val importedSymbols: Map<String, WorkspaceImportedSymbol> = emptyMap(),
+    val resolveImportedSymbol: ((String) -> WorkspaceImportedSymbol?)? = null,
+    val resolveImportTarget: ((String) -> WorkspaceImportedSymbol?)? = null
+)
+
+internal data class WorkspaceImportedSymbol(
+    val alias: String,
+    val moduleName: String,
+    val providerPath: VirtualPath,
+    val moduleType: io.github.dingyi222666.luaparser.semantic.types.model.ModuleType
 )
 
 internal data class SemanticPipelineSnapshot(

@@ -56,16 +56,20 @@ object WorkspaceDirtySetPlanner {
     }
 
     private fun changedFiles(previous: WorkspaceSnapshot, current: WorkspaceSnapshot): Set<VirtualPath> {
-        val allPaths = previous.files.keys + current.files.keys
+        val previousSnapshots = previous.files + previous.extraProviders
+        val currentSnapshots = current.files + current.extraProviders
+        val allPaths = previousSnapshots.keys + currentSnapshots.keys
         return allPaths.filterTo(linkedSetOf()) { path ->
-            previous.files[path] != current.files[path]
+            previousSnapshots[path] != currentSnapshots[path]
         }
     }
 
     private fun publicSurfaceChangedFiles(previous: WorkspaceSnapshot, current: WorkspaceSnapshot): Set<VirtualPath> {
-        val allPaths = previous.files.keys + current.files.keys
+        val previousSnapshots = previous.files + previous.extraProviders
+        val currentSnapshots = current.files + current.extraProviders
+        val allPaths = previousSnapshots.keys + currentSnapshots.keys
         return allPaths.filterTo(linkedSetOf()) { path ->
-            previous.files[path]?.publicFingerprint?.value != current.files[path]?.publicFingerprint?.value
+            previousSnapshots[path]?.publicFingerprint?.value != currentSnapshots[path]?.publicFingerprint?.value
         }
     }
 
@@ -111,6 +115,7 @@ object WorkspaceDirtySetPlanner {
         publicSurfaceChangedFiles.forEach { path ->
             seedFiles += reverseDependentsOf(path, previous.graph)
             seedFiles += reverseDependentsOf(path, current.graph)
+            seedFiles += currentExtraProviderConsumers(path, current)
         }
 
         activeProviderChangedModuleNames.forEach { moduleName ->
@@ -174,6 +179,15 @@ object WorkspaceDirtySetPlanner {
             .mapTo(linkedSetOf()) { it.consumerPath }
     }
 
+    private fun currentExtraProviderConsumers(path: VirtualPath, current: WorkspaceSnapshot): Set<VirtualPath> {
+        if (path !in current.extraProviders) {
+            return emptySet()
+        }
+        return current.graph.reverseDependencies[path]
+            .orEmpty()
+            .filterTo(linkedSetOf()) { it in current.files }
+    }
+
     private fun affectedModuleNames(
         previous: WorkspaceSnapshot,
         current: WorkspaceSnapshot,
@@ -184,7 +198,9 @@ object WorkspaceDirtySetPlanner {
         moduleNames += activeProviderChangedModuleNames
         publicSurfaceChangedFiles.forEach { path ->
             moduleNames += previous.files[path]?.publicFingerprint?.providedModuleNames.orEmpty()
+            moduleNames += previous.extraProviders[path]?.publicFingerprint?.providedModuleNames.orEmpty()
             moduleNames += current.files[path]?.publicFingerprint?.providedModuleNames.orEmpty()
+            moduleNames += current.extraProviders[path]?.publicFingerprint?.providedModuleNames.orEmpty()
         }
         return moduleNames
     }

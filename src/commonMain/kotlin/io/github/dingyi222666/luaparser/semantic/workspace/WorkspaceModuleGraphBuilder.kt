@@ -5,7 +5,8 @@ import io.github.dingyi222666.luaparser.semantic.workspace.std.BuiltinOverlaySna
 object WorkspaceModuleGraphBuilder {
     fun build(
         files: Map<VirtualPath, WorkspaceSnapshot.FileSnapshot>,
-        builtinOverlay: BuiltinOverlaySnapshot = BuiltinOverlaySnapshot.EMPTY
+        builtinOverlay: BuiltinOverlaySnapshot = BuiltinOverlaySnapshot.EMPTY,
+        extraProviders: Map<VirtualPath, WorkspaceSnapshot.FileSnapshot> = emptyMap()
     ): WorkspaceModuleGraph {
         val providerClaims = linkedMapOf<String, MutableList<WorkspaceModuleGraph.ModuleProvider>>()
         val graphFiles = linkedMapOf<VirtualPath, WorkspaceSnapshot.FileSnapshot>()
@@ -24,6 +25,17 @@ object WorkspaceModuleGraphBuilder {
                 path = path,
                 source = WorkspaceModuleGraph.ProviderSource.STANDARD_LIBRARY_OVERLAY
             )
+        }
+
+        extraProviders.forEach { (path, snapshot) ->
+            graphFiles[path] = snapshot
+            snapshot.moduleExportSurface?.moduleType?.moduleName?.let { moduleName ->
+                providerClaims.getOrPut(moduleName) { mutableListOf() } += WorkspaceModuleGraph.ModuleProvider(
+                    moduleName = moduleName,
+                    path = path,
+                    source = WorkspaceModuleGraph.ProviderSource.EXTRA_WORKSPACE_PROVIDER
+                )
+            }
         }
 
         val providersByModuleName = providerClaims.mapValues { (_, providers) ->
@@ -209,6 +221,7 @@ object WorkspaceModuleGraphBuilder {
     private fun providerSourceRank(source: WorkspaceModuleGraph.ProviderSource): Int = when (source) {
         WorkspaceModuleGraph.ProviderSource.LEGACY_TOP_LEVEL -> 0
         WorkspaceModuleGraph.ProviderSource.VIRTUAL_PATH -> 1
-        WorkspaceModuleGraph.ProviderSource.STANDARD_LIBRARY_OVERLAY -> 2
+        WorkspaceModuleGraph.ProviderSource.EXTRA_WORKSPACE_PROVIDER -> 2
+        WorkspaceModuleGraph.ProviderSource.STANDARD_LIBRARY_OVERLAY -> 3
     }
 }

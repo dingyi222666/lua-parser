@@ -49,7 +49,9 @@ internal class WorkspaceModuleResolver(
     }
 
     private fun fileSnapshot(path: VirtualPath): WorkspaceSnapshot.FileSnapshot? {
-        return snapshot.files[path] ?: snapshot.builtinOverlay.providerModules[path]?.file
+        return snapshot.files[path]
+            ?: snapshot.extraProviders[path]
+            ?: snapshot.builtinOverlay.providerModules[path]?.file
     }
 
     private fun rangeContains(

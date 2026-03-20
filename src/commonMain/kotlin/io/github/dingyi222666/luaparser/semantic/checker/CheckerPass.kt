@@ -1,14 +1,19 @@
 package io.github.dingyi222666.luaparser.semantic.checker
 
 import io.github.dingyi222666.luaparser.parser.ast.node.ChunkNode
+import io.github.dingyi222666.luaparser.semantic.SemanticWorkspaceContext
 import io.github.dingyi222666.luaparser.semantic.api.Diagnostic
 import io.github.dingyi222666.luaparser.semantic.binder.BinderPassResult
 import io.github.dingyi222666.luaparser.semantic.binder.DeclarationKind
 
 class CheckerPass {
-    fun check(chunk: ChunkNode, binder: BinderPassResult): CheckerPassResult {
+    internal fun check(
+        chunk: ChunkNode,
+        binder: BinderPassResult,
+        context: SemanticWorkspaceContext = SemanticWorkspaceContext()
+    ): CheckerPassResult {
         val signatureChecker = FunctionSignatureChecker(binder)
-        val returnChecker = ReturnChecker(binder)
+        val returnChecker = ReturnChecker(binder, context)
         val declarations = binder.declarationIndex.declarations.filter {
             it.kind in setOf(
                 DeclarationKind.FUNCTION,
