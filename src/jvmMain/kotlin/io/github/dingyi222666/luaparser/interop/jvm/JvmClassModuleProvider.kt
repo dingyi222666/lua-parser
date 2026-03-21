@@ -46,6 +46,18 @@ class JvmClassModuleProvider(
         }.associate { it.first to it.second }
     }
 
+    internal fun packageProvidersFor(
+        importTargets: Collection<String>,
+        configuration: JvmWorkspaceConfiguration
+    ): Map<VirtualPath, WorkspaceSnapshot.FileSnapshot> {
+        val normalized = configuration.normalized(defaultImportPrefixes)
+        val classLoader = normalized.classLoader ?: classLoaderFor(normalized)
+        return importTargets
+            .asSequence()
+            .mapNotNull { importedPackageProvider(it, normalized, classLoader) }
+            .associate { it.first to it.second }
+    }
+
     internal fun requestedClasses(metadata: Map<String, String>): Set<String> {
         val configuration = JvmWorkspaceConfiguration.fromMetadata(metadata)
         return requestedClasses(configuration, configuration.classLoader ?: classLoaderFor(configuration))
@@ -77,10 +89,28 @@ class JvmClassModuleProvider(
         return resolveImports(importText, normalized.importPrefixes, classLoader)
     }
 
+    internal fun importedSymbolForTarget(importText: String, configuration: JvmWorkspaceConfiguration): WorkspaceImportedSymbol? {
+        val normalized = configuration.normalized(defaultImportPrefixes)
+        val classLoader = normalized.classLoader ?: classLoaderFor(normalized)
+        return if (isWildcardImport(importText)) {
+            importedPackageSymbol(importText, normalized, classLoader)
+        } else {
+            importedClassSymbol(importText, normalized, classLoader)
+        }
+    }
+
     internal fun importedSymbol(importText: String, configuration: JvmWorkspaceConfiguration): WorkspaceImportedSymbol? {
         val normalized = configuration.normalized(defaultImportPrefixes)
         val classLoader = normalized.classLoader ?: classLoaderFor(normalized)
-        val className = resolveImport(importText, normalized.importPrefixes, classLoader) ?: return null
+        return importedClassSymbol(importText, normalized, classLoader)
+    }
+
+    private fun importedClassSymbol(
+        importText: String,
+        configuration: JvmWorkspaceConfiguration,
+        classLoader: ClassLoader
+    ): WorkspaceImportedSymbol? {
+        val className = resolveImport(importText, configuration.importPrefixes, classLoader) ?: return null
         val clazz = runCatching { Class.forName(className, false, classLoader) }.getOrNull() ?: return null
         val (providerPath, _) = providerForClass(clazz)
         return WorkspaceImportedSymbol(
@@ -89,6 +119,39 @@ class JvmClassModuleProvider(
             providerPath = providerPath,
             moduleType = moduleTypeFor(clazz)
         )
+    }
+
+    private fun importedPackageSymbol(
+        importText: String,
+        configuration: JvmWorkspaceConfiguration,
+        classLoader: ClassLoader
+    ): WorkspaceImportedSymbol? {
+        val packageName = wildcardPackageName(importText) ?: return null
+        val classNames = resolveImports(importText, configuration.importPrefixes, classLoader)
+        if (classNames.isEmpty()) {
+            return null
+        }
+        val moduleType = packageModuleTypeFor(packageName, classNames, classLoader)
+        val (providerPath, _) = providerForPackage(packageName, moduleType)
+        return WorkspaceImportedSymbol(
+            alias = packageName.substringBeforeLast('.', packageName),
+            moduleName = moduleType.moduleName,
+            providerPath = providerPath,
+            moduleType = moduleType
+        )
+    }
+
+    private fun importedPackageProvider(
+        importText: String,
+        configuration: JvmWorkspaceConfiguration,
+        classLoader: ClassLoader
+    ): Pair<VirtualPath, WorkspaceSnapshot.FileSnapshot>? {
+        val packageName = wildcardPackageName(importText) ?: return null
+        val classNames = resolveImports(importText, configuration.importPrefixes, classLoader)
+        if (classNames.isEmpty()) {
+            return null
+        }
+        return providerForPackage(packageName, packageModuleTypeFor(packageName, classNames, classLoader))
     }
 
     private fun requestedClasses(configuration: JvmWorkspaceConfiguration, classLoader: ClassLoader): Set<String> {
@@ -109,16 +172,82 @@ class JvmClassModuleProvider(
         if (normalized.isEmpty()) {
             return emptyList()
         }
-        if (normalized.endsWith(".*")) {
-            return resolveWildcardImports(normalized.removeSuffix(".*"), classLoader)
+        val target = normalized.substringAfter(':', normalized)
+        if (target.isEmpty()) {
+            return emptyList()
         }
-        if ('.' in normalized) {
-            return listOf(normalized)
+        if (target.endsWith(".*")) {
+            return resolveWildcardImports(target.removeSuffix(".*"), classLoader)
+        }
+        if ('.' in target) {
+            return candidateClassNames(target).firstNotNullOfOrNull { candidate ->
+                runCatching { Class.forName(candidate, false, classLoader) }.getOrNull()?.name?.let(::listOf)
+            }.orEmpty()
         }
         return importPrefixes.firstNotNullOfOrNull { prefix ->
-            val candidate = "$prefix.$normalized"
-            runCatching { Class.forName(candidate, false, classLoader) }.getOrNull()?.name?.let(::listOf)
+            candidateClassNames("$prefix.$target").firstNotNullOfOrNull { candidate ->
+                runCatching { Class.forName(candidate, false, classLoader) }.getOrNull()?.name?.let(::listOf)
+            }
         }.orEmpty()
+    }
+
+    private fun isWildcardImport(importText: String): Boolean {
+        return wildcardPackageName(importText) != null
+    }
+
+    private fun wildcardPackageName(importText: String): String? {
+        val normalized = importText.removePrefix("import ").trim()
+        val target = normalized.substringAfter(':', normalized)
+        if (!target.endsWith(".*")) {
+            return null
+        }
+        return target.removeSuffix(".*").takeIf(String::isNotBlank)
+    }
+
+    private fun packageModuleTypeFor(
+        packageName: String,
+        classNames: List<String>,
+        classLoader: ClassLoader
+    ): ModuleType {
+        val members = linkedMapOf<String, Type>()
+        classNames
+            .mapNotNull { className -> runCatching { Class.forName(className, false, classLoader) }.getOrNull() }
+            .forEach { clazz ->
+                members[clazz.simpleName] = moduleTypeFor(clazz)
+            }
+        return ModuleType(
+            moduleName = packageModuleName(packageName),
+            fields = members.toSortedMap(),
+            indexSignature = ModuleType.IndexSignature(PrimitiveType.STRING, UnknownType)
+        )
+    }
+
+    private fun packageModuleName(packageName: String): String {
+        return packageName
+    }
+
+    private fun candidateClassNames(className: String): List<String> {
+        val trimmed = className.trim()
+        if (trimmed.isEmpty()) {
+            return emptyList()
+        }
+        val separatorIndexes = trimmed.indices.filter { trimmed[it] == '.' }
+        return buildSet {
+            add(trimmed)
+            trimmed.takeIf { '_' in it }?.replace('_', '$')?.let(::add)
+            if (separatorIndexes.isNotEmpty()) {
+                val combinations = 1 shl separatorIndexes.size
+                for (mask in 1 until combinations) {
+                    val chars = trimmed.toCharArray()
+                    separatorIndexes.forEachIndexed { index, separator ->
+                        if ((mask and (1 shl index)) != 0) {
+                            chars[separator] = '$'
+                        }
+                    }
+                    add(String(chars))
+                }
+            }
+        }.toList()
     }
 
     private fun resolveWildcardImports(packageName: String, classLoader: ClassLoader): List<String> {
@@ -243,10 +372,48 @@ class JvmClassModuleProvider(
         )
     }
 
+    private fun providerForPackage(
+        packageName: String,
+        moduleType: ModuleType
+    ): Pair<VirtualPath, WorkspaceSnapshot.FileSnapshot> {
+        val path = VirtualPath.of("__jvm__/packages/${packageName.replace('.', '/')}.lua")
+        val source = buildString {
+            append("-- reflected JVM package provider for ")
+            append(packageName)
+            append('\n')
+        }
+        val surface = ModuleExportSurface(
+            moduleType = moduleType,
+            sourceForm = ModuleExportSurface.SourceForm.RETURN_TABLE_LITERAL,
+            members = moduleMembers(moduleType)
+        )
+        val fingerprintPayload = buildString {
+            append(packageName)
+            append('\n')
+            append(moduleType.displayName)
+            append('\n')
+            append(surface.members.joinToString("|") { "${it.kind}:${it.name}:${it.type.displayName}" })
+        }
+        return path to WorkspaceSnapshot.FileSnapshot(
+            cacheKey = workspaceFingerprintHash(source),
+            moduleExportSurface = surface,
+            publicFingerprint = io.github.dingyi222666.luaparser.semantic.workspace.WorkspacePublicFingerprint(
+                providedModuleNames = linkedSetOf(moduleType.moduleName),
+                value = workspaceFingerprintHash(fingerprintPayload)
+            )
+        )
+    }
+
     private fun moduleTypeFor(clazz: Class<*>): ModuleType {
         val classType = classTypeFor(clazz)
         val fields = linkedMapOf<String, Type>("__class" to classType)
         val methods = linkedMapOf<String, Type>()
+
+        clazz.fields
+            .filter { Modifier.isStatic(it.modifiers) }
+            .forEach { field ->
+                fields[field.name] = javaTypeToType(field.type)
+            }
 
         clazz.methods
             .filter { Modifier.isStatic(it.modifiers) }
@@ -309,6 +476,9 @@ class JvmClassModuleProvider(
                 type = type,
                 range = null
             )
+            if (name == "__class") {
+                output += classMembers(type)
+            }
         }
         moduleType.methods.forEach { (name, type) ->
             output += ModuleExportSurface.MemberExport(
@@ -319,7 +489,31 @@ class JvmClassModuleProvider(
                 range = null
             )
         }
-        return output.sortedBy { it.name }
+        return output.sortedWith(compareBy<ModuleExportSurface.MemberExport>({ it.exportPath.size }, { it.name }))
+    }
+
+    private fun classMembers(type: Type, exportPathPrefix: List<String> = listOf("__class")): List<ModuleExportSurface.MemberExport> {
+        val classType = type as? ClassType ?: return emptyList()
+        val output = mutableListOf<ModuleExportSurface.MemberExport>()
+        classType.getAllFields().forEach { (name, memberType) ->
+            output += ModuleExportSurface.MemberExport(
+                name = name,
+                exportPath = exportPathPrefix + name,
+                kind = io.github.dingyi222666.luaparser.semantic.api.SymbolKind.FIELD,
+                type = memberType,
+                range = null
+            )
+        }
+        classType.getAllMethods().forEach { (name, memberType) ->
+            output += ModuleExportSurface.MemberExport(
+                name = name,
+                exportPath = exportPathPrefix + name,
+                kind = io.github.dingyi222666.luaparser.semantic.api.SymbolKind.METHOD,
+                type = memberType,
+                range = null
+            )
+        }
+        return output
     }
 
     private fun javaTypeToType(type: Class<*>): Type {
@@ -352,7 +546,8 @@ class JvmClassModuleProvider(
             "android.app",
             "android.content",
             "android.view",
-            "android.widget"
+            "android.widget",
+            "com.androlua"
         )
     }
 }

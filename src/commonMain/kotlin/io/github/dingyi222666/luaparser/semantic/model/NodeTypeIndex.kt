@@ -3,20 +3,26 @@ package io.github.dingyi222666.luaparser.semantic.model
 import io.github.dingyi222666.luaparser.parser.ast.node.BaseASTNode
 import io.github.dingyi222666.luaparser.parser.ast.node.CallExpression
 import io.github.dingyi222666.luaparser.parser.ast.node.ExpressionNode
+import io.github.dingyi222666.luaparser.parser.ast.node.FunctionDeclaration
 import io.github.dingyi222666.luaparser.parser.ast.node.Identifier
 import io.github.dingyi222666.luaparser.parser.ast.node.LocalStatement
+import io.github.dingyi222666.luaparser.parser.ast.node.MemberExpression
 import io.github.dingyi222666.luaparser.parser.ast.node.Position
 import io.github.dingyi222666.luaparser.semantic.binder.BinderDeclaration
-import io.github.dingyi222666.luaparser.semantic.binder.DeclarationNamespace
-import io.github.dingyi222666.luaparser.semantic.binder.DeclarationKind
 import io.github.dingyi222666.luaparser.semantic.binder.BinderPassResult
+import io.github.dingyi222666.luaparser.semantic.binder.DeclarationKind
+import io.github.dingyi222666.luaparser.semantic.binder.DeclarationNamespace
+import io.github.dingyi222666.luaparser.semantic.binder.DeclarationOwner
 import io.github.dingyi222666.luaparser.semantic.checker.ExpressionTypeEvaluator
 import io.github.dingyi222666.luaparser.semantic.checker.ValueSequence
+import io.github.dingyi222666.luaparser.semantic.checker.isColonMethodDeclaration
 import io.github.dingyi222666.luaparser.semantic.checker.resolveOwningFunctionDeclaration
+import io.github.dingyi222666.luaparser.semantic.comments.ParamTagSyntax
 import io.github.dingyi222666.luaparser.semantic.types.model.CallableType
 import io.github.dingyi222666.luaparser.semantic.types.model.FunctionParameter
 import io.github.dingyi222666.luaparser.semantic.types.model.FunctionType
 import io.github.dingyi222666.luaparser.semantic.types.model.MultiReturnType
+import io.github.dingyi222666.luaparser.semantic.types.model.OverloadedFunctionType
 import io.github.dingyi222666.luaparser.semantic.types.model.PrimitiveType
 import io.github.dingyi222666.luaparser.semantic.types.model.Type
 import io.github.dingyi222666.luaparser.semantic.types.model.UnknownType
@@ -100,6 +106,14 @@ internal class NodeTypeIndex(
             return evaluated
         }
 
+        val memberBase = node.base as? MemberExpression
+        if (memberBase?.indexer == ":") {
+            val baseIdentifier = memberBase.base as? Identifier ?: return evaluated
+            val declaration = astMethodDeclarationForBase(baseIdentifier, node.range.start) ?: return evaluated
+            val callableType = callableTypeForDeclaration(declaration) ?: return evaluated
+            return callableType.callSignatures.firstOrNull()?.returnType ?: evaluated
+        }
+
         val baseIdentifier = node.base as? Identifier ?: return evaluated
         val declaration = visibleValueDeclaration(baseIdentifier.name, node.range.start) ?: return evaluated
         val callableType = callableTypeForDeclaration(declaration) ?: return evaluated
@@ -109,12 +123,53 @@ internal class NodeTypeIndex(
     private fun callableTypeForDeclaration(
         declaration: io.github.dingyi222666.luaparser.semantic.binder.BinderDeclaration
     ): CallableType? {
-        val declared = declaration.declaredType as? CallableType
-        if (declared != null && declared.callSignatures.any { it.returnType != UnknownType }) {
-            return declared
+        return inferFunctionCallableType(declaration) ?: (declaration.declaredType as? CallableType)
+    }
+
+    private fun astMethodDeclarationForBase(
+        baseIdentifier: Identifier,
+        position: io.github.dingyi222666.luaparser.parser.ast.node.Position
+    ): BinderDeclaration? {
+        var scope = binder.positionQueries.getScopeAt(position)
+        while (scope != null) {
+            val lexicalOwner = scope.ownerNode
+            val declaration = binder.declarationIndex.declarations.firstOrNull { candidate ->
+                candidate.kind == DeclarationKind.METHOD &&
+                    lexicalOwner != null &&
+                    isDeclaredInLexicalOwnerChain(candidate, lexicalOwner) &&
+                    isMethodBoundToBaseIdentifier(candidate, baseIdentifier.name) &&
+                    (candidate.range == null || compare(candidate.range.start, position) <= 0)
+            }
+            if (declaration != null) {
+                return declaration
+            }
+            scope = scope.parentId?.let(binder.scopeGraph::getScope)
+        }
+        return null
+    }
+
+    private fun isDeclaredInLexicalOwnerChain(declaration: BinderDeclaration, lexicalOwner: BaseASTNode): Boolean {
+        var current: BaseASTNode? = lexicalOwner
+        while (current != null) {
+            if (declaration.owner == DeclarationOwner.Lexical(current)) {
+                return true
+            }
+            current = runCatching { current.parent }.getOrNull()
+        }
+        return false
+    }
+
+    private fun isMethodBoundToBaseIdentifier(declaration: BinderDeclaration, baseName: String): Boolean {
+        val anchorMember = declaration.anchorNode?.parent as? MemberExpression
+        val anchorBase = anchorMember?.base as? Identifier
+        if (anchorBase?.name == baseName) {
+            return true
         }
 
-        return inferFunctionCallableType(declaration) ?: declared
+        val function = resolveOwningFunctionDeclaration(binder, declaration) ?: return false
+        val identifier = function.identifier as? MemberExpression ?: return false
+        val base = identifier.base as? Identifier ?: return false
+        return base.name == baseName
     }
 
     private fun visibleValueDeclaration(
@@ -142,29 +197,122 @@ internal class NodeTypeIndex(
     private fun inferFunctionCallableType(
         declaration: io.github.dingyi222666.luaparser.semantic.binder.BinderDeclaration
     ): CallableType? {
-        val functionNode = resolveOwningFunctionDeclaration(binder, declaration) ?: return null
-        val body = functionNode.body ?: return null
-        val functionScopeId = binder.scopeGraph.getScope(body)?.id ?: binder.scopeGraph.rootScope.id
-        val parameterDeclarations = binder.scopeGraph.getScope(body)
-            ?.declarationIds
-            .orEmpty()
-            .mapNotNull(binder.declarationIndex::getDeclaration)
-            .filter { it.kind == io.github.dingyi222666.luaparser.semantic.binder.DeclarationKind.PARAMETER }
+        val declared = declaration.declaredType as? CallableType
+        val functionNode = resolveOwningFunctionDeclaration(binder, declaration)
+        val inferred = functionNode?.let(evaluator::inferImplementationFunctionType)
 
-        val parameters = functionNode.params.mapIndexed { index, parameterNode ->
-            val parameterType = parameterDeclarations.getOrNull(index)?.declaredType ?: UnknownType
-            FunctionParameter(
-                name = parameterNode.name,
-                type = parameterType,
-                vararg = parameterNode.name == "..." || parameterType is VarargType
+        return when {
+            declared == null -> {
+                if (declaration.kind == DeclarationKind.METHOD && inferred != null) {
+                    enrichMethodCallableType(declaration, inferred)
+                } else {
+                    inferred
+                }
+            }
+            inferred == null -> {
+                if (declaration.kind == DeclarationKind.METHOD) {
+                    enrichMethodCallableType(declaration, declared)
+                } else {
+                    declared
+                }
+            }
+            declaration.kind == DeclarationKind.METHOD -> mergeCallableInference(declaration, declared, inferred)
+            else -> mergeCallableInference(declaration, declared, inferred)
+        }
+    }
+
+    private fun mergeCallableInference(
+        declaration: BinderDeclaration,
+        declared: CallableType,
+        inferred: CallableType
+    ): CallableType {
+        val declaredSignature = declared.callSignatures.firstOrNull() ?: return enrichMethodCallableType(declaration, inferred)
+        val inferredSignature = inferred.callSignatures.firstOrNull() ?: return enrichMethodCallableType(declaration, declared)
+        val declaredParameterOffset = if (
+            declaration.kind == DeclarationKind.METHOD &&
+                declaredSignature.parameters.firstOrNull()?.name == "self" &&
+                inferredSignature.parameters.firstOrNull()?.name != "self"
+        ) {
+            1
+        } else {
+            0
+        }
+        val mergedParameters = when {
+            declaration.kind == DeclarationKind.METHOD -> inferredSignature.parameters.mapIndexed { index, parameter ->
+                val declaredParameter = declaredSignature.parameters.getOrNull(index + declaredParameterOffset)
+                val parameterType = when {
+                    declaredParameter == null -> parameter.type
+                    parameter.type == UnknownType -> declaredParameter.type
+                    declaredParameter.type == UnknownType -> parameter.type
+                    else -> declaredParameter.type
+                }
+                parameter.copy(type = parameterType)
+            }
+            else -> inferredSignature.parameters.mapIndexed { index, parameter ->
+                val declaredParameter = declaredSignature.parameters.getOrNull(index)
+                val parameterType = when {
+                    declaredParameter == null -> parameter.type
+                    parameter.type == UnknownType -> declaredParameter.type
+                    declaredParameter.type == UnknownType -> parameter.type
+                    else -> declaredParameter.type
+                }
+                parameter.copy(type = parameterType)
+            }
+        }
+        val mergedSignature = inferredSignature.copy(
+            parameters = mergedParameters,
+            returnType = if (inferredSignature.returnType != UnknownType) inferredSignature.returnType else declaredSignature.returnType,
+            name = FunctionType(
+                parameters = mergedParameters,
+                returnType = if (inferredSignature.returnType != UnknownType) inferredSignature.returnType else declaredSignature.returnType,
+                typeParameters = inferredSignature.typeParameters
+            ).name
+        )
+        return if (declaration.kind == DeclarationKind.METHOD) {
+            enrichMethodCallableType(declaration, mergedSignature)
+        } else {
+            mergedSignature
+        }
+    }
+
+    private fun enrichMethodCallableType(declaration: BinderDeclaration, declared: CallableType): CallableType {
+        if (declaration.kind != DeclarationKind.METHOD) {
+            return declared
+        }
+
+        if (!isColonMethodDeclaration(binder, declaration)) {
+            return declared
+        }
+
+        val selfType = declaration.documentation?.resolvedParameterTypes?.get("self") ?: UnknownType
+        val enrichedSignatures = declared.callSignatures.map { signature ->
+            val parameters = if (signature.parameters.firstOrNull()?.name == "self") {
+                signature.parameters.mapIndexed { index, parameter ->
+                    if (index == 0 && parameter.type == UnknownType && selfType != UnknownType) {
+                        parameter.copy(type = selfType)
+                    } else {
+                        parameter
+                    }
+                }
+            } else {
+                listOf(FunctionParameter(name = "self", type = selfType)) + signature.parameters
+            }
+            signature.copy(
+                parameters = parameters,
+                name = FunctionType(
+                    parameters = parameters,
+                    returnType = signature.returnType,
+                    typeParameters = signature.typeParameters
+                ).name
             )
         }
-        val varargType = parameters.lastOrNull { it.vararg }?.type ?: VarargType(UnknownType)
-        val context = evaluator.buildFunctionBodyContext(functionNode, parameters, functionScopeId, varargType)
-        val returnSites = evaluator.collectReturnSites(body, context)
-        val returnType = inferReturnType(returnSites.map { it.values })
-        return FunctionType(parameters = parameters, returnType = returnType)
+        return when (enrichedSignatures.size) {
+            0 -> declared
+            1 -> enrichedSignatures.single()
+            else -> OverloadedFunctionType(enrichedSignatures)
+        }
     }
+
 
     private fun inferReturnType(returnSequences: List<ValueSequence>): Type {
         if (returnSequences.isEmpty()) {

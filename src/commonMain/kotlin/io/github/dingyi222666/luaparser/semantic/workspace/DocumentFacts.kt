@@ -10,6 +10,8 @@ data class DocumentFacts(
     val requires: List<RequireFact> = emptyList(),
     val dynamicRequires: List<DynamicRequireFact> = emptyList(),
     val legacyModuleCalls: List<LegacyModuleCallFact> = emptyList(),
+    val sourceImports: List<SourceImportFact> = emptyList(),
+    val jvmClassLoads: List<JvmClassLoadFact> = emptyList(),
     val returnHint: ReturnExportShapeHint = ReturnExportShapeHint.none(),
     val environmentSegments: List<EnvironmentSegment> = emptyList(),
     val exportWriteAnchors: List<ExportWriteAnchor> = emptyList()
@@ -46,6 +48,25 @@ data class DocumentFacts(
         val range: Range,
         val isTopLevel: Boolean
     )
+
+    data class SourceImportFact(
+        val target: String,
+        val range: Range
+    )
+
+    data class JvmClassLoadFact(
+        val target: String,
+        val kind: JvmClassLoadKind,
+        val range: Range
+    )
+
+    enum class JvmClassLoadKind {
+        IMPORT_CALL,
+        BIND_CLASS_CALL,
+        NEW_INSTANCE_CALL,
+        CREATE_PROXY_CALL,
+        LOAD_LIB_CALL
+    }
 
     data class ReturnExportShapeHint(
         val kind: ReturnExportShapeKind,

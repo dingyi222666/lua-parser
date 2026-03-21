@@ -3,18 +3,24 @@ package io.github.dingyi222666.luaparser.interop.jvm
 import io.github.dingyi222666.luaparser.parser.LuaParser
 import io.github.dingyi222666.luaparser.semantic.SemanticWorkspaceContext
 import io.github.dingyi222666.luaparser.semantic.WorkspaceImportedSymbol
+import io.github.dingyi222666.luaparser.semantic.workspace.DocumentFacts
+import io.github.dingyi222666.luaparser.semantic.workspace.DocumentFactsCollector
 import io.github.dingyi222666.luaparser.semantic.workspace.LuaWorkspaceEngine
 import io.github.dingyi222666.luaparser.semantic.workspace.LuaWorkspaceInput
+import io.github.dingyi222666.luaparser.semantic.workspace.VirtualPath
 import io.github.dingyi222666.luaparser.semantic.workspace.WorkspaceSnapshot
 
 class JvmWorkspaceEngine(
-    parserFactory: () -> LuaParser = { LuaParser() },
+    private val workspaceParserFactory: () -> LuaParser = { LuaParser() },
     private val classModuleProvider: JvmClassModuleProvider = JvmClassModuleProvider(),
     private val configuration: JvmWorkspaceConfiguration = JvmWorkspaceConfiguration()
-) : LuaWorkspaceEngine(parserFactory) {
-    override fun extraProviders(input: LuaWorkspaceInput): Map<io.github.dingyi222666.luaparser.semantic.workspace.VirtualPath, WorkspaceSnapshot.FileSnapshot> {
-        val resolvedConfiguration = configuration.overlay(JvmWorkspaceConfiguration.fromMetadata(input.metadata))
-        val sourceImportedClasses = collectSourceImportedClasses(input, resolvedConfiguration)
+) : LuaWorkspaceEngine(workspaceParserFactory) {
+    override fun extraProviders(input: LuaWorkspaceInput): Map<VirtualPath, WorkspaceSnapshot.FileSnapshot> {
+        val baseConfiguration = configuration.overlay(JvmWorkspaceConfiguration.fromMetadata(input.metadata))
+        val documentFacts = collectDocumentFacts(input)
+        val resolvedConfiguration = configurationWithWildcardImportPrefixes(baseConfiguration, documentFacts)
+        val sourceImportedClasses = collectSourceImportedClasses(documentFacts, resolvedConfiguration)
+        val packageProviders = classModuleProvider.packageProvidersFor(collectWildcardImportTargets(documentFacts), resolvedConfiguration)
         val providerConfiguration = if (sourceImportedClasses.isEmpty()) {
             resolvedConfiguration
         } else {
@@ -22,30 +28,34 @@ class JvmWorkspaceEngine(
                 classes = (resolvedConfiguration.classes + sourceImportedClasses).toCollection(linkedSetOf())
             )
         }
-        return classModuleProvider.providersFor(providerConfiguration)
+        return classModuleProvider.providersFor(providerConfiguration) + packageProviders
     }
 
     internal override fun workspaceContext(input: LuaWorkspaceInput, path: io.github.dingyi222666.luaparser.semantic.workspace.VirtualPath, snapshot: WorkspaceSnapshot): SemanticWorkspaceContext {
-        val resolvedConfiguration = configuration.overlay(JvmWorkspaceConfiguration.fromMetadata(input.metadata))
-        val importedSymbols = collectImportedSymbols(input, resolvedConfiguration)
+        val baseConfiguration = configuration.overlay(JvmWorkspaceConfiguration.fromMetadata(input.metadata))
+        val documentFacts = collectDocumentFacts(input)
+        val resolvedConfiguration = configurationWithWildcardImportPrefixes(baseConfiguration, documentFacts)
+        val importedSymbols = collectImportedSymbols(documentFacts, resolvedConfiguration)
         return SemanticWorkspaceContext(
             currentPath = path,
             workspaceResolver = io.github.dingyi222666.luaparser.semantic.workspace.WorkspaceModuleResolver(snapshot),
             overlayGlobals = snapshot.builtinOverlay.globals,
             importedSymbols = importedSymbols,
-            resolveImportedSymbol = { name -> importedSymbols[name] },
-            resolveImportTarget = { target -> classModuleProvider.importedSymbol(target, resolvedConfiguration) }
+            resolveImportedSymbol = { name ->
+                importedSymbols[name] ?: classModuleProvider.importedSymbol(name, resolvedConfiguration)
+            },
+            resolveImportTarget = { target -> classModuleProvider.importedSymbolForTarget(target, resolvedConfiguration) }
         )
     }
 
     private fun collectImportedSymbols(
-        input: LuaWorkspaceInput,
+        documentFacts: Map<VirtualPath, DocumentFacts>,
         configuration: JvmWorkspaceConfiguration
     ): Map<String, WorkspaceImportedSymbol> {
         val imported = linkedMapOf<String, WorkspaceImportedSymbol>()
-        input.files.values.forEach { source ->
-            parseSourceImports(source).forEach { importTarget ->
-                classModuleProvider.importedClassNames(importTarget, configuration)
+        documentFacts.values.forEach { facts ->
+            facts.sourceImports.forEach { importFact ->
+                classModuleProvider.importedClassNames(importFact.target, configuration)
                     .mapNotNull { classModuleProvider.importedSymbol(it, configuration) }
                     .forEach { imported[it.alias] = it }
             }
@@ -54,63 +64,74 @@ class JvmWorkspaceEngine(
     }
 
     private fun collectSourceImportedClasses(
-        input: LuaWorkspaceInput,
+        documentFacts: Map<VirtualPath, DocumentFacts>,
         configuration: JvmWorkspaceConfiguration
     ): Set<String> {
         return buildSet {
-            input.files.values.forEach { source ->
-                parseSourceImports(source).forEach { importTarget ->
-                    classModuleProvider.importedClassNames(importTarget, configuration)
+            documentFacts.values.forEach { facts ->
+                facts.sourceImports.forEach { importFact ->
+                    classModuleProvider.importedClassNames(importFact.target, configuration)
                         .forEach(::add)
                 }
-                parseDynamicImportTargets(source)
-                    .mapNotNull { classModuleProvider.importedClassName(it, configuration) }
-                    .forEach(::add)
-                parseBindClassTargets(source)
-                    .mapNotNull { classModuleProvider.importedClassName(it, configuration) }
-                    .forEach(::add)
+                facts.jvmClassLoads.forEach { fact ->
+                    when (fact.kind) {
+                        DocumentFacts.JvmClassLoadKind.IMPORT_CALL,
+                        DocumentFacts.JvmClassLoadKind.BIND_CLASS_CALL,
+                        DocumentFacts.JvmClassLoadKind.NEW_INSTANCE_CALL,
+                        DocumentFacts.JvmClassLoadKind.CREATE_PROXY_CALL,
+                        DocumentFacts.JvmClassLoadKind.LOAD_LIB_CALL -> {
+                            classModuleProvider.importedClassName(fact.target, configuration)
+                                ?.let(::add)
+                        }
+                    }
+                }
             }
         }
     }
 
-    private fun parseSourceImports(source: String): List<String> {
-        return source.lineSequence()
-            .map(String::trim)
-            .filter { it.startsWith("import ") }
-            .mapNotNull(::parseImportTarget)
-            .toList()
-    }
-
-    private fun parseBindClassTargets(source: String): List<String> {
-        return BIND_CLASS_PATTERN.findAll(source)
-            .map { it.groupValues[1] }
-            .toList()
-    }
-
-    private fun parseDynamicImportTargets(source: String): List<String> {
-        val aliases = REQUIRE_IMPORT_ALIAS_PATTERN.findAll(source)
-            .map { it.groupValues[1] }
-            .toSet() + "import"
-        if (aliases.isEmpty()) {
-            return emptyList()
+    private fun collectWildcardImportTargets(documentFacts: Map<VirtualPath, DocumentFacts>): Set<String> {
+        return buildSet {
+            documentFacts.values.forEach { facts ->
+                facts.sourceImports.forEach { importFact ->
+                    if (wildcardImportPrefix(importFact.target) != null) {
+                        add(importFact.target)
+                    }
+                }
+            }
         }
-        return DYNAMIC_IMPORT_CALL_PATTERN.findAll(source)
-            .filter { it.groupValues[1] in aliases }
-            .map { it.groupValues[2] }
-            .toList()
     }
 
-    private fun parseImportTarget(line: String): String? {
-        val raw = line.removePrefix("import").trim()
-        if (raw.isEmpty()) {
+    private fun configurationWithWildcardImportPrefixes(
+        configuration: JvmWorkspaceConfiguration,
+        documentFacts: Map<VirtualPath, DocumentFacts>
+    ): JvmWorkspaceConfiguration {
+        val normalized = configuration.normalized()
+        val wildcardPrefixes = linkedSetOf<String>()
+        documentFacts.values.forEach { facts ->
+            facts.sourceImports.forEach { importFact ->
+                wildcardImportPrefix(importFact.target)?.let(wildcardPrefixes::add)
+            }
+        }
+        if (wildcardPrefixes.isEmpty()) {
+            return normalized
+        }
+        return normalized.copy(
+            importPrefixes = (normalized.importPrefixes + wildcardPrefixes).distinct()
+        )
+    }
+
+    private fun wildcardImportPrefix(importText: String): String? {
+        val normalized = importText.removePrefix("import ").trim()
+        if (!normalized.endsWith(".*")) {
             return null
         }
-        return raw.removeSurrounding("\"", "\"").removeSurrounding("'", "'").trim().takeIf { it.isNotEmpty() }
+        return normalized.substringAfter(':', normalized).removeSuffix(".*").takeIf(String::isNotBlank)
     }
 
-    companion object {
-        private val BIND_CLASS_PATTERN = Regex("""luajava\.bindClass\(\s*["']([^"']+)["']\s*\)""")
-        private val REQUIRE_IMPORT_ALIAS_PATTERN = Regex("""\blocal\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*require\(\s*[\"']import[\"']\s*\)""")
-        private val DYNAMIC_IMPORT_CALL_PATTERN = Regex("""\b([A-Za-z_][A-Za-z0-9_]*)\s*\(\s*[\"']([^\"']+)[\"']\s*\)""")
+    private fun collectDocumentFacts(input: LuaWorkspaceInput): Map<VirtualPath, DocumentFacts> {
+        return input.files.mapValues { (path, source) ->
+            DocumentFactsCollector.collect(path, workspaceParserFactory().parse(source))
+        }
     }
+
 }

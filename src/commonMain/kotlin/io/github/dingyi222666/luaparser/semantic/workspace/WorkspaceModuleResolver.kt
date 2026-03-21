@@ -1,6 +1,7 @@
 package io.github.dingyi222666.luaparser.semantic.workspace
 
 import io.github.dingyi222666.luaparser.semantic.api.SymbolKind
+import io.github.dingyi222666.luaparser.semantic.types.model.ModuleType
 
 internal class WorkspaceModuleResolver(
     private val snapshot: WorkspaceSnapshot
@@ -23,11 +24,20 @@ internal class WorkspaceModuleResolver(
     }
 
     fun exportedMember(providerPath: VirtualPath, memberName: String): ResolvedExportMember? {
+        return exportedMember(providerPath, listOf(memberName))
+    }
+
+    fun exportedMember(providerPath: VirtualPath, exportPath: List<String>): ResolvedExportMember? {
         val file = fileSnapshot(providerPath) ?: return null
         val surface = file.moduleExportSurface ?: return null
-        val member = surface.members.firstOrNull { it.name == memberName } ?: return null
+        val member = surface.members.firstOrNull { it.exportPath == exportPath } ?: return null
+        val definitionProviderPath = when (val memberType = member.type) {
+            is ModuleType -> activeProvider(memberType.moduleName)?.path ?: providerPath
+            else -> providerPath
+        }
         return ResolvedExportMember(
             providerPath = providerPath,
+            definitionProviderPath = definitionProviderPath,
             moduleName = surface.moduleType.moduleName,
             member = member
         )
@@ -35,13 +45,13 @@ internal class WorkspaceModuleResolver(
 
     fun exportedMemberByHandle(handle: String): ResolvedExportMember? {
         val identity = ModuleExportIdentity.parse(handle) ?: return null
-        return exportedMember(identity.providerPath, identity.exportPath.firstOrNull() ?: return null)
+        return exportedMember(identity.providerPath, identity.exportPath)
     }
 
     fun exportAt(path: VirtualPath, position: io.github.dingyi222666.luaparser.parser.ast.node.Position): ResolvedExportMember? {
         val surface = fileSnapshot(path)?.moduleExportSurface ?: return null
         val member = surface.members.firstOrNull { rangeContains(it.range, position) } ?: return null
-        return ResolvedExportMember(path, surface.moduleType.moduleName, member)
+        return exportedMember(path, member.exportPath)
     }
 
     fun exportHandle(providerPath: VirtualPath, exportPath: List<String>): String {
@@ -78,6 +88,7 @@ internal class WorkspaceModuleResolver(
 
     data class ResolvedExportMember(
         val providerPath: VirtualPath,
+        val definitionProviderPath: VirtualPath,
         val moduleName: String,
         val member: ModuleExportSurface.MemberExport
     ) {
@@ -91,7 +102,7 @@ internal data class ModuleExportIdentity(
     val exportPath: List<String>
 ) {
     fun asHandle(): String {
-        return "module-export:${providerPath.value}:${exportPath.joinToString(".")}" 
+        return "module-export:${providerPath.value}:${exportPath.joinToString(".")}"
     }
 
     companion object {

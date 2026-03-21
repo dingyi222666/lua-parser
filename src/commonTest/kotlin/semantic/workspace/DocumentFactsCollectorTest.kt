@@ -158,6 +158,209 @@ class DocumentFactsCollectorTest {
         assertEquals(emptyList(), facts.exportWriteAnchors)
     }
 
+
+    @Test
+    fun collects_source_imports_and_jvm_class_loads_from_direct_and_aliased_import_calls() {
+        val facts = collectFacts(
+            path = "pkg/runtime.lua",
+            source = """
+                local import = require("import")
+                import("java.util.Locale")
+                import "android.content.Context"
+            """.trimIndent()
+        )
+
+        assertEquals(
+            listOf("java.util.Locale", "android.content.Context"),
+            facts.sourceImports.map { it.target }
+        )
+        assertEquals(
+            listOf(
+                DocumentFacts.JvmClassLoadKind.IMPORT_CALL,
+                DocumentFacts.JvmClassLoadKind.IMPORT_CALL
+            ),
+            facts.jvmClassLoads.map { it.kind }
+        )
+        assertEquals(
+            listOf("java.util.Locale", "android.content.Context"),
+            facts.jvmClassLoads.map { it.target }
+        )
+    }
+
+    @Test
+    fun collects_source_imports_and_jvm_class_loads_from_import_table_arguments() {
+        val facts = collectFacts(
+            path = "pkg/runtime.lua",
+            source = """
+                local import = require("import")
+                import({ "java.util.Locale", "android.content.Context" })
+            """.trimIndent()
+        )
+
+        assertEquals(
+            listOf("java.util.Locale", "android.content.Context"),
+            facts.sourceImports.map { it.target }
+        )
+        assertEquals(
+            listOf(
+                DocumentFacts.JvmClassLoadKind.IMPORT_CALL,
+                DocumentFacts.JvmClassLoadKind.IMPORT_CALL
+            ),
+            facts.jvmClassLoads.map { it.kind }
+        )
+        assertEquals(
+            listOf("java.util.Locale", "android.content.Context"),
+            facts.jvmClassLoads.map { it.target }
+        )
+    }
+
+    @Test
+    fun collects_source_imports_and_jvm_class_loads_from_dex_prefixed_import_calls() {
+        val facts = collectFacts(
+            path = "pkg/runtime.lua",
+            source = """
+                local import = require("import")
+                import("plugin.dex:android.content.Context")
+            """.trimIndent()
+        )
+
+        assertEquals(
+            listOf("plugin.dex:android.content.Context"),
+            facts.sourceImports.map { it.target }
+        )
+        assertEquals(
+            listOf(DocumentFacts.JvmClassLoadKind.IMPORT_CALL),
+            facts.jvmClassLoads.map { it.kind }
+        )
+        assertEquals(
+            listOf("plugin.dex:android.content.Context"),
+            facts.jvmClassLoads.map { it.target }
+        )
+    }
+
+    @Test
+    fun collects_jvm_bind_class_loads_from_direct_aliased_and_realiased_bind_calls() {
+        val facts = collectFacts(
+            path = "pkg/runtime.lua",
+            source = """
+                local bindClass = luajava.bindClass
+                local bind = bindClass
+                local Context = bind "android.content.Context"
+                local Locale = luajava.bindClass("java.util.Locale")
+            """.trimIndent()
+        )
+
+        assertEquals(emptyList(), facts.sourceImports)
+        assertEquals(
+            listOf(
+                DocumentFacts.JvmClassLoadKind.BIND_CLASS_CALL,
+                DocumentFacts.JvmClassLoadKind.BIND_CLASS_CALL
+            ),
+            facts.jvmClassLoads.map { it.kind }
+        )
+        assertEquals(
+            listOf("android.content.Context", "java.util.Locale"),
+            facts.jvmClassLoads.map { it.target }
+        )
+    }
+
+    @Test
+    fun collects_jvm_new_instance_loads_from_direct_aliased_and_realiased_calls() {
+        val facts = collectFacts(
+            path = "pkg/runtime.lua",
+            source = """
+                local newInstance = luajava.newInstance
+                local create = newInstance
+                local first = create("java.lang.StringBuilder")
+                local second = luajava.newInstance "java.lang.String"
+            """.trimIndent()
+        )
+
+        assertEquals(emptyList(), facts.sourceImports)
+        assertEquals(
+            listOf(
+                DocumentFacts.JvmClassLoadKind.NEW_INSTANCE_CALL,
+                DocumentFacts.JvmClassLoadKind.NEW_INSTANCE_CALL
+            ),
+            facts.jvmClassLoads.map { it.kind }
+        )
+        assertEquals(
+            listOf("java.lang.StringBuilder", "java.lang.String"),
+            facts.jvmClassLoads.map { it.target }
+        )
+    }
+
+    @Test
+    fun collects_jvm_create_proxy_loads_from_direct_aliased_and_realiased_calls() {
+        val facts = collectFacts(
+            path = "pkg/runtime.lua",
+            source = """
+                local createProxy = luajava.createProxy
+                local create = createProxy
+                local listener = create("java.lang.Runnable", {})
+                local proxy = luajava.createProxy("java.util.Comparator", {})
+            """.trimIndent()
+        )
+
+        assertEquals(emptyList(), facts.sourceImports)
+        assertEquals(
+            listOf(
+                DocumentFacts.JvmClassLoadKind.CREATE_PROXY_CALL,
+                DocumentFacts.JvmClassLoadKind.CREATE_PROXY_CALL
+            ),
+            facts.jvmClassLoads.map { it.kind }
+        )
+        assertEquals(
+            listOf("java.lang.Runnable", "java.util.Comparator"),
+            facts.jvmClassLoads.map { it.target }
+        )
+    }
+
+
+    @Test
+    fun collects_jvm_create_proxy_loads_for_all_string_interface_arguments_before_implementation() {
+        val facts = collectFacts(
+            path = "pkg/runtime.lua",
+            source = """
+                local proxy = luajava.createProxy("java.lang.Runnable", "java.util.Comparator", {})
+            """.trimIndent()
+        )
+
+        assertEquals(emptyList(), facts.sourceImports)
+        assertEquals(
+            listOf(
+                DocumentFacts.JvmClassLoadKind.CREATE_PROXY_CALL,
+                DocumentFacts.JvmClassLoadKind.CREATE_PROXY_CALL
+            ),
+            facts.jvmClassLoads.map { it.kind }
+        )
+        assertEquals(
+            listOf("java.lang.Runnable", "java.util.Comparator"),
+            facts.jvmClassLoads.map { it.target }
+        )
+    }
+
+
+    @Test
+    fun collects_jvm_load_lib_loads_from_short_string_calls_with_trailing_member_name_arguments() {
+        val facts = collectFacts(
+            path = "pkg/runtime.lua",
+            source = """
+                local open = luajava.loadLib "java.lang.System", "currentTimeMillis"
+            """.trimIndent()
+        )
+
+        assertEquals(emptyList(), facts.sourceImports)
+        assertEquals(
+            listOf(DocumentFacts.JvmClassLoadKind.LOAD_LIB_CALL),
+            facts.jvmClassLoads.map { it.kind }
+        )
+        assertEquals(
+            listOf("java.lang.System"),
+            facts.jvmClassLoads.map { it.target }
+        )
+    }
+
     @Test
     fun derives_module_name_candidates_from_virtual_path_and_module_call() {
         val facts = collectFacts(

@@ -74,6 +74,32 @@ class DocTypeResolutionTest {
     }
 
     @Test
+    fun resolvesAstColonMethodDocsIntoDeclaredCallableSurface() {
+        val result = bindAndResolve(
+            """
+            local box = {}
+            ---@param self table
+            ---@param value number
+            ---@param label string
+            ---@return string
+            function box:render(value, label)
+                return label
+            end
+            """.trimIndent()
+        )
+
+        val method = result.declarationIndex.declarations.single {
+            it.kind == DeclarationKind.METHOD && it.name == "render"
+        }
+        val methodType = assertIs<FunctionType>(method.declaredType)
+
+        assertEquals(listOf("self", "value", "label"), methodType.parameters.map { it.name })
+        assertEquals(listOf("table", "number", "string"), methodType.parameters.map { it.type.displayName })
+        assertEquals("string", methodType.returnType.displayName)
+        assertEquals(setOf("self", "value", "label"), method.documentation?.resolvedParameterTypes?.keys)
+    }
+
+    @Test
     fun resolvesAliasClassFieldsAndMethodDocForms() {
         val result = bindAndResolve(
             """

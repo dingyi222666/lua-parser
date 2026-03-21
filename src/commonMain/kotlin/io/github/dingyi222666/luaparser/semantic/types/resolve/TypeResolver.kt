@@ -53,6 +53,8 @@ import io.github.dingyi222666.luaparser.semantic.types.syntax.TypeSyntax
 import io.github.dingyi222666.luaparser.semantic.types.syntax.TypeSyntaxParser
 import io.github.dingyi222666.luaparser.semantic.types.syntax.UnionTypeSyntax
 import io.github.dingyi222666.luaparser.semantic.types.syntax.VarargTypeSyntax
+import io.github.dingyi222666.luaparser.semantic.checker.isColonMethodDeclaration
+import io.github.dingyi222666.luaparser.semantic.checker.resolveOwningFunctionDeclaration
 
 class TypeResolver(
     private val docFunctionTypeSyntaxParser: DocFunctionTypeSyntaxParser = DocFunctionTypeSyntaxParser()
@@ -147,12 +149,25 @@ class TypeResolver(
 
         return when (type) {
             is FunctionType -> type.copy(
-                typeParameters = mergeTypeParameters(typeParameters, type.typeParameters)
+                typeParameters = mergeTypeParameters(typeParameters, type.typeParameters),
+                name = FunctionType(
+                    parameters = type.parameters,
+                    returnType = type.returnType,
+                    typeParameters = mergeTypeParameters(typeParameters, type.typeParameters)
+                ).name
             )
 
             is OverloadedFunctionType -> OverloadedFunctionType(
                 callSignatures = type.callSignatures.map { signature ->
-                    signature.copy(typeParameters = mergeTypeParameters(typeParameters, signature.typeParameters))
+                    val mergedTypeParameters = mergeTypeParameters(typeParameters, signature.typeParameters)
+                    signature.copy(
+                        typeParameters = mergedTypeParameters,
+                        name = FunctionType(
+                            parameters = signature.parameters,
+                            returnType = signature.returnType,
+                            typeParameters = mergedTypeParameters
+                        ).name
+                    )
                 }
             )
 
@@ -224,6 +239,9 @@ class TypeResolver(
     }
 
     private fun resolveMethodDeclaration(declaration: BinderDeclaration): BinderDeclaration {
+        val owner = DeclarationOwner.Declaration(declaration.id)
+        val ownedDeclarations = binder.declarationIndex.getOwnedDeclarations(owner)
+        val isColonMethod = isColonMethodDeclaration(binder, declaration)
         val context = TypeResolutionContext.forDeclaration(declaration.id, binder)
         val syntax = declaration.declaredTypeSyntax
             ?: declaration.documentation.findDocTag<MethodTagSyntax>()
@@ -231,11 +249,74 @@ class TypeResolver(
                 ?.let(docFunctionTypeSyntaxParser::parseOrNull)
         val primaryType = syntax?.let { resolveSyntax(it, context) as? FunctionType }
         val overloadTypes = resolveOverloadTypes(declaration, context)
-        val type = combineMethodCallableType(primaryType, overloadTypes)
+
+        val parameters = buildList {
+            if (isColonMethod) {
+                val selfType = declaration.documentation?.docComment?.tags
+                    .orEmpty()
+                    .filterIsInstance<ParamTagSyntax>()
+                    .lastOrNull { it.name == "self" }
+                    ?.typeText
+                    ?.let(::parseNamedTypeText)
+                    ?.let { resolveSyntax(it, context) }
+                    ?: UnknownType
+                add(FunctionParameter(name = "self", type = selfType))
+            }
+
+            addAll(
+                ownedDeclarations
+                    .filter { it.kind == DeclarationKind.PARAMETER }
+                    .map { parameterDeclaration ->
+                        val resolvedParameter = resolveDeclaration(parameterDeclaration.id)
+                        val paramTag = resolvedParameter.findOwningFunctionParamTag()
+                        val isVararg = paramTag?.vararg == true || resolvedParameter.name == "..."
+                        val parameterType = resolvedParameter.declaredType?.let {
+                            if (isVararg && it !is VarargType) VarargType(it) else it
+                        } ?: UnknownType
+                        FunctionParameter(
+                            name = resolvedParameter.name,
+                            type = parameterType,
+                            optional = paramTag?.optional == true,
+                            vararg = isVararg
+                        )
+                    }
+            )
+        }
+
+        val returnTypes = declaration.documentation?.docComment
+            ?.tags
+            .orEmpty()
+            .filterIsInstance<ReturnTagSyntax>()
+            .lastOrNull()
+            ?.typeTexts
+            ?.map(::parseNamedTypeText)
+            ?.map { syntaxNode -> resolveSyntax(syntaxNode, context) }
+            .orEmpty()
+        val returnType = when (returnTypes.size) {
+            0 -> UnknownType
+            1 -> returnTypes.single()
+            else -> MultiReturnType(returnTypes)
+        }
+
+        val inferredPrimaryType = if (primaryType == null && (parameters.isNotEmpty() || returnTypes.isNotEmpty())) {
+            FunctionType(parameters = parameters, returnType = returnType)
+        } else {
+            primaryType
+        }
+        val type = combineMethodCallableType(inferredPrimaryType, overloadTypes)
+        val resolvedParameterTypes = linkedMapOf<String, Type>()
+        if (isColonMethod) {
+            parameters.firstOrNull { it.name == "self" }?.type?.let { resolvedParameterTypes["self"] = it }
+        }
+        ownedDeclarations.filter { it.kind == DeclarationKind.PARAMETER }.forEach { parameter ->
+            resolveDeclaration(parameter.id).declaredType?.let { resolvedParameterTypes[parameter.name] = it }
+        }
         return declaration.copy(
             declaredType = type,
             documentation = declaration.documentation.withResolved(
                 inlineType = type,
+                parameterTypes = resolvedParameterTypes,
+                returnTypes = returnTypes,
                 overloadTypes = overloadTypes
             )
         )

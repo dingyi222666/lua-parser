@@ -221,24 +221,36 @@ internal class DeclarationBinder(
         node: FunctionDeclaration,
         documentation: DeclarationDocumentation?
     ): BinderDeclaration? {
-        val identifier = node.identifier as? Identifier ?: return null
         val owner = DeclarationOwner.Lexical(currentLexicalOwnerNode())
-        val declaration = if (node.isLocal) {
-            functionDeclaration(
+        val declaration = when (val identifier = node.identifier) {
+            is Identifier -> if (node.isLocal) {
+                functionDeclaration(
+                    id = builder.nextDeclarationId(),
+                    name = identifier.name,
+                    owner = owner,
+                    anchorNode = identifier,
+                    documentation = documentation
+                )
+            } else {
+                globalDeclaration(
+                    id = builder.nextDeclarationId(),
+                    name = identifier.name,
+                    owner = owner,
+                    anchorNode = identifier,
+                    documentation = documentation
+                )
+            }
+
+            is MemberExpression -> methodDeclaration(
                 id = builder.nextDeclarationId(),
-                name = identifier.name,
+                name = identifier.identifier.name,
+                origin = DeclarationOrigin.AST,
                 owner = owner,
-                anchorNode = identifier,
+                anchorNode = identifier.identifier,
                 documentation = documentation
             )
-        } else {
-            globalDeclaration(
-                id = builder.nextDeclarationId(),
-                name = identifier.name,
-                owner = owner,
-                anchorNode = identifier,
-                documentation = documentation
-            )
+
+            else -> return null
         }
         return builder.addDeclarationWithSymbol(declaration)
     }

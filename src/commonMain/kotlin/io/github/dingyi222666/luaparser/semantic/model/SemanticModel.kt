@@ -5,6 +5,7 @@ import io.github.dingyi222666.luaparser.parser.ast.node.Position
 import io.github.dingyi222666.luaparser.semantic.api.CompletionItem
 import io.github.dingyi222666.luaparser.semantic.api.Diagnostic
 import io.github.dingyi222666.luaparser.semantic.api.Scope
+import io.github.dingyi222666.luaparser.semantic.api.SignatureHelp
 import io.github.dingyi222666.luaparser.semantic.api.Symbol
 import io.github.dingyi222666.luaparser.semantic.api.TypeInfo
 
@@ -24,6 +25,8 @@ interface SemanticModel {
 
     fun getCompletionsAt(position: Position): List<CompletionItem>
 
+    fun getSignatureHelpAt(position: Position): SignatureHelp?
+
     fun getDiagnostics(): List<Diagnostic>
 
     fun getScopeAt(position: Position): Scope?
@@ -41,6 +44,8 @@ object EmptySemanticModel : SemanticModel {
     override fun getMembers(type: TypeInfo): List<Symbol> = emptyList()
 
     override fun getCompletionsAt(position: Position): List<CompletionItem> = emptyList()
+
+    override fun getSignatureHelpAt(position: Position): SignatureHelp? = null
 
     override fun getDiagnostics(): List<Diagnostic> = emptyList()
 

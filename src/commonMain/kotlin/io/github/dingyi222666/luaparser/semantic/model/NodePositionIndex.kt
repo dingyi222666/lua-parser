@@ -80,6 +80,16 @@ internal class NodePositionIndex(root: BaseASTNode) {
     }
 
     fun findInnermost(position: Position): BaseASTNode? {
+        return entriesAt(position)
+            .map(Entry::node)
+            .firstOrNull()
+    }
+
+    fun findEnclosing(position: Position): List<BaseASTNode> {
+        return entriesAt(position).map(Entry::node)
+    }
+
+    private fun entriesAt(position: Position): List<Entry> {
         return entries
             .asSequence()
             .filter { contains(it.range, position) }
@@ -91,8 +101,7 @@ internal class NodePositionIndex(root: BaseASTNode) {
                     b.order.compareTo(a.order)
                 }
             })
-            .map(Entry::node)
-            .firstOrNull()
+            .toList()
     }
 
     private fun containsNodeRange(range: Range): Boolean {

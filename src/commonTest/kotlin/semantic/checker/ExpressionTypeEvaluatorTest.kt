@@ -9,11 +9,15 @@ import io.github.dingyi222666.luaparser.parser.ast.node.FunctionDeclaration
 import io.github.dingyi222666.luaparser.parser.ast.node.Identifier
 import io.github.dingyi222666.luaparser.parser.ast.node.LambdaDeclaration
 import io.github.dingyi222666.luaparser.parser.ast.node.LocalStatement
+import io.github.dingyi222666.luaparser.semantic.SemanticWorkspaceContext
+import io.github.dingyi222666.luaparser.semantic.WorkspaceImportedSymbol
 import io.github.dingyi222666.luaparser.semantic.binder.BinderPass
 import io.github.dingyi222666.luaparser.semantic.binder.BinderPassResult
+import io.github.dingyi222666.luaparser.semantic.binder.DeclarationKind
 import io.github.dingyi222666.luaparser.semantic.checker.ExpressionTypeEvaluator
 import io.github.dingyi222666.luaparser.semantic.comments.CommentAttachPass
 import io.github.dingyi222666.luaparser.semantic.types.model.FunctionType
+import io.github.dingyi222666.luaparser.semantic.types.model.ModuleType
 import io.github.dingyi222666.luaparser.semantic.types.model.LiteralType
 import io.github.dingyi222666.luaparser.semantic.types.model.MultiReturnType
 import io.github.dingyi222666.luaparser.semantic.types.model.PrimitiveType
@@ -118,6 +122,48 @@ class ExpressionTypeEvaluatorTest {
         val functionType = assertIs<FunctionType>(type)
         assertSame(PrimitiveType.NUMBER, functionType.parameters.single().type)
         assertSame(PrimitiveType.STRING, functionType.returnType)
+    }
+
+    @Test
+    fun implementationInferenceIgnoresDocumentedReturnForDocumentedFunctionDeclaration() {
+        val harness = harness(
+            """
+            ---@param value string
+            ---@return number
+            local function render(value)
+                return 1, 2
+            end
+            """.trimIndent()
+        )
+
+        val function = namedFunction(harness.chunk, "render")
+        val type = harness.evaluator.inferImplementationFunctionType(function)
+        val functionType = assertIs<FunctionType>(type)
+        assertEquals("value", functionType.parameters.single().name)
+        assertEquals("string", functionType.parameters.single().type.displayName)
+        assertEquals("1, 2", functionType.returnType.displayName)
+    }
+
+    @Test
+    fun implementationInferenceUsesBodyReturnForColonMethodDeclaration() {
+        val harness = harness(
+            """
+            local box = {}
+            ---@param self table
+            ---@param value number
+            ---@param label string
+            function box:render(value, label)
+                return label
+            end
+            """.trimIndent()
+        )
+
+        val function = namedFunction(harness.chunk, "render")
+        val type = harness.evaluator.inferImplementationFunctionType(function)
+        val functionType = assertIs<FunctionType>(type)
+        assertEquals(listOf("value", "label"), functionType.parameters.map { it.name })
+        assertEquals(listOf("number", "string"), functionType.parameters.map { it.type.displayName })
+        assertEquals("string", functionType.returnType.displayName)
     }
 
     @Test
@@ -226,7 +272,509 @@ class ExpressionTypeEvaluatorTest {
     }
 
     @Test
-    fun callExpressionReturnsAnnotatedFunctionReturnTypeAndSelectsOverload() {
+    fun resolvesShortStringCallImportAndBindClassTargetsFromWorkspaceContext() {
+        val importModule = ModuleType(moduleName = "Locale")
+        val bindModule = ModuleType(moduleName = "Context")
+        val harness = harness(
+            "local bindClass = luajava.bindClass\nlocal import = require \"import\"\nlocal Context = bindClass \"android.content.Context\"\nlocal Locale = import \"java.util.Locale\"",
+            SemanticWorkspaceContext(
+                resolveImportTarget = { target ->
+                    when (target) {
+                        "android.content.Context" -> WorkspaceImportedSymbol(
+                            alias = "Context",
+                            moduleName = "Context",
+                            providerPath = io.github.dingyi222666.luaparser.semantic.workspace.VirtualPath.of("__jvm__/classes/android/content/Context.lua"),
+                            moduleType = bindModule
+                        )
+                        "java.util.Locale" -> WorkspaceImportedSymbol(
+                            alias = "Locale",
+                            moduleName = "Locale",
+                            providerPath = io.github.dingyi222666.luaparser.semantic.workspace.VirtualPath.of("__jvm__/classes/java/util/Locale.lua"),
+                            moduleType = importModule
+                        )
+                        else -> null
+                    }
+                }
+            )
+        )
+
+        val contextType = harness.evaluator.evaluate(localInitializer(harness.chunk, "Context"))
+        val localeType = harness.evaluator.evaluate(localInitializer(harness.chunk, "Locale"))
+
+        assertSame(bindModule, contextType)
+        assertSame(importModule, localeType)
+    }
+
+    @Test
+    fun resolvesRealiasedImportAndBindClassTargetsFromWorkspaceContext() {
+        val importModule = ModuleType(moduleName = "Locale")
+        val bindModule = ModuleType(moduleName = "Context")
+        val harness = harness(
+            "local bindClass = luajava.bindClass\nlocal bind = bindClass\nlocal againBind = bind\nlocal import = require(\"import\")\nlocal load = import\nlocal againLoad = load\nlocal Context = againBind \"android.content.Context\"\nlocal Locale = againLoad \"java.util.Locale\"",
+            SemanticWorkspaceContext(
+                resolveImportTarget = { target ->
+                    when (target) {
+                        "android.content.Context" -> WorkspaceImportedSymbol(
+                            alias = "Context",
+                            moduleName = "Context",
+                            providerPath = io.github.dingyi222666.luaparser.semantic.workspace.VirtualPath.of("__jvm__/classes/android/content/Context.lua"),
+                            moduleType = bindModule
+                        )
+                        "java.util.Locale" -> WorkspaceImportedSymbol(
+                            alias = "Locale",
+                            moduleName = "Locale",
+                            providerPath = io.github.dingyi222666.luaparser.semantic.workspace.VirtualPath.of("__jvm__/classes/java/util/Locale.lua"),
+                            moduleType = importModule
+                        )
+                        else -> null
+                    }
+                }
+            )
+        )
+
+        val contextType = harness.evaluator.evaluate(localInitializer(harness.chunk, "Context"))
+        val localeType = harness.evaluator.evaluate(localInitializer(harness.chunk, "Locale"))
+
+        assertSame(bindModule, contextType)
+        assertSame(importModule, localeType)
+    }
+
+    @Test
+    fun resolvesNewInstanceCallsToWorkspaceBackedJvmClassTypes() {
+        val builderModule = ModuleType(
+            moduleName = "StringBuilder",
+            fields = mapOf(
+                "__class" to TableType(
+                    fields = mapOf("length" to PrimitiveType.NUMBER),
+                    methods = mapOf("append" to FunctionType(returnType = PrimitiveType.STRING))
+                )
+            )
+        )
+        val harness = harness(
+            "local newInstance = luajava.newInstance\nlocal create = newInstance\nlocal builder = create(\"java.lang.StringBuilder\")",
+            SemanticWorkspaceContext(
+                resolveImportTarget = { target ->
+                    when (target) {
+                        "java.lang.StringBuilder" -> WorkspaceImportedSymbol(
+                            alias = "StringBuilder",
+                            moduleName = "StringBuilder",
+                            providerPath = io.github.dingyi222666.luaparser.semantic.workspace.VirtualPath.of("__jvm__/classes/java/lang/StringBuilder.lua"),
+                            moduleType = builderModule
+                        )
+                        else -> null
+                    }
+                }
+            )
+        )
+
+        val builderType = harness.evaluator.evaluate(localInitializer(harness.chunk, "builder"))
+        val instanceType = assertIs<TableType>(builderType)
+        assertSame(PrimitiveType.NUMBER, instanceType.fields["length"])
+        val appendType = assertIs<FunctionType>(instanceType.methods.getValue("append"))
+        assertSame(PrimitiveType.STRING, appendType.returnType)
+    }
+
+    @Test
+    fun resolvesShortStringCallNewInstanceTargetsFromWorkspaceContext() {
+        val stringModule = ModuleType(
+            moduleName = "String",
+            fields = mapOf(
+                "__class" to TableType(fields = mapOf("length" to PrimitiveType.NUMBER))
+            )
+        )
+        val harness = harness(
+            "local text = luajava.newInstance \"java.lang.String\"",
+            SemanticWorkspaceContext(
+                resolveImportTarget = { target ->
+                    when (target) {
+                        "java.lang.String" -> WorkspaceImportedSymbol(
+                            alias = "String",
+                            moduleName = "String",
+                            providerPath = io.github.dingyi222666.luaparser.semantic.workspace.VirtualPath.of("__jvm__/classes/java/lang/String.lua"),
+                            moduleType = stringModule
+                        )
+                        else -> null
+                    }
+                }
+            )
+        )
+
+        val instanceType = assertIs<TableType>(harness.evaluator.evaluate(localInitializer(harness.chunk, "text")))
+        assertSame(PrimitiveType.NUMBER, instanceType.fields["length"])
+    }
+
+    @Test
+    fun resolvesCreateProxyCallsToWorkspaceBackedJvmInterfaceTypes() {
+        val runnableModule = ModuleType(
+            moduleName = "Runnable",
+            fields = mapOf(
+                "__class" to TableType(methods = mapOf("run" to FunctionType(returnType = PrimitiveType.NIL)))
+            )
+        )
+        val harness = harness(
+            "local createProxy = luajava.createProxy\nlocal proxy = createProxy(\"java.lang.Runnable\", {})",
+            SemanticWorkspaceContext(
+                resolveImportTarget = { target ->
+                    when (target) {
+                        "java.lang.Runnable" -> WorkspaceImportedSymbol(
+                            alias = "Runnable",
+                            moduleName = "Runnable",
+                            providerPath = io.github.dingyi222666.luaparser.semantic.workspace.VirtualPath.of("__jvm__/classes/java/lang/Runnable.lua"),
+                            moduleType = runnableModule
+                        )
+                        else -> null
+                    }
+                }
+            )
+        )
+
+        val proxyType = assertIs<TableType>(harness.evaluator.evaluate(localInitializer(harness.chunk, "proxy")))
+        val runType = assertIs<FunctionType>(proxyType.methods.getValue("run"))
+        assertSame(PrimitiveType.NIL, runType.returnType)
+    }
+
+    @Test
+    fun resolvesCreateProxyCallsToIntersectionOfWorkspaceBackedJvmInterfaceTypes() {
+        val runnableClass = TableType(methods = mapOf("run" to FunctionType(returnType = PrimitiveType.NIL)))
+        val comparatorClass = TableType(methods = mapOf("compare" to FunctionType(returnType = PrimitiveType.NUMBER)))
+        val harness = harness(
+            "local proxy = luajava.createProxy(\"java.lang.Runnable\", \"java.util.Comparator\", {})",
+            SemanticWorkspaceContext(
+                resolveImportTarget = { target ->
+                    when (target) {
+                        "java.lang.Runnable" -> WorkspaceImportedSymbol(
+                            alias = "Runnable",
+                            moduleName = "Runnable",
+                            providerPath = io.github.dingyi222666.luaparser.semantic.workspace.VirtualPath.of("__jvm__/classes/java/lang/Runnable.lua"),
+                            moduleType = ModuleType(moduleName = "Runnable", fields = mapOf("__class" to runnableClass))
+                        )
+                        "java.util.Comparator" -> WorkspaceImportedSymbol(
+                            alias = "Comparator",
+                            moduleName = "Comparator",
+                            providerPath = io.github.dingyi222666.luaparser.semantic.workspace.VirtualPath.of("__jvm__/classes/java/util/Comparator.lua"),
+                            moduleType = ModuleType(moduleName = "Comparator", fields = mapOf("__class" to comparatorClass))
+                        )
+                        else -> null
+                    }
+                }
+            )
+        )
+
+        val proxyType = assertIs<io.github.dingyi222666.luaparser.semantic.types.model.IntersectionType>(
+            harness.evaluator.evaluate(localInitializer(harness.chunk, "proxy"))
+        )
+        assertEquals(setOf(runnableClass, comparatorClass), proxyType.types)
+    }
+
+    @Test
+    fun resolvesLoadLibCallsToWorkspaceBackedJvmStaticMembers() {
+        val systemModule = ModuleType(
+            moduleName = "System",
+            methods = mapOf("currentTimeMillis" to FunctionType(returnType = PrimitiveType.NUMBER))
+        )
+        val harness = harness(
+            "local loadLib = luajava.loadLib\nlocal load = loadLib\nlocal currentTimeMillis = load(\"java.lang.System\", \"currentTimeMillis\")",
+            SemanticWorkspaceContext(
+                resolveImportTarget = { target ->
+                    when (target) {
+                        "java.lang.System" -> WorkspaceImportedSymbol(
+                            alias = "System",
+                            moduleName = "System",
+                            providerPath = io.github.dingyi222666.luaparser.semantic.workspace.VirtualPath.of("__jvm__/classes/java/lang/System.lua"),
+                            moduleType = systemModule
+                        )
+                        else -> null
+                    }
+                }
+            )
+        )
+
+        val memberType = assertIs<FunctionType>(harness.evaluator.evaluate(localInitializer(harness.chunk, "currentTimeMillis")))
+        assertSame(PrimitiveType.NUMBER, memberType.returnType)
+    }
+
+    @Test
+    fun resolvesShortStringLoadLibTargetsFromWorkspaceContext() {
+        val localeModule = ModuleType(
+            moduleName = "Locale",
+            methods = mapOf("getDefault" to FunctionType(returnType = PrimitiveType.STRING))
+        )
+        val harness = harness(
+            "local getDefault = luajava.loadLib \"java.util.Locale\", \"getDefault\"",
+            SemanticWorkspaceContext(
+                resolveImportTarget = { target ->
+                    when (target) {
+                        "java.util.Locale" -> WorkspaceImportedSymbol(
+                            alias = "Locale",
+                            moduleName = "Locale",
+                            providerPath = io.github.dingyi222666.luaparser.semantic.workspace.VirtualPath.of("__jvm__/classes/java/util/Locale.lua"),
+                            moduleType = localeModule
+                        )
+                        else -> null
+                    }
+                }
+            )
+        )
+
+        val memberType = assertIs<FunctionType>(harness.evaluator.evaluate(localInitializer(harness.chunk, "getDefault")))
+        assertSame(PrimitiveType.STRING, memberType.returnType)
+    }
+
+    @Test
+    fun resolvesConstructorStyleCallsOnWorkspaceBackedJvmModulesToInstanceTypes() {
+        val builderModule = ModuleType(
+            moduleName = "StringBuilder",
+            fields = mapOf(
+                "__class" to TableType(
+                    fields = mapOf("length" to PrimitiveType.NUMBER),
+                    methods = mapOf("append" to FunctionType(returnType = PrimitiveType.STRING))
+                )
+            )
+        )
+        val harness = harness(
+            "local builder = StringBuilder()",
+            SemanticWorkspaceContext(
+                resolveImportTarget = { target ->
+                    when (target) {
+                        "java.lang.StringBuilder" -> WorkspaceImportedSymbol(
+                            alias = "StringBuilder",
+                            moduleName = "StringBuilder",
+                            providerPath = io.github.dingyi222666.luaparser.semantic.workspace.VirtualPath.of("__jvm__/classes/java/lang/StringBuilder.lua"),
+                            moduleType = builderModule
+                        )
+                        else -> null
+                    }
+                },
+                importedSymbols = mapOf(
+                    "StringBuilder" to WorkspaceImportedSymbol(
+                        alias = "StringBuilder",
+                        moduleName = "StringBuilder",
+                        providerPath = io.github.dingyi222666.luaparser.semantic.workspace.VirtualPath.of("__jvm__/classes/java/lang/StringBuilder.lua"),
+                        moduleType = builderModule
+                    )
+                )
+            )
+        )
+
+        val builderType = harness.evaluator.evaluate(localInitializer(harness.chunk, "builder"))
+        val instanceType = assertIs<TableType>(builderType)
+        assertSame(PrimitiveType.NUMBER, instanceType.fields["length"])
+        val appendType = assertIs<FunctionType>(instanceType.methods.getValue("append"))
+        assertSame(PrimitiveType.STRING, appendType.returnType)
+    }
+
+    @Test
+    fun resolvesTableImportCallsToArrayOfImportedModuleTypes() {
+        val localeModule = ModuleType(moduleName = "Locale")
+        val contextModule = ModuleType(moduleName = "Context")
+        val harness = harness(
+            "local import = require(\"import\")\nlocal classes = import({ \"java.util.Locale\", \"android.content.Context\" })",
+            SemanticWorkspaceContext(
+                resolveImportTarget = { target ->
+                    when (target) {
+                        "java.util.Locale" -> WorkspaceImportedSymbol(
+                            alias = "Locale",
+                            moduleName = "Locale",
+                            providerPath = io.github.dingyi222666.luaparser.semantic.workspace.VirtualPath.of("__jvm__/classes/java/util/Locale.lua"),
+                            moduleType = localeModule
+                        )
+                        "android.content.Context" -> WorkspaceImportedSymbol(
+                            alias = "Context",
+                            moduleName = "Context",
+                            providerPath = io.github.dingyi222666.luaparser.semantic.workspace.VirtualPath.of("__jvm__/classes/android/content/Context.lua"),
+                            moduleType = contextModule
+                        )
+                        else -> null
+                    }
+                }
+            )
+        )
+
+        val type = assertIs<io.github.dingyi222666.luaparser.semantic.types.model.ArrayType>(
+            harness.evaluator.evaluate(localInitializer(harness.chunk, "classes"))
+        )
+        val elementType = assertIs<UnionType>(type.elementType)
+        assertEquals(setOf(localeModule, contextModule), elementType.types)
+    }
+
+
+    @Test
+    fun resolvesWildcardImportCallToAndroidLuaStylePackageModule() {
+        val textViewModule = ModuleType(moduleName = "TextView")
+        val packageModule = ModuleType(
+            moduleName = "android.widget",
+            fields = mapOf("TextView" to textViewModule),
+            indexSignature = ModuleType.IndexSignature(PrimitiveType.STRING, UnknownType)
+        )
+        val harness = harness(
+            "local import = require(\"import\")\nlocal widget = import(\"android.widget.*\")\nlocal TextView = widget.TextView",
+            SemanticWorkspaceContext(
+                resolveImportTarget = { target ->
+                    if (target == "android.widget.*") {
+                        WorkspaceImportedSymbol(
+                            alias = "android.widget",
+                            moduleName = "android.widget",
+                            providerPath = io.github.dingyi222666.luaparser.semantic.workspace.VirtualPath.of("__jvm__/packages/android/widget.lua"),
+                            moduleType = packageModule
+                        )
+                    } else {
+                        null
+                    }
+                }
+            )
+        )
+
+        val widgetType = assertIs<ModuleType>(harness.evaluator.evaluate(localInitializer(harness.chunk, "widget")))
+        val textViewType = harness.evaluator.evaluate(localInitializer(harness.chunk, "TextView"))
+
+        assertEquals("android.widget", widgetType.moduleName)
+        assertSame(packageModule, widgetType)
+        assertSame(textViewModule, textViewType)
+    }
+
+    @Test
+    fun resolvesDexPrefixedWildcardImportTargetsToAndroidLuaStylePackageModule() {
+        val textViewModule = ModuleType(moduleName = "TextView")
+        val packageModule = ModuleType(
+            moduleName = "android.widget",
+            fields = mapOf("TextView" to textViewModule),
+            indexSignature = ModuleType.IndexSignature(PrimitiveType.STRING, UnknownType)
+        )
+        val harness = harness(
+            "local import = require(\"import\")\nlocal widget = import(\"plugin.dex:android.widget.*\")\nlocal TextView = widget.TextView",
+            SemanticWorkspaceContext(
+                resolveImportTarget = { target ->
+                    if (target == "plugin.dex:android.widget.*") {
+                        WorkspaceImportedSymbol(
+                            alias = "android.widget",
+                            moduleName = "android.widget",
+                            providerPath = io.github.dingyi222666.luaparser.semantic.workspace.VirtualPath.of("__jvm__/packages/android/widget.lua"),
+                            moduleType = packageModule
+                        )
+                    } else {
+                        null
+                    }
+                }
+            )
+        )
+
+        val widgetType = assertIs<ModuleType>(harness.evaluator.evaluate(localInitializer(harness.chunk, "widget")))
+        val textViewType = harness.evaluator.evaluate(localInitializer(harness.chunk, "TextView"))
+
+        assertEquals("android.widget", widgetType.moduleName)
+        assertSame(packageModule, widgetType)
+        assertSame(textViewModule, textViewType)
+    }
+
+    @Test
+    fun resolvesRealiasedWildcardImportTargetsToAndroidLuaStylePackageModule() {
+        val textViewModule = ModuleType(moduleName = "TextView")
+        val packageModule = ModuleType(
+            moduleName = "android.widget",
+            fields = mapOf("TextView" to textViewModule),
+            indexSignature = ModuleType.IndexSignature(PrimitiveType.STRING, UnknownType)
+        )
+        val harness = harness(
+            "local import = require(\"import\")\nlocal load = import\nlocal again = load\nlocal widget = again \"android.widget.*\"\nlocal TextView = widget.TextView",
+            SemanticWorkspaceContext(
+                resolveImportTarget = { target ->
+                    if (target == "android.widget.*") {
+                        WorkspaceImportedSymbol(
+                            alias = "android.widget",
+                            moduleName = "android.widget",
+                            providerPath = io.github.dingyi222666.luaparser.semantic.workspace.VirtualPath.of("__jvm__/packages/android/widget.lua"),
+                            moduleType = packageModule
+                        )
+                    } else {
+                        null
+                    }
+                }
+            )
+        )
+
+        val widgetType = assertIs<ModuleType>(harness.evaluator.evaluate(localInitializer(harness.chunk, "widget")))
+        val textViewType = harness.evaluator.evaluate(localInitializer(harness.chunk, "TextView"))
+
+        assertEquals("android.widget", widgetType.moduleName)
+        assertSame(packageModule, widgetType)
+        assertSame(textViewModule, textViewType)
+    }
+
+    @Test
+    fun resolvesDexPrefixedImportTargetsFromWorkspaceContext() {
+        val contextModule = ModuleType(moduleName = "Context")
+        val harness = harness(
+            "local import = require(\"import\")\nlocal Context = import(\"plugin.dex:android.content.Context\")",
+            SemanticWorkspaceContext(
+                resolveImportTarget = { target ->
+                    if (target == "plugin.dex:android.content.Context") {
+                        WorkspaceImportedSymbol(
+                            alias = "Context",
+                            moduleName = "Context",
+                            providerPath = io.github.dingyi222666.luaparser.semantic.workspace.VirtualPath.of("__jvm__/classes/android/content/Context.lua"),
+                            moduleType = contextModule
+                        )
+                    } else {
+                        null
+                    }
+                }
+            )
+        )
+
+        val contextType = harness.evaluator.evaluate(localInitializer(harness.chunk, "Context"))
+        assertSame(contextModule, contextType)
+    }
+
+    @Test
+    fun localDeclarationShadowsWorkspaceImportedSymbolWithSameAlias() {
+        val importedString = ModuleType(moduleName = "String")
+        val harness = harness(
+            "local String = 1\nlocal current = String",
+            SemanticWorkspaceContext(
+                importedSymbols = mapOf(
+                    "String" to WorkspaceImportedSymbol(
+                        alias = "String",
+                        moduleName = "String",
+                        providerPath = io.github.dingyi222666.luaparser.semantic.workspace.VirtualPath.of("__jvm__/classes/java/lang/String.lua"),
+                        moduleType = importedString
+                    )
+                )
+            )
+        )
+
+        val type = harness.evaluator.evaluate(localInitializer(harness.chunk, "current"))
+        val literal = assertIs<LiteralType>(type)
+        assertSame(PrimitiveType.NUMBER, literal.baseType)
+        assertEquals("1", literal.displayName)
+    }
+    @Test
+    fun localDeclarationShadowsResolveImportedSymbolLookup() {
+        val harness = harness(
+            "local Locale = 1\nlocal current = Locale",
+            SemanticWorkspaceContext(
+                resolveImportedSymbol = { name ->
+                    if (name == "Locale") {
+                        WorkspaceImportedSymbol(
+                            alias = "Locale",
+                            moduleName = "Locale",
+                            providerPath = io.github.dingyi222666.luaparser.semantic.workspace.VirtualPath.of("__jvm__/classes/java/util/Locale.lua"),
+                            moduleType = ModuleType(moduleName = "Locale")
+                        )
+                    } else {
+                        null
+                    }
+                }
+            )
+        )
+
+        val type = harness.evaluator.evaluate(localInitializer(harness.chunk, "current"))
+        val literal = assertIs<LiteralType>(type)
+        assertSame(PrimitiveType.NUMBER, literal.baseType)
+        assertEquals("1", literal.displayName)
+    }
+
+    @Test
+    fun overload_calls_choose_expected_branch() {
         val harness = harness(
             """
             ---@overload fun(value: string): string
@@ -409,14 +957,37 @@ class ExpressionTypeEvaluatorTest {
         assertEquals(setOf("1", "\"x\""), literalMembers)
     }
 
+    @Test
+    fun type_resolver_preserves_function_display_name_when_attaching_generic_type_parameters() {
+        val chunk = parser.parse(
+            """
+            ---@generic T
+            ---@param value T
+            ---@return T
+            local function identity(value)
+                return value
+            end
+            """.trimIndent()
+        )
+        val binder = BinderPass().bind(chunk, CommentAttachPass().attach(chunk))
+        val resolved = TypeResolver().resolve(binder)
+        val declaration = resolved.declarationIndex.declarations.first { it.name == "identity" && it.kind == DeclarationKind.FUNCTION }
+
+        assertEquals("fun<T>(value: T): T", declaration.declaredType?.displayName)
+    }
+
     private fun harness(source: String): Harness {
+        return harness(source, SemanticWorkspaceContext())
+    }
+
+    private fun harness(source: String, workspaceContext: SemanticWorkspaceContext): Harness {
         val chunk = parser.parse(source)
         val binder = BinderPass().bind(chunk, CommentAttachPass().attach(chunk))
         val resolved = TypeResolver().resolve(binder)
         return Harness(
             chunk = chunk,
             binder = resolved,
-            evaluator = ExpressionTypeEvaluator(resolved)
+            evaluator = ExpressionTypeEvaluator(resolved, workspaceContext)
         )
     }
 
@@ -429,7 +1000,13 @@ class ExpressionTypeEvaluatorTest {
     private fun namedFunction(chunk: ChunkNode, name: String): FunctionDeclaration {
         return findStatements(chunk.body)
             .filterIsInstance<FunctionDeclaration>()
-            .first { (it.identifier as? Identifier)?.name == name }
+            .first { function ->
+                when (val identifier = function.identifier) {
+                    is Identifier -> identifier.name == name
+                    is io.github.dingyi222666.luaparser.parser.ast.node.MemberExpression -> identifier.identifier.name == name
+                    else -> false
+                }
+            }
     }
 
     private fun findLocalStatement(block: BlockNode, name: String): LocalStatement {

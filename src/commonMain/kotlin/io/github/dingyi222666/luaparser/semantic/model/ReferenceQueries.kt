@@ -1,7 +1,10 @@
 package io.github.dingyi222666.luaparser.semantic.model
 
 import io.github.dingyi222666.luaparser.parser.ast.node.BaseASTNode
+import io.github.dingyi222666.luaparser.parser.ast.node.ConstantNode
+import io.github.dingyi222666.luaparser.parser.ast.node.ExpressionNode
 import io.github.dingyi222666.luaparser.parser.ast.node.Identifier
+import io.github.dingyi222666.luaparser.parser.ast.node.IndexExpression
 import io.github.dingyi222666.luaparser.parser.ast.node.MemberExpression
 import io.github.dingyi222666.luaparser.parser.ast.node.Position
 import io.github.dingyi222666.luaparser.semantic.SemanticWorkspaceContext
@@ -189,7 +192,7 @@ internal class ReferenceQueries(
         }
 
         val normalizedBase = TypeExpansion.expandForMemberSurface(baseType, lexicalScopeId, binder)
-        val workspaceMember = workspaceModuleMember(normalizedBase, expression.identifier.name)
+        val workspaceMember = workspaceModuleMember(expression.base, normalizedBase, expression.identifier.name)
         val declaration = findBackingMemberDeclaration(normalizedBase, expression.identifier.name, resolution.accessKind)
         return declaration?.let { adapters.toDeclarationSymbol(it, resolution.type, resolution.type) }
             ?: workspaceMember?.let {
@@ -236,11 +239,11 @@ internal class ReferenceQueries(
 
             is ModuleType -> buildMap {
                 normalized.fields.forEach { (name, memberType) ->
-                    val workspaceMember = workspaceModuleMember(normalized, name)
+                    val workspaceMember = workspaceModuleMember(null, normalized, name)
                     put(name, MemberSurface(name, memberType, MemberAccessKind.FIELD, syntheticRange = workspaceMember?.member?.range, syntheticHandle = workspaceMember?.handle))
                 }
                 normalized.methods.forEach { (name, memberType) ->
-                    val workspaceMember = workspaceModuleMember(normalized, name)
+                    val workspaceMember = workspaceModuleMember(null, normalized, name)
                     put(name, MemberSurface(name, memberType, MemberAccessKind.METHOD, syntheticRange = workspaceMember?.member?.range, syntheticHandle = workspaceMember?.handle))
                 }
             }
@@ -476,10 +479,41 @@ internal class ReferenceQueries(
 
     private fun importedSymbolsAt(position: Position): Map<String, WorkspaceImportedSymbol> {
         val imported = linkedMapOf<String, WorkspaceImportedSymbol>()
+        val visibleDeclarations = visibleValueDeclarationsWithoutImports(position)
         workspaceContext.importedSymbols.forEach { (alias, symbol) ->
-            imported[alias] = symbol
+            val localDeclaration = visibleDeclarations
+                .firstOrNull { declaration -> declaration.name == alias }
+            if (localDeclaration == null) {
+                imported[alias] = symbol
+            }
         }
         return imported
+    }
+
+    private fun visibleValueDeclarationsWithoutImports(position: Position): List<BinderDeclaration> {
+        val scope = binder.positionQueries.getScopeAt(position) ?: return emptyList()
+        val results = mutableListOf<BinderDeclaration>()
+        val seenNames = linkedSetOf<String>()
+
+        var current: Scope? = scope
+        while (current != null) {
+            current.declarationIds
+                .asReversed()
+                .mapNotNull(binder.declarationIndex::getDeclaration)
+                .forEach { declaration ->
+                    if (
+                        declaration.kind.namespace == DeclarationNamespace.VALUE &&
+                        declaration.name !in seenNames &&
+                        isVisibleAt(declaration, position)
+                    ) {
+                        seenNames += declaration.name
+                        results += declaration
+                    }
+                }
+            current = current.parentId?.let(binder.scopeGraph::getScope)
+        }
+
+        return results
     }
 
     private fun importedSymbolAt(position: Position, node: BaseASTNode?): WorkspaceImportedSymbol? {
@@ -487,8 +521,14 @@ internal class ReferenceQueries(
             is Identifier -> node.name
             else -> null
         } ?: return null
-        return importedSymbolsAt(position)[identifier]
-            ?: workspaceContext.resolveImportedSymbol?.invoke(identifier)
+        val visibleImported = importedSymbolsAt(position)[identifier]
+        if (visibleImported != null) {
+            return visibleImported
+        }
+        if (visibleValueDeclarationsWithoutImports(position).any { it.name == identifier }) {
+            return null
+        }
+        return workspaceContext.resolveImportedSymbol?.invoke(identifier)
     }
 
     private fun toImportedSymbol(imported: WorkspaceImportedSymbol): Symbol {
@@ -541,12 +581,58 @@ internal class ReferenceQueries(
     }
 
     private fun workspaceModuleMember(
+        baseExpression: ExpressionNode?,
         baseType: Type,
         memberName: String
     ): io.github.dingyi222666.luaparser.semantic.workspace.WorkspaceModuleResolver.ResolvedExportMember? {
-        val moduleType = baseType as? ModuleType ?: return null
         val resolver = workspaceContext.workspaceResolver ?: return null
-        val provider = resolver.activeProvider(moduleType.moduleName) ?: return null
-        return resolver.exportedMember(provider.path, memberName)
+        return when (baseType) {
+            is ModuleType -> {
+                val provider = resolver.activeProvider(baseType.moduleName) ?: return null
+                val exportPath = moduleExportPath(baseExpression, provider.path)?.plus(memberName) ?: listOf(memberName)
+                resolver.exportedMember(provider.path, exportPath)
+                    ?: resolver.exportedMember(provider.path, memberName)
+            }
+            is ClassType -> {
+                val provider = resolver.activeProvider(baseType.name.substringAfterLast('.')) ?: return null
+                resolver.exportedMember(provider.path, listOf("__class", memberName))
+            }
+            is IntersectionType -> baseType.types.firstNotNullOfOrNull { branch ->
+                workspaceModuleMember(baseExpression, branch, memberName)
+            }
+            is UnionType -> {
+                val matches = baseType.types.mapNotNull { branch ->
+                    workspaceModuleMember(baseExpression, branch, memberName)
+                }
+                matches.distinctBy { it.handle }.singleOrNull()
+            }
+            else -> null
+        }
+    }
+
+    private fun moduleExportPath(
+        expression: ExpressionNode?,
+        providerPath: io.github.dingyi222666.luaparser.semantic.workspace.VirtualPath
+    ): List<String>? {
+        return when (expression) {
+            is Identifier -> null
+            is MemberExpression -> {
+                val basePath = moduleExportPath(expression.base, providerPath) ?: emptyList()
+                val export = workspaceModuleMember(expression.base, evaluator.evaluate(expression.base), expression.identifier.name)
+                when {
+                    export?.providerPath == providerPath -> export.member.exportPath
+                    else -> basePath + expression.identifier.name
+                }
+            }
+            is IndexExpression -> {
+                val key = (expression.index as? ConstantNode)
+                    ?.takeIf { it.constantType == ConstantNode.TYPE.STRING }
+                    ?.stringOf()
+                    ?: return null
+                val basePath = moduleExportPath(expression.base, providerPath) ?: emptyList()
+                basePath + key
+            }
+            else -> null
+        }
     }
 }

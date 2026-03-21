@@ -27,4 +27,20 @@ class AST2LuaRoundTripTest {
             assertEquals(renderShape(initial), renderShape(reparsed), sample)
         }
     }
+
+    @Test
+    fun roundTripsAndroLuaCompactCallsAndSwitchStatements() {
+        val samples = listOf(
+            "return luajava.loadLib \"java.util.Locale\", \"getDefault\"",
+            "return print { value = 1, nested = { 2, 3 } }",
+            "switch expr do case 1, 2 then call() default other() end"
+        )
+
+        samples.forEach { sample ->
+            val initial = parser.parse(sample)
+            val reparsed = parser.parse(printer.asCode(initial))
+
+            assertEquals(renderShape(initial), renderShape(reparsed), sample)
+        }
+    }
 }

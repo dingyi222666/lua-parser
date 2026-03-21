@@ -5,6 +5,10 @@ import io.github.dingyi222666.luaparser.parser.ast.node.Position
 import io.github.dingyi222666.luaparser.parser.ast.node.Range
 import io.github.dingyi222666.luaparser.semantic.api.CompletionItemKind
 import io.github.dingyi222666.luaparser.semantic.api.DiagnosticSeverity
+import io.github.dingyi222666.luaparser.semantic.binder.BinderDeclaration
+import io.github.dingyi222666.luaparser.semantic.binder.DeclarationKind
+import io.github.dingyi222666.luaparser.semantic.binder.DeclarationOrigin
+import io.github.dingyi222666.luaparser.semantic.binder.DeclarationOwner
 import io.github.dingyi222666.luaparser.semantic.workspace.LuaWorkspaceInput
 import io.github.dingyi222666.luaparser.semantic.workspace.LuaWorkspaceQueryFacade
 import io.github.dingyi222666.luaparser.semantic.workspace.VirtualPath
@@ -12,6 +16,7 @@ import io.github.dingyi222666.luaparser.semantic.workspace.WorkspaceSnapshot
 import org.eclipse.lsp4j.CompletionItem
 import org.eclipse.lsp4j.CompletionList
 import org.eclipse.lsp4j.CompletionOptions
+import org.eclipse.lsp4j.DeclarationParams
 import org.eclipse.lsp4j.DefinitionOptions
 import org.eclipse.lsp4j.DefinitionParams
 import org.eclipse.lsp4j.Diagnostic
@@ -19,6 +24,9 @@ import org.eclipse.lsp4j.DidChangeTextDocumentParams
 import org.eclipse.lsp4j.DidCloseTextDocumentParams
 import org.eclipse.lsp4j.DidOpenTextDocumentParams
 import org.eclipse.lsp4j.DidSaveTextDocumentParams
+import org.eclipse.lsp4j.DocumentHighlight
+import org.eclipse.lsp4j.DocumentHighlightKind
+import org.eclipse.lsp4j.DocumentHighlightParams
 import org.eclipse.lsp4j.Hover
 import org.eclipse.lsp4j.HoverOptions
 import org.eclipse.lsp4j.HoverParams
@@ -28,15 +36,22 @@ import org.eclipse.lsp4j.InsertTextFormat
 import org.eclipse.lsp4j.Location
 import org.eclipse.lsp4j.MarkupContent
 import org.eclipse.lsp4j.MarkupKind
+import org.eclipse.lsp4j.ParameterInformation
 import org.eclipse.lsp4j.PublishDiagnosticsParams
 import org.eclipse.lsp4j.ReferenceOptions
 import org.eclipse.lsp4j.ReferenceParams
 import org.eclipse.lsp4j.ServerCapabilities
+import org.eclipse.lsp4j.SignatureHelp
+import org.eclipse.lsp4j.SignatureHelpOptions
+import org.eclipse.lsp4j.SignatureHelpParams
+import org.eclipse.lsp4j.SignatureInformation
+import org.eclipse.lsp4j.SymbolInformation
 import org.eclipse.lsp4j.TextDocumentContentChangeEvent
 import org.eclipse.lsp4j.TextDocumentIdentifier
 import org.eclipse.lsp4j.TextDocumentItem
 import org.eclipse.lsp4j.TextDocumentSyncKind
 import org.eclipse.lsp4j.WorkspaceFolder
+import org.eclipse.lsp4j.WorkspaceSymbolOptions
 import org.eclipse.lsp4j.jsonrpc.messages.Either
 import java.net.URI
 
@@ -107,10 +122,47 @@ class LuaLanguageService(
         return CompletionList(false, items)
     }
 
+    fun signatureHelp(params: SignatureHelpParams): SignatureHelp? {
+        val path = pathOf(params.textDocument)
+        val help = queries.signatureHelp(path, params.position.toParserPosition()) ?: return null
+        return SignatureHelp(
+            help.signatures.map { signature ->
+                SignatureInformation(signature.label).apply {
+                    documentation = signature.documentation
+                        ?.takeIf { it.isNotBlank() }
+                        ?.let { Either.forRight(MarkupContent(MarkupKind.MARKDOWN, it)) }
+                    parameters = signature.parameters.map { parameter ->
+                        ParameterInformation(parameter.label).apply {
+                            documentation = parameter.documentation
+                                ?.takeIf { it.isNotBlank() }
+                                ?.let { Either.forRight(MarkupContent(MarkupKind.MARKDOWN, it)) }
+                        }
+                    }
+                }
+            },
+            help.activeSignature,
+            help.activeParameter
+        )
+    }
+
     fun definition(params: DefinitionParams): List<Location> {
         val path = pathOf(params.textDocument)
         return queries.gotoDefinition(path, params.position.toParserPosition()).map { location ->
             Location(uriOf(location.path), location.range.toLspRange())
+        }
+    }
+
+    fun declaration(params: DeclarationParams): List<Location> {
+        val path = pathOf(params.textDocument)
+        return queries.declaration(path, params.position.toParserPosition()).map { location ->
+            Location(uriOf(location.path), location.range.toLspRange())
+        }
+    }
+
+    fun documentHighlights(params: DocumentHighlightParams): List<DocumentHighlight> {
+        val path = pathOf(params.textDocument)
+        return queries.documentHighlights(path, params.position.toParserPosition()).map { location ->
+            DocumentHighlight(location.range.toLspRange(), DocumentHighlightKind.Read)
         }
     }
 
@@ -119,6 +171,22 @@ class LuaLanguageService(
         return queries.references(path, params.position.toParserPosition()).map { location ->
             Location(uriOf(location.path), location.range.toLspRange())
         }
+    }
+
+    fun documentSymbols(path: String): List<SymbolInformation> {
+        val virtualPath = VirtualPath.of(path)
+        val file = snapshot.files[virtualPath]?.semanticFile ?: return emptyList()
+        return declarationSymbolEntries(virtualPath, file.snapshot.binder.declarationIndex.declarations)
+            .map(::toSymbolInformation)
+    }
+
+    fun workspaceSymbols(query: String): List<SymbolInformation> {
+        val normalizedQuery = query.trim()
+        return allSymbolEntries()
+            .asSequence()
+            .filter { normalizedQuery.isBlank() || it.name.contains(normalizedQuery, ignoreCase = true) }
+            .map(::toSymbolInformation)
+            .toList()
     }
 
     fun diagnostics(path: String): PublishDiagnosticsParams {
@@ -152,10 +220,98 @@ class LuaLanguageService(
         return ServerCapabilities().apply {
             textDocumentSync = Either.forLeft(TextDocumentSyncKind.Full)
             hoverProvider = Either.forRight(HoverOptions())
+            declarationProvider = Either.forLeft(true)
             definitionProvider = Either.forRight(DefinitionOptions())
             referencesProvider = Either.forRight(ReferenceOptions())
+            documentHighlightProvider = Either.forLeft(true)
             completionProvider = CompletionOptions()
+            signatureHelpProvider = SignatureHelpOptions(listOf("(", ","), listOf(")"))
+            documentSymbolProvider = Either.forLeft(true)
+            workspaceSymbolProvider = Either.forRight(WorkspaceSymbolOptions())
         }
+    }
+
+    private fun allSymbolEntries(): List<LspSymbolEntry> {
+        val entries = buildList {
+            snapshot.files.forEach { (path, file) ->
+                file.semanticFile?.let { semanticFile ->
+                    addAll(declarationSymbolEntries(path, semanticFile.snapshot.binder.declarationIndex.declarations))
+                }
+            }
+            snapshot.extraProviders.forEach { (path, file) ->
+                moduleSymbolEntry(path, file)?.let(::add)
+                file.semanticFile?.let { semanticFile ->
+                    addAll(declarationSymbolEntries(path, semanticFile.snapshot.binder.declarationIndex.declarations))
+                }
+            }
+        }
+        return entries
+            .distinctBy { entry ->
+                listOf(
+                    entry.path.value,
+                    entry.name,
+                    entry.kind.name,
+                    entry.range.start.line.toString(),
+                    entry.range.start.column.toString(),
+                    entry.containerName.orEmpty()
+                ).joinToString(":")
+            }
+            .sortedWith(compareBy<LspSymbolEntry>({ it.name }, { it.path.value }, { it.range.start.line }, { it.range.start.column }))
+    }
+
+    private fun declarationSymbolEntries(path: VirtualPath, declarations: List<BinderDeclaration>): List<LspSymbolEntry> {
+        val declarationsById = declarations.associateBy(BinderDeclaration::id)
+        return declarations
+            .asSequence()
+            .filter(::isNavigableSymbolDeclaration)
+            .mapNotNull { declaration ->
+                declaration.range?.let { range ->
+                    LspSymbolEntry(
+                        name = declaration.name,
+                        kind = declaration.kind.toLspSymbolKind(),
+                        path = path,
+                        range = range,
+                        containerName = containerNameFor(declaration, declarationsById)
+                    )
+                }
+            }
+            .toList()
+    }
+
+    private fun isNavigableSymbolDeclaration(declaration: BinderDeclaration): Boolean {
+        if (declaration.name.isBlank() || declaration.range == null) {
+            return false
+        }
+        if (declaration.origin == DeclarationOrigin.BUILTIN) {
+            return false
+        }
+        return declaration.kind != DeclarationKind.PARAMETER && declaration.kind != DeclarationKind.TYPE_PARAMETER
+    }
+
+    private fun containerNameFor(
+        declaration: BinderDeclaration,
+        declarationsById: Map<io.github.dingyi222666.luaparser.semantic.binder.DeclarationId, BinderDeclaration>
+    ): String? {
+        val ownerId = (declaration.owner as? DeclarationOwner.Declaration)?.declarationId ?: return null
+        return declarationsById[ownerId]?.name?.takeIf { it.isNotBlank() }
+    }
+
+    private fun moduleSymbolEntry(path: VirtualPath, file: WorkspaceSnapshot.FileSnapshot): LspSymbolEntry? {
+        val moduleName = file.moduleExportSurface?.moduleType?.moduleName?.takeIf { it.isNotBlank() } ?: return null
+        return LspSymbolEntry(
+            name = moduleName,
+            kind = org.eclipse.lsp4j.SymbolKind.Module,
+            path = path,
+            range = syntheticModuleRange(moduleName),
+            containerName = null
+        )
+    }
+
+    private fun syntheticModuleRange(moduleName: String): Range {
+        return Range(
+            start = Position(1, 1),
+            end = Position(1, maxOf(moduleName.length + 1, 2))
+        )
     }
 
     private fun pathOf(document: TextDocumentItem): VirtualPath = pathOf(document.uri)
@@ -197,6 +353,14 @@ class LuaLanguageService(
     }
 }
 
+private data class LspSymbolEntry(
+    val name: String,
+    val kind: org.eclipse.lsp4j.SymbolKind,
+    val path: VirtualPath,
+    val range: Range,
+    val containerName: String?
+)
+
 private fun org.eclipse.lsp4j.Position.toParserPosition(): Position {
     return Position(line + 1, character + 1)
 }
@@ -230,5 +394,40 @@ private fun CompletionItemKind.toLspKind(): org.eclipse.lsp4j.CompletionItemKind
         CompletionItemKind.MODULE -> org.eclipse.lsp4j.CompletionItemKind.Module
         CompletionItemKind.KEYWORD -> org.eclipse.lsp4j.CompletionItemKind.Keyword
         CompletionItemKind.SNIPPET -> org.eclipse.lsp4j.CompletionItemKind.Snippet
+    }
+}
+
+private fun toSymbolInformation(entry: LspSymbolEntry): SymbolInformation {
+    return SymbolInformation(
+        entry.name,
+        entry.kind,
+        Location(uriOf(entry.path), entry.range.toLspRange()),
+        entry.containerName
+    )
+}
+
+private fun uriOf(path: VirtualPath): String {
+    val normalized = path.value.replace('\\', '/')
+    return if (normalized.length >= 2 && normalized[1] == ':') {
+        "file:///" + normalized
+    } else {
+        "file:///" + normalized.trimStart('/')
+    }
+}
+
+private fun DeclarationKind.toLspSymbolKind(): org.eclipse.lsp4j.SymbolKind {
+    return when (this) {
+        DeclarationKind.LOCAL,
+        DeclarationKind.GLOBAL,
+        DeclarationKind.PARAMETER -> org.eclipse.lsp4j.SymbolKind.Variable
+
+        DeclarationKind.FUNCTION -> org.eclipse.lsp4j.SymbolKind.Function
+        DeclarationKind.MODULE -> org.eclipse.lsp4j.SymbolKind.Module
+        DeclarationKind.CLASS -> org.eclipse.lsp4j.SymbolKind.Class
+        DeclarationKind.TYPE_ALIAS,
+        DeclarationKind.TYPE_PARAMETER -> org.eclipse.lsp4j.SymbolKind.TypeParameter
+
+        DeclarationKind.FIELD -> org.eclipse.lsp4j.SymbolKind.Field
+        DeclarationKind.METHOD -> org.eclipse.lsp4j.SymbolKind.Method
     }
 }

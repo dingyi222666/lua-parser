@@ -211,6 +211,14 @@ class Lua53SyntaxRegressionTest {
 
         val methodCall = assertIs<CallExpression>(parse(LuaVersion.LUA_5_3, "return obj:method(1)").returnExpression())
         assertEquals(":", assertIs<MemberExpression>(methodCall.base).indexer)
+
+        val shortStringCall = assertIs<CallExpression>(
+            parse(LuaVersion.LUA_5_3, "return luajava.loadLib \"java.util.Locale\", \"getDefault\"").returnExpression()
+        )
+        assertEquals(
+            "Call(StringCall(Member(Id(luajava).loadLib):Const(\"java.util.Locale\")):Const(\"getDefault\"))",
+            renderShape(shortStringCall)
+        )
     }
 
     @Test

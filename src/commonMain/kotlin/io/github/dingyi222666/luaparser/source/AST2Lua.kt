@@ -28,6 +28,32 @@ class AST2Lua : ASTVisitor<StringBuilder> {
         indent(value)
     }
 
+    private fun appendCompactCallSuffix(value: StringBuilder, arguments: List<ExpressionNode>) {
+        if (arguments.size == 1) {
+            when (val argument = arguments.single()) {
+                is ConstantNode -> if (argument.constantType == ConstantNode.TYPE.STRING) {
+                    value.append(" ")
+                    appendExpression(value, argument)
+                    return
+                }
+                is TableConstructorExpression -> {
+                    value.append(" ")
+                    appendExpression(value, argument)
+                    return
+                }
+            }
+        }
+
+        value.append("(")
+        arguments.forEachIndexed { index, argument ->
+            if (index != 0) {
+                value.append(", ")
+            }
+            appendExpression(value, argument)
+        }
+        value.append(")")
+    }
+
     override fun visitBlockNode(node: BlockNode, value: StringBuilder) {
         currentDepth++
         super.visitBlockNode(node, value)
@@ -148,6 +174,20 @@ class AST2Lua : ASTVisitor<StringBuilder> {
         visitBlockNode(node.body, value)
 
 
+    }
+
+    override fun visitSwitchStatement(node: SwitchStatement, value: StringBuilder) {
+        value.append("switch ")
+        visitExpressionNode(node.condition, value)
+        value.append(" do")
+        node.causes.forEach { cause ->
+            when (cause) {
+                is CaseCause -> visitCaseCause(cause, value)
+                is DefaultCause -> visitDefaultCause(cause, value)
+            }
+        }
+        appendLineAndIndent(value)
+        value.append("end")
     }
 
     override fun visitDoStatement(node: DoStatement, value: StringBuilder) {
@@ -505,25 +545,11 @@ class AST2Lua : ASTVisitor<StringBuilder> {
             is LambdaDeclaration -> visitLambdaDeclaration(node, value)
             is StringCallExpression -> {
                 appendExpression(value, node.base, expressionPrecedence(node), null, false)
-                value.append("(")
-                node.arguments.forEachIndexed { index, argument ->
-                    if (index != 0) {
-                        value.append(", ")
-                    }
-                    appendExpression(value, argument)
-                }
-                value.append(")")
+                appendCompactCallSuffix(value, node.arguments)
             }
             is TableCallExpression -> {
                 appendExpression(value, node.base, expressionPrecedence(node), null, false)
-                value.append("(")
-                node.arguments.forEachIndexed { index, argument ->
-                    if (index != 0) {
-                        value.append(", ")
-                    }
-                    appendExpression(value, argument)
-                }
-                value.append(")")
+                appendCompactCallSuffix(value, node.arguments)
             }
             is TableConstructorExpression -> visitTableConstructorExpression(node, value)
             is VarargLiteral -> visitVarargLiteral(node, value)

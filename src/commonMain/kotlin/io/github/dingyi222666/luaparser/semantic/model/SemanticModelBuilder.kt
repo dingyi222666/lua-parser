@@ -29,6 +29,7 @@ class SemanticModelBuilder {
         val referenceQueries = ReferenceQueries(binder, evaluator, memberResolver, adapters, context)
         val nodeTypeIndex = NodeTypeIndex(binder, evaluator, adapters)
         val completionProvider = CompletionProvider(nodePositionIndex, referenceQueries, adapters)
+        val signatureHelpProvider = SignatureHelpProvider(binder, nodePositionIndex, evaluator)
 
         return DefaultSemanticModel(
             binder = binder,
@@ -37,6 +38,7 @@ class SemanticModelBuilder {
             nodePositionIndex = nodePositionIndex,
             nodeTypeIndex = nodeTypeIndex,
             completionProvider = completionProvider,
+            signatureHelpProvider = signatureHelpProvider,
             diagnostics = diagnostics
         )
     }

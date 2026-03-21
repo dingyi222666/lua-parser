@@ -1369,7 +1369,9 @@ class LuaParser(
 
         val findLeft = consume { it == LuaTokenTypes.LPAREN }
         if (!findLeft && !isOnlyExpList) {
-            // empty left
+            if (consumeToken(LuaTokenTypes.COMMA)) {
+                result.arguments.addAll(parseExpList(result))
+            }
             consumeToken(LuaTokenTypes.SEMI)
             return result
         }

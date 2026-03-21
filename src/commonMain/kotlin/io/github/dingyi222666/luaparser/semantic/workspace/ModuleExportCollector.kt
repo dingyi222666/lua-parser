@@ -143,6 +143,12 @@ object ModuleExportCollector {
                 when (val binding = locals[current]) {
                     null -> return ResolvedRoot(identifier = current, aliases = aliases)
                     is AliasBinding.Identifier -> current = binding.target
+                    is AliasBinding.Path -> {
+                        if (binding.path.isNotEmpty()) {
+                            return null
+                        }
+                        current = binding.root
+                    }
                     is AliasBinding.TableLiteral -> {
                         return ResolvedRoot(
                             identifier = current,
@@ -167,15 +173,13 @@ object ModuleExportCollector {
 
         fun membersFromTableLiteral(table: TableConstructorExpression): List<ModuleExportSurface.MemberExport> {
             val tableType = tableLiteralType(table)
-            return tableType.fields.map { (name, type) ->
-                ModuleExportSurface.MemberExport(
-                    name = name,
-                    exportPath = listOf(name),
-                    kind = if (type is FunctionType) SymbolKind.METHOD else SymbolKind.FIELD,
-                    type = type,
-                    range = table.fields.firstOrNull { staticFieldName(it) == name }?.key?.range
-                )
-            }.sortedWith(compareBy<ModuleExportSurface.MemberExport>({ if (it.kind == SymbolKind.FIELD) 0 else 1 }, { it.name }))
+            val ranges = buildMap<String, Range?> {
+                table.fields.forEach { field ->
+                    val name = staticFieldName(field) ?: return@forEach
+                    put(name, field.key.range)
+                }
+            }
+            return collectMembersFromTableType(tableType, ranges)
         }
 
         private fun visitStatement(statement: StatementNode) {
@@ -269,13 +273,14 @@ object ModuleExportCollector {
             }
 
             val writeTarget = extractWriteTarget(target) ?: return
+            val normalizedTarget = normalizeWriteTarget(writeTarget)
             writes += CollectedWrite(
-                name = writeTarget.rootIdentifier,
-                path = writeTarget.path,
+                name = normalizedTarget.rootIdentifier,
+                path = normalizedTarget.path,
                 type = inferValueType(value),
-                isMethod = writeTarget.isMethod,
+                isMethod = normalizedTarget.isMethod,
                 segment = legacyEnvironment.segmentAt(target.range.start),
-                range = writeTarget.range
+                range = normalizedTarget.range
             )
         }
 
@@ -283,7 +288,50 @@ object ModuleExportCollector {
             return when (expression) {
                 is Identifier -> AliasBinding.Identifier(expression.name)
                 is TableConstructorExpression -> AliasBinding.TableLiteral(expression)
+                is MemberExpression -> extractWriteTargetBase(expression)?.let { (root, path) ->
+                    normalizeAliasBinding(root, path)
+                } ?: AliasBinding.Unknown
+                is IndexExpression -> extractWriteTargetBase(expression)?.let { (root, path) ->
+                    normalizeAliasBinding(root, path)
+                } ?: AliasBinding.Unknown
                 else -> AliasBinding.Unknown
+            }
+        }
+
+        private fun normalizeWriteTarget(target: WriteTarget): WriteTarget {
+            return when (val alias = resolveAliasPath(target.rootIdentifier, target.path)) {
+                null -> target
+                else -> target.copy(rootIdentifier = alias.first, path = alias.second)
+            }
+        }
+
+        private fun normalizeAliasBinding(root: String, path: List<String>): AliasBinding {
+            val normalized = resolveAliasPath(root, path) ?: return AliasBinding.Path(root, path)
+            return if (normalized.second.isEmpty()) {
+                AliasBinding.Identifier(normalized.first)
+            } else {
+                AliasBinding.Path(normalized.first, normalized.second)
+            }
+        }
+
+        private fun resolveAliasPath(root: String, path: List<String> = emptyList()): Pair<String, List<String>>? {
+            val visited = linkedSetOf<String>()
+            var currentRoot = root
+            var currentPath = path
+            while (true) {
+                if (!visited.add(currentRoot)) {
+                    return null
+                }
+                when (val binding = locals[currentRoot]) {
+                    null -> return currentRoot to currentPath
+                    is AliasBinding.Identifier -> currentRoot = binding.target
+                    is AliasBinding.Path -> {
+                        currentRoot = binding.root
+                        currentPath = binding.path + currentPath
+                    }
+                    is AliasBinding.TableLiteral -> return currentRoot to currentPath
+                    AliasBinding.Unknown -> return null
+                }
             }
         }
 
@@ -320,6 +368,7 @@ object ModuleExportCollector {
 
     private sealed interface AliasBinding {
         data class Identifier(val target: String) : AliasBinding
+        data class Path(val root: String, val path: List<String>) : AliasBinding
         data class TableLiteral(val table: TableConstructorExpression) : AliasBinding
         data object Unknown : AliasBinding
     }
@@ -416,27 +465,39 @@ object ModuleExportCollector {
         }
 
         fun toMembers(tableType: TableType): List<ModuleExportSurface.MemberExport> {
-            val output = mutableListOf<ModuleExportSurface.MemberExport>()
-            tableType.fields.forEach { (name, type) ->
-                output += ModuleExportSurface.MemberExport(
-                    name = name,
-                    exportPath = listOf(name),
-                    kind = SymbolKind.FIELD,
-                    type = type,
-                    range = memberRanges[name]
-                )
-            }
-            tableType.methods.forEach { (name, type) ->
-                output += ModuleExportSurface.MemberExport(
-                    name = name,
-                    exportPath = listOf(name),
-                    kind = SymbolKind.METHOD,
-                    type = type,
-                    range = memberRanges[name]
-                )
-            }
-            return output.sortedWith(compareBy<ModuleExportSurface.MemberExport>({ if (it.kind == SymbolKind.FIELD) 0 else 1 }, { it.name }))
+            return collectMembersFromTableType(tableType, memberRanges)
         }
+    }
+
+    private fun collectMembersFromTableType(
+        tableType: TableType,
+        ranges: Map<String, Range?>,
+        prefix: List<String> = emptyList()
+    ): List<ModuleExportSurface.MemberExport> {
+        val output = mutableListOf<ModuleExportSurface.MemberExport>()
+        tableType.fields.forEach { (name, type) ->
+            val exportPath = prefix + name
+            output += ModuleExportSurface.MemberExport(
+                name = name,
+                exportPath = exportPath,
+                kind = SymbolKind.FIELD,
+                type = type,
+                range = ranges[name]
+            )
+            if (type is TableType) {
+                output += collectMembersFromTableType(type, emptyMap(), exportPath)
+            }
+        }
+        tableType.methods.forEach { (name, type) ->
+            output += ModuleExportSurface.MemberExport(
+                name = name,
+                exportPath = prefix + name,
+                kind = SymbolKind.METHOD,
+                type = type,
+                range = ranges[name]
+            )
+        }
+        return output.sortedWith(compareBy<ModuleExportSurface.MemberExport>({ if (it.kind == SymbolKind.FIELD) 0 else 1 }, { it.exportPath.joinToString(".") }))
     }
 
     private fun extractWriteTarget(expression: ExpressionNode): WriteTarget? {

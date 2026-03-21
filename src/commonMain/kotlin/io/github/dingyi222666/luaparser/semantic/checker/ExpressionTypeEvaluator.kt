@@ -1,5 +1,6 @@
 package io.github.dingyi222666.luaparser.semantic.checker
 
+import io.github.dingyi222666.luaparser.parser.ast.node.BaseASTNode
 import io.github.dingyi222666.luaparser.parser.ast.node.BinaryExpression
 import io.github.dingyi222666.luaparser.parser.ast.node.BlockNode
 import io.github.dingyi222666.luaparser.parser.ast.node.CallExpression
@@ -41,12 +42,14 @@ import io.github.dingyi222666.luaparser.semantic.binder.BinderPassResult
 import io.github.dingyi222666.luaparser.semantic.binder.DeclarationId
 import io.github.dingyi222666.luaparser.semantic.binder.DeclarationKind
 import io.github.dingyi222666.luaparser.semantic.binder.DeclarationNamespace
+import io.github.dingyi222666.luaparser.semantic.binder.DeclarationOwner
 import io.github.dingyi222666.luaparser.semantic.binder.DeclarationOrigin
 import io.github.dingyi222666.luaparser.semantic.binder.Scope
 import io.github.dingyi222666.luaparser.semantic.binder.ScopeId
 import io.github.dingyi222666.luaparser.semantic.binder.comparePositions
 import io.github.dingyi222666.luaparser.semantic.types.model.AppliedType
 import io.github.dingyi222666.luaparser.semantic.types.model.ArrayType
+import io.github.dingyi222666.luaparser.semantic.types.model.CallableType
 import io.github.dingyi222666.luaparser.semantic.types.model.FunctionParameter
 import io.github.dingyi222666.luaparser.semantic.types.model.FunctionType
 import io.github.dingyi222666.luaparser.semantic.types.model.LiteralType
@@ -64,6 +67,7 @@ import io.github.dingyi222666.luaparser.semantic.types.resolve.DocFunctionTypeSy
 import io.github.dingyi222666.luaparser.semantic.types.resolve.TypeResolutionContext
 import io.github.dingyi222666.luaparser.semantic.types.resolve.intersectionTypeOf
 import io.github.dingyi222666.luaparser.semantic.types.resolve.unionTypeOf
+import io.github.dingyi222666.luaparser.semantic.checker.resolveOwningFunctionDeclaration
 import io.github.dingyi222666.luaparser.semantic.types.syntax.ArrayTypeSyntax
 import io.github.dingyi222666.luaparser.semantic.types.syntax.FunctionTypeSyntax
 import io.github.dingyi222666.luaparser.semantic.types.syntax.GenericTypeSyntax
@@ -146,11 +150,14 @@ class ExpressionTypeEvaluator internal constructor(
     }
 
     private fun evaluateIdentifier(node: Identifier, context: Context): Type {
+        context.localOverrides[node.name]?.let { return it }
+        val declaration = findVisibleValueDeclaration(node.name, node.range.start, context)
+        if (declaration != null) {
+            return typeOfDeclaration(declaration, context)
+        }
         workspaceContext.importedSymbols[node.name]?.let { return it.moduleType }
         workspaceContext.resolveImportedSymbol?.invoke(node.name)?.let { return it.moduleType }
-        context.localOverrides[node.name]?.let { return it }
-        val declaration = findVisibleValueDeclaration(node.name, node.range.start, context) ?: return UnknownType
-        return typeOfDeclaration(declaration, context)
+        return UnknownType
     }
 
     private fun evaluateUnary(node: UnaryExpression): Type {
@@ -237,50 +244,221 @@ class ExpressionTypeEvaluator internal constructor(
     private fun evaluateCallExpression(node: CallExpression, context: Context): Type {
         resolveBuiltinRequire(node, context)?.let { return it }
         resolveDynamicImportCall(node, context)?.let { return it }
-        resolveBindClassCall(node)?.let { return it }
+        resolveBindClassCall(node, context)?.let { return it }
+        resolveNewInstanceCall(node, context)?.let { return it }
+        resolveCreateProxyCall(node, context)?.let { return it }
+        resolveLoadLibCall(node, context)?.let { return it }
+        resolveJvmConstructorCall(node, context)?.let { return it }
         val declaration = callableDeclaration(node.base, context)
         val callableType = evaluateReferenceBaseType(node.base, context)
         val argumentSequences = buildCallArgumentSequences(node, context)
         return callChecker.checkCallValues(callableType, argumentSequences, context.lexicalScopeId, declaration).returnType ?: UnknownType
     }
 
-    private fun resolveDynamicImportCall(node: CallExpression, context: Context): ModuleType? {
-        val identifier = node.base as? Identifier ?: return null
+
+    private fun resolveDynamicImportCall(node: CallExpression, context: Context): Type? {
+        val identifier = effectiveCallBase(node) as? Identifier ?: return null
         val declaration = callableDeclaration(identifier, context)
         if (identifier.name != "import" && !isRequireImportAlias(declaration, context)) {
             return null
         }
-        val target = (node.arguments.singleOrNull() as? ConstantNode)
-            ?.takeIf { it.constantType == ConstantNode.TYPE.STRING }
-            ?.stringOf()
-            ?: return null
-        return workspaceContext.resolveImportTarget?.invoke(target)?.moduleType
+        val importedTargets = importTargets(node)
+        if (importedTargets.isEmpty()) {
+            return null
+        }
+        val importedTypes = importedTargets.mapNotNull { target ->
+            workspaceContext.resolveImportTarget?.invoke(target)?.moduleType
+        }
+        if (importedTypes.isEmpty()) {
+            return null
+        }
+        return if (importedTargets.size == 1 && importedTypes.size == 1) {
+            importedTypes.single()
+        } else {
+            ArrayType(elementType = unionTypeOf(importedTypes))
+        }
     }
 
     private fun isRequireImportAlias(declaration: BinderDeclaration?, context: Context): Boolean {
-        if (declaration?.kind != DeclarationKind.LOCAL) {
-            return false
-        }
-        val localStatement = declaration.anchorNode?.parent as? LocalStatement ?: return false
-        val initializerIndex = localStatement.init.indexOf(declaration.anchorNode)
-        if (initializerIndex < 0) {
-            return false
-        }
-        val initializer = localStatement.variables.getOrNull(initializerIndex) as? CallExpression ?: return false
-        return isBuiltinRequireImportCall(initializer, context)
+        return aliasResolvesTo(declaration, context, matches = { expression ->
+            val call = expression as? CallExpression ?: return@aliasResolvesTo false
+            isBuiltinRequireImportCall(call, context)
+        })
     }
 
-    private fun resolveBindClassCall(node: CallExpression): ModuleType? {
-        val member = node.base as? MemberExpression ?: return null
-        val owner = member.base as? Identifier ?: return null
-        if (owner.name != "luajava" || member.identifier.name != "bindClass") {
+    private fun resolveBindClassCall(node: CallExpression, context: Context): ModuleType? {
+        val target = stringCallTarget(node) ?: return null
+        val base = effectiveCallBase(node)
+        val isBindClassCall = when (base) {
+            is MemberExpression -> {
+                val owner = base.base as? Identifier
+                owner?.name == "luajava" && base.identifier.name == "bindClass"
+            }
+            is Identifier -> {
+                if (base.name == "bindClass") {
+                    true
+                } else {
+                    val declaration = callableDeclaration(base, context)
+                    declaration != null && isBindClassAlias(declaration, context)
+                }
+            }
+            else -> false
+        }
+        if (!isBindClassCall) {
             return null
         }
-        val target = (node.arguments.singleOrNull() as? ConstantNode)
-            ?.takeIf { it.constantType == ConstantNode.TYPE.STRING }
-            ?.stringOf()
-            ?: return null
         return workspaceContext.resolveImportTarget?.invoke(target)?.moduleType
+    }
+
+    private fun resolveNewInstanceCall(node: CallExpression, context: Context): Type? {
+        val target = stringCallTarget(node) ?: return null
+        val base = effectiveCallBase(node)
+        val isNewInstanceCall = when (base) {
+            is MemberExpression -> {
+                val owner = base.base as? Identifier
+                owner?.name == "luajava" && base.identifier.name == "newInstance"
+            }
+            is Identifier -> {
+                if (base.name == "newInstance") {
+                    true
+                } else {
+                    val declaration = callableDeclaration(base, context)
+                    declaration != null && isNewInstanceAlias(declaration, context)
+                }
+            }
+            else -> false
+        }
+        if (!isNewInstanceCall) {
+            return null
+        }
+        return workspaceContext.resolveImportTarget?.invoke(target)?.moduleType?.fields?.get("__class") ?: UnknownType
+    }
+
+    private fun resolveCreateProxyCall(node: CallExpression, context: Context): Type? {
+        val interfaceTargets = createProxyTargets(node)
+        if (interfaceTargets.isEmpty()) {
+            return null
+        }
+        val base = effectiveCallBase(node)
+        val isCreateProxyCall = when (base) {
+            is MemberExpression -> {
+                val owner = base.base as? Identifier
+                owner?.name == "luajava" && base.identifier.name == "createProxy"
+            }
+            is Identifier -> {
+                if (base.name == "createProxy") {
+                    true
+                } else {
+                    val declaration = callableDeclaration(base, context)
+                    declaration != null && isCreateProxyAlias(declaration, context)
+                }
+            }
+            else -> false
+        }
+        if (!isCreateProxyCall) {
+            return null
+        }
+        val interfaceTypes = interfaceTargets.mapNotNull { target ->
+            workspaceContext.resolveImportTarget?.invoke(target)?.moduleType?.fields?.get("__class")
+        }
+        if (interfaceTypes.isEmpty()) {
+            return UnknownType
+        }
+        return intersectionTypeOf(interfaceTypes)
+    }
+
+    private fun resolveLoadLibCall(node: CallExpression, context: Context): Type? {
+        val target = stringCallTarget(node) ?: return null
+        val memberName = stringCallTarget(node, argumentIndex = 1) ?: return null
+        val base = effectiveCallBase(node)
+        val isLoadLibCall = when (base) {
+            is MemberExpression -> {
+                val owner = base.base as? Identifier
+                owner?.name == "luajava" && base.identifier.name == "loadLib"
+            }
+            is Identifier -> {
+                if (base.name == "loadLib") {
+                    true
+                } else {
+                    val declaration = callableDeclaration(base, context)
+                    declaration != null && isLoadLibAlias(declaration, context)
+                }
+            }
+            else -> false
+        }
+        if (!isLoadLibCall) {
+            return null
+        }
+        val moduleType = workspaceContext.resolveImportTarget?.invoke(target)?.moduleType ?: return UnknownType
+        return moduleType.methods[memberName] ?: moduleType.fields[memberName] ?: UnknownType
+    }
+
+    private fun resolveJvmConstructorCall(node: CallExpression, context: Context): Type? {
+        val moduleType = evaluateReferenceBaseType(node.base, context) as? ModuleType ?: return null
+        return moduleType.fields["__class"]
+    }
+
+    private fun isBindClassAlias(declaration: BinderDeclaration, context: Context): Boolean {
+        return aliasResolvesTo(declaration, context, matches = { expression ->
+            val initializer = expression as? MemberExpression ?: return@aliasResolvesTo false
+            val owner = initializer.base as? Identifier ?: return@aliasResolvesTo false
+            owner.name == "luajava" && initializer.identifier.name == "bindClass"
+        })
+    }
+
+    private fun isNewInstanceAlias(declaration: BinderDeclaration, context: Context): Boolean {
+        return aliasResolvesTo(declaration, context, matches = { expression ->
+            val initializer = expression as? MemberExpression ?: return@aliasResolvesTo false
+            val owner = initializer.base as? Identifier ?: return@aliasResolvesTo false
+            owner.name == "luajava" && initializer.identifier.name == "newInstance"
+        })
+    }
+
+    private fun isCreateProxyAlias(declaration: BinderDeclaration, context: Context): Boolean {
+        return aliasResolvesTo(declaration, context, matches = { expression ->
+            val initializer = expression as? MemberExpression ?: return@aliasResolvesTo false
+            val owner = initializer.base as? Identifier ?: return@aliasResolvesTo false
+            owner.name == "luajava" && initializer.identifier.name == "createProxy"
+        })
+    }
+
+    private fun isLoadLibAlias(declaration: BinderDeclaration, context: Context): Boolean {
+        return aliasResolvesTo(declaration, context, matches = { expression ->
+            val initializer = expression as? MemberExpression ?: return@aliasResolvesTo false
+            val owner = initializer.base as? Identifier ?: return@aliasResolvesTo false
+            owner.name == "luajava" && initializer.identifier.name == "loadLib"
+        })
+    }
+
+    private fun aliasResolvesTo(
+        declaration: BinderDeclaration?,
+        context: Context,
+        matches: (ExpressionNode) -> Boolean,
+        visited: MutableSet<io.github.dingyi222666.luaparser.semantic.binder.DeclarationId> = linkedSetOf()
+    ): Boolean {
+        declaration ?: return false
+        if (declaration.kind != DeclarationKind.LOCAL) {
+            return false
+        }
+        if (!visited.add(declaration.id)) {
+            return false
+        }
+        val initializer = localDeclarationInitializer(declaration) ?: return false
+        if (matches(initializer)) {
+            return true
+        }
+        val aliasIdentifier = initializer as? Identifier ?: return false
+        val aliasedDeclaration = findVisibleValueDeclaration(aliasIdentifier.name, aliasIdentifier.range.start, context) ?: return false
+        return aliasResolvesTo(aliasedDeclaration, context, matches, visited)
+    }
+
+    private fun localDeclarationInitializer(declaration: BinderDeclaration): ExpressionNode? {
+        val localStatement = declaration.anchorNode?.parent as? LocalStatement ?: return null
+        val initializerIndex = localStatement.init.indexOf(declaration.anchorNode)
+        if (initializerIndex < 0) {
+            return null
+        }
+        return localStatement.variables.getOrNull(initializerIndex)
     }
 
     private fun resolveBuiltinRequire(node: CallExpression, context: Context): ModuleType? {
@@ -308,13 +486,94 @@ class ExpressionTypeEvaluator internal constructor(
         return builtinRequireModuleName(node, context) == "import"
     }
 
+    private fun effectiveCallBase(node: CallExpression): ExpressionNode {
+        return if (node.base is StringCallExpression && node.arguments.isEmpty()) {
+            node.base
+        } else {
+            node.base
+        }.let { base ->
+            if (base is StringCallExpression) base.base else base
+        }
+    }
+
+    private fun importTargets(node: CallExpression): List<String> {
+        val arguments = callArguments(node)
+        val firstArgument = arguments.singleOrNull()
+        return when (firstArgument) {
+            is ConstantNode -> {
+                if (firstArgument.constantType == ConstantNode.TYPE.STRING) listOf(firstArgument.stringOf()) else emptyList()
+            }
+            is ArrayConstructorExpression -> firstArgument.values.mapNotNull(::stringLiteralOf)
+            is TableConstructorExpression -> firstArgument.fields.mapNotNull { stringLiteralOf(it.value) }
+            else -> emptyList()
+        }
+    }
+
+    private fun createProxyTargets(node: CallExpression): List<String> {
+        val arguments = callArguments(node)
+        if (arguments.isEmpty()) {
+            return emptyList()
+        }
+        return arguments.mapNotNull(::stringLiteralOf)
+    }
+
+    private fun stringLiteralOf(expression: ExpressionNode): String? {
+        val constant = expression as? ConstantNode ?: return null
+        return constant.takeIf { it.constantType == ConstantNode.TYPE.STRING }?.stringOf()
+    }
+
+    private fun callArguments(node: CallExpression): List<ExpressionNode> {
+        val stringCallBase = node.base as? StringCallExpression
+        return buildList {
+            if (stringCallBase != null) {
+                addAll(stringCallBase.arguments)
+            }
+            addAll(node.arguments)
+        }
+    }
+
+    private fun stringCallTarget(node: CallExpression, argumentIndex: Int = 0): String? {
+        return stringLiteralOf(callArguments(node).getOrNull(argumentIndex) ?: return null)
+    }
+
     private fun evaluateFunctionDeclaration(node: FunctionDeclaration, context: Context): Type {
+        return evaluateFunctionDeclaration(node, context, preferDeclaredReturn = true)
+    }
+
+    internal fun inferImplementationFunctionType(node: FunctionDeclaration): CallableType? {
+        val scopeId = node.body
+            ?.let(binder.scopeGraph::getScope)
+            ?.id
+            ?: binder.positionQueries.getScopeAt(node.range.start)?.id
+            ?: binder.scopeGraph.rootScope.id
+        return evaluateFunctionDeclaration(
+            node = node,
+            context = Context(lexicalScopeId = scopeId),
+            preferDeclaredReturn = false
+        ) as? CallableType
+    }
+
+    private fun evaluateFunctionDeclaration(
+        node: FunctionDeclaration,
+        context: Context,
+        preferDeclaredReturn: Boolean
+    ): Type {
         val ownedDeclaration = node.body
             ?.let(binder.scopeGraph::getScope)
             ?.ownerDeclarationId
             ?.let(binder.declarationIndex::getDeclaration)
-
-        ownedDeclaration?.declaredType?.let { return it }
+        val declaredSignature = (ownedDeclaration?.declaredType as? CallableType)?.callSignatures?.firstOrNull()
+        val declaredParameterOffset = if (ownedDeclaration?.let { isColonMethodDeclaration(binder, it) } == true) 1 else 0
+        val documentedParameterTypes = ownedDeclaration?.documentation?.resolvedParameterTypes.orEmpty()
+        val documentedReturnType = ownedDeclaration?.documentation?.resolvedReturnTypes
+            ?.takeIf { it.isNotEmpty() }
+            ?.let { returnTypes ->
+                if (returnTypes.size == 1) {
+                    returnTypes.single()
+                } else {
+                    MultiReturnType(returnTypes)
+                }
+            }
 
         val body = node.body
         val functionScopeId = body?.let(binder.scopeGraph::getScope)?.id ?: context.lexicalScopeId
@@ -327,7 +586,10 @@ class ExpressionTypeEvaluator internal constructor(
 
         val parameters = node.params.mapIndexed { index, parameterNode ->
             val declaration = parameterDeclarations.getOrNull(index)
+            val declaredParameterType = declaredSignature?.parameters?.getOrNull(index + declaredParameterOffset)?.type
             val parameterType = declaration?.declaredType
+                ?: declaredParameterType
+                ?: documentedParameterTypes[parameterNode.name]
                 ?: context.localOverrides[parameterNode.name]
                 ?: UnknownType
             FunctionParameter(
@@ -344,7 +606,14 @@ class ExpressionTypeEvaluator internal constructor(
             fallbackScopeId = functionScopeId,
             fallbackVarargType = varargType
         )
-        val returnType = body?.let { inferFunctionReturnType(it, childContext) } ?: PrimitiveType.NIL
+        val inferredReturnType = body?.let { inferFunctionReturnType(it, childContext) } ?: PrimitiveType.NIL
+        val returnType = if (preferDeclaredReturn) {
+            declaredSignature?.returnType?.takeIf { it != UnknownType }
+                ?: documentedReturnType?.takeIf { it != UnknownType }
+                ?: inferredReturnType
+        } else {
+            inferredReturnType
+        }
         return FunctionType(parameters = parameters, returnType = returnType)
     }
 
@@ -372,7 +641,9 @@ class ExpressionTypeEvaluator internal constructor(
             return UnknownType
         }
 
-        declaration.declaredType?.let { return it }
+        if (declaration.kind !in setOf(DeclarationKind.FUNCTION, DeclarationKind.GLOBAL, DeclarationKind.METHOD)) {
+            declaration.declaredType?.let { return it }
+        }
         declarationValueTypeCache[declaration.id]?.let { return it }
 
         if (!activeDeclarationIds.add(declaration.id)) {
@@ -394,6 +665,7 @@ class ExpressionTypeEvaluator internal constructor(
             DeclarationKind.FUNCTION -> deriveFunctionDeclarationValueType(declaration, context)
             DeclarationKind.PARAMETER -> declaration.declaredType ?: UnknownType
             DeclarationKind.GLOBAL -> deriveGlobalDeclarationValueType(declaration, context)
+            DeclarationKind.METHOD -> deriveMethodDeclarationValueType(declaration, context)
             DeclarationKind.MODULE -> declaration.declaredType ?: UnknownType
             else -> UnknownType
         }
@@ -414,7 +686,12 @@ class ExpressionTypeEvaluator internal constructor(
         val initializerContext = context.copy(
             excludedDeclarations = context.excludedDeclarations + declarationIdsInStatement
         )
-        return resolveAssignedValueType(localStatement.variables, initializerIndex, initializerContext)
+        val baseType = resolveAssignedValueType(localStatement.variables, initializerIndex, initializerContext)
+        return if (baseType is TableType) {
+            attachVisibleAstMethodsToTable(declaration, baseType, initializerContext)
+        } else {
+            baseType
+        }
     }
 
     private fun deriveFunctionDeclarationValueType(declaration: BinderDeclaration, context: Context): Type {
@@ -425,6 +702,14 @@ class ExpressionTypeEvaluator internal constructor(
     private fun deriveGlobalDeclarationValueType(declaration: BinderDeclaration, context: Context): Type {
         val functionNode = declaration.anchorNode?.parent as? FunctionDeclaration ?: return UnknownType
         return evaluateFunctionDeclaration(functionNode, context)
+    }
+
+    private fun deriveMethodDeclarationValueType(declaration: BinderDeclaration, context: Context): Type {
+        val functionNode = resolveOwningFunctionDeclaration(binder, declaration) ?: return declaration.declaredType ?: UnknownType
+        val inferred = inferImplementationFunctionType(functionNode)
+        val declared = declaration.declaredType as? CallableType ?: return inferred ?: UnknownType
+        val inferredCallable = inferred as? CallableType ?: return enrichMethodCallableType(declaration, declared)
+        return mergeDeclaredAndInferredCallableType(declaration, declared, inferredCallable)
     }
 
     private fun findVisibleValueDeclaration(name: String, position: Position, context: Context): BinderDeclaration? {
@@ -481,6 +766,171 @@ class ExpressionTypeEvaluator internal constructor(
             ValueSequence.of(evaluate(expressions[targetIndex], context)).collapseToSingle().typeAt(0)
         } else {
             ValueSequence.of(evaluate(expressions[lastExpressionIndex], context)).typeAt(targetIndex - lastExpressionIndex)
+        }
+    }
+
+    private fun attachVisibleAstMethodsToTable(
+        declaration: BinderDeclaration,
+        tableType: TableType,
+        context: Context
+    ): TableType {
+        val methodDeclarations = visibleMethodDeclarationsForValue(declaration, context)
+        if (methodDeclarations.isEmpty()) {
+            return tableType
+        }
+
+        val methods = linkedMapOf<String, Type>()
+        methods.putAll(tableType.methods)
+        methodDeclarations.forEach { methodDeclaration ->
+            val methodType = typeOfDeclaration(methodDeclaration, context)
+            if (methodType != UnknownType) {
+                methods[methodDeclaration.name] = methodType
+            }
+        }
+        return tableType.copy(methods = methods)
+    }
+
+    private fun visibleMethodDeclarationsForValue(
+        declaration: BinderDeclaration,
+        context: Context
+    ): List<BinderDeclaration> {
+        val anchor = declaration.anchorNode as? Identifier ?: return emptyList()
+        val lexicalOwner = binder.scopeGraph.getScope(context.lexicalScopeId)?.ownerNode
+        val scopedMatches = lexicalOwner?.let { owner ->
+            binder.declarationIndex.declarations.filter { candidate ->
+                candidate.kind == DeclarationKind.METHOD &&
+                    isDeclaredInLexicalOwnerChain(candidate, owner) &&
+                    isMethodBoundToBaseIdentifier(candidate, anchor.name)
+            }
+        }.orEmpty()
+        if (scopedMatches.isNotEmpty()) {
+            return scopedMatches
+        }
+        return binder.declarationIndex.declarations.filter { candidate ->
+            candidate.kind == DeclarationKind.METHOD &&
+                isMethodBoundToBaseIdentifier(candidate, anchor.name)
+        }
+    }
+
+    private fun isDeclaredInLexicalOwnerChain(declaration: BinderDeclaration, lexicalOwner: BaseASTNode): Boolean {
+        var current: BaseASTNode? = lexicalOwner
+        while (current != null) {
+            if (declaration.owner == DeclarationOwner.Lexical(current)) {
+                return true
+            }
+            current = runCatching { current.parent }.getOrNull()
+        }
+        return false
+    }
+
+    private fun isMethodBoundToBaseIdentifier(declaration: BinderDeclaration, baseName: String): Boolean {
+        val anchorMember = declaration.anchorNode?.parent as? MemberExpression
+        val anchorBase = anchorMember?.base as? Identifier
+        if (anchorBase?.name == baseName) {
+            return true
+        }
+
+        val function = resolveOwningFunctionDeclaration(binder, declaration) ?: return false
+        val identifier = function.identifier as? MemberExpression ?: return false
+        return identifier.base is Identifier && (identifier.base as Identifier).name == baseName
+    }
+
+    private fun inferDeclaredFunctionValueType(functionNode: FunctionDeclaration, context: Context): Type {
+        val parameters = functionNode.params.map { parameterNode ->
+            val parameterType = context.localOverrides[parameterNode.name] ?: UnknownType
+            FunctionParameter(
+                name = parameterNode.name,
+                type = parameterType,
+                vararg = parameterNode.name == "..." || parameterType is VarargType
+            )
+        }
+        val varargType = parameters.lastOrNull { it.vararg }?.type ?: context.varargType
+        val childContext = buildFunctionBodyContext(functionNode, parameters, context.lexicalScopeId, varargType)
+        return evaluateFunctionDeclaration(functionNode, childContext)
+    }
+
+    private fun mergeDeclaredAndInferredCallableType(
+        declaration: BinderDeclaration,
+        declared: CallableType,
+        inferred: CallableType
+    ): CallableType {
+        val declaredSignature = declared.callSignatures.firstOrNull() ?: return inferred
+        val inferredSignature = inferred.callSignatures.firstOrNull() ?: return declared
+        val declaredParameterOffset = if (
+            declaration.kind == DeclarationKind.METHOD &&
+                declaredSignature.parameters.firstOrNull()?.name == "self" &&
+                inferredSignature.parameters.firstOrNull()?.name != "self"
+        ) {
+            1
+        } else {
+            0
+        }
+        val mergedParameters = when {
+            declaration.kind == DeclarationKind.METHOD -> inferredSignature.parameters.mapIndexed { index, parameter ->
+                val declaredParameter = declaredSignature.parameters.getOrNull(index + declaredParameterOffset)
+                val parameterType = when {
+                    declaredParameter == null -> parameter.type
+                    parameter.type == UnknownType -> declaredParameter.type
+                    declaredParameter.type == UnknownType -> parameter.type
+                    else -> declaredParameter.type
+                }
+                parameter.copy(type = parameterType)
+            }
+            else -> inferredSignature.parameters.mapIndexed { index, parameter ->
+                val declaredParameter = declaredSignature.parameters.getOrNull(index)
+                val parameterType = when {
+                    declaredParameter == null -> parameter.type
+                    parameter.type == UnknownType -> declaredParameter.type
+                    declaredParameter.type == UnknownType -> parameter.type
+                    else -> declaredParameter.type
+                }
+                parameter.copy(type = parameterType)
+            }
+        }
+        val mergedSignature = inferredSignature.copy(
+            parameters = mergedParameters,
+            returnType = if (inferredSignature.returnType != UnknownType) inferredSignature.returnType else declaredSignature.returnType,
+            name = io.github.dingyi222666.luaparser.semantic.types.model.FunctionType(
+                parameters = mergedParameters,
+                returnType = if (inferredSignature.returnType != UnknownType) inferredSignature.returnType else declaredSignature.returnType,
+                typeParameters = inferredSignature.typeParameters
+            ).name
+        )
+        return if (declaration.kind == DeclarationKind.METHOD) {
+            enrichMethodCallableType(declaration, mergedSignature)
+        } else {
+            mergedSignature
+        }
+    }
+
+    private fun enrichMethodCallableType(declaration: BinderDeclaration, declared: CallableType): CallableType {
+        if (declaration.kind != DeclarationKind.METHOD) {
+            return declared
+        }
+
+        if (!isColonMethodDeclaration(binder, declaration)) {
+            return declared
+        }
+
+        val selfType = declaration.documentation?.resolvedParameterTypes?.get("self") ?: UnknownType
+        val enrichedSignatures = declared.callSignatures.map { signature ->
+            val parameters = if (signature.parameters.firstOrNull()?.name == "self") {
+                signature.parameters.mapIndexed { index, parameter ->
+                    if (index == 0 && parameter.type == UnknownType && selfType != UnknownType) {
+                        parameter.copy(type = selfType)
+                    } else {
+                        parameter
+                    }
+                }
+            } else {
+                listOf(FunctionParameter(name = "self", type = selfType)) + signature.parameters
+            }
+            signature.copy(parameters = parameters, name = io.github.dingyi222666.luaparser.semantic.types.model.FunctionType(parameters = parameters, returnType = signature.returnType, typeParameters = signature.typeParameters).name)
+        }
+        return when (enrichedSignatures.size) {
+            0 -> declared
+            1 -> enrichedSignatures.single()
+            else -> io.github.dingyi222666.luaparser.semantic.types.model.OverloadedFunctionType(enrichedSignatures)
         }
     }
 

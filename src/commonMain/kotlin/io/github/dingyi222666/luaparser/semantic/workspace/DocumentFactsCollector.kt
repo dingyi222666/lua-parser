@@ -1,6 +1,8 @@
 package io.github.dingyi222666.luaparser.semantic.workspace
 
+import io.github.dingyi222666.luaparser.parser.ast.node.ArrayConstructorExpression
 import io.github.dingyi222666.luaparser.parser.ast.node.AssignmentStatement
+import io.github.dingyi222666.luaparser.parser.ast.node.BinaryExpression
 import io.github.dingyi222666.luaparser.parser.ast.node.BlockNode
 import io.github.dingyi222666.luaparser.parser.ast.node.CallExpression
 import io.github.dingyi222666.luaparser.parser.ast.node.CallStatement
@@ -16,6 +18,7 @@ import io.github.dingyi222666.luaparser.parser.ast.node.Identifier
 import io.github.dingyi222666.luaparser.parser.ast.node.IfClause
 import io.github.dingyi222666.luaparser.parser.ast.node.IfStatement
 import io.github.dingyi222666.luaparser.parser.ast.node.IndexExpression
+import io.github.dingyi222666.luaparser.parser.ast.node.LambdaDeclaration
 import io.github.dingyi222666.luaparser.parser.ast.node.LocalStatement
 import io.github.dingyi222666.luaparser.parser.ast.node.MemberExpression
 import io.github.dingyi222666.luaparser.parser.ast.node.Position
@@ -23,15 +26,13 @@ import io.github.dingyi222666.luaparser.parser.ast.node.Range
 import io.github.dingyi222666.luaparser.parser.ast.node.RepeatStatement
 import io.github.dingyi222666.luaparser.parser.ast.node.ReturnStatement
 import io.github.dingyi222666.luaparser.parser.ast.node.StatementNode
+import io.github.dingyi222666.luaparser.parser.ast.node.StringCallExpression
 import io.github.dingyi222666.luaparser.parser.ast.node.SwitchStatement
 import io.github.dingyi222666.luaparser.parser.ast.node.TableConstructorExpression
+import io.github.dingyi222666.luaparser.parser.ast.node.TableKey
 import io.github.dingyi222666.luaparser.parser.ast.node.UnaryExpression
 import io.github.dingyi222666.luaparser.parser.ast.node.WhenStatement
 import io.github.dingyi222666.luaparser.parser.ast.node.WhileStatement
-import io.github.dingyi222666.luaparser.parser.ast.node.BinaryExpression
-import io.github.dingyi222666.luaparser.parser.ast.node.LambdaDeclaration
-import io.github.dingyi222666.luaparser.parser.ast.node.ArrayConstructorExpression
-import io.github.dingyi222666.luaparser.parser.ast.node.TableKey
 
 object DocumentFactsCollector {
     fun collect(path: VirtualPath, chunk: ChunkNode): DocumentFacts {
@@ -47,6 +48,8 @@ object DocumentFactsCollector {
             requires = state.requires,
             dynamicRequires = state.dynamicRequires,
             legacyModuleCalls = state.legacyModuleCalls,
+            sourceImports = state.sourceImports,
+            jvmClassLoads = state.jvmClassLoads,
             returnHint = returnHint,
             environmentSegments = segments,
             exportWriteAnchors = state.exportWriteAnchors
@@ -59,6 +62,8 @@ object DocumentFactsCollector {
             requires = state.requires.toList(),
             dynamicRequires = state.dynamicRequires.toList(),
             legacyModuleCalls = state.legacyModuleCalls.toList(),
+            sourceImports = state.sourceImports.toList(),
+            jvmClassLoads = state.jvmClassLoads.toList(),
             returnHint = returnHint,
             environmentSegments = segments,
             exportWriteAnchors = state.exportWriteAnchors.toList()
@@ -69,9 +74,24 @@ object DocumentFactsCollector {
         val requires = mutableListOf<DocumentFacts.RequireFact>()
         val dynamicRequires = mutableListOf<DocumentFacts.DynamicRequireFact>()
         val legacyModuleCalls = mutableListOf<DocumentFacts.LegacyModuleCallFact>()
+        val sourceImports = mutableListOf<DocumentFacts.SourceImportFact>()
+        val jvmClassLoads = mutableListOf<DocumentFacts.JvmClassLoadFact>()
         val exportWriteAnchors = mutableListOf<DocumentFacts.ExportWriteAnchor>()
         private val moduleNameCandidates = linkedMapOf<ModuleNameCandidateKey, DocumentFacts.ModuleNameCandidate>()
         private val topLevelSegmentTriggers = mutableListOf<DocumentFacts.LegacyModuleCallFact>()
+        private val importAliases = linkedSetOf<String>()
+        private val bindClassAliases = linkedSetOf<String>()
+        private val newInstanceAliases = linkedSetOf<String>()
+        private val createProxyAliases = linkedSetOf<String>()
+        private val loadLibAliases = linkedSetOf<String>()
+
+        init {
+            importAliases += "import"
+            bindClassAliases += "luajava.bindClass"
+            newInstanceAliases += "luajava.newInstance"
+            createProxyAliases += "luajava.createProxy"
+            loadLibAliases += "luajava.loadLib"
+        }
 
         fun addPathDerivedModuleNameCandidate() {
             deriveModuleNameFromPath(path)?.let { moduleName ->
@@ -152,10 +172,12 @@ object DocumentFactsCollector {
         private fun visitStatement(statement: StatementNode, functionDepth: Int) {
             when (statement) {
                 is LocalStatement -> {
+                    collectLocalAliases(statement)
                     statement.variables.forEach { visitExpression(it, functionDepth) }
                 }
 
                 is AssignmentStatement -> {
+                    collectAssignmentAliases(statement)
                     if (functionDepth == 0) {
                         statement.init.forEach { target ->
                             collectAssignmentAnchor(target)
@@ -272,10 +294,9 @@ object DocumentFactsCollector {
         }
 
         private fun collectCallFacts(call: CallExpression, isTopLevel: Boolean) {
-            val calleeName = identifierName(call.base) ?: return
+            val calleeName = calleeName(call.base) ?: return
             when (calleeName) {
                 "require" -> collectRequireFact(call)
-
                 "module" -> extractLegacyModuleCall(call, isTopLevel)?.let { fact ->
                     legacyModuleCalls += fact
                     addModuleNameCandidate(
@@ -287,15 +308,38 @@ object DocumentFactsCollector {
                         topLevelSegmentTriggers += fact
                     }
                 }
+                "import" -> collectJvmClassLoadFact(call, calleeName, DocumentFacts.JvmClassLoadKind.IMPORT_CALL)
+                "luajava.bindClass" -> collectJvmClassLoadFact(call, calleeName, DocumentFacts.JvmClassLoadKind.BIND_CLASS_CALL)
+                "luajava.newInstance" -> collectJvmClassLoadFact(call, calleeName, DocumentFacts.JvmClassLoadKind.NEW_INSTANCE_CALL)
+                "luajava.createProxy" -> collectJvmClassLoadFact(call, calleeName, DocumentFacts.JvmClassLoadKind.CREATE_PROXY_CALL)
+                "luajava.loadLib" -> collectJvmClassLoadFact(call, calleeName, DocumentFacts.JvmClassLoadKind.LOAD_LIB_CALL)
+                else -> {
+                    if (calleeName in importAliases) {
+                        collectJvmClassLoadFact(call, calleeName, DocumentFacts.JvmClassLoadKind.IMPORT_CALL)
+                    }
+                    if (calleeName in bindClassAliases) {
+                        collectJvmClassLoadFact(call, calleeName, DocumentFacts.JvmClassLoadKind.BIND_CLASS_CALL)
+                    }
+                    if (calleeName in newInstanceAliases) {
+                        collectJvmClassLoadFact(call, calleeName, DocumentFacts.JvmClassLoadKind.NEW_INSTANCE_CALL)
+                    }
+                    if (calleeName in createProxyAliases) {
+                        collectJvmClassLoadFact(call, calleeName, DocumentFacts.JvmClassLoadKind.CREATE_PROXY_CALL)
+                    }
+                    if (calleeName in loadLibAliases) {
+                        collectJvmClassLoadFact(call, calleeName, DocumentFacts.JvmClassLoadKind.LOAD_LIB_CALL)
+                    }
+                }
             }
         }
 
         private fun collectRequireFact(call: CallExpression) {
-            val firstArgument = call.arguments.firstOrNull()
+            val firstArgument = callArguments(call).firstOrNull()
             val stringArgument = firstArgument as? ConstantNode
             if (stringArgument != null && stringArgument.constantType == ConstantNode.TYPE.STRING) {
+                val moduleName = stringArgument.stringOf()
                 requires += DocumentFacts.RequireFact(
-                    moduleName = stringArgument.stringOf(),
+                    moduleName = moduleName,
                     range = call.range
                 )
                 return
@@ -309,6 +353,73 @@ object DocumentFactsCollector {
                 },
                 range = call.range
             )
+        }
+
+        private fun collectLocalAliases(statement: LocalStatement) {
+            val bindings = statement.init.zip(statement.variables)
+            bindings.forEach { (identifier, value) ->
+                registerAlias(identifier.name, value)
+            }
+        }
+
+        private fun collectAssignmentAliases(statement: AssignmentStatement) {
+            val bindings = statement.variables.zip(statement.init)
+            bindings.forEach { (target, value) ->
+                val identifier = target as? Identifier ?: return@forEach
+                registerAlias(identifier.name, value)
+            }
+        }
+
+        private fun registerAlias(aliasName: String, expression: ExpressionNode) {
+            val requireTarget = extractRequireString(expression)
+            val resolvedName = calleeName(expression)
+            if (requireTarget == "import" || resolvedName in importAliases) {
+                importAliases += aliasName
+            }
+            if (isBindClassReference(expression) || resolvedName in bindClassAliases) {
+                bindClassAliases += aliasName
+            }
+            if (isNewInstanceReference(expression) || resolvedName in newInstanceAliases) {
+                newInstanceAliases += aliasName
+            }
+            if (isCreateProxyReference(expression) || resolvedName in createProxyAliases) {
+                createProxyAliases += aliasName
+            }
+            if (isLoadLibReference(expression) || resolvedName in loadLibAliases) {
+                loadLibAliases += aliasName
+            }
+        }
+
+        private fun collectJvmClassLoadFact(
+            call: CallExpression,
+            calleeName: String,
+            kind: DocumentFacts.JvmClassLoadKind
+        ) {
+            val targets = when (kind) {
+                DocumentFacts.JvmClassLoadKind.IMPORT_CALL -> extractImportTargets(call)
+                DocumentFacts.JvmClassLoadKind.BIND_CLASS_CALL,
+                DocumentFacts.JvmClassLoadKind.NEW_INSTANCE_CALL,
+                DocumentFacts.JvmClassLoadKind.LOAD_LIB_CALL -> extractStringTargets(call)
+                DocumentFacts.JvmClassLoadKind.CREATE_PROXY_CALL -> extractCreateProxyTargets(call)
+            }
+            if (targets.isEmpty()) {
+                return
+            }
+            if (kind == DocumentFacts.JvmClassLoadKind.IMPORT_CALL && calleeName in importAliases) {
+                targets.forEach { target ->
+                    sourceImports += DocumentFacts.SourceImportFact(
+                        target = target,
+                        range = call.range
+                    )
+                }
+            }
+            targets.forEach { target ->
+                jvmClassLoads += DocumentFacts.JvmClassLoadFact(
+                    target = target,
+                    kind = kind,
+                    range = call.range
+                )
+            }
         }
 
         private fun addModuleNameCandidate(
@@ -422,12 +533,88 @@ object DocumentFactsCollector {
     private fun identifierName(expression: ExpressionNode): String? =
         (expression as? Identifier)?.name
 
+    private fun calleeName(expression: ExpressionNode): String? {
+        return when (expression) {
+            is Identifier -> expression.name
+            is MemberExpression -> {
+                if (expression.indexer != ".") {
+                    return null
+                }
+                val base = calleeName(expression.base) ?: return null
+                "$base.${expression.identifier.name}"
+            }
+            else -> null
+        }
+    }
+
+    private fun callArguments(call: CallExpression): List<ExpressionNode> {
+        val stringCall = call.base as? StringCallExpression
+        return buildList {
+            if (stringCall != null) {
+                addAll(stringCall.arguments)
+            }
+            addAll(call.arguments)
+        }
+    }
+
+    private fun extractStringTargets(call: CallExpression): List<String> {
+        return extractStringTargets(callArguments(call).firstOrNull())
+    }
+
+    private fun extractCreateProxyTargets(call: CallExpression): List<String> {
+        val arguments = callArguments(call)
+        if (arguments.isEmpty()) {
+            return emptyList()
+        }
+        val targets = mutableListOf<String>()
+        arguments.forEach { argument ->
+            targets += extractStringTargets(argument)
+        }
+        return targets
+    }
+
+    private fun extractImportTargets(call: CallExpression): List<String> {
+        return when (val firstArgument = callArguments(call).firstOrNull()) {
+            is ArrayConstructorExpression -> firstArgument.values.flatMap(::extractStringTargets)
+            is TableConstructorExpression -> firstArgument.fields.flatMap { extractStringTargets(it.value) }
+            else -> extractStringTargets(firstArgument)
+        }
+    }
+
+    private fun extractStringTargets(expression: ExpressionNode?): List<String> {
+        val constant = expression as? ConstantNode ?: return emptyList()
+        if (constant.constantType != ConstantNode.TYPE.STRING) {
+            return emptyList()
+        }
+        return listOf(constant.stringOf())
+    }
+
     private fun extractStringArgument(call: CallExpression): String? {
-        val firstArgument = call.arguments.firstOrNull() as? ConstantNode ?: return null
-        if (firstArgument.constantType != ConstantNode.TYPE.STRING) {
+        return extractStringTargets(call).singleOrNull()
+    }
+
+    private fun extractRequireString(expression: ExpressionNode): String? {
+        val call = expression as? CallExpression ?: return null
+        if (calleeName(call.base) != "require") {
             return null
         }
-        return firstArgument.stringOf()
+        return extractStringArgument(call)
+    }
+
+    private fun isBindClassReference(expression: ExpressionNode): Boolean {
+        return calleeName(expression) == "luajava.bindClass"
+    }
+
+    private fun isNewInstanceReference(expression: ExpressionNode): Boolean {
+        return calleeName(expression) == "luajava.newInstance"
+    }
+
+    private fun isCreateProxyReference(expression: ExpressionNode): Boolean {
+        return calleeName(expression) == "luajava.createProxy"
+    }
+
+    private fun isLoadLibReference(expression: ExpressionNode): Boolean {
+        return calleeName(expression) == "luajava.loadLib"
     }
 
     private fun isPackageSeeAll(expression: ExpressionNode): Boolean {
@@ -493,6 +680,8 @@ object DocumentFactsCollector {
         requires: List<DocumentFacts.RequireFact>,
         dynamicRequires: List<DocumentFacts.DynamicRequireFact>,
         legacyModuleCalls: List<DocumentFacts.LegacyModuleCallFact>,
+        sourceImports: List<DocumentFacts.SourceImportFact>,
+        jvmClassLoads: List<DocumentFacts.JvmClassLoadFact>,
         returnHint: DocumentFacts.ReturnExportShapeHint,
         environmentSegments: List<DocumentFacts.EnvironmentSegment>,
         exportWriteAnchors: List<DocumentFacts.ExportWriteAnchor>
@@ -501,53 +690,35 @@ object DocumentFactsCollector {
             append("path=")
             append(path.value)
             append('\n')
-            append("moduleCandidates=")
-            append(moduleNameCandidates.joinToString("|") {
-                listOf(it.moduleName, it.source.name).joinToString("#")
-            })
+            append("moduleNameCandidates=")
+            append(moduleNameCandidates.joinToString("|") { "${it.source}:${it.moduleName}" })
             append('\n')
             append("requires=")
-            append(requires.joinToString("|") {
-                it.moduleName
-            })
+            append(requires.joinToString("|") { it.moduleName })
             append('\n')
             append("dynamicRequires=")
-            append(dynamicRequires.joinToString("|") {
-                it.kind.name
-            })
+            append(dynamicRequires.joinToString("|") { it.kind.name })
             append('\n')
-            append("legacyModules=")
-            append(legacyModuleCalls.joinToString("|") {
-                listOf(it.moduleName, it.mode.name, it.isTopLevel.toString()).joinToString("#")
-            })
+            append("legacyModuleCalls=")
+            append(legacyModuleCalls.joinToString("|") { "${it.moduleName}:${it.mode}:${it.isTopLevel}" })
             append('\n')
-            append("return=")
-            append(listOf(returnHint.kind.name, returnHint.identifierName.orEmpty()).joinToString("#"))
+            append("sourceImports=")
+            append(sourceImports.joinToString("|") { it.target })
             append('\n')
-            append("segments=")
-            append(environmentSegments.joinToString("|") {
-                it.mode.name
-            })
+            append("jvmClassLoads=")
+            append(jvmClassLoads.joinToString("|") { "${it.kind}:${it.target}" })
             append('\n')
-            append("anchors=")
-            append(exportWriteAnchors.joinToString("|") {
-                listOf(
-                    it.rootIdentifier,
-                    it.accessPath.joinToString("."),
-                    it.kind.name
-                ).joinToString("#")
-            })
+            append("returnHint=")
+            append(returnHint.kind)
+            append(':')
+            append(returnHint.identifierName.orEmpty())
+            append('\n')
+            append("environmentSegments=")
+            append(environmentSegments.joinToString("|") { it.mode.name })
+            append('\n')
+            append("exportWriteAnchors=")
+            append(exportWriteAnchors.joinToString("|") { "${it.kind}:${it.rootIdentifier}:${it.accessPath.joinToString(".")}" })
         }
-        return fnv1a64(payload)
-    }
-
-    private fun fnv1a64(text: String): String {
-        var hash = -3750763034362895579L
-        val prime = 1099511628211L
-        for (char in text) {
-            hash = hash xor char.code.toLong()
-            hash *= prime
-        }
-        return hash.toULong().toString(16).padStart(16, '0')
+        return workspaceFingerprintHash(payload)
     }
 }

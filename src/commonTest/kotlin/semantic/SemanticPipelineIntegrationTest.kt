@@ -151,40 +151,71 @@ class SemanticPipelineIntegrationTest {
     }
 
     @Test
-    fun overload_calls_choose_expected_branch() {
+    fun ast_method_declarations_bind_as_methods_and_infer_callable_surface() {
         val harness = integrationHarness(
             """
-            ---@overload fun(value: string): string
+            local box = {}
+            ---@param self table
             ---@param value number
-            ---@return number
-            local function normalize(value)
-                return value
+            ---@param label string
+            function box:render(value, label)
+                return label
             end
-
-            ---@class Widget
-            ---@method Widget:pick(): number
-            ---@overload fun(self: Widget, value: string): string
-            ---@type Widget
-            local widget = {}
-
-            local fromNumber = normalize(1)
-            local fromString = normalize("x")
-            local pickedDefault = widget:pick()
-            local pickedString = widget:pick("x")
+            local current = box:render(1, "hi")
             """.trimIndent()
         )
 
-        val widgetDeclaration = harness.declaration("Widget", DeclarationKind.CLASS)
-        val ownedDeclarations = harness.snapshot.binder.declarationIndex.getOwnedDeclarations(DeclarationOwner.Declaration(widgetDeclaration.id))
+        val methodDeclaration = harness.declaration("render", DeclarationKind.METHOD)
+        val methodSymbol = harness.assertSymbol("render", SymbolKind.METHOD, harness.positionOf("render", occurrence = 1))
+        val methodType = harness.snapshot.model.getInferredType(methodSymbol)
+        val currentType = harness.snapshot.model.getTypeAt(harness.localValue("current"))
 
-        assertEquals("number", harness.snapshot.model.getTypeAt(harness.localValue("fromNumber"))?.displayName)
-        assertEquals("string", harness.snapshot.model.getTypeAt(harness.localValue("fromString"))?.displayName)
-        assertEquals("number", harness.snapshot.model.getTypeAt(harness.localValue("pickedDefault"))?.displayName)
-        assertEquals("string", harness.snapshot.model.getTypeAt(harness.localValue("pickedString"))?.displayName)
-        assertTrue(ownedDeclarations.any { it.kind == DeclarationKind.METHOD && it.name == "pick" })
-        assertTrue(harness.snapshot.model.getMembers(assertNotNull(harness.snapshot.model.getDeclaredType(harness.assertSymbol("Widget", SymbolKind.CLASS, harness.positionOf("Widget", occurrence = 1))))).any {
-            it.name == "pick" && it.kind == SymbolKind.METHOD
-        })
+        assertEquals("render", methodDeclaration.name)
+        assertEquals("fun(self: table, value: number, label: string): string", methodType?.displayName)
+        assertEquals("string", currentType?.displayName)
+    }
+
+    @Test
+    fun ast_method_declarations_resolve_owning_function_for_body_inference() {
+        val harness = integrationHarness(
+            """
+            local box = {}
+            ---@param self table
+            ---@param value number
+            ---@param label string
+            function box:render(value, label)
+                return label
+            end
+            """.trimIndent()
+        )
+
+        val methodDeclaration = harness.declaration("render", DeclarationKind.METHOD)
+        val ownedDeclarations = harness.snapshot.binder.declarationIndex.getOwnedDeclarations(DeclarationOwner.Declaration(methodDeclaration.id))
+
+        assertEquals(listOf("value", "label"), ownedDeclarations.filter { it.kind == DeclarationKind.PARAMETER }.map { it.name })
+    }
+
+    @Test
+    fun ast_method_declaration_inference_prefers_body_return_over_doc_return() {
+        val harness = integrationHarness(
+            """
+            local box = {}
+            ---@param self table
+            ---@param value number
+            ---@param label string
+            ---@return number
+            function box:render(value, label)
+                return label
+            end
+            """.trimIndent()
+        )
+
+        val methodDeclaration = harness.declaration("render", DeclarationKind.METHOD)
+        val methodSymbol = harness.assertSymbol("render", SymbolKind.METHOD, harness.positionOf("render", occurrence = 1))
+
+        assertEquals("fun(self: table, value: number, label: string): string", harness.snapshot.model.getInferredType(methodSymbol)?.displayName)
+        assertEquals("string", harness.snapshot.model.getTypeAt(harness.identifier("label", occurrence = 2))?.displayName)
+        assertEquals(listOf("number"), methodDeclaration.documentation?.resolvedReturnTypes?.map { it.displayName })
     }
 
     @Test

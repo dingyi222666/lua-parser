@@ -8,8 +8,11 @@ import io.github.dingyi222666.luaparser.semantic.api.CompletionItem
 import io.github.dingyi222666.luaparser.semantic.api.CompletionItemKind
 import io.github.dingyi222666.luaparser.semantic.api.Diagnostic
 import io.github.dingyi222666.luaparser.semantic.api.DiagnosticSeverity
+import io.github.dingyi222666.luaparser.semantic.api.ParameterInformation
 import io.github.dingyi222666.luaparser.semantic.api.Scope
 import io.github.dingyi222666.luaparser.semantic.api.ScopeKind
+import io.github.dingyi222666.luaparser.semantic.api.SignatureHelp
+import io.github.dingyi222666.luaparser.semantic.api.SignatureInformation
 import io.github.dingyi222666.luaparser.semantic.api.Symbol
 import io.github.dingyi222666.luaparser.semantic.api.SymbolKind
 import io.github.dingyi222666.luaparser.semantic.api.TypeInfo
@@ -66,6 +69,16 @@ class SemanticPublicApiTest {
                 detail = "number"
             )
         )
+        val signatureHelp = SignatureHelp(
+            signatures = listOf(
+                SignatureInformation(
+                    label = "fun(value: number): number",
+                    parameters = listOf(ParameterInformation("value: number"))
+                )
+            ),
+            activeSignature = 0,
+            activeParameter = 0
+        )
 
         val model = object : SemanticModel {
             override fun getSymbolAt(position: Position): Symbol = symbol
@@ -79,6 +92,8 @@ class SemanticPublicApiTest {
             override fun getMembers(type: TypeInfo): List<Symbol> = listOf(symbol)
 
             override fun getCompletionsAt(position: Position): List<CompletionItem> = completions
+
+            override fun getSignatureHelpAt(position: Position): SignatureHelp = signatureHelp
 
             override fun getDiagnostics(): List<Diagnostic> = diagnostics
 
@@ -96,6 +111,7 @@ class SemanticPublicApiTest {
         assertEquals("integer", result.model.getInferredType(symbol)?.displayName)
         assertEquals("value", result.model.getMembers(TypeInfo("number")).single().name)
         assertEquals("value", result.model.getCompletionsAt(position).single().label)
+        assertEquals("fun(value: number): number", result.model.getSignatureHelpAt(position)?.signatures?.single()?.label)
         assertEquals("placeholder", result.model.getDiagnostics().single().message)
         assertEquals(1, result.summary.diagnosticCount)
         assertEquals(0, result.summary.errorCount)

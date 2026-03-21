@@ -42,12 +42,12 @@ class BinderPassDeclarationTest {
     }
 
     @Test
-    fun defersMemberFunctionDeclarationsButStillCreatesBodyScope() {
+    fun bindsMemberFunctionDeclarationsAndCreatesBodyScope() {
         val chunk = parser.parse("function obj:render() end")
         val result = BinderPass().bind(chunk, CommentAttachPass().attach(chunk))
         val function = chunk.body.statements.filterIsInstance<FunctionDeclaration>().single()
 
-        assertEquals(0, result.declarationIndex.declarations.count { it.name == "render" && it.origin != DeclarationOrigin.BUILTIN })
+        assertEquals(1, result.declarationIndex.declarations.count { it.kind == DeclarationKind.METHOD && it.name == "render" && it.origin != DeclarationOrigin.BUILTIN })
         assertNotNull(result.scopeGraph.getScope(function.body!!))
     }
 
