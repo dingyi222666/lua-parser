@@ -181,7 +181,8 @@ class AstVisitorAndroLuaNodesTddTest {
         assertContains(events, "Continue")
         assertContains(events, "Break")
 
-        assertSame(doStmt, switchStmt.parent)
+        assertSame(doStmt.body, switchStmt.parent)
+        assertSame(doStmt, doStmt.body.parent)
         assertSame(switchStmt, switchStmt.causes[0].parent)
         assertSame(switchStmt, switchStmt.causes[1].parent)
         assertIs<ContinueStatement>(assertIs<CaseCause>(switchStmt.causes[0]).body.statements.single())
@@ -270,7 +271,11 @@ class AstVisitorAndroLuaNodesTddTest {
             }
 
             override fun visitConstantNode(node: ConstantNode, value: Unit): ConstantNode {
-                return if (node.constantType == ConstantNode.TYPE.INTERGER && node.rawValue == 1) {
+                // Parser stores NUMBER tokens as lexer text on rawValue; coerce via toString.
+                return if (
+                    node.constantType == ConstantNode.TYPE.INTERGER &&
+                    integerConstantMatches(node, 1)
+                ) {
                     ConstantNode(ConstantNode.TYPE.INTERGER, 99).also { it.range = node.range.copy() }
                 } else {
                     node
@@ -286,7 +291,9 @@ class AstVisitorAndroLuaNodesTddTest {
 
         val caseCause = assertIs<CaseCause>(switchStmt.causes[0])
         assertEquals(2, caseCause.conditions.size)
-        assertEquals(99, assertIs<ConstantNode>(caseCause.conditions[0]).rawValue)
+        val rewrittenCaseConst = assertIs<ConstantNode>(caseCause.conditions[0])
+        assertEquals(99, rewrittenCaseConst.intOf())
+        assertEquals("99", rewrittenCaseConst.rawValue.toString())
         assertEquals("rewrittenLimit", assertIs<Identifier>(caseCause.conditions[1]).name)
         val caseCall = assertIs<CallStatement>(caseCause.body.statements.single())
         val caseCallExpr = assertIs<CallExpression>(caseCall.expression)
@@ -417,6 +424,15 @@ class AstVisitorAndroLuaNodesTddTest {
 
     private fun rewriteId(name: String, original: Identifier): Identifier {
         return Identifier(name).also { it.range = original.range.copy() }
+    }
+
+    private fun integerConstantMatches(node: ConstantNode, expected: Int): Boolean {
+        return when (val raw = node.rawValue) {
+            is Int -> raw == expected
+            is Long -> raw == expected.toLong()
+            is Number -> raw.toInt() == expected
+            else -> raw.toString() == expected.toString()
+        } || runCatching { node.intOf() == expected }.getOrDefault(false)
     }
 
     private fun recordingVisitor(events: MutableList<String>): ASTVisitor<Unit> {
