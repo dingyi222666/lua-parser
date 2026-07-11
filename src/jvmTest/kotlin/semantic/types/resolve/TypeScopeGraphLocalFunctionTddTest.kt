@@ -37,6 +37,10 @@ import kotlin.test.assertTrue
  * scopes only surface CLASS / TYPE_ALIAS (lexical) and TYPE_PARAMETER (declaration
  * scopes). This corpus locks that split for local functions.
  *
+ * Fixture note: avoid multi-identifier returns such as `return body, label` —
+ * the current parser rejects those with IllegalStateException near eof. Use both
+ * parameters via body locals / single returns instead.
+ *
  * Test-only; verification deferred to
  * `jvmTest --tests semantic.types.resolve.TypeScopeGraphLocalFunctionTddTest`.
  */
@@ -77,11 +81,14 @@ class TypeScopeGraphLocalFunctionTddTest {
 
     @Test
     fun localFunctionParameterBindingsVisibleInsideBodyOnlyOnBinderScopeGraph() {
+        // Body uses both parameters without multi-identifier return
+        // (`return body, label` currently fails parse with IllegalStateException near eof).
         val source = """
             local outer = 1
             local function render(input, label)
                 local body = input
-                return body, label
+                local tag = label
+                return body
             end
             local after = outer
             """.trimIndent()
@@ -93,6 +100,7 @@ class TypeScopeGraphLocalFunctionTddTest {
         val input = nonBuiltin(result, name = "input", kind = DeclarationKind.PARAMETER)
         val label = nonBuiltin(result, name = "label", kind = DeclarationKind.PARAMETER)
         val bodyLocal = nonBuiltin(result, name = "body", kind = DeclarationKind.LOCAL)
+        val tagLocal = nonBuiltin(result, name = "tag", kind = DeclarationKind.LOCAL)
         val functionDecl = nonBuiltin(result, name = "render", kind = DeclarationKind.FUNCTION)
 
         // Parameters live in the function body lexical scope only.
@@ -101,6 +109,7 @@ class TypeScopeGraphLocalFunctionTddTest {
         assertTrue(bodyDecls.any { it.id == input.id })
         assertTrue(bodyDecls.any { it.id == label.id })
         assertTrue(bodyDecls.any { it.id == bodyLocal.id })
+        assertTrue(bodyDecls.any { it.id == tagLocal.id })
         assertFalse(bodyDecls.any { it.id == functionDecl.id })
 
         val rootDecls = result.scopeGraph.getDeclarations(result.scopeGraph.rootScope.id)
@@ -109,6 +118,7 @@ class TypeScopeGraphLocalFunctionTddTest {
         assertFalse(rootDecls.any { it.id == input.id })
         assertFalse(rootDecls.any { it.id == label.id })
         assertFalse(rootDecls.any { it.id == bodyLocal.id })
+        assertFalse(rootDecls.any { it.id == tagLocal.id })
         assertTrue(rootDecls.any { it.id == functionDecl.id })
 
         // Owner linkage: parameters are owned by the function declaration.
@@ -117,6 +127,7 @@ class TypeScopeGraphLocalFunctionTddTest {
 
         // Parameter name resolution along parent chain is body-only (not outer/after).
         assertEquals(input.id, resolveValueAlongParentChain(result, functionLexical.id, "input")?.id)
+        assertEquals(label.id, resolveValueAlongParentChain(result, functionLexical.id, "label")?.id)
         assertNull(resolveValueAlongParentChain(result, result.scopeGraph.rootScope.id, "input"))
         val afterLocal = nonBuiltin(result, name = "after", kind = DeclarationKind.LOCAL)
         val afterScope = assertNotNull(result.scopeGraph.getDeclarationScope(afterLocal.id))
