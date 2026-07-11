@@ -24,6 +24,9 @@ import kotlin.test.assertTrue
  * - provider modules: coroutine, debug, io, math, os, package, string, table, utf8
  * - documented gaps: bit32 catalog-only, `module` catalog-only, package.seeall shim,
  *   moduleFieldNames seed subset, io `file` userdata methods
+ *
+ * See also: docs/semantic-compat.md section
+ * "Lua 5.3 builtin overlay inventory (TASK-205)".
  */
 class BuiltinOverlayLua53CompletenessTddTest {
 
@@ -32,7 +35,7 @@ class BuiltinOverlayLua53CompletenessTddTest {
         val overlay = loadLua53()
         val moduleNames = overlay.providerModules.values.map { it.moduleName }.toSet()
 
-        assertEquals(EXPECTED_PROVIDER_MODULES, moduleNames.sorted().toSet())
+        assertEquals(EXPECTED_PROVIDER_MODULES, moduleNames)
         EXPECTED_PROVIDER_MODULES.forEach { moduleName ->
             val path = overlay.providerModules.entries.single { it.value.moduleName == moduleName }.key
             assertEquals("__lua_std__/5.3/$moduleName.lua", path.value)
@@ -89,6 +92,9 @@ class BuiltinOverlayLua53CompletenessTddTest {
         assertTrue("bit32" in globals, "Catalog still lists bit32 as a Lua 5.3 compatibility global.")
         assertTrue("module" in globals, "Catalog still lists legacy module() as a Lua 5.3 compatibility global.")
         assertFalse("warn" in globals, "Lua 5.3 overlay must not advertise Lua 5.4 warn().")
+        assertFalse("loadstring" in globals, "Lua 5.3 overlay must not advertise removed loadstring alias as a catalog global.")
+        assertFalse("getfenv" in globals, "Lua 5.3 overlay must not advertise 5.1 getfenv.")
+        assertFalse("setfenv" in globals, "Lua 5.3 overlay must not advertise 5.1 setfenv.")
     }
 
     @Test
@@ -105,6 +111,15 @@ class BuiltinOverlayLua53CompletenessTddTest {
         }
         assertTrue("_G" in memberNames || "_G" in overlay.globals.globalNames)
         assertTrue("_VERSION" in memberNames || "_VERSION" in overlay.globals.globalNames)
+
+        // Module tables are catalogued as globals even though they are not declared as functions
+        // in global.lua; provider modules own their export surfaces.
+        EXPECTED_MODULE_GLOBALS.forEach { name ->
+            assertTrue(
+                name in overlay.globals.globalNames,
+                "Module table global '$name' must remain catalogued."
+            )
+        }
     }
 
     /**
@@ -130,31 +145,49 @@ class BuiltinOverlayLua53CompletenessTddTest {
             bit32Provider == null,
             "If this fails, update docs/semantic-compat.md bit32 gap (provider now exists)."
         )
-        val seed = overlay.globals.moduleFieldNames["bit32"].orEmpty()
-        val missingBit32Api = EXPECTED_BIT32_MEMBERS - seed
-        assertTrue(
-            missingBit32Api.isNotEmpty(),
+        assertFalse(
+            EXPECTED_BIT32_MEMBERS.all { member ->
+                overlay.globals.moduleFieldNames["bit32"].orEmpty().contains(member)
+            },
             "Documented gap: moduleFieldNames for bit32 is only the seed {band}, not full bit32 inventory."
         )
-        assertEquals(EXPECTED_BIT32_MEMBERS - setOf("band"), missingBit32Api)
+        EXPECTED_BIT32_MEMBERS.forEach { member ->
+            if (member != "band") {
+                assertFalse(
+                    member in overlay.globals.moduleFieldNames["bit32"].orEmpty(),
+                    "bit32 seed must not silently expand to full inventory ($member)."
+                )
+            }
+        }
     }
 
     /**
      * Documented gap: catalog globalNames includes legacy `module`, but lua53/global.lua does not
-     * declare a documented `function module(...)` surface member in the basic-library inventory.
+     * declare a documented `function module(...)` surface member.
      */
     @Test
     fun documented_gap_module_global_is_catalog_only_without_resource_declaration() {
         val overlay = loadLua53()
+        val surface = assertNotNull(overlay.globals.file.moduleExportSurface)
+        val memberNames = surface.members.map { it.name }.toSet()
 
         assertTrue("module" in overlay.globals.globalNames)
+        // Compatibility assignment may inject `module = module` into the globals source without docs.
+        // The resource file itself does not provide a typed basic-library declaration.
         assertFalse(
             "module" in EXPECTED_BASIC_CALLABLE_GLOBALS,
             "module() is not part of the Lua 5.3 basic library resource inventory."
         )
-        // Compatibility assignment may inject `module = module` into the merged globals source.
-        // The resource inventory intentionally omits a typed basic-library declaration.
-        assertFalse("module" in EXPECTED_BASIC_GLOBALS)
+        // Lock the gap: either absent from surface, or present only as untyped compatibility fill.
+        if ("module" in memberNames) {
+            val moduleMember = surface.members.single { it.name == "module" }
+            assertTrue(
+                moduleMember.type.displayName == "unknown" ||
+                    moduleMember.type.displayName == "any" ||
+                    moduleMember.type.displayName.contains("fun"),
+                "If module becomes a fully documented basic global, refresh the semantic-compat inventory."
+            )
+        }
     }
 
     /**
@@ -176,6 +209,10 @@ class BuiltinOverlayLua53CompletenessTddTest {
         assertFalse(
             "seeall" in packageMembers,
             "Documented gap: package provider surface lacks seeall; only compatibility metadata lists it."
+        )
+        assertFalse(
+            "loaders" in packageMembers,
+            "Lua 5.3 package.searchers replaced 5.1 package.loaders; loaders must not appear."
         )
     }
 
@@ -221,32 +258,27 @@ class BuiltinOverlayLua53CompletenessTddTest {
     }
 
     /**
-     * Documented gap: Lua 5.3 file userdata methods are declared on a `file` class in io.lua
-     * (colon methods / class docs). File-only methods such as seek/setvbuf are intentionally
-     * outside the io module inventory even though some names overlap with io.* helpers.
+     * Documented gap: Lua 5.3 file userdata methods are declared on a `file` class in io.lua,
+     * not as `io.*` provider members. They are intentionally outside the io module inventory.
      */
     @Test
-    fun documented_gap_io_file_userdata_methods_are_not_modeled_as_io_module_only_api() {
+    fun documented_gap_io_file_userdata_methods_are_not_io_module_members() {
         val overlay = loadLua53()
         val ioProvider = overlay.providerModules.values.single { it.moduleName == "io" }
         val ioSurface = assertNotNull(ioProvider.file.moduleExportSurface)
         val ioMembers = ioSurface.members.map { it.name }.toSet()
 
-        // File-only methods from the Lua 5.3 file userdata API.
-        FILE_ONLY_USERDATA_METHODS.forEach { method ->
+        EXPECTED_FILE_USERDATA_METHODS.forEach { method ->
             assertFalse(
-                method in ioMembers,
-                "file userdata-only method '$method' must not appear as an io module member."
-            )
-            assertFalse(
-                method in EXPECTED_MODULE_MEMBERS.getValue("io"),
-                "Inventory must keep file-only method '$method' outside io.*"
+                method in ioMembers && method !in EXPECTED_MODULE_MEMBERS.getValue("io"),
+                "file userdata method '$method' must not be mis-attributed unless modeled as io member."
             )
         }
-
-        // Overlapping names (close/flush/lines/read/write) exist on both io and file; inventory
-        // only models the io.* side for the provider surface.
-        assertTrue(ioMembers.containsAll(setOf("close", "flush", "lines", "read", "write")))
+        // None of the colon-style file methods appear as top-level io members in the inventory.
+        // Note: close/flush/lines/read/write also exist as io.* helpers; those are not file-only.
+        val fileOnlyMethods = setOf("seek", "setvbuf")
+        assertTrue(ioMembers.intersect(fileOnlyMethods).isEmpty())
+        assertTrue(ioMembers.intersect(EXPECTED_FILE_USERDATA_METHODS - EXPECTED_MODULE_MEMBERS.getValue("io")).isEmpty())
     }
 
     @Test
@@ -254,6 +286,30 @@ class BuiltinOverlayLua53CompletenessTddTest {
         val overlay = loadLua53()
         assertEquals(LuaVersion.LUA_5_3, overlay.version)
         assertEquals("__lua_std__/5.3/_G.lua", overlay.globals.path.value)
+    }
+
+    @Test
+    fun lua53_resource_inventory_excludes_removed_pre53_stdlib_symbols() {
+        val overlay = loadLua53()
+
+        // Symbols removed or replaced before/at Lua 5.3 must not appear on provider surfaces.
+        val forbiddenByModule = mapOf(
+            "math" to setOf("atan2", "cosh", "sinh", "tanh", "pow", "frexp", "ldexp", "log10"),
+            "table" to setOf("maxn", "foreach", "foreachi", "getn", "setn"),
+            "package" to setOf("loaders", "seeall"),
+            "string" to setOf("gfind"),
+            "debug" to setOf("getfenv", "setfenv")
+        )
+        forbiddenByModule.forEach { (moduleName, forbidden) ->
+            val provider = overlay.providerModules.values.single { it.moduleName == moduleName }
+            val surface = assertNotNull(provider.file.moduleExportSurface)
+            val actual = surface.members.map { it.name }.toSet()
+            val leaked = actual.intersect(forbidden)
+            assertTrue(
+                leaked.isEmpty(),
+                "Lua 5.3 module '$moduleName' unexpectedly exposes pre-5.3 symbols: $leaked"
+            )
+        }
     }
 
     private fun loadLua53() =
@@ -278,6 +334,10 @@ class BuiltinOverlayLua53CompletenessTddTest {
             "coroutine", "debug", "io", "math", "os", "package", "string", "table", "utf8"
         )
 
+        /**
+         * Full member inventory mirrored from
+         * `src/commonMain/resources/.../std/lua53/{module}.lua` and docs/semantic-compat.md.
+         */
         private val EXPECTED_MODULE_MEMBERS: Map<String, Set<String>> = linkedMapOf(
             "coroutine" to setOf(
                 "create", "isyieldable", "resume", "running", "status", "wrap", "yield"
@@ -320,6 +380,8 @@ class BuiltinOverlayLua53CompletenessTddTest {
             "replace", "rrotate", "rshift"
         )
 
-        private val FILE_ONLY_USERDATA_METHODS = setOf("seek", "setvbuf")
+        private val EXPECTED_FILE_USERDATA_METHODS = setOf(
+            "close", "flush", "lines", "read", "seek", "setvbuf", "write"
+        )
     }
 }

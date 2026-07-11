@@ -87,8 +87,18 @@ These are intentional incomplete or compatibility-only surfaces. They are locked
 | `module` | **Catalog-only gap** | Legacy `module` appears in `globalNames` for compatibility, but is **not** part of the Lua 5.3 basic-library resource inventory in `global.lua`. |
 | `package.seeall` | **Compatibility shim** | Injected via `compatibilityGlobalsSource` and `moduleFieldNames["package"]`; **not** present on the `package.lua` resource export surface. |
 | `moduleFieldNames` | **Seed subset** | Compact seed map used for metadata fingerprinting / early completion seeds (e.g. `math.abs`, `string.format`). Full member inventory lives on provider export surfaces, not this map. |
-| `file` userdata (`io` class) | **Out of io inventory** | `io.lua` documents `file` class methods (`seek`, `setvbuf`, and colon-style close/flush/lines/read/write). Provider inventory only models `io.*` members; file-only methods are not `io` module members. |
+| `file` userdata (`io` class) | **Out of io inventory** | `io.lua` documents `file` class methods (`seek`, `setvbuf`, and colon-style close/flush/lines/read/write). Provider inventory only models `io.*` members; file-only methods (`seek`, `setvbuf`) are not `io` module members. Shared names (`close`, `flush`, `lines`, `read`, `write`) exist both as `io.*` helpers and as `file:` methods. |
 | `builtin.lua` | **Type aliases only** | Primitive class stubs (`nil`, `boolean`, `number`, …); not a requireable stdlib module. |
+
+### Explicit non-goals for this inventory
+
+Pre-5.3 / 5.1–5.2 symbols intentionally absent from provider surfaces (locked by the completeness test):
+
+- `math`: `atan2`, `cosh`, `sinh`, `tanh`, `pow`, `frexp`, `ldexp`, `log10`
+- `table`: `maxn`, `foreach`, `foreachi`, `getn`, `setn`
+- `package`: `loaders` (replaced by `searchers`), `seeall` (compat shim only)
+- `string`: `gfind`
+- `debug` / globals: `getfenv`, `setfenv`, `loadstring`, Lua 5.4 `warn`
 
 ### Related tests
 
