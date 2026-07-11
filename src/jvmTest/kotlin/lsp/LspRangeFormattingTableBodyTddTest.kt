@@ -26,8 +26,9 @@ import kotlin.test.fail
  * range covers (or targets) a Lua table constructor body:
  * - Multi-line table bodies may yield empty edits or well-formed [TextEdit]s;
  *   the provider must not crash or invent inverted / out-of-bounds ranges.
- * - Nested tables, array-style / record-style fields, and mixed bodies stay
- *   within the same degrade-safely policy.
+ * - Nested tables, array-style / record-style fields, computed keys, trailing
+ *   commas, method-style fields, and mixed bodies stay within the same
+ *   degrade-safely policy.
  * - Invalid ranges (inverted, beyond EOF, empty, missing document, negative
  *   positions) return an empty edit list without throwing once the surface is
  *   reachable.
@@ -43,6 +44,11 @@ import kotlin.test.fail
  *   contract requires an implemented surface.
  * - Enforce hard empty-or-well-formed edit contracts once rangeFormatting is
  *   implemented / advertised.
+ *
+ * WAVE31 note: REVIEW25 rejection was a serial compile-gate failure in
+ * production `LuaWorkspaceQueryFacade` (unrelated TableConstructorExpression
+ * resolve), not a corpus assertion failure. This file remains test-only and
+ * does not touch production sources.
  *
  * Verification is review-owned and serial; this worker does not run Gradle.
  */
@@ -346,6 +352,118 @@ class LspRangeFormattingTableBodyTddTest {
         assertEditsStayInsideDocument(edits, document)
     }
 
+    @Test
+    fun range_formatting_on_trailing_comma_table_body_degrades_safely_when_supported() {
+        val service = service()
+        val textDocuments = LuaTextDocumentService(service)
+        val document = textDocuments.open(
+            "workspace/range-format-trailing-comma-table.lua",
+            """
+            local cfg = {
+                a = 1,
+                b = 2,
+            }
+            return cfg
+            """
+        )
+
+        val edits = requireRangeFormattingEdits(
+            textDocuments,
+            document,
+            Range(Position(0, 12), Position(3, 1)),
+            context = "trailing-comma record table body"
+        )
+
+        assertWellFormedEdits(edits, document)
+        assertEditsStayInsideDocument(edits, document)
+    }
+
+    @Test
+    fun range_formatting_on_computed_key_table_body_degrades_safely_when_supported() {
+        val service = service()
+        val textDocuments = LuaTextDocumentService(service)
+        val document = textDocuments.open(
+            "workspace/range-format-computed-key-table.lua",
+            """
+            local t = {
+                ["x-y"] = 1,
+                [1 + 2] = "sum",
+                plain = true
+            }
+            return t
+            """
+        )
+
+        val edits = requireRangeFormattingEdits(
+            textDocuments,
+            document,
+            Range(Position(0, 10), Position(4, 1)),
+            context = "computed-key table body"
+        )
+
+        assertWellFormedEdits(edits, document)
+        assertEditsStayInsideDocument(edits, document)
+    }
+
+    @Test
+    fun range_formatting_on_method_style_field_table_degrades_safely_when_supported() {
+        val service = service()
+        val textDocuments = LuaTextDocumentService(service)
+        val document = textDocuments.open(
+            "workspace/range-format-method-field-table.lua",
+            """
+            local obj = {
+                value = 0,
+                get = function(self)
+                    return self.value
+                end,
+                set = function(self, v)
+                    self.value = v
+                end
+            }
+            return obj
+            """
+        )
+
+        val edits = requireRangeFormattingEdits(
+            textDocuments,
+            document,
+            Range(Position(0, 12), Position(8, 1)),
+            context = "method-style field table body"
+        )
+
+        assertWellFormedEdits(edits, document)
+        assertEditsStayInsideDocument(edits, document)
+    }
+
+    @Test
+    fun range_formatting_on_single_field_line_inside_table_degrades_safely_when_supported() {
+        val service = service()
+        val textDocuments = LuaTextDocumentService(service)
+        val document = textDocuments.open(
+            "workspace/range-format-single-field-line.lua",
+            """
+            local config = {
+                enabled = true,
+                retries = 3,
+                label = "demo"
+            }
+            return config
+            """
+        )
+
+        // Only the middle field line is selected.
+        val edits = requireRangeFormattingEdits(
+            textDocuments,
+            document,
+            Range(Position(2, 0), Position(2, 16)),
+            context = "single field line inside table body"
+        )
+
+        assertWellFormedEdits(edits, document)
+        assertEditsStayInsideDocument(edits, document)
+    }
+
     // -------------------------------------------------------------------------
     // Malformed / incomplete table sources — no crash
     // -------------------------------------------------------------------------
@@ -419,6 +537,45 @@ class LspRangeFormattingTableBodyTddTest {
             is RangeFormatOutcome.Failed -> {
                 fail(
                     "unclosed table must not crash rangeFormatting; got hard failure: ${outcome.detail}"
+                )
+            }
+            is RangeFormatOutcome.Succeeded -> {
+                assertWellFormedEdits(outcome.edits, document)
+            }
+        }
+    }
+
+    @Test
+    fun range_formatting_on_missing_comma_table_does_not_crash() {
+        val service = service()
+        val textDocuments = LuaTextDocumentService(service)
+        val document = textDocuments.open(
+            "workspace/range-format-missing-comma-table.lua",
+            """
+            local broken = {
+                a = 1
+                b = 2
+            }
+            return broken
+            """
+        )
+
+        val outcome = invokeRangeFormatting(
+            textDocuments,
+            rangeFormattingParams(
+                document,
+                Range(Position(0, 15), Position(3, 1)),
+                FormattingOptions(4, true)
+            )
+        )
+
+        when (outcome) {
+            is RangeFormatOutcome.Unsupported -> {
+                assertTrue(outcome.detail.isNotBlank())
+            }
+            is RangeFormatOutcome.Failed -> {
+                fail(
+                    "missing-comma table must not crash rangeFormatting; got hard failure: ${outcome.detail}"
                 )
             }
             is RangeFormatOutcome.Succeeded -> {
@@ -703,6 +860,43 @@ class LspRangeFormattingTableBodyTddTest {
         }
     }
 
+    @Test
+    fun range_formatting_with_large_tab_size_option_degrades_safely_when_supported() {
+        val service = service()
+        val textDocuments = LuaTextDocumentService(service)
+        val document = textDocuments.open(
+            "workspace/range-format-large-tab-size.lua",
+            """
+            local config = {
+             enabled=true,
+             retries=3
+            }
+            return config
+            """
+        )
+
+        val outcome = invokeRangeFormatting(
+            textDocuments,
+            rangeFormattingParams(
+                document,
+                Range(Position(0, 15), Position(3, 1)),
+                FormattingOptions(8, true)
+            )
+        )
+
+        when (outcome) {
+            is RangeFormatOutcome.Unsupported -> {
+                assertTrue(outcome.detail.isNotBlank())
+            }
+            is RangeFormatOutcome.Failed -> {
+                fail("large tabSize option must not crash rangeFormatting: ${outcome.detail}")
+            }
+            is RangeFormatOutcome.Succeeded -> {
+                assertWellFormedEdits(outcome.edits, document)
+            }
+        }
+    }
+
     // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------
@@ -812,6 +1006,7 @@ class LspRangeFormattingTableBodyTddTest {
     ): RangeFormatOutcome {
         return try {
             val edits = textDocuments.rangeFormatting(params).get()
+            // null result is treated as empty edit list (safe no-op).
             RangeFormatOutcome.Succeeded(edits.orEmpty())
         } catch (error: Throwable) {
             val root = unwrap(error)
@@ -824,15 +1019,16 @@ class LspRangeFormattingTableBodyTddTest {
     }
 
     private fun assertWellFormedEdits(edits: List<TextEdit>, document: OpenDocument) {
-        edits.forEach { edit ->
+        assertNotNull(edits, "edits list must be non-null (use empty list for no-op)")
+        edits.forEachIndexed { index, edit ->
             val range = edit.range
-            assertNotNull(range, "TextEdit.range must not be null; edit=$edit")
-            assertNotNull(edit.newText, "TextEdit.newText must not be null; edit=$edit")
+            assertNotNull(range, "TextEdit[$index].range must be non-null; edit=$edit")
+            assertNotNull(edit.newText, "TextEdit[$index].newText must be non-null; edit=$edit")
 
             val start = range.start
             val end = range.end
-            assertNotNull(start, "range.start must not be null")
-            assertNotNull(end, "range.end must not be null")
+            assertNotNull(start, "TextEdit[$index].range.start must not be null")
+            assertNotNull(end, "TextEdit[$index].range.end must not be null")
 
             assertTrue(
                 start.line >= 0,
@@ -855,6 +1051,7 @@ class LspRangeFormattingTableBodyTddTest {
                     (end.line == start.line && end.character >= start.character),
                 "edit range must be ordered (end >= start); got ${describe(listOf(edit))}"
             )
+            assertRangeInsideDocument(range, document, label = "TextEdit[$index]")
         }
         assertEditsStayInsideDocument(edits, document)
     }
@@ -863,8 +1060,15 @@ class LspRangeFormattingTableBodyTddTest {
         val lineCount = document.lineCount
         if (lineCount == 0) {
             assertTrue(
-                edits.isEmpty(),
-                "empty document should yield no edits; got ${describe(edits)}"
+                edits.isEmpty() || edits.all { edit ->
+                    val range = edit.range
+                    range != null &&
+                        range.start.line == 0 &&
+                        range.start.character == 0 &&
+                        range.end.line == 0 &&
+                        range.end.character == 0
+                },
+                "empty document should yield no edits or origin zero-range; got ${describe(edits)}"
             )
             return
         }
@@ -883,6 +1087,55 @@ class LspRangeFormattingTableBodyTddTest {
                 range.end.line <= lineCount,
                 "edit end.line must not jump far past document end (lineCount=$lineCount); " +
                     "got ${describe(listOf(edit))}"
+            )
+        }
+    }
+
+    private fun assertRangeInsideDocument(range: Range, document: OpenDocument, label: String) {
+        val lineCount = document.lineCount
+        if (lineCount == 0) {
+            val isOriginEmpty =
+                range.start.line == 0 &&
+                    range.start.character == 0 &&
+                    range.end.line == 0 &&
+                    range.end.character == 0
+            assertTrue(
+                isOriginEmpty,
+                "$label on empty document must be 0:0-0:0 or absent; got " +
+                    "${range.start.line}:${range.start.character}-" +
+                    "${range.end.line}:${range.end.character}"
+            )
+            return
+        }
+
+        // LSP allows end at the start of the line after last content (exclusive end).
+        assertTrue(
+            range.start.line < lineCount,
+            "$label.start.line must be < lineCount=$lineCount; got ${range.start.line}"
+        )
+        assertTrue(
+            range.end.line <= lineCount,
+            "$label.end.line must be <= lineCount=$lineCount; got ${range.end.line}"
+        )
+
+        val startLineLength = document.lineLength(range.start.line)
+        assertTrue(
+            range.start.character <= startLineLength,
+            "$label.start.character must be <= line length $startLineLength; " +
+                "got ${range.start.character} on line ${range.start.line}"
+        )
+        if (range.end.line < lineCount) {
+            val endLineLength = document.lineLength(range.end.line)
+            assertTrue(
+                range.end.character <= endLineLength,
+                "$label.end.character must be <= line length $endLineLength; " +
+                    "got ${range.end.character} on line ${range.end.line}"
+            )
+        } else {
+            // EOF exclusive end: character should be 0.
+            assertTrue(
+                range.end.character == 0,
+                "$label.end at EOF line must use character 0; got ${range.end.character}"
             )
         }
     }
@@ -944,5 +1197,30 @@ class LspRangeFormattingTableBodyTddTest {
                 // Number of lines in the open document (last line may lack trailing newline).
                 return source.count { it == '\n' } + 1
             }
+
+        fun lineLength(line: Int): Int {
+            require(line >= 0) { "line must be >= 0" }
+            if (source.isEmpty()) {
+                return 0
+            }
+            var currentLine = 0
+            var index = 0
+            var lineStart = 0
+            while (index < source.length) {
+                if (source[index] == '\n') {
+                    if (currentLine == line) {
+                        return index - lineStart
+                    }
+                    currentLine += 1
+                    lineStart = index + 1
+                }
+                index += 1
+            }
+            if (currentLine == line) {
+                return source.length - lineStart
+            }
+            // Past last line — treat as length 0 for exclusive EOF checks.
+            return 0
+        }
     }
 }
