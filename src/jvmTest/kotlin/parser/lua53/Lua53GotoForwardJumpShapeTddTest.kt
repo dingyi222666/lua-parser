@@ -27,6 +27,8 @@ import parser.renderShape
  * - Forward `::label::` after `goto` remains in the AST (strict parse shapes).
  * - Malformed labels recover without hang (errorRecovery path, bounded runtime).
  *
+ * Label names intentionally avoid reserved keywords (`end`, `do`, `if`, …).
+ *
  * Test-only; production parser changes are out of scope unless review re-scopes.
  */
 class Lua53GotoForwardJumpShapeTddTest {
@@ -51,14 +53,15 @@ class Lua53GotoForwardJumpShapeTddTest {
                 """.trimIndent() to
                     "Chunk(Block[Goto(Id(done));Local(Id(skipped)=Const(true));CallStmt(Call(Id(print):Id(skipped)));Label(Id(done))])"
             ),
+            // Label must not be the reserved keyword `end` (Lua 5.3 name rule).
             "forward jump over assignment and return path" to (
                 """
-                goto end
+                goto finish
                 x = 1
-                ::end::
+                ::finish::
                 return x
                 """.trimIndent() to
-                    "Chunk(Block[Goto(Id(end));Assign(Id(x)=Const(1));Label(Id(end));Return(Id(x))])"
+                    "Chunk(Block[Goto(Id(finish));Assign(Id(x)=Const(1));Label(Id(finish));Return(Id(x))])"
             ),
             "multiple forward targets stay ordered" to (
                 "goto a goto b ::a:: ::b::" to
@@ -285,16 +288,17 @@ class Lua53GotoForwardJumpShapeTddTest {
                 ),
                 warningFragments = listOf("<name> expected", "'::' expected")
             ),
+            // Label name must not be reserved keyword `end`.
             MalformedLabelCase(
                 name = "label name then later statement without closing double colon",
                 source = """
-                    goto end
-                    ::end
+                    goto finish
+                    ::finish
                     return 1
                 """.trimIndent(),
                 requiredShapeFragments = listOf(
-                    "Goto(Id(end))",
-                    "Label(Id(end))",
+                    "Goto(Id(finish))",
+                    "Label(Id(finish))",
                     "Return(Const(1))"
                 ),
                 warningFragments = listOf("'::' expected")
