@@ -56,10 +56,13 @@ import parser.renderShape
  * reachable where the current product keeps them reachable. Test-only until
  * review expands production scope.
  *
- * Goldens track current product behaviour (WAVE22B after REVIEW20/21C):
- * - unclosed empty `{` after a line break uses statement-start recovery:
- *   following `print(...)` / `local` stay siblings after a missing array-field
- *   ExpressionNodeSupport placeholder;
+ * Goldens track current product behaviour (WAVE25B after REVIEW23/24):
+ * - unclosed empty `{` + following expression-start statement (`print(...)`)
+ *   absorbs that call as a table array field
+ *   TableKey(Const(1)=Call(...)) rather than a sibling CallStmt;
+ * - statement-start tokens that are not expression starts (`local`) still force
+ *   a missing array-field ExpressionNodeSupport placeholder, then leave the
+ *   later statement as a sibling;
  * - bare Name without `=` recovers as bad TableKeyString; failed recoverToken('=')
  *   leaves the lexer on the next significant token, so a following next-line
  *   expression start is absorbed as the field value
@@ -302,15 +305,15 @@ class LuaParserRecoveryTableConstructorTddTest {
             warningFragments = listOf("'}' expected")
         ),
         RecoveryCase(
-            // Empty `{` + next-line statement-start uses parseExpressionOrMissing
-            // line-break recovery: missing array field placeholder, then sibling print.
-            name = "unclosed empty table keeps following print after missing field",
+            // Following print(...) is a valid table array-field expression start, so the
+            // current product absorbs it into the unclosed constructor rather than
+            // leaving a sibling CallStmt. Document that absorption shape explicitly
+            // (REVIEW23/24 reject: empty `{` + print is not a missing-field sibling).
+            name = "unclosed empty table absorbs following print call as array field",
             source = "local config = {\nprint(config)",
             requiredShapeFragments = listOf(
-                "Local(Id(config)=Table(TableKey(Const(1)=ExpressionNodeSupport)))",
-                "CallStmt(Call(Id(print):Id(config)))"
+                "Local(Id(config)=Table(TableKey(Const(1)=Call(Id(print):Id(config)))))"
             ),
-            badShapeFragments = listOf("ExpressionNodeSupport"),
             warningFragments = listOf("'}' expected")
         ),
         RecoveryCase(
