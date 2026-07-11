@@ -21,6 +21,14 @@ import kotlin.test.assertTrue
  * - JvmClassModuleProvider: `__jvm__/packages/${packageName.replace('.', '/')}.lua`
  * - BuiltinOverlayLoader: `__lua_std__/$versionSegment/$moduleName.lua`
  * - LuaLanguageService.encodedUriPath: `__lsp_uri__/$encoded.lua`
+ *
+ * Product contract encoded here (VirtualPath.of / normalize):
+ * - `\` and `/` are equivalent separators; duplicates and trailing separators collapse.
+ * - `.` segments are dropped; `..` pops one segment or throws if it would escape the workspace root.
+ * - Empty segments from leading/duplicate separators are dropped, so a leading `/` does **not**
+ *   survive normalization: Unix absolute-looking inputs are re-rooted as workspace-relative
+ *   segment lists (they never remain host-rooted and never become provider prefixes).
+ * - Empty / `.`-only results are rejected.
  */
 class VirtualPathNormalizationTddTest {
 
@@ -65,21 +73,40 @@ class VirtualPathNormalizationTddTest {
 
     @Test
     fun dot_segments_are_collapsed_consistently_across_slash_styles() {
-        val cases = listOf(
+        // All of these collapse to src/module.lua under segment rules (., .., empty).
+        val toSrcModule = listOf(
             "src/./module.lua",
             "src\\.\\module.lua",
             "src/././module.lua",
             "./src/module.lua",
             ".\\src\\module.lua",
             "src/foo/../module.lua",
-            "src\\foo\\..\\module.lua",
-            "src/foo/./bar/../module.lua",
-            "src\\foo\\.\\bar\\..\\module.lua"
+            "src\\foo\\..\\module.lua"
         )
+        val srcModule = toSrcModule.map { VirtualPath.of(it) }.distinct()
+        assertEquals(1, srcModule.size)
+        assertEquals("src/module.lua", srcModule.single().value)
 
-        val normalized = cases.map { VirtualPath.of(it) }.distinct()
-        assertEquals(1, normalized.size)
-        assertEquals("src/module.lua", normalized.single().value)
+        // foo/./bar/.. keeps `foo` (`.` drops, then `..` pops only `bar`).
+        val toSrcFooModule = listOf(
+            "src/foo/./bar/../module.lua",
+            "src\\foo\\.\\bar\\..\\module.lua",
+            "src/foo/bar/../module.lua",
+            "src\\foo\\bar\\..\\module.lua"
+        )
+        val srcFooModule = toSrcFooModule.map { VirtualPath.of(it) }.distinct()
+        assertEquals(1, srcFooModule.size)
+        assertEquals("src/foo/module.lua", srcFooModule.single().value)
+
+        // Slash-style matrix for the same logical navigation.
+        assertEquals(
+            VirtualPath.of("src/foo/./bar/../module.lua"),
+            VirtualPath.of("src\\foo\\.\\bar\\..\\module.lua")
+        )
+        assertEquals(
+            VirtualPath.of("src/./module.lua"),
+            VirtualPath.of("src\\.\\module.lua")
+        )
     }
 
     @Test
@@ -111,8 +138,17 @@ class VirtualPathNormalizationTddTest {
         assertEquals("src/sibling.lua", base.resolve("..\\sibling.lua").value)
         assertEquals("src/pkg", base.resolve("").value)
         assertEquals("src/pkg/a/b.lua", base.resolve("a\\\\b.lua").value)
+
+        // Two `..` from `src/pkg` land on workspace-relative `outside.lua` (no escape).
+        assertEquals("outside.lua", base.resolve("../../outside.lua").value)
+        assertEquals("outside.lua", base.resolve("..\\..\\outside.lua").value)
+
+        // Three `..` would escape the workspace root and must be rejected.
         assertFailsWith<IllegalArgumentException> {
-            base.resolve("../../outside.lua")
+            base.resolve("../../../outside.lua")
+        }
+        assertFailsWith<IllegalArgumentException> {
+            base.resolve("..\\..\\..\\outside.lua")
         }
     }
 
@@ -137,18 +173,29 @@ class VirtualPathNormalizationTddTest {
     // -------------------------------------------------------------------------
 
     @Test
-    fun leading_slash_is_rejected_as_non_relative() {
-        assertFailsWith<IllegalArgumentException> {
+    fun leading_slash_collapses_to_workspace_relative_segments() {
+        // normalize() drops empty segments from leading `/`, so Unix absolute-looking
+        // inputs become ordinary workspace-relative segment lists. They never keep a
+        // leading `/` and therefore never look host-absolute after of().
+        assertEquals("absolute/path.lua", VirtualPath.of("/absolute/path.lua").value)
+        assertEquals("absolute/path.lua", VirtualPath.of("///absolute//path.lua").value)
+        assertEquals(
+            VirtualPath.of("absolute/path.lua"),
             VirtualPath.of("/absolute/path.lua")
-        }
-        // After separator normalization, a Windows-style root-ish form that
-        // still begins with '/' after strip is not produced by of(); empty
-        // after collapse is also rejected.
+        )
+        assertFalse(VirtualPath.of("/absolute/path.lua").value.startsWith('/'))
+        assertFalse(looksLikeHostAbsolutePath(VirtualPath.of("/absolute/path.lua").value))
+        assertFalse(isProviderVirtualPath(VirtualPath.of("/absolute/path.lua")))
+
+        // Collapse to empty is still rejected (workspace root / empty path).
         assertFailsWith<IllegalArgumentException> {
             VirtualPath.of("/")
         }
         assertFailsWith<IllegalArgumentException> {
             VirtualPath.of("///")
+        }
+        assertFailsWith<IllegalArgumentException> {
+            VirtualPath.of("\\")
         }
     }
 
@@ -329,13 +376,18 @@ class VirtualPathNormalizationTddTest {
     @Test
     fun raw_host_absolute_style_inputs_are_not_accepted_as_workspace_relative_providers() {
         // Provider construction must never pass host absolute paths into VirtualPath.of.
-        // Absolute Unix paths are rejected by the leading-slash invariant.
-        assertFailsWith<IllegalArgumentException> {
-            VirtualPath.of("/Users/dingyi/projects/app/main.lua")
-        }
-        assertFailsWith<IllegalArgumentException> {
-            VirtualPath.of("/home/user/workspace/mod.lua")
-        }
+        // Unix absolute-looking inputs lose their leading `/` under normalize() and become
+        // ordinary relative segment lists — never provider virtual paths.
+        val unixUsers = VirtualPath.of("/Users/dingyi/projects/app/main.lua")
+        assertEquals("Users/dingyi/projects/app/main.lua", unixUsers.value)
+        assertFalse(unixUsers.value.startsWith('/'), unixUsers.value)
+        assertFalse(looksLikeHostAbsolutePath(unixUsers.value), unixUsers.value)
+        assertFalse(isProviderVirtualPath(unixUsers), unixUsers.value)
+
+        val unixHome = VirtualPath.of("/home/user/workspace/mod.lua")
+        assertEquals("home/user/workspace/mod.lua", unixHome.value)
+        assertFalse(isProviderVirtualPath(unixHome), unixHome.value)
+        assertFalse(looksLikeHostAbsolutePath(unixHome.value), unixHome.value)
 
         // UNC-looking inputs lose empty leading segments under normalize(), so they
         // become workspace-relative segment lists — never provider virtual paths.
@@ -429,30 +481,33 @@ class VirtualPathNormalizationTddTest {
         // Even if a host absolute fragment is concatenated under a virtual prefix
         // without normalization discipline, VirtualPath must not yield a path that
         // both claims a provider prefix and embeds a host absolute root.
-        val sneaky = runCatching {
-            VirtualPath.of("__jvm__/classes//Users/dingyi/evil.lua")
-        }.getOrNull()
-        if (sneaky != null) {
-            // Duplicate separators collapse; leading-empty segments are dropped, so
-            // this becomes a relative-looking provider path — but it must still not
-            // look like a host absolute path after normalization.
-            assertFalse(looksLikeHostAbsolutePath(sneaky.value), sneaky.value)
-            assertFalse(sneaky.value.startsWith('/'), sneaky.value)
-            assertTrue(sneaky.value.startsWith("__jvm__/"), sneaky.value)
-        }
+        val sneaky = VirtualPath.of("__jvm__/classes//Users/dingyi/evil.lua")
+        // Duplicate separators collapse; leading-empty segments are dropped, so
+        // this becomes a relative-looking provider path — but it must still not
+        // look like a host absolute path after normalization.
+        assertEquals("__jvm__/classes/Users/dingyi/evil.lua", sneaky.value)
+        assertFalse(looksLikeHostAbsolutePath(sneaky.value), sneaky.value)
+        assertFalse(sneaky.value.startsWith('/'), sneaky.value)
+        assertTrue(sneaky.value.startsWith("__jvm__/"), sneaky.value)
+        // Same collapse with backslashes.
+        assertEquals(
+            sneaky,
+            VirtualPath.of("__jvm__\\classes\\\\Users\\dingyi\\evil.lua")
+        )
 
-        // Absolute host under resolve must not escape the virtual workspace.
-        val base = VirtualPath.of("__jvm__/classes")
-        assertFailsWith<IllegalArgumentException> {
-            // resolve only accepts relative child; absolute-looking children that
-            // begin with '/' are rejected by of() after join+normalize only if they
-            // introduce a leading '/'. Construct via of directly instead.
-            VirtualPath.of("/Users/dingyi/evil.lua")
-        }
+        // Absolute host of() re-roots as relative segments; never a provider path.
+        val absoluteHost = VirtualPath.of("/Users/dingyi/evil.lua")
+        assertEquals("Users/dingyi/evil.lua", absoluteHost.value)
+        assertFalse(isProviderVirtualPath(absoluteHost), absoluteHost.value)
+        assertFalse(looksLikeHostAbsolutePath(absoluteHost.value), absoluteHost.value)
+
         // Parent escape from a provider prefix must still be blocked at workspace root.
+        val base = VirtualPath.of("__jvm__/classes")
         assertFailsWith<IllegalArgumentException> {
             base.resolve("../../../../../../etc/passwd")
         }
+        // Controlled in-prefix navigation stays under the virtual prefix when it does not escape.
+        assertEquals("__jvm__/sibling.lua", base.resolve("../sibling.lua").value)
     }
 
     // -------------------------------------------------------------------------
@@ -479,6 +534,10 @@ class VirtualPathNormalizationTddTest {
             Case("a\\b\\..\\c.lua", "a/c.lua"),
             Case("a/b/./../c/./d.lua", "a/c/d.lua"),
             Case("a/b/c/../../d.lua", "a/d.lua"),
+            Case("a/foo/./bar/../c.lua", "a/foo/c.lua"),
+            Case("a\\foo\\.\\bar\\..\\c.lua", "a/foo/c.lua"),
+            Case("/a/b.lua", "a/b.lua"),
+            Case("///a//b.lua", "a/b.lua"),
             Case("__jvm__/classes/java/lang/String.lua", "__jvm__/classes/java/lang/String.lua"),
             Case("__jvm__\\classes\\java\\lang\\String.lua", "__jvm__/classes/java/lang/String.lua"),
             Case("__jvm__/classes/android/view/View\$OnClickListener.lua", "__jvm__/classes/android/view/View\$OnClickListener.lua"),
@@ -541,6 +600,10 @@ class VirtualPathNormalizationTddTest {
     /**
      * Host absolute shapes that must not appear as provider VirtualPath values:
      * Unix absolute, Windows drive, or UNC.
+     *
+     * Note: after VirtualPath.normalize, leading `/` empty segments are dropped, so
+     * a successfully constructed VirtualPath.value never starts with `/` or `//`.
+     * Drive-letter forms (C:/...) can still appear if naively fed in.
      */
     private fun looksLikeHostAbsolutePath(value: String): Boolean {
         if (value.startsWith('/')) return true
