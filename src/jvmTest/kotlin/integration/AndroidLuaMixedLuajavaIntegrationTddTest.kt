@@ -150,17 +150,17 @@ class AndroidLuaMixedLuajavaIntegrationTddTest {
         val harness = jvmHarness("main.lua" to MIXED_WILDCARD_IMPORT_AND_BIND_CLASS)
 
         // Completions at a free local identifier (not a member access) should expose:
-        // - simple names from wildcard `import "java.io.*"` (File, ...)
-        // - the local bindClass result (Integer)
-        // Product surfaces imported class aliases through lexical value completions as VARIABLE
-        // (globalDeclaration-backed). Facade importCompletions may also offer MODULE, but
-        // mergeCompletions prefers the lexical base item, so the stable golden is VARIABLE.
+        // - simple names from wildcard `import "java.io.*"` (File, ...) as MODULE via
+        //   facade importCompletions; mergeCompletions prefers MODULE over any lexical
+        //   VARIABLE for the same label (matches AndroidLuaImportWorkspaceTddTest).
+        // - the local bindClass result (Integer) as VARIABLE; importCompletions skips
+        //   aliases that are already visible locals, so Integer stays lexical VARIABLE.
         val completions = harness.queries.completions(
             harness.path("main.lua"),
             harness.positionOf("main.lua", "current")
         )
 
-        assertCompletion(completions, "File", CompletionItemKind.VARIABLE)
+        assertCompletion(completions, "File", CompletionItemKind.MODULE)
         assertCompletion(completions, "Integer", CompletionItemKind.VARIABLE)
         assertProviderPath(harness, "java.lang.Integer")
         assertProviderPath(harness, "java.io.File")
