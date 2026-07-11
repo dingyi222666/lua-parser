@@ -22,9 +22,10 @@ import kotlin.test.assertTrue
  * Corpus focuses on `luajava.bindClass` static field access (not instance chains).
  * Product sources are out of scope; no Gradle from workers.
  *
- * Note (REVIEW20): product maps some static-field completions (e.g. System.out/err)
+ * Note (REVIEW20/22): product may map some static-field completions (e.g. System.out/err)
  * as CompletionItemKind.VARIABLE rather than FIELD. Hover still reports SymbolKind.FIELD.
- * Assertions match current product mapping; VARIABLE is accepted for those completions.
+ * Completion asserts accept VARIABLE or FIELD. Cursor must land on the member identifier
+ * (not a same-named local) so member completions surface out/err together.
  */
 class JavaStaticFieldReadTddTest {
 
@@ -114,8 +115,9 @@ class JavaStaticFieldReadTddTest {
             """.trimIndent()
         )
 
+        // Occurrence 2 is System.out (occurrence 1 is the local name `out`).
         val hover = assertNotNull(
-            harness.queries.hover(harness.path("main.lua"), harness.positionOf("main.lua", "out"))
+            harness.queries.hover(harness.path("main.lua"), harness.positionOf("main.lua", "out", occurrence = 2))
         )
         assertEquals(SymbolKind.FIELD, hover.symbol?.kind)
         assertEquals("java.io.PrintStream", hover.typeInfo?.displayName)
@@ -133,7 +135,7 @@ class JavaStaticFieldReadTddTest {
         )
 
         val hover = assertNotNull(
-            harness.queries.hover(harness.path("main.lua"), harness.positionOf("main.lua", "err"))
+            harness.queries.hover(harness.path("main.lua"), harness.positionOf("main.lua", "err", occurrence = 2))
         )
         assertEquals(SymbolKind.FIELD, hover.symbol?.kind)
         assertEquals("java.io.PrintStream", hover.typeInfo?.displayName)
@@ -264,11 +266,13 @@ class JavaStaticFieldReadTddTest {
 
     @Test
     fun system_static_field_completions_include_out_and_err() {
+        // Local name must not shadow the static field token so positionOf("out")
+        // lands on System.out (member completion surface), not a lexical local.
         val harness = jvmHarness(
             "main.lua" to """
                 local System = luajava.bindClass("java.lang.System")
-                local out = System.out
-                return out
+                local stream = System.out
+                return stream
             """.trimIndent()
         )
 
@@ -276,7 +280,7 @@ class JavaStaticFieldReadTddTest {
             harness.path("main.lua"),
             harness.positionOf("main.lua", "out")
         )
-        // REVIEW20: product emits VARIABLE (not FIELD) for System.out / System.err completions.
+        // REVIEW20: product may emit VARIABLE (not FIELD) for System.out / System.err.
         assertCompletionAnyKind(
             completions,
             "out",
@@ -367,9 +371,9 @@ class JavaStaticFieldReadTddTest {
             """.trimIndent()
         )
 
-        // Known field still resolves.
+        // Known field still resolves (member site, not the local name).
         val outHover = assertNotNull(
-            harness.queries.hover(harness.path("main.lua"), harness.positionOf("main.lua", "out"))
+            harness.queries.hover(harness.path("main.lua"), harness.positionOf("main.lua", "out", occurrence = 2))
         )
         assertEquals("java.io.PrintStream", outHover.typeInfo?.displayName)
 
