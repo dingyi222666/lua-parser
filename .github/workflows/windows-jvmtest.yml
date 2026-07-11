@@ -1,6 +1,10 @@
 # Windows self-hosted runner only. Does not run on main.
 # Runner labels: self-hosted, Windows, X64 (DINGYI-PC)
-# Parallelism: ~80% of 8-core host → workers.max=6, maxParallelForks=6, Xmx4G
+# CPU HARD CAP (real, not soft):
+#   scripts/windows-run-gradle-capped.ps1
+#   - ProcessorAffinity 0x3F = 6 of 8 cores (~75-80%)
+#   - BelowNormal priority on cmd/gradle + all java/javaw children
+# Soft Gradle caps: workers.max=5, maxParallelForks=5, --max-workers=5
 name: windows-jvmtest
 
 on:
@@ -15,27 +19,28 @@ jobs:
     env:
       JAVA_HOME: C:\Users\dingyi\.jdks\temurin-17.0.11
       ANDROID_HOME: C:\Users\dingyi\AppData\Local\Android\Sdk
-      GRADLE_OPTS: -Dorg.gradle.workers.max=6
+      GRADLE_OPTS: -Dorg.gradle.workers.max=5
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Show environment
-        shell: cmd
+        shell: pwsh
         run: |
-          echo JAVA_HOME=%JAVA_HOME%
-          echo ANDROID_HOME=%ANDROID_HOME%
+          Write-Host "JAVA_HOME=$env:JAVA_HOME"
+          Write-Host "ANDROID_HOME=$env:ANDROID_HOME"
           java -version
-          echo processor_count=%NUMBER_OF_PROCESSORS%
+          Write-Host "processor_count=$env:NUMBER_OF_PROCESSORS"
           git rev-parse --short HEAD
+          Write-Host "cpu_hard_cap=ProcessorAffinity_0x3F_6of8 + BelowNormal + workers=5"
 
-      - name: Compile test sources
-        shell: cmd
-        run: gradlew.bat compileTestKotlinJvm --parallel --max-workers=6
+      - name: Compile test sources (CPU hard-capped)
+        shell: pwsh
+        run: ./scripts/windows-run-gradle-capped.ps1 compileTestKotlinJvm --parallel --max-workers=5
 
-      - name: Full jvmTest
-        shell: cmd
-        run: gradlew.bat jvmTest --parallel --max-workers=6
+      - name: Full jvmTest (CPU hard-capped)
+        shell: pwsh
+        run: ./scripts/windows-run-gradle-capped.ps1 jvmTest --parallel --max-workers=5
 
       - name: Stop Gradle and kill leftover Java
         if: always()

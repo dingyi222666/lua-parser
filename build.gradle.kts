@@ -100,9 +100,9 @@ tasks.named("mingwX64Test") {
     }
 }
 
-// Parallel JVM tests (Windows self-hosted: ~80% CPU → 6 forks / workers, 4G heap)
+// Parallel JVM tests: soft maxParallelForks=5; Windows CI hard-caps CPU via affinity script
 tasks.withType<Test>().configureEach {
-    maxParallelForks = 6
+    maxParallelForks = 5
     // Avoid one hung suite blocking the whole fork forever without bound
     // (individual tests still use JUnit defaults unless annotated)
 }
