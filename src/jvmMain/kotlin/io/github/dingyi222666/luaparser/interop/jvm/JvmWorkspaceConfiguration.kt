@@ -28,17 +28,44 @@ data class JvmWorkspaceConfiguration(
             ?.let(::add)
     }
 
-    fun androidJarConfigurationNote(environment: Map<String, String> = System.getenv()): String? {
+    fun androidJarConfigurationNote(
+        environment: Map<String, String> = System.getenv(),
+        userHome: File = defaultUserHome(),
+        localAppData: String? = environmentValue(environment, LOCAL_APPDATA_ENV)
+    ): String? {
         if (!androidJar.isNullOrBlank()) {
             return "$ANDROID_JAR_METADATA_KEY is configured explicitly; Android SDK environment discovery is skipped."
         }
-        return discoverAndroidJar(environment).note
+        val envDiscovery = discoverAndroidJar(environment)
+        if (envDiscovery.path != null) {
+            return envDiscovery.note
+        }
+        val wellKnown = discoverWellKnownAndroidJar(userHome, localAppData)
+        if (wellKnown.path != null) {
+            return wellKnown.note
+        }
+        return envDiscovery.note
     }
 
-    fun reflectionClasspathEntries(environment: Map<String, String> = System.getenv()): List<String> = buildList {
+    /**
+     * Reflective classpath entries for JVM module providers.
+     *
+     * Includes explicit [classpathEntries] and [androidJar] metadata first. When
+     * [androidJar] is unset, discovers an existing platform `android.jar` with the
+     * same precedence as [DEFAULT_ANDROID_JAR_PATH]: `ANDROID_HOME` /
+     * `ANDROID_SDK_ROOT`, then well-known host SDK roots (macOS
+     * `~/Library/Android/sdk`, Linux `~/Android/Sdk`, Windows `%LOCALAPPDATA%/Android/Sdk`
+     * plus documented Windows candidate). Missing jars are never invented; the
+     * Downloads host jar remains an explicit metadata override only.
+     */
+    fun reflectionClasspathEntries(
+        environment: Map<String, String> = System.getenv(),
+        userHome: File = defaultUserHome(),
+        localAppData: String? = environmentValue(environment, LOCAL_APPDATA_ENV)
+    ): List<String> = buildList {
         addAll(effectiveClasspathEntries())
         if (androidJar.isNullOrBlank()) {
-            discoverAndroidJar(environment).path?.let(::add)
+            discoverReflectiveAndroidJarPath(environment, userHome, localAppData)?.let(::add)
         }
     }.distinct()
 
@@ -199,9 +226,24 @@ data class JvmWorkspaceConfiguration(
             userHome: File = defaultUserHome(),
             localAppData: String? = environmentValue(environment, LOCAL_APPDATA_ENV)
         ): String {
-            discoverAndroidJar(environment).path?.let { return it }
-            discoverWellKnownAndroidJar(userHome, localAppData).path?.let { return it }
+            discoverReflectiveAndroidJarPath(environment, userHome, localAppData)?.let { return it }
             return preferredDefaultAndroidJarCandidate(userHome, localAppData).path
+        }
+
+        /**
+         * Existing platform `android.jar` for reflective classpaths / defaults.
+         *
+         * Same discovery order as [DEFAULT_ANDROID_JAR_PATH] without inventing a
+         * missing candidate path. Explicit Downloads jars are not auto-selected;
+         * pass them via [androidJar] metadata.
+         */
+        fun discoverReflectiveAndroidJarPath(
+            environment: Map<String, String> = System.getenv(),
+            userHome: File = defaultUserHome(),
+            localAppData: String? = environmentValue(environment, LOCAL_APPDATA_ENV)
+        ): String? {
+            discoverAndroidJar(environment).path?.let { return it }
+            return discoverWellKnownAndroidJar(userHome, localAppData).path
         }
 
         private fun discoverAndroidJar(environment: Map<String, String>): AndroidJarDiscovery {
