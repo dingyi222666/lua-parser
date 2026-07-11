@@ -19,13 +19,13 @@ review-owned.
 | --- | --- | ---: | ---: | --- |
 | Parser/source | JVM | 46 | 346 | Lua 5.3/5.4/AndroLua syntax, parser recovery, comments, regression fixtures, literal comments, Android-Lua grammar, AST visitor/modifier behavior, AST to Lua round trips, lexer corpora. |
 | Semantic core | Common | 7 | 75 | Pipeline integration, public model facade, completion, checker expression evaluation, module type bridge, type info shape. |
-| Semantic core | JVM | 74 | 1038 | Binder, declarations, position queries, comment interop, doc comment parsing, type model/syntax/resolution, call/member/return checking, public API compatibility, Android-Lua interop semantics, LuaJava helper typing. |
+| Semantic core | JVM | 75 | 1059 | Binder, declarations, position queries, comment interop, doc comment parsing, type model/syntax/resolution, call/member/return checking, public API compatibility, Android-Lua interop semantics, LuaJava helper typing. |
 | Workspace | Common | 9 | 127 | Document facts, module graphs, module exports, workspace engine behavior, overlays, legacy module environment support, Android import facts. |
 | Workspace | JVM | 21 | 292 | JVM workspace updates, query facade behavior, Android-Lua import workspace behavior, builtin overlay loading, dirty-set planning, module graph cycles, path styles, fingerprint stability, semantic workspace campaign coverage. |
 | Interop | JVM | 12 | 271 | JVM class module provider, reflection-backed workspace modeling, Java class metadata, classloader configuration, Android jar reflection, package enumeration, luajava import modeling. |
-| LSP | JVM | 36 | 541 | Language service, lifecycle diagnostics, navigation symbols, text document service, hover/completion/definition/declaration/references/signature help, shutdown/idempotency, watched files/workspace folders, Android-Lua JVM resolution paths. |
+| LSP | JVM | 36 | 547 | Language service, lifecycle diagnostics, navigation symbols, text document service, hover/completion/definition/declaration/references/signature help, shutdown/idempotency, watched files/workspace folders, Android-Lua JVM resolution paths. |
 | Integration | JVM | 3 | 35 | Android-Lua corpus semantic verification across parser, workspace, and interop fixtures; mixed LuaJava integration coverage. |
-| **Total current inventory** | Common + JVM | **208** | **2725** | Current parser, semantic, workspace, interop, LSP, and integration coverage, excluding the inventory fixture. |
+| **Total current inventory** | Common + JVM | **209** | **2752** | Current parser, semantic, workspace, interop, LSP, and integration coverage, excluding the inventory fixture. |
 
 Inventory notes:
 
@@ -74,8 +74,8 @@ As of 2026-07-11 (TASK-231 WAVE31 live recount under git lock; not a global
 success claim), the current source-tree accounting reports:
 
 ```text
-current_campaign_files = 149
-current_campaign_total = 2210
+current_campaign_files = 150
+current_campaign_total = 2237
 remaining_to_500 = 0
 ```
 
@@ -106,6 +106,6 @@ does not import or mutate production code and can run before future
 implementation tasks are complete.
 
 TASK-231 WAVE31 raised both this document and the inventory fixture constants
-to the live source-tree counts (baseline 208/2725, campaign 149/2210). Bars were
+to the live source-tree counts (baseline 209/2752, campaign 150/2237). Bars were
 only raised; `testinventory` remains excluded from campaign totals. Verification
 remains deferred to TASK-043.
