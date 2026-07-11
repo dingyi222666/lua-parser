@@ -1,10 +1,13 @@
 package io.github.dingyi222666.luaparser.lsp
 
 import io.github.dingyi222666.luaparser.interop.jvm.JvmWorkspaceEngine
+import io.github.dingyi222666.luaparser.parser.LuaParser
+import io.github.dingyi222666.luaparser.parser.LuaParserRecoveryDiagnostic
 import io.github.dingyi222666.luaparser.parser.ast.node.Position
 import io.github.dingyi222666.luaparser.parser.ast.node.Range
 import io.github.dingyi222666.luaparser.semantic.api.CompletionItemKind
 import io.github.dingyi222666.luaparser.semantic.api.DiagnosticSeverity
+import io.github.dingyi222666.luaparser.semantic.api.SymbolKind as SemanticSymbolKind
 import io.github.dingyi222666.luaparser.semantic.binder.BinderDeclaration
 import io.github.dingyi222666.luaparser.semantic.binder.DeclarationKind
 import io.github.dingyi222666.luaparser.semantic.binder.DeclarationOrigin
@@ -27,6 +30,8 @@ import org.eclipse.lsp4j.DidSaveTextDocumentParams
 import org.eclipse.lsp4j.DocumentHighlight
 import org.eclipse.lsp4j.DocumentHighlightKind
 import org.eclipse.lsp4j.DocumentHighlightParams
+import org.eclipse.lsp4j.FileChangeType
+import org.eclipse.lsp4j.FileEvent
 import org.eclipse.lsp4j.Hover
 import org.eclipse.lsp4j.HoverOptions
 import org.eclipse.lsp4j.HoverParams
@@ -53,64 +58,127 @@ import org.eclipse.lsp4j.TextDocumentSyncKind
 import org.eclipse.lsp4j.WorkspaceFolder
 import org.eclipse.lsp4j.WorkspaceSymbolOptions
 import org.eclipse.lsp4j.jsonrpc.messages.Either
+import java.io.IOException
+import java.io.UncheckedIOException
 import java.net.URI
+import java.nio.charset.StandardCharsets
+import java.nio.file.FileSystemNotFoundException
+import java.nio.file.Files
+import java.nio.file.Path
+import java.nio.file.Paths
+import java.util.Base64
 
 class LuaLanguageService(
     private val engine: JvmWorkspaceEngine = JvmWorkspaceEngine()
 ) {
+    private val stateLock = Any()
     private var snapshot: WorkspaceSnapshot = WorkspaceSnapshot()
     private var queries: LuaWorkspaceQueryFacade = LuaWorkspaceQueryFacade(snapshot)
+    private val indexedWorkspaceFiles = linkedMapOf<VirtualPath, String>()
+    private val indexedWorkspaceUris = linkedMapOf<VirtualPath, String>()
+    private val workspaceFolderUriPrefixes = linkedMapOf<String, String>()
     private val openDocuments = linkedMapOf<VirtualPath, String>()
+    private val documentUris = linkedMapOf<VirtualPath, String>()
     private var workspaceMetadata: Map<String, String> = emptyMap()
     private var workspaceFolders: List<WorkspaceFolder> = emptyList()
 
-    fun initialize(params: InitializeParams): InitializeResult {
-        workspaceFolders = params.workspaceFolders.orEmpty()
+    fun initialize(params: InitializeParams): InitializeResult = synchronized(stateLock) {
+        workspaceFolders = configuredWorkspaceFolders(params)
+        refreshWorkspaceFolderUriPrefixes()
+        refreshWorkspaceFolderIndex()
         rebuild()
-        return InitializeResult(serverCapabilities())
+        InitializeResult(serverCapabilities())
     }
 
-    fun setWorkspaceMetadata(metadata: Map<String, String>) {
-        workspaceMetadata = metadata
+    fun setWorkspaceMetadata(metadata: Map<String, String>) = synchronized(stateLock) {
+        workspaceMetadata = metadata.toMap()
         rebuild()
     }
 
-    fun didOpen(params: DidOpenTextDocumentParams): PublishDiagnosticsParams {
+    /**
+     * Applies workspace/didChangeWatchedFiles create/change/delete events to the
+     * indexed workspace snapshot. Open-document overlays remain authoritative for
+     * unsaved buffers. Non-Lua/ALY files are ignored.
+     */
+    fun applyWatchedFileChanges(changes: List<FileEvent>) = synchronized(stateLock) {
+        var mutated = false
+        changes.forEach { event ->
+            val uri = event.uri?.takeIf { it.isNotBlank() } ?: return@forEach
+            if (!isLuaOrAlyUri(uri)) {
+                return@forEach
+            }
+            val virtualPath = pathOf(uri)
+            when (event.type) {
+                FileChangeType.Deleted -> {
+                    val removedSource = indexedWorkspaceFiles.remove(virtualPath) != null
+                    // Keep URI mapping so diagnostics("path") still clears against the
+                    // original file URI after the source is dropped from the snapshot.
+                    indexedWorkspaceUris.putIfAbsent(virtualPath, uri)
+                    if (removedSource) {
+                        mutated = true
+                    }
+                }
+
+                FileChangeType.Created, FileChangeType.Changed -> {
+                    val source = readWorkspaceSourceFromUri(uri)
+                    if (source != null) {
+                        val previous = indexedWorkspaceFiles.put(virtualPath, source)
+                        indexedWorkspaceUris[virtualPath] = uri
+                        if (previous != source) {
+                            mutated = true
+                        }
+                    }
+                }
+
+                else -> Unit
+            }
+        }
+        if (mutated) {
+            rebuild()
+        }
+    }
+
+    fun didOpen(params: DidOpenTextDocumentParams): PublishDiagnosticsParams = synchronized(stateLock) {
         val document = params.textDocument
-        openDocuments[pathOf(document)] = document.text
+        val path = pathOf(document)
+        openDocuments[path] = document.text
+        documentUris[path] = document.uri
         rebuild()
-        return publishDiagnostics(pathOf(document))
+        publishDiagnostics(path)
     }
 
-    fun didChange(params: DidChangeTextDocumentParams): PublishDiagnosticsParams {
+    fun didChange(params: DidChangeTextDocumentParams): PublishDiagnosticsParams = synchronized(stateLock) {
         val path = pathOf(params.textDocument)
         openDocuments[path] = applyContentChanges(openDocuments[path].orEmpty(), params.contentChanges)
+        documentUris[path] = params.textDocument.uri
         rebuild()
-        return publishDiagnostics(path)
+        publishDiagnostics(path)
     }
 
-    fun didClose(params: DidCloseTextDocumentParams): PublishDiagnosticsParams {
-        val path = pathOf(params.textDocument)
+    fun didClose(params: DidCloseTextDocumentParams): PublishDiagnosticsParams = synchronized(stateLock) {
+        val uri = params.textDocument.uri
+        val path = pathOf(uri)
         openDocuments.remove(path)
+        documentUris.remove(path)
         rebuild()
-        return PublishDiagnosticsParams(uriOf(path), emptyList())
+        PublishDiagnosticsParams(uri, emptyList())
     }
 
     fun didSave(@Suppress("UNUSED_PARAMETER") params: DidSaveTextDocumentParams) {
     }
 
-    fun hover(params: HoverParams): Hover? {
+    fun hover(params: HoverParams): Hover? = synchronized(stateLock) {
         val path = pathOf(params.textDocument)
-        val result = queries.hover(path, params.position.toParserPosition()) ?: return null
+        val result = queries.hover(path, params.position.toParserPosition()) ?: return@synchronized null
         val content = buildHoverContent(result.symbol?.name, result.symbol?.detail, result.typeInfo?.displayName)
-            ?: return null
+            ?: return@synchronized null
         val hover = Hover()
         hover.contents = Either.forRight(MarkupContent(MarkupKind.MARKDOWN, content))
-        return hover
+        hover
     }
 
-    fun completion(path: String, line: Int, character: Int): CompletionList {
-        val items = queries.completions(VirtualPath.of(path), Position(line + 1, character + 1)).map { completion ->
+    fun completion(path: String, line: Int, character: Int): CompletionList = synchronized(stateLock) {
+        val items = queries.completions(pathFromClientPath(path), Position(line + 1, character + 1)).map { completion ->
             CompletionItem(completion.label).apply {
                 kind = completion.kind.toLspKind()
                 detail = completion.detail
@@ -119,13 +187,13 @@ class LuaLanguageService(
                 sortText = completion.sortText
             }
         }
-        return CompletionList(false, items)
+        CompletionList(false, items)
     }
 
-    fun signatureHelp(params: SignatureHelpParams): SignatureHelp? {
+    fun signatureHelp(params: SignatureHelpParams): SignatureHelp? = synchronized(stateLock) {
         val path = pathOf(params.textDocument)
-        val help = queries.signatureHelp(path, params.position.toParserPosition()) ?: return null
-        return SignatureHelp(
+        val help = queries.signatureHelp(path, params.position.toParserPosition()) ?: return@synchronized null
+        SignatureHelp(
             help.signatures.map { signature ->
                 SignatureInformation(signature.label).apply {
                     documentation = signature.documentation
@@ -145,75 +213,262 @@ class LuaLanguageService(
         )
     }
 
-    fun definition(params: DefinitionParams): List<Location> {
+    fun definition(params: DefinitionParams): List<Location> = synchronized(stateLock) {
         val path = pathOf(params.textDocument)
-        return queries.gotoDefinition(path, params.position.toParserPosition()).map { location ->
-            Location(uriOf(location.path), location.range.toLspRange())
+        queries.gotoDefinition(path, params.position.toParserPosition()).map { location ->
+            Location(uriFor(location.path), location.range.toLspRange())
         }
     }
 
-    fun declaration(params: DeclarationParams): List<Location> {
+    fun declaration(params: DeclarationParams): List<Location> = synchronized(stateLock) {
         val path = pathOf(params.textDocument)
-        return queries.declaration(path, params.position.toParserPosition()).map { location ->
-            Location(uriOf(location.path), location.range.toLspRange())
+        queries.declaration(path, params.position.toParserPosition()).map { location ->
+            Location(uriFor(location.path), location.range.toLspRange())
         }
     }
 
-    fun documentHighlights(params: DocumentHighlightParams): List<DocumentHighlight> {
+    fun documentHighlights(params: DocumentHighlightParams): List<DocumentHighlight> = synchronized(stateLock) {
         val path = pathOf(params.textDocument)
-        return queries.documentHighlights(path, params.position.toParserPosition()).map { location ->
+        queries.documentHighlights(path, params.position.toParserPosition()).map { location ->
             DocumentHighlight(location.range.toLspRange(), DocumentHighlightKind.Read)
         }
     }
 
-    fun references(params: ReferenceParams): List<Location> {
+    fun references(params: ReferenceParams): List<Location> = synchronized(stateLock) {
         val path = pathOf(params.textDocument)
-        return queries.references(path, params.position.toParserPosition()).map { location ->
-            Location(uriOf(location.path), location.range.toLspRange())
+        queries.references(path, params.position.toParserPosition()).map { location ->
+            Location(uriFor(location.path), location.range.toLspRange())
         }
     }
 
-    fun documentSymbols(path: String): List<SymbolInformation> {
-        val virtualPath = VirtualPath.of(path)
-        val file = snapshot.files[virtualPath]?.semanticFile ?: return emptyList()
-        return declarationSymbolEntries(virtualPath, file.snapshot.binder.declarationIndex.declarations)
-            .map(::toSymbolInformation)
+    fun documentSymbols(path: String): List<SymbolInformation> = synchronized(stateLock) {
+        val virtualPath = pathFromClientPath(path)
+        val file = snapshot.files[virtualPath]?.semanticFile ?: return@synchronized emptyList()
+        declarationSymbolEntries(virtualPath, file.snapshot.binder.declarationIndex.declarations)
+            .map { toSymbolInformation(it) }
     }
 
-    fun workspaceSymbols(query: String): List<SymbolInformation> {
+    fun workspaceSymbols(query: String): List<SymbolInformation> = synchronized(stateLock) {
         val normalizedQuery = query.trim()
-        return allSymbolEntries()
+        allSymbolEntries()
             .asSequence()
             .filter { normalizedQuery.isBlank() || it.name.contains(normalizedQuery, ignoreCase = true) }
-            .map(::toSymbolInformation)
+            .map { toSymbolInformation(it) }
             .toList()
     }
 
-    fun diagnostics(path: String): PublishDiagnosticsParams {
-        return publishDiagnostics(VirtualPath.of(path))
+    fun diagnostics(path: String): PublishDiagnosticsParams = synchronized(stateLock) {
+        publishDiagnostics(pathFromClientPath(path))
     }
 
-    private fun publishDiagnostics(path: VirtualPath): PublishDiagnosticsParams {
-        val diagnostics = queries.diagnostics(path).map { diagnostic ->
+    fun diagnosticsForUri(uri: String): PublishDiagnosticsParams = synchronized(stateLock) {
+        publishDiagnostics(pathOf(uri), uri)
+    }
+
+    private fun publishDiagnostics(path: VirtualPath, uri: String? = null): PublishDiagnosticsParams {
+        val diagnostics = (parseDiagnostics(path) + queries.diagnostics(path).map { diagnostic ->
             Diagnostic().apply {
                 message = diagnostic.message
                 severity = diagnostic.severity.toLspSeverity()
                 code = diagnostic.code?.let { Either.forLeft<String, Int>(it) }
                 range = diagnostic.range?.toLspRange() ?: Range(Position(1, 1), Position(1, 1)).toLspRange()
             }
+        }).distinctBy { diagnostic ->
+            listOf(
+                diagnostic.range?.start?.line,
+                diagnostic.range?.start?.character,
+                diagnostic.range?.end?.line,
+                diagnostic.range?.end?.character,
+                diagnostic.severity,
+                diagnostic.message
+            )
         }
-        return PublishDiagnosticsParams(uriOf(path), diagnostics)
+        return PublishDiagnosticsParams(uri ?: uriFor(path), diagnostics)
+    }
+
+    private fun parseDiagnostics(path: VirtualPath): List<Diagnostic> {
+        val source = openDocuments[path] ?: indexedWorkspaceFiles[path] ?: return emptyList()
+        val result = try {
+            LuaParser().parseWithDiagnostics(source)
+        } catch (error: IllegalStateException) {
+            return listOf(parseDiagnostic(error.message, Range(Position(1, 1), Position(1, 2))))
+        }
+        return result.recoveryDiagnostics.map(::parseDiagnostic)
+    }
+
+    private fun parseDiagnostic(diagnostic: LuaParserRecoveryDiagnostic): Diagnostic {
+        return parseDiagnostic(diagnostic.message, diagnostic.range)
+    }
+
+    private fun parseDiagnostic(message: String?, range: Range): Diagnostic {
+        return Diagnostic().apply {
+            this.message = message?.takeIf { it.isNotBlank() } ?: "Lua parse error"
+            severity = org.eclipse.lsp4j.DiagnosticSeverity.Error
+            code = Either.forLeft<String, Int>("lua-parse")
+            this.range = range.toLspRange()
+        }
     }
 
     private fun rebuild() {
+        val files = linkedMapOf<VirtualPath, String>()
+        files.putAll(indexedWorkspaceFiles)
+        files.putAll(openDocuments)
         val result = engine.build(
             LuaWorkspaceInput(
-                files = openDocuments.toMap(),
+                files = files,
                 metadata = workspaceMetadata
             )
         )
         snapshot = result.snapshot
         queries = LuaWorkspaceQueryFacade(snapshot)
+    }
+
+    private fun configuredWorkspaceFolders(params: InitializeParams): List<WorkspaceFolder> {
+        val folders = params.workspaceFolders.orEmpty().toList()
+        if (folders.isNotEmpty()) {
+            return folders
+        }
+        val rootUri = params.rootUri?.takeIf { it.isNotBlank() } ?: return emptyList()
+        return listOf(WorkspaceFolder(rootUri, workspaceFolderName(rootUri)))
+    }
+
+    private fun refreshWorkspaceFolderIndex() {
+        indexedWorkspaceFiles.clear()
+        indexedWorkspaceUris.clear()
+        workspaceFolders.forEach { folder ->
+            val root = workspaceFolderRoot(folder) ?: return@forEach
+            if (!Files.isDirectory(root)) {
+                return@forEach
+            }
+            indexWorkspaceFolder(root)
+        }
+    }
+
+    private fun refreshWorkspaceFolderUriPrefixes() {
+        workspaceFolderUriPrefixes.clear()
+        workspaceFolders.forEach { folder ->
+            val root = workspaceFolderRoot(folder) ?: return@forEach
+            if (!Files.isDirectory(root)) {
+                return@forEach
+            }
+            val uri = folder.uri ?: return@forEach
+            rawWorkspacePathFromUri(uri)
+                ?.normalizeWorkspacePathPrefix()
+                ?.takeIf { it.isNotBlank() }
+                ?.let { workspaceFolderUriPrefixes[normalizeUriPrefixKey(it)] = "" }
+        }
+    }
+
+    private fun indexWorkspaceFolder(root: Path) {
+        val stream = try {
+            Files.walk(root)
+        } catch (_: IOException) {
+            return
+        } catch (_: SecurityException) {
+            return
+        }
+
+        try {
+            stream
+                .filter { path -> isLuaWorkspaceFile(path) }
+                .forEach { path ->
+                    val virtualPath = virtualPathForWorkspaceFile(root, path) ?: return@forEach
+                    val source = readWorkspaceSource(path) ?: return@forEach
+                    indexedWorkspaceFiles[virtualPath] = source
+                    indexedWorkspaceUris[virtualPath] = path.toUri().toString()
+                }
+        } catch (_: UncheckedIOException) {
+        } catch (_: SecurityException) {
+        } finally {
+            stream.close()
+        }
+    }
+
+    private fun workspaceFolderRoot(folder: WorkspaceFolder): Path? {
+        val uri = folder.uri ?: return null
+        return try {
+            val parsed = URI(uri)
+            val scheme = parsed.scheme
+            val path = when {
+                scheme.equals("file", ignoreCase = true) -> Paths.get(parsed)
+                scheme.isNullOrBlank() -> Paths.get(uri)
+                else -> return null
+            }
+            path.toAbsolutePath().normalize()
+        } catch (_: IllegalArgumentException) {
+            null
+        } catch (_: FileSystemNotFoundException) {
+            null
+        } catch (_: SecurityException) {
+            null
+        }
+    }
+
+    private fun workspaceFolderName(uri: String): String {
+        return rawWorkspacePathFromUri(uri)
+            ?.normalizeWorkspacePathPrefix()
+            ?.substringAfterLast('/')
+            ?.takeIf { it.isNotBlank() }
+            ?: "workspace"
+    }
+
+    private fun isLuaWorkspaceFile(path: Path): Boolean {
+        if (!Files.isRegularFile(path)) {
+            return false
+        }
+        val fileName = path.fileName?.toString()?.lowercase() ?: return false
+        return fileName.endsWith(".lua") || fileName.endsWith(".aly")
+    }
+
+    private fun isLuaOrAlyUri(uri: String): Boolean {
+        val candidate = rawWorkspacePathFromUri(uri) ?: uri
+        val lower = candidate.lowercase()
+        return lower.endsWith(".lua") || lower.endsWith(".aly")
+    }
+
+    private fun virtualPathForWorkspaceFile(root: Path, path: Path): VirtualPath? {
+        val absoluteRoot = root.toAbsolutePath().normalize()
+        val absolutePath = path.toAbsolutePath().normalize()
+        val relativePath = try {
+            absoluteRoot.relativize(absolutePath)
+        } catch (_: IllegalArgumentException) {
+            absolutePath
+        }
+        return relativePath.toString().toVirtualPathOrNull()
+    }
+
+    private fun readWorkspaceSource(path: Path): String? {
+        return try {
+            Files.readString(path, StandardCharsets.UTF_8)
+        } catch (_: IOException) {
+            null
+        } catch (_: SecurityException) {
+            null
+        }
+    }
+
+    private fun readWorkspaceSourceFromUri(uri: String): String? {
+        val path = pathFromFileUri(uri) ?: return null
+        return readWorkspaceSource(path)
+    }
+
+    private fun pathFromFileUri(uri: String): Path? {
+        return try {
+            val parsed = URI(uri)
+            val scheme = parsed.scheme
+            val path = when {
+                scheme.equals("file", ignoreCase = true) -> Paths.get(parsed)
+                scheme.isNullOrBlank() -> Paths.get(uri)
+                else -> return null
+            }
+            path.toAbsolutePath().normalize()
+        } catch (_: IllegalArgumentException) {
+            null
+        } catch (_: FileSystemNotFoundException) {
+            null
+        } catch (_: SecurityException) {
+            null
+        }
     }
 
     private fun serverCapabilities(): ServerCapabilities {
@@ -224,7 +479,9 @@ class LuaLanguageService(
             definitionProvider = Either.forRight(DefinitionOptions())
             referencesProvider = Either.forRight(ReferenceOptions())
             documentHighlightProvider = Either.forLeft(true)
-            completionProvider = CompletionOptions()
+            completionProvider = CompletionOptions().apply {
+                triggerCharacters = listOf(".", ":")
+            }
             signatureHelpProvider = SignatureHelpOptions(listOf("(", ","), listOf(")"))
             documentSymbolProvider = Either.forLeft(true)
             workspaceSymbolProvider = Either.forRight(WorkspaceSymbolOptions())
@@ -235,13 +492,20 @@ class LuaLanguageService(
         val entries = buildList {
             snapshot.files.forEach { (path, file) ->
                 file.semanticFile?.let { semanticFile ->
-                    addAll(declarationSymbolEntries(path, semanticFile.snapshot.binder.declarationIndex.declarations))
+                    val declarations = declarationSymbolEntries(path, semanticFile.snapshot.binder.declarationIndex.declarations)
+                    addAll(declarations)
+                    addAll(moduleExportMemberSymbolEntries(path, file, declarations))
                 }
             }
             snapshot.extraProviders.forEach { (path, file) ->
                 moduleSymbolEntry(path, file)?.let(::add)
-                file.semanticFile?.let { semanticFile ->
-                    addAll(declarationSymbolEntries(path, semanticFile.snapshot.binder.declarationIndex.declarations))
+                val semanticFile = file.semanticFile
+                if (semanticFile != null) {
+                    val declarations = declarationSymbolEntries(path, semanticFile.snapshot.binder.declarationIndex.declarations)
+                    addAll(declarations)
+                    addAll(moduleExportMemberSymbolEntries(path, file, declarations))
+                } else {
+                    addAll(moduleExportMemberSymbolEntries(path, file))
                 }
             }
         }
@@ -307,6 +571,54 @@ class LuaLanguageService(
         )
     }
 
+    private fun moduleExportMemberSymbolEntries(
+        path: VirtualPath,
+        file: WorkspaceSnapshot.FileSnapshot,
+        existingDeclarations: List<LspSymbolEntry> = emptyList()
+    ): List<LspSymbolEntry> {
+        val surface = file.moduleExportSurface ?: return emptyList()
+        val moduleName = surface.moduleType.moduleName.takeIf { it.isNotBlank() }
+        val declarationKeys = existingDeclarations
+            .asSequence()
+            .map { symbolEntryKey(it.path, it.name, it.kind, it.range) }
+            .toSet()
+
+        return surface.members
+            .asSequence()
+            .filter { isUserFacingExportName(it.name) }
+            .map { member ->
+                val range = member.range ?: syntheticModuleRange(member.name)
+                LspSymbolEntry(
+                    name = member.name,
+                    kind = member.kind.toLspSymbolKind(),
+                    path = path,
+                    range = range,
+                    containerName = moduleName
+                )
+            }
+            .filterNot { symbolEntryKey(it.path, it.name, it.kind, it.range) in declarationKeys }
+            .toList()
+    }
+
+    private fun symbolEntryKey(
+        path: VirtualPath,
+        name: String,
+        kind: org.eclipse.lsp4j.SymbolKind,
+        range: Range
+    ): String {
+        return listOf(
+            path.value,
+            name,
+            kind.name,
+            range.start.line.toString(),
+            range.start.column.toString()
+        ).joinToString(":")
+    }
+
+    private fun isUserFacingExportName(name: String): Boolean {
+        return name.isNotBlank() && !name.startsWith("__")
+    }
+
     private fun syntheticModuleRange(moduleName: String): Range {
         return Range(
             start = Position(1, 1),
@@ -314,33 +626,92 @@ class LuaLanguageService(
         )
     }
 
+    private fun toSymbolInformation(entry: LspSymbolEntry): SymbolInformation {
+        return SymbolInformation(
+            entry.name,
+            entry.kind,
+            Location(uriFor(entry.path), entry.range.toLspRange()),
+            entry.containerName
+        )
+    }
+
     private fun pathOf(document: TextDocumentItem): VirtualPath = pathOf(document.uri)
 
     private fun pathOf(document: TextDocumentIdentifier): VirtualPath = pathOf(document.uri)
 
-    private fun pathOf(uri: String): VirtualPath {
-        val parsed = URI(uri)
-        val rawPath = when {
-            parsed.scheme.equals("file", ignoreCase = true) -> parsed.path.removePrefix("/")
-            else -> parsed.path.ifEmpty { uri }
+    private fun pathOf(uri: String): VirtualPath = lspVirtualPathFromUri(
+        uri,
+        workspaceFolderUriPrefixes,
+        collapseSyntheticWorkspaceRoot = shouldCollapseSyntheticWorkspaceRoot()
+    )
+
+    private fun pathFromClientPath(pathOrUri: String): VirtualPath {
+        val normalizedPath = pathOrUri.normalizeWorkspacePathPrefix()
+        val workspacePath = normalizedPath.workspaceRelativePath(workspaceFolderUriPrefixes)
+        if (workspacePath != normalizedPath) {
+            return workspacePath.toVirtualPathOrNull() ?: lspVirtualPathFromUri(
+                pathOrUri,
+                workspaceFolderUriPrefixes,
+                collapseSyntheticWorkspaceRoot = shouldCollapseSyntheticWorkspaceRoot()
+            )
         }
-        return VirtualPath.of(rawPath)
+        if (pathOrUri.looksLikeUri()) {
+            return lspVirtualPathFromUri(
+                pathOrUri,
+                workspaceFolderUriPrefixes,
+                collapseSyntheticWorkspaceRoot = shouldCollapseSyntheticWorkspaceRoot()
+            )
+        }
+        val clientPath = normalizedPath.syntheticWorkspaceRelativePath(shouldCollapseSyntheticWorkspaceRoot())
+        return clientPath.toVirtualPathOrNull() ?: lspVirtualPathFromUri(
+            pathOrUri,
+            workspaceFolderUriPrefixes,
+            collapseSyntheticWorkspaceRoot = shouldCollapseSyntheticWorkspaceRoot()
+        )
     }
 
-    private fun uriOf(path: VirtualPath): String {
-        val normalized = path.value.replace('\\', '/')
-        return if (normalized.length >= 2 && normalized[1] == ':') {
-            "file:///" + normalized
-        } else {
-            "file:///" + normalized.trimStart('/')
-        }
-    }
+    private fun uriFor(path: VirtualPath): String = documentUris[path] ?: indexedWorkspaceUris[path] ?: lspFileUri(path)
+
+    private fun shouldCollapseSyntheticWorkspaceRoot(): Boolean = workspaceFolders.isEmpty()
 
     private fun applyContentChanges(current: String, changes: List<TextDocumentContentChangeEvent>): String {
-        if (changes.isEmpty()) {
-            return current
+        return changes.fold(current) { text, change ->
+            val range = change.range
+            if (range == null) {
+                change.text
+            } else {
+                val start = offsetAt(text, range.start)
+                val end = offsetAt(text, range.end).coerceAtLeast(start)
+                text.replaceRange(start, end, change.text)
+            }
         }
-        return changes.last().text
+    }
+
+    private fun offsetAt(text: String, position: org.eclipse.lsp4j.Position): Int {
+        val lineStarts = mutableListOf(0)
+        text.forEachIndexed { index, character ->
+            if (character == '\n') {
+                lineStarts += index + 1
+            }
+        }
+
+        if (position.line <= 0) {
+            return position.character.coerceAtLeast(0).coerceAtMost(lineEnd(text, 0))
+        }
+
+        if (position.line >= lineStarts.size) {
+            return text.length
+        }
+
+        val lineStart = lineStarts[position.line]
+        val lineEnd = lineEnd(text, lineStart)
+        return (lineStart + position.character.coerceAtLeast(0)).coerceAtMost(lineEnd)
+    }
+
+    private fun lineEnd(text: String, lineStart: Int): Int {
+        val newline = text.indexOf('\n', lineStart)
+        val end = if (newline >= 0) newline else text.length
+        return if (end > lineStart && text[end - 1] == '\r') end - 1 else end
     }
 
     private fun buildHoverContent(name: String?, detail: String?, typeDisplayName: String?): String? {
@@ -397,16 +768,84 @@ private fun CompletionItemKind.toLspKind(): org.eclipse.lsp4j.CompletionItemKind
     }
 }
 
-private fun toSymbolInformation(entry: LspSymbolEntry): SymbolInformation {
-    return SymbolInformation(
-        entry.name,
-        entry.kind,
-        Location(uriOf(entry.path), entry.range.toLspRange()),
-        entry.containerName
-    )
+internal fun lspVirtualPathFromUri(
+    uri: String,
+    workspaceFolderUriPrefixes: Map<String, String> = emptyMap(),
+    collapseSyntheticWorkspaceRoot: Boolean = false
+): VirtualPath {
+    val parsedPath = rawWorkspacePathFromUri(uri)
+    val workspacePath = parsedPath?.workspaceRelativePath(workspaceFolderUriPrefixes)
+        ?.syntheticWorkspaceRelativePath(collapseSyntheticWorkspaceRoot)
+    return workspacePath?.toVirtualPathOrNull() ?: encodedUriPath(uri)
 }
 
-private fun uriOf(path: VirtualPath): String {
+private fun rawWorkspacePathFromUri(uri: String): String? {
+    val parsed = try {
+        URI(uri)
+    } catch (_: IllegalArgumentException) {
+        return uri.removePrefix("file:///")
+    }
+
+    return when {
+        parsed.scheme.equals("file", ignoreCase = true) -> parsed.fileWorkspacePath(uri)
+        parsed.scheme.isNullOrBlank() -> parsed.path?.takeIf { it.isNotBlank() } ?: uri
+        else -> null
+    }
+}
+
+private fun URI.fileWorkspacePath(originalUri: String): String {
+    path?.takeIf { it.isNotBlank() }?.let { return it.removePrefix("/") }
+    schemeSpecificPart?.takeIf { it.isNotBlank() }?.let { return it.removePrefix("///").removePrefix("/") }
+    return originalUri.removePrefix("file:///")
+}
+
+private fun String.toVirtualPathOrNull(): VirtualPath? {
+    if (isBlank()) {
+        return null
+    }
+    return runCatching { VirtualPath.of(this) }.getOrNull()
+}
+
+private fun String.workspaceRelativePath(workspaceFolderUriPrefixes: Map<String, String>): String {
+    val normalized = normalizeWorkspacePathPrefix()
+    val match = workspaceFolderUriPrefixes.keys
+        .filter { prefix -> normalized == prefix || normalized.startsWith("$prefix/") }
+        .maxByOrNull { it.length }
+        ?: return normalized
+    return normalized.removePrefix(match).removePrefix("/").ifBlank { normalized }
+}
+
+private fun String.syntheticWorkspaceRelativePath(enabled: Boolean): String {
+    return if (enabled) removePrefix("workspace/").ifBlank { this } else this
+}
+
+private fun String.normalizeWorkspacePathPrefix(): String {
+    return replace('\\', '/').trimEnd('/')
+}
+
+private fun normalizeUriPrefixKey(path: String): String {
+    return path.replace('\\', '/').trimEnd('/')
+}
+
+private fun String.looksLikeUri(): Boolean {
+    val separator = indexOf(':')
+    if (separator <= 1) {
+        return false
+    }
+    val scheme = substring(0, separator)
+    return scheme.first().isLetter() && scheme.all { character ->
+        character.isLetterOrDigit() || character == '+' || character == '-' || character == '.'
+    }
+}
+
+private fun encodedUriPath(uri: String): VirtualPath {
+    val encoded = Base64.getUrlEncoder()
+        .withoutPadding()
+        .encodeToString(uri.toByteArray(StandardCharsets.UTF_8))
+    return VirtualPath.of("__lsp_uri__/$encoded.lua")
+}
+
+private fun lspFileUri(path: VirtualPath): String {
     val normalized = path.value.replace('\\', '/')
     return if (normalized.length >= 2 && normalized[1] == ':') {
         "file:///" + normalized
@@ -429,5 +868,21 @@ private fun DeclarationKind.toLspSymbolKind(): org.eclipse.lsp4j.SymbolKind {
 
         DeclarationKind.FIELD -> org.eclipse.lsp4j.SymbolKind.Field
         DeclarationKind.METHOD -> org.eclipse.lsp4j.SymbolKind.Method
+    }
+}
+
+private fun SemanticSymbolKind.toLspSymbolKind(): org.eclipse.lsp4j.SymbolKind {
+    return when (this) {
+        SemanticSymbolKind.VARIABLE,
+        SemanticSymbolKind.PARAMETER,
+        SemanticSymbolKind.LOCAL -> org.eclipse.lsp4j.SymbolKind.Variable
+
+        SemanticSymbolKind.FUNCTION -> org.eclipse.lsp4j.SymbolKind.Function
+        SemanticSymbolKind.METHOD -> org.eclipse.lsp4j.SymbolKind.Method
+        SemanticSymbolKind.FIELD -> org.eclipse.lsp4j.SymbolKind.Field
+        SemanticSymbolKind.CLASS -> org.eclipse.lsp4j.SymbolKind.Class
+        SemanticSymbolKind.TYPE_ALIAS -> org.eclipse.lsp4j.SymbolKind.TypeParameter
+        SemanticSymbolKind.MODULE -> org.eclipse.lsp4j.SymbolKind.Module
+        SemanticSymbolKind.UNKNOWN -> org.eclipse.lsp4j.SymbolKind.Property
     }
 }
