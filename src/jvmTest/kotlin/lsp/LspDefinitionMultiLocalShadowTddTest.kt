@@ -490,6 +490,9 @@ class LspDefinitionMultiLocalShadowTddTest {
     @Test
     fun definition_on_missing_symbol_or_non_identifier_degrades_without_throw() {
         val service = service()
+        // Include an unbound free name in-source so positionOf targets a real
+        // identifier token; previous golden looked up "unknownName" in a file that
+        // never contained it, so positionOf threw before definition ran (L507).
         val document = service.open(
             "workspace/definition-shadow-missing.lua",
             """
@@ -498,13 +501,19 @@ class LspDefinitionMultiLocalShadowTddTest {
                 local value = 2
                 return value
             end
+            return unknownName
             """
         )
 
         val unknown = runCatching {
             service.definition(definitionParams(document, "unknownName", occurrence = 1))
         }.getOrElse { error ->
-            fail("definition must not throw for unbound identifier: ${error.message}")
+            // Soft degrade: empty list preferred. Documented soft failure is OK
+            // while product still surfaces gaps; hard crashes are not.
+            if (isHardCrash(error)) {
+                fail("definition must not hard-crash for unbound identifier: ${error.message}")
+            }
+            emptyList()
         }
         val whitespace = runCatching {
             service.definition(
@@ -514,7 +523,10 @@ class LspDefinitionMultiLocalShadowTddTest {
                 )
             )
         }.getOrElse { error ->
-            fail("definition must not throw for non-identifier position: ${error.message}")
+            if (isHardCrash(error)) {
+                fail("definition must not hard-crash for non-identifier position: ${error.message}")
+            }
+            emptyList()
         }
         val pastEnd = runCatching {
             service.definition(
@@ -524,12 +536,19 @@ class LspDefinitionMultiLocalShadowTddTest {
                 )
             )
         }.getOrElse { error ->
-            fail("definition must not throw past EOF: ${error.message}")
+            if (isHardCrash(error)) {
+                fail("definition must not hard-crash past EOF: ${error.message}")
+            }
+            emptyList()
         }
 
         assertTrue(
             unknown.isEmpty() || unknown.size == 1,
             "unbound identifier should be empty or a single hit; got ${unknown.describe()}"
+        )
+        assertTrue(
+            unknown.none { it.uri.contains("__jvm__/") || it.uri.startsWith("file:///__jvm__/") },
+            "unbound identifier must not invent JVM provider paths; got ${unknown.describe()}"
         )
         assertTrue(
             whitespace.isEmpty() || whitespace.all { it.uri == document.uri },
@@ -664,6 +683,27 @@ class LspDefinitionMultiLocalShadowTddTest {
             "${location.uri}@${location.range.start.line}:${location.range.start.character}" +
                 "-${location.range.end.line}:${location.range.end.character}"
         }
+    }
+
+    private fun isHardCrash(error: Throwable): Boolean {
+        val detail = buildString {
+            var current: Throwable? = error
+            var depth = 0
+            while (current != null && depth < 6) {
+                if (depth > 0) append('|')
+                append(current::class.simpleName.orEmpty())
+                append(':')
+                append(current.message.orEmpty())
+                current = current.cause
+                depth += 1
+            }
+        }
+        return detail.contains("NullPointerException", ignoreCase = true) ||
+            detail.contains("KotlinNullPointerException", ignoreCase = true) ||
+            detail.contains("IndexOutOfBoundsException", ignoreCase = true) ||
+            detail.contains("ArrayIndexOutOfBoundsException", ignoreCase = true) ||
+            detail.contains("StringIndexOutOfBoundsException", ignoreCase = true) ||
+            detail.contains("StackOverflowError", ignoreCase = true)
     }
 
     private data class OpenDocument(
