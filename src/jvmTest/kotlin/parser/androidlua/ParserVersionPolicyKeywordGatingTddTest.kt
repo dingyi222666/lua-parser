@@ -30,13 +30,14 @@ import parser.returnExpression
  * Complements [ParserVersionPolicyTddTest] with a denser matrix of:
  * - AndroLua acceptance (stable shapes / typed AST nodes)
  * - plain Lua 5.3 / 5.4 rejection of AndroLua-only constructs
- * - deterministic version-policy / parse-failure messages under plain Lua
+ * - deterministic failure messages under plain Lua
  *
  * Keyword demotion: under plain Lua, AndroLua keywords (`switch`, `when`,
- * `continue`, `lambda`, `case`, `default`) are lexed as NAME, so statement
- * forms fail as ordinary parse errors. Dollar-locals hit the name-policy gate
- * (`'$' is not allowed in name ...`); bare `$name` statements hit the
- * AndroLua-only local-prefix assertVersion surface.
+ * `continue`, `lambda`, `case`, `default`) are demoted to NAME by
+ * [io.github.dingyi222666.luaparser.lexer.WrapperLuaLexer], so statement /
+ * expression forms fail as ordinary parse errors rather than
+ * `assertVersion` strings. Dollar-prefixed statement-start names still hit
+ * the dedicated version gate; `local $name` hits the name-rule error path.
  */
 class ParserVersionPolicyKeywordGatingTddTest {
 
@@ -100,25 +101,8 @@ class ParserVersionPolicyKeywordGatingTddTest {
     }
 
     @Test
-    fun dollarLocalNamePolicyMessageIsPinnedAndDeterministic() {
-        // `local $value` under plain Lua rejects inside parseName when dollar support is off.
-        plainVersions.forEach { version ->
-            val first = assertParseFails(version, "local \$value = 1")
-            val second = assertParseFails(version, "local \$value = 1")
-
-            assertEquals(first.message, second.message, version.name)
-            assertEquals(
-                "(1,7): '\$' is not allowed in name \$value",
-                first.message,
-                version.name
-            )
-            assertTrue(first is IllegalStateException, version.name)
-        }
-    }
-
-    @Test
-    fun bareDollarLocalHitsAndroLuaVersionPolicyMessage() {
-        // Bare `$value = 1` is treated as AndroLua-only dollar-local statement syntax.
+    fun dollarStatementStartVersionPolicyMessageIsPinnedAndDeterministic() {
+        // Statement-start `$name` remains a NAME token and hits assertVersion under plain Lua.
         plainVersions.forEach { version ->
             val first = assertParseFails(version, "\$value = 1")
             val second = assertParseFails(version, "\$value = 1")
@@ -131,7 +115,25 @@ class ParserVersionPolicyKeywordGatingTddTest {
             )
             assertTrue(first is IllegalStateException, version.name)
         }
+    }
 
+    @Test
+    fun localDollarNameRuleMessageIsPinnedAndDeterministic() {
+        // `local $name` goes through parseName(supportDollarSymbol=false) under plain Lua.
+        plainVersions.forEach { version ->
+            val first = assertParseFails(version, "local \$value = 1")
+            val second = assertParseFails(version, "local \$value = 1")
+
+            assertEquals(first.message, second.message, version.name)
+            assertEquals(
+                "(1,7): '\$' is not allowed in name \$value",
+                first.message,
+                version.name
+            )
+            assertTrue(first is IllegalStateException, version.name)
+        }
+
+        // Bare `$value = 1` is accepted as AndroLua dollar-local statement under ANDROLUA_5_3.
         assertEquals(
             "Chunk(Block[Local(Id(value)=Const(1))])",
             renderShape(parse(LuaVersion.ANDROLUA_5_3, "\$value = 1"))
@@ -154,6 +156,29 @@ class ParserVersionPolicyKeywordGatingTddTest {
                     first.message!!.contains("array constructor"),
                 "${version.name}: unexpected array rejection message: ${first.message}"
             )
+        }
+    }
+
+    @Test
+    fun keywordStatementFailuresRemainDeterministicUnderPlainLua() {
+        // Demoted keywords produce ordinary parse failures; pin message stability.
+        listOf(
+            "while ready do continue end",
+            "when ready print(1)",
+            "switch value do end",
+            "return lambda value: value"
+        ).forEach { source ->
+            plainVersions.forEach { version ->
+                val first = assertParseFails(version, source)
+                val second = assertParseFails(version, source)
+                assertEquals(
+                    first.message,
+                    second.message,
+                    "$source / ${version.name}"
+                )
+                assertNotNull(first.message, "$source / ${version.name}")
+                assertTrue(first is IllegalStateException, "$source / ${version.name}")
+            }
         }
     }
 
@@ -185,6 +210,16 @@ class ParserVersionPolicyKeywordGatingTddTest {
                         .parse(LuaLexer(returnSource, supportAndroLuaKeywords = false))
                 ),
                 "${version.name} with external plain lexer"
+            )
+            // Even if an external lexer emits AndroLua keyword tokens, WrapperLuaLexer
+            // demotes them for plain versions so identifiers still parse.
+            assertEquals(
+                expectedReturnShape,
+                renderShape(
+                    LuaParser(luaVersion = version, errorRecovery = false)
+                        .parse(LuaLexer(returnSource, supportAndroLuaKeywords = true))
+                ),
+                "${version.name} with external androlua-keyword lexer demoted by wrapper"
             )
         }
     }
@@ -243,7 +278,7 @@ class ParserVersionPolicyKeywordGatingTddTest {
             "local items = [1, 2]",
             "local \$x = 1",
             "local \$a, \$b = 1, 2",
-            "\$handler = 1"
+            "\$x = 1"
         ).forEach { source ->
             parse(LuaVersion.ANDROLUA_5_3, source)
             assertParseFails(LuaVersion.LUA_5_3, source)
@@ -370,7 +405,7 @@ class ParserVersionPolicyKeywordGatingTddTest {
                 name = "switch with case and default",
                 surface = "switch",
                 source = "switch value do case 1 then print(1) default print(2) end",
-                expectedShape = "Chunk(Block[Switch(Id(value):Case(Const(1):Block[CallStmt(Call(Id(print):Const(1)))]),Default(Block[CallStmt(Call(Id(print):Const(2)))])])"
+                expectedShape = "Chunk(Block[Switch(Id(value):Case(Const(1):Block[CallStmt(Call(Id(print):Const(1)))]),Default(Block[CallStmt(Call(Id(print):Const(2)))]))])"
             ),
             GatedConstructCase(
                 name = "colon lambda",
