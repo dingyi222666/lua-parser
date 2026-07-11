@@ -1,6 +1,7 @@
 package io.github.dingyi222666.luaparser.semantic
 
 import io.github.dingyi222666.luaparser.parser.ast.node.ChunkNode
+import io.github.dingyi222666.luaparser.parser.ast.node.Range
 import io.github.dingyi222666.luaparser.semantic.binder.BinderPass
 import io.github.dingyi222666.luaparser.semantic.binder.BinderPassResult
 import io.github.dingyi222666.luaparser.semantic.checker.CheckerPass
@@ -44,11 +45,12 @@ class SemanticPipeline(
         chunk: ChunkNode,
         context: SemanticWorkspaceContext = SemanticWorkspaceContext()
     ): SemanticPipelineSnapshot {
+        val effectiveContext = context.withWorkspaceImportEffects()
         val comments = commentAttachPass.attach(chunk)
-        val bound = binderPass.bind(chunk, comments, context.overlayGlobals)
+        val bound = binderPass.bind(chunk, comments, effectiveContext.overlayGlobals)
         val resolvedBinder = typeResolver.resolve(bound)
-        val checker = checkerPass.check(chunk, resolvedBinder, context)
-        val model = semanticModelBuilder.build(chunk, checker.binder, checker.diagnostics, context)
+        val checker = checkerPass.check(chunk, resolvedBinder, effectiveContext)
+        val model = semanticModelBuilder.build(chunk, checker.binder, checker.diagnostics, effectiveContext)
         val result = SemanticAnalysisResult(
             model = model,
             summary = SemanticAnalysisSummary.from(model.getDiagnostics())
@@ -60,7 +62,8 @@ class SemanticPipeline(
             binder = checker.binder,
             checker = checker,
             model = model,
-            result = result
+            result = result,
+            workspaceContext = effectiveContext
         )
     }
 }
@@ -71,7 +74,42 @@ internal data class SemanticWorkspaceContext(
     val overlayGlobals: BuiltinOverlaySnapshot.GlobalsSnapshot = BuiltinOverlayLoader.standaloneGlobals(),
     val importedSymbols: Map<String, WorkspaceImportedSymbol> = emptyMap(),
     val resolveImportedSymbol: ((String) -> WorkspaceImportedSymbol?)? = null,
-    val resolveImportTarget: ((String) -> WorkspaceImportedSymbol?)? = null
+    val resolveImportTarget: ((String) -> WorkspaceImportedSymbol?)? = null,
+    val unresolvedLuaJavaTargets: List<UnresolvedLuaJavaTarget> = emptyList()
+) {
+    fun withWorkspaceImportEffects(): SemanticWorkspaceContext {
+        val path = currentPath ?: return this
+        val resolver = workspaceResolver ?: return this
+        val documentImports = resolver.importedSymbolsFor(path)
+        val activeImports = linkedMapOf<String, WorkspaceImportedSymbol>().apply {
+            putAll(importedSymbols)
+            putAll(documentImports)
+        }
+        val fallbackResolveImportedSymbol = resolveImportedSymbol
+        val fallbackResolveImportTarget = resolveImportTarget
+        return copy(
+            // Expose the current-file active import set so lexical completions and symbol queries
+            // see MODULE-kind imported Java classes/packages for this file only.
+            importedSymbols = activeImports,
+            resolveImportedSymbol = { name ->
+                activeImports[name]
+                    ?: resolver.importedSymbolFor(path, name)
+                    ?: fallbackResolveImportedSymbol?.invoke(name)
+            },
+            resolveImportTarget = { target ->
+                // Prefer path-scoped source import activation first, then engine fallback
+                // (configured imports / unrestricted JVM target resolution for dynamic calls).
+                resolver.importTargetSymbolFor(path, target)
+                    ?: fallbackResolveImportTarget?.invoke(target)
+            }
+        )
+    }
+}
+
+internal data class UnresolvedLuaJavaTarget(
+    val target: String,
+    val helperName: String,
+    val range: Range?
 )
 
 internal data class WorkspaceImportedSymbol(
@@ -87,5 +125,6 @@ internal data class SemanticPipelineSnapshot(
     val binder: BinderPassResult,
     val checker: CheckerPassResult,
     val model: SemanticModel,
-    val result: SemanticAnalysisResult
+    val result: SemanticAnalysisResult,
+    val workspaceContext: SemanticWorkspaceContext = SemanticWorkspaceContext()
 )
