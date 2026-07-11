@@ -27,8 +27,9 @@ import parser.renderShape
  *
  * Focus: import / luajava / UI stubs / compact string+table calls under
  * AndroLua 5.3 policy. Snippets are distilled from Android-Lua assets
- * (main.lua, main7.lua, loadlayout2.lua, bin.lua, main9.lua, toast patterns)
- * but kept self-contained so this file stays test-only and scope-local.
+ * (main.lua, main7.lua, main9.lua, main11.lua, main12.lua, main14.lua,
+ * loadlayout2.lua, bin.lua, bmob.lua, AndLua.lua, toast.lua) but kept
+ * self-contained so this file stays test-only and scope-local.
  *
  * Acceptance (TASK-194):
  * - at least 8 new snippets
@@ -214,6 +215,33 @@ class AndroidLuaAssetCorpusExtraFixturesTddTest {
         assertIs<MemberExpression>(assertIs<CallExpression>(chain).base)
     }
 
+    @Test
+    fun compileStringCallAndNestedSecureImportParse() {
+        val compileChunk = parse(
+            LuaVersion.ANDROLUA_5_3,
+            """
+            require "import"
+            compile "libs/android-support-v4"
+            import "android.support.v4.widget.*"
+            """.trimIndent()
+        )
+        assertEquals(3, compileChunk.body.statements.size)
+        compileChunk.body.statements.forEach { assertIs<CallStatement>(it) }
+        val compileCall = assertIs<CallStatement>(compileChunk.body.statements[1]).expression
+        assertIs<StringCallExpression>(compileCall.base)
+
+        val nested = parse(
+            LuaVersion.ANDROLUA_5_3,
+            """
+            function deviceId()
+              import "android.provider.Settings${'$'}Secure"
+              return Secure.getString(activity.getContentResolver(), Secure.ANDROID_ID)
+            end
+            """.trimIndent()
+        )
+        assertIs<FunctionDeclaration>(nested.body.statements.single())
+    }
+
     private data class ExtraFixture(
         val id: String,
         val asset: String,
@@ -225,13 +253,13 @@ class AndroidLuaAssetCorpusExtraFixturesTddTest {
 
     private companion object {
         /**
-         * Ten distilled Android-Lua asset snippets covering the TASK-194 themes.
+         * Thirteen distilled Android-Lua asset snippets covering the TASK-194 themes.
          * Provenance points at Android-Lua app assets (read-only reference).
          */
         val extraFixtures = listOf(
             ExtraFixture(
                 id = "import-bootstrap-main",
-                asset = "main.lua",
+                asset = "main.lua / main14.lua",
                 tags = setOf("import"),
                 source = """
                     require "import"
@@ -260,6 +288,23 @@ class AndroidLuaAssetCorpusExtraFixturesTddTest {
                 asserter = { chunk ->
                     assertIs<CallStatement>(chunk.body.statements[0])
                     assertIs<LocalStatement>(chunk.body.statements[1])
+                }
+            ),
+            ExtraFixture(
+                id = "import-compile-support-v4",
+                asset = "main.lua / main11.lua / main12.lua / bin.lua",
+                tags = setOf("import", "compact"),
+                source = """
+                    require "import"
+                    compile "libs/android-support-v4"
+                    import "android.support.v4.widget.*"
+                    compile "mao"
+                    compile "sign"
+                """.trimIndent(),
+                expectedShapeFragments = listOf("compile", "import", "StringCall"),
+                asserter = { chunk ->
+                    assertEquals(5, chunk.body.statements.size)
+                    chunk.body.statements.forEach { assertIs<CallStatement>(it) }
                 }
             ),
             ExtraFixture(
@@ -340,7 +385,7 @@ class AndroidLuaAssetCorpusExtraFixturesTddTest {
             ),
             ExtraFixture(
                 id = "ui-loadlayout-contentview-and-toast",
-                asset = "main.lua / AndLua.lua / ThomeLua.lua",
+                asset = "main.lua / AndLua.lua / toast.lua",
                 tags = setOf("ui", "import"),
                 source = """
                     require "import"
@@ -389,6 +434,39 @@ class AndroidLuaAssetCorpusExtraFixturesTddTest {
                 }
             ),
             ExtraFixture(
+                id = "ui-toast-cardview-stub",
+                asset = "AndLua.lua / toast.lua",
+                tags = setOf("ui"),
+                source = """
+                    toasts = {
+                      CardView;
+                      id = "toastb";
+                      CardElevation = ele;
+                      radius = rad;
+                      backgroundColor = color;
+                      {
+                        TextView;
+                        layout_margin = "7dp";
+                        textSize = "13sp";
+                        TextColor = color2;
+                        text = str;
+                        layout_gravity = "center";
+                        id = "mess";
+                      };
+                    }
+                    local toast = Toast.makeText(activity, nil, Toast.LENGTH_SHORT)
+                    toast.setView(loadlayout(toasts))
+                    toast.show()
+                """.trimIndent(),
+                expectedShapeFragments = listOf("CardView", "TextView", "Toast", "loadlayout"),
+                asserter = { chunk ->
+                    assertIs<AssignmentStatement>(chunk.body.statements[0])
+                    assertIs<LocalStatement>(chunk.body.statements[1])
+                    assertIs<CallStatement>(chunk.body.statements[2])
+                    assertIs<CallStatement>(chunk.body.statements[3])
+                }
+            ),
+            ExtraFixture(
                 id = "compact-luajava-loadlib-return",
                 asset = "compact call forms (luajava.loadLib multi-arg)",
                 tags = setOf("compact", "luajava"),
@@ -423,7 +501,7 @@ class AndroidLuaAssetCorpusExtraFixturesTddTest {
             ),
             ExtraFixture(
                 id = "activity-window-chain-and-result-table-call",
-                asset = "main7.lua / ThomeLua.lua",
+                asset = "main7.lua / main14.lua / AndLua.lua",
                 tags = setOf("ui", "compact"),
                 source = """
                     activity.getWindow()
@@ -444,7 +522,7 @@ class AndroidLuaAssetCorpusExtraFixturesTddTest {
             ),
             ExtraFixture(
                 id = "import-inner-function-and-luajava-newinstance",
-                asset = "ThomeLua.lua (nested import + luajava)",
+                asset = "AndLua.lua (nested import + luajava)",
                 tags = setOf("import", "luajava"),
                 source = """
                     function deviceId()
