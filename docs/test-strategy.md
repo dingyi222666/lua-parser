@@ -2,8 +2,9 @@
 
 TASK-006 established the original baseline used by the Android-Lua TDD
 campaign. The inventory below was refreshed from `src/commonTest/kotlin` and
-`src/jvmTest/kotlin` on 2026-07-11 (TASK-224 WAVE22 docs snapshot) using the same
-counting rules as `testinventory.NewTestInventoryTddTest`. It excludes
+`src/jvmTest/kotlin` on 2026-07-11 (TASK-231 WAVE30 live recount; prior TASK-224
+WAVE22 snapshot raised) using the same counting rules as
+`testinventory.NewTestInventoryTddTest`. It excludes
 `testinventory.NewTestInventoryTddTest` because that file is an accounting
 fixture, not campaign or product coverage.
 
@@ -16,15 +17,15 @@ review-owned.
 
 | Area | Source set | Test files | `@Test` methods | Coverage focus |
 | --- | --- | ---: | ---: | --- |
-| Parser/source | JVM | 32 | 227 | Lua 5.3/5.4/AndroLua syntax, parser recovery, comments, regression fixtures, literal comments, Android-Lua grammar, AST visitor/modifier behavior, AST to Lua round trips, lexer corpora. |
+| Parser/source | JVM | 43 | 316 | Lua 5.3/5.4/AndroLua syntax, parser recovery, comments, regression fixtures, literal comments, Android-Lua grammar, AST visitor/modifier behavior, AST to Lua round trips, lexer corpora. |
 | Semantic core | Common | 7 | 75 | Pipeline integration, public model facade, completion, checker expression evaluation, module type bridge, type info shape. |
-| Semantic core | JVM | 58 | 732 | Binder, declarations, position queries, comment interop, doc comment parsing, type model/syntax/resolution, call/member/return checking, public API compatibility, Android-Lua interop semantics, LuaJava helper typing. |
+| Semantic core | JVM | 64 | 835 | Binder, declarations, position queries, comment interop, doc comment parsing, type model/syntax/resolution, call/member/return checking, public API compatibility, Android-Lua interop semantics, LuaJava helper typing. |
 | Workspace | Common | 9 | 127 | Document facts, module graphs, module exports, workspace engine behavior, overlays, legacy module environment support, Android import facts. |
-| Workspace | JVM | 16 | 243 | JVM workspace updates, query facade behavior, Android-Lua import workspace behavior, builtin overlay loading, dirty-set planning, module graph cycles, path styles, fingerprint stability, semantic workspace campaign coverage. |
-| Interop | JVM | 9 | 229 | JVM class module provider, reflection-backed workspace modeling, Java class metadata, classloader configuration, Android jar reflection, package enumeration, luajava import modeling. |
-| LSP | JVM | 18 | 269 | Language service, lifecycle diagnostics, navigation symbols, text document service, hover/completion/definition/declaration/references/signature help, shutdown/idempotency, watched files/workspace folders, Android-Lua JVM resolution paths. |
+| Workspace | JVM | 18 | 257 | JVM workspace updates, query facade behavior, Android-Lua import workspace behavior, builtin overlay loading, dirty-set planning, module graph cycles, path styles, fingerprint stability, semantic workspace campaign coverage. |
+| Interop | JVM | 10 | 240 | JVM class module provider, reflection-backed workspace modeling, Java class metadata, classloader configuration, Android jar reflection, package enumeration, luajava import modeling. |
+| LSP | JVM | 34 | 486 | Language service, lifecycle diagnostics, navigation symbols, text document service, hover/completion/definition/declaration/references/signature help, shutdown/idempotency, watched files/workspace folders, Android-Lua JVM resolution paths. |
 | Integration | JVM | 2 | 19 | Android-Lua corpus semantic verification across parser, workspace, and interop fixtures; mixed LuaJava integration coverage. |
-| **Total current inventory** | Common + JVM | **151** | **1921** | Current parser, semantic, workspace, interop, LSP, and integration coverage, excluding the inventory fixture. |
+| **Total current inventory** | Common + JVM | **187** | **2355** | Current parser, semantic, workspace, interop, LSP, and integration coverage, excluding the inventory fixture. |
 
 Inventory notes:
 
@@ -69,12 +70,12 @@ campaign_total = sum(@Test methods in included *TddTest.kt files)
 remaining = max(0, 500 - campaign_total)
 ```
 
-As of 2026-07-11 (TASK-224 docs snapshot; not a global success claim), the
+As of 2026-07-11 (TASK-231 WAVE30 live recount; not a global success claim), the
 current source-tree accounting reports:
 
 ```text
-current_campaign_files = 92
-current_campaign_total = 1406
+current_campaign_files = 128
+current_campaign_total = 1840
 remaining_to_500 = 0
 ```
 
@@ -104,6 +105,7 @@ The fixture prints a concise inventory report during the required test run. It
 does not import or mutate production code and can run before future
 implementation tasks are complete.
 
-TASK-224 refreshes this document only. Fixture constant sync is owned by
-TASK-231 (serial with this docs refresh) and verification remains deferred to
-TASK-043.
+TASK-231 WAVE30 raised both this document and the inventory fixture constants
+to the live source-tree counts (baseline 187/2355, campaign 128/1840). Bars were
+only raised; `testinventory` remains excluded from campaign totals. Verification
+remains deferred to TASK-043.
