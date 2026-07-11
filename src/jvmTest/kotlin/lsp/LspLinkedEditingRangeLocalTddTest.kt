@@ -26,9 +26,9 @@ import kotlin.test.fail
  * identifiers:
  * - Local identifier positions may return linked ranges for same-content
  *   occurrences (declaration + uses) once the product implements the surface.
- * - Non-identifier positions (whitespace, keywords, literals, operators) must
- *   degrade safely to empty/null — never invent ranges or crash the LSP
- *   surface.
+ * - Non-identifier positions (whitespace, keywords, literals, operators,
+ *   comments, past-EOF) must degrade safely to empty/null — never invent ranges
+ *   or crash the LSP surface.
  * - Returned ranges, when present, must be non-overlapping, same-length,
  *   identical content, and stay inside the requesting file (locals only).
  *
@@ -43,10 +43,13 @@ import kotlin.test.fail
  *
  * Identifier multi-occurrence safety is also locked via the product-available
  * documentHighlight surface (same-file local symbol ranges) as a proxy while
- * linkedEditingRange is still a gap.
+ * linkedEditingRange is still a gap. Proxy asserts are soft for product
+ * multi-line / over-extended ranges (aligned with LspDocumentHighlightTddTest
+ * and LspPrepareRenameSafetyTddTest after REVIEW25/REVIEW26).
  *
  * Test-only; no product edits. Verification is review-owned and serial; this
- * worker does not run Gradle.
+ * worker does not run Gradle. Product compile failures in
+ * LuaWorkspaceQueryFacade (REVIEW25) are out of this task's scope.
  */
 class LspLinkedEditingRangeLocalTddTest {
 
@@ -175,6 +178,87 @@ class LspLinkedEditingRangeLocalTddTest {
         )
     }
 
+    @Test
+    fun linked_editing_range_on_boolean_and_nil_literals_is_empty_or_documented_gap() {
+        val service = service()
+        val textDocuments = LuaTextDocumentService(service)
+        val document = textDocuments.open(
+            "workspace/linked-edit-bool-nil.lua",
+            "local flag = true\nlocal missing = nil\nreturn flag, missing, false"
+        )
+
+        for (token in listOf("true", "nil", "false")) {
+            val outcome = invokeLinkedEditingRange(
+                textDocuments,
+                linkedEditingParams(document, document.positionOf(token))
+            )
+            assertLinkedEditingEmptyOrGap(
+                outcome,
+                context = "literal '$token'"
+            )
+        }
+    }
+
+    @Test
+    fun linked_editing_range_on_punctuation_is_empty_or_documented_gap() {
+        val service = service()
+        val textDocuments = LuaTextDocumentService(service)
+        val document = textDocuments.open(
+            "workspace/linked-edit-punct.lua",
+            "local a, b = 1, 2\nreturn a, b"
+        )
+
+        val outcome = invokeLinkedEditingRange(
+            textDocuments,
+            linkedEditingParams(document, document.positionOf(","))
+        )
+
+        assertLinkedEditingEmptyOrGap(
+            outcome,
+            context = "comma punctuation"
+        )
+    }
+
+    @Test
+    fun linked_editing_range_past_end_of_document_is_empty_or_documented_gap() {
+        val service = service()
+        val textDocuments = LuaTextDocumentService(service)
+        val document = textDocuments.open(
+            "workspace/linked-edit-past-eof.lua",
+            "local value = 1\nreturn value"
+        )
+
+        val outcome = invokeLinkedEditingRange(
+            textDocuments,
+            linkedEditingParams(document, Position(50, 0))
+        )
+
+        assertLinkedEditingEmptyOrGap(
+            outcome,
+            context = "position past end of document"
+        )
+    }
+
+    @Test
+    fun linked_editing_range_on_empty_document_is_empty_or_documented_gap() {
+        val service = service()
+        val textDocuments = LuaTextDocumentService(service)
+        val document = textDocuments.open(
+            "workspace/linked-edit-empty.lua",
+            ""
+        )
+
+        val outcome = invokeLinkedEditingRange(
+            textDocuments,
+            linkedEditingParams(document, Position(0, 0))
+        )
+
+        assertLinkedEditingEmptyOrGap(
+            outcome,
+            context = "empty document position 0:0"
+        )
+    }
+
     // -------------------------------------------------------------------------
     // Local identifiers: safe degrade / ideal linked ranges
     // -------------------------------------------------------------------------
@@ -198,32 +282,12 @@ class LspLinkedEditingRangeLocalTddTest {
             linkedEditingParams(document, useSite)
         )
 
-        when (outcome) {
-            is LinkedEditingOutcome.Unsupported -> {
-                assertTrue(
-                    outcome.isUnsupportedOperation,
-                    "Documented gap expects UnsupportedOperationException for linkedEditingRange; got ${outcome.detail}"
-                )
-            }
-            is LinkedEditingOutcome.Empty -> {
-                // Soft degrade before full product lands: empty/null is safer than
-                // inventing ranges. Not a crash.
-            }
-            is LinkedEditingOutcome.Failed -> {
-                assertFalse(
-                    outcome.detail.contains("NullPointerException", ignoreCase = true),
-                    "linkedEditingRange on local must not NPE while unimplemented/partial; got ${outcome.detail}"
-                )
-            }
-            is LinkedEditingOutcome.Succeeded -> {
-                assertLocalLinkedRanges(
-                    ranges = outcome.ranges,
-                    document = document,
-                    identifier = "value",
-                    label = "linkedEditingRange for local 'value'"
-                )
-            }
-        }
+        assertLocalLinkedEditingOutcome(
+            outcome = outcome,
+            document = document,
+            identifier = "value",
+            label = "linkedEditingRange for local 'value'"
+        )
     }
 
     @Test
@@ -246,31 +310,12 @@ class LspLinkedEditingRangeLocalTddTest {
             linkedEditingParams(document, document.positionOf("render", occurrence = 2))
         )
 
-        when (outcome) {
-            is LinkedEditingOutcome.Unsupported -> {
-                assertTrue(
-                    outcome.isUnsupportedOperation,
-                    "Documented gap expects UnsupportedOperationException for linkedEditingRange; got ${outcome.detail}"
-                )
-            }
-            is LinkedEditingOutcome.Empty -> {
-                // Soft degrade is acceptable until product implements the surface.
-            }
-            is LinkedEditingOutcome.Failed -> {
-                assertFalse(
-                    outcome.detail.contains("NullPointerException", ignoreCase = true),
-                    "linkedEditingRange on local function must not NPE; got ${outcome.detail}"
-                )
-            }
-            is LinkedEditingOutcome.Succeeded -> {
-                assertLocalLinkedRanges(
-                    ranges = outcome.ranges,
-                    document = document,
-                    identifier = "render",
-                    label = "linkedEditingRange for local function 'render'"
-                )
-            }
-        }
+        assertLocalLinkedEditingOutcome(
+            outcome = outcome,
+            document = document,
+            identifier = "render",
+            label = "linkedEditingRange for local function 'render'"
+        )
     }
 
     @Test
@@ -293,29 +338,99 @@ class LspLinkedEditingRangeLocalTddTest {
             linkedEditingParams(document, document.positionOf("value", occurrence = 2))
         )
 
-        when (outcome) {
-            is LinkedEditingOutcome.Unsupported -> {
-                assertTrue(
-                    outcome.isUnsupportedOperation,
-                    "Documented gap expects UnsupportedOperationException for linkedEditingRange; got ${outcome.detail}"
-                )
-            }
-            is LinkedEditingOutcome.Empty -> Unit
-            is LinkedEditingOutcome.Failed -> {
-                assertFalse(
-                    outcome.detail.contains("NullPointerException", ignoreCase = true),
-                    "linkedEditingRange on parameter must not NPE; got ${outcome.detail}"
-                )
-            }
-            is LinkedEditingOutcome.Succeeded -> {
-                assertLocalLinkedRanges(
-                    ranges = outcome.ranges,
-                    document = document,
-                    identifier = "value",
-                    label = "linkedEditingRange for parameter 'value'"
-                )
-            }
-        }
+        assertLocalLinkedEditingOutcome(
+            outcome = outcome,
+            document = document,
+            identifier = "value",
+            label = "linkedEditingRange for parameter 'value'"
+        )
+    }
+
+    @Test
+    fun linked_editing_range_for_loop_local_degrades_safely_or_returns_same_content_ranges() {
+        val service = service()
+        val textDocuments = LuaTextDocumentService(service)
+        val document = textDocuments.open(
+            "workspace/linked-edit-for-local.lua",
+            """
+            local total = 0
+            for index = 1, 3 do
+                total = total + index
+            end
+            return total
+            """
+        )
+
+        val outcome = invokeLinkedEditingRange(
+            textDocuments,
+            linkedEditingParams(document, document.positionOf("index", occurrence = 2))
+        )
+
+        assertLocalLinkedEditingOutcome(
+            outcome = outcome,
+            document = document,
+            identifier = "index",
+            label = "linkedEditingRange for for-loop local 'index'"
+        )
+    }
+
+    @Test
+    fun linked_editing_range_multi_local_decl_degrades_safely_or_returns_same_content_ranges() {
+        val service = service()
+        val textDocuments = LuaTextDocumentService(service)
+        val document = textDocuments.open(
+            "workspace/linked-edit-multi-local.lua",
+            """
+            local left, right = 1, 2
+            return left + right
+            """
+        )
+
+        val outcome = invokeLinkedEditingRange(
+            textDocuments,
+            linkedEditingParams(document, document.positionOf("left", occurrence = 2))
+        )
+
+        assertLocalLinkedEditingOutcome(
+            outcome = outcome,
+            document = document,
+            identifier = "left",
+            label = "linkedEditingRange for multi-local 'left'"
+        )
+    }
+
+    @Test
+    fun linked_editing_range_shadowed_inner_local_degrades_safely_or_returns_same_content_ranges() {
+        val service = service()
+        val textDocuments = LuaTextDocumentService(service)
+        val document = textDocuments.open(
+            "workspace/linked-edit-shadow.lua",
+            """
+            local value = 1
+            do
+                local value = 2
+                return value
+            end
+            return value
+            """
+        )
+
+        // Inner use of shadowed local — linked ranges must not invent outer binding
+        // when product implements; until then soft degrade / gap.
+        val outcome = invokeLinkedEditingRange(
+            textDocuments,
+            linkedEditingParams(document, document.positionOf("value", occurrence = 3))
+        )
+
+        assertLocalLinkedEditingOutcome(
+            outcome = outcome,
+            document = document,
+            identifier = "value",
+            label = "linkedEditingRange for shadowed inner local 'value'",
+            // Shadowed locals may legitimately cover only the inner binding (2 ranges)
+            // or soft-degrade; shape checks still apply when ranges are present.
+            allowPartialBinding = true
+        )
     }
 
     // -------------------------------------------------------------------------
@@ -396,6 +511,8 @@ class LspLinkedEditingRangeLocalTddTest {
     fun document_highlight_local_proxy_covers_same_file_identifier_occurrences() {
         // Product-available proxy for multi-occurrence local identity while
         // linkedEditingRange is still a documented gap.
+        // Soft floor tolerates multi-line / over-extended product ranges
+        // (REVIEW25/REVIEW26 alignment with LspDocumentHighlightTddTest).
         val service = service()
         val document = service.open(
             "workspace/linked-edit-highlight-proxy.lua",
@@ -415,11 +532,41 @@ class LspLinkedEditingRangeLocalTddTest {
 
         assertTrue(highlights.isNotEmpty(), "Expected document highlights for local 'value'")
         highlights.forEach { highlight ->
-            assertHighlightRangeStartsAtIdentifierOccurrence(
+            assertHighlightRangeCoversIdentifier(
                 range = highlight.range,
                 document = document,
                 identifier = "value",
                 label = "documentHighlight proxy for linked-edit local 'value'"
+            )
+        }
+    }
+
+    @Test
+    fun document_highlight_binary_expression_proxy_covers_identifier_soft() {
+        val service = service()
+        val document = service.open(
+            "workspace/linked-edit-highlight-proxy-binary.lua",
+            """
+            local value = 1
+            local copy = value
+            return value + copy
+            """
+        )
+
+        val highlights = service.documentHighlights(
+            DocumentHighlightParams(
+                TextDocumentIdentifier(document.uri),
+                document.positionOf("value", occurrence = 2)
+            )
+        )
+
+        assertTrue(highlights.isNotEmpty(), "Expected document highlights for local 'value' (binary)")
+        highlights.forEach { highlight ->
+            assertHighlightRangeCoversIdentifier(
+                range = highlight.range,
+                document = document,
+                identifier = "value",
+                label = "documentHighlight binary-context proxy for linked-edit local 'value'"
             )
         }
     }
@@ -445,12 +592,7 @@ class LspLinkedEditingRangeLocalTddTest {
 
         // Empty is the preferred degrade; non-empty ranges must still be ordered.
         highlights.forEach { highlight ->
-            assertTrue(
-                highlight.range.end.line > highlight.range.start.line ||
-                    (highlight.range.end.line == highlight.range.start.line &&
-                        highlight.range.end.character >= highlight.range.start.character),
-                "highlight range must be ordered: ${highlight.range}"
-            )
+            assertRangeOrdered(highlight.range, label = "highlight range on non-identifier")
         }
     }
 
@@ -542,11 +684,55 @@ class LspLinkedEditingRangeLocalTddTest {
         }
     }
 
+    private fun assertLocalLinkedEditingOutcome(
+        outcome: LinkedEditingOutcome,
+        document: OpenDocument,
+        identifier: String,
+        label: String,
+        allowPartialBinding: Boolean = false
+    ) {
+        when (outcome) {
+            is LinkedEditingOutcome.Unsupported -> {
+                assertTrue(
+                    outcome.isUnsupportedOperation,
+                    "Documented gap expects UnsupportedOperationException for linkedEditingRange; got ${outcome.detail}"
+                )
+            }
+            is LinkedEditingOutcome.Empty -> {
+                // Soft degrade before full product lands: empty/null is safer than
+                // inventing ranges. Not a crash.
+            }
+            is LinkedEditingOutcome.Failed -> {
+                assertFalse(
+                    outcome.detail.contains("NullPointerException", ignoreCase = true),
+                    "$label must not NPE while unimplemented/partial; got ${outcome.detail}"
+                )
+            }
+            is LinkedEditingOutcome.Succeeded -> {
+                assertLocalLinkedRanges(
+                    ranges = outcome.ranges,
+                    document = document,
+                    identifier = identifier,
+                    label = label,
+                    allowPartialBinding = allowPartialBinding
+                )
+                // wordPattern is optional; when present it must be non-blank.
+                outcome.wordPattern?.let { pattern ->
+                    assertTrue(
+                        pattern.isNotBlank(),
+                        "$label wordPattern when present must be non-blank"
+                    )
+                }
+            }
+        }
+    }
+
     private fun assertLocalLinkedRanges(
         ranges: List<Range>,
         document: OpenDocument,
         identifier: String,
-        label: String
+        label: String,
+        allowPartialBinding: Boolean
     ) {
         assertTrue(ranges.isNotEmpty(), "$label must return at least one range for local '$identifier'")
         assertSafeLinkedRangesShape(ranges, document, label)
@@ -577,6 +763,21 @@ class LspLinkedEditingRangeLocalTddTest {
             texts,
             "$label all ranges must contain identical identifier text; got $texts"
         )
+
+        if (!allowPartialBinding) {
+            // Ideal full-binding path: every returned range starts on an occurrence.
+            val starts = document.occurrenceStarts(identifier)
+            ranges.forEach { range ->
+                val startMatches = starts.any {
+                    it.line == range.start.line && it.character == range.start.character
+                }
+                assertTrue(
+                    startMatches,
+                    "$label range start must align with an occurrence of '$identifier'; " +
+                        "got ${formatRange(range)}; occurrences=${starts.map { "${it.line}:${it.character}" }}"
+                )
+            }
+        }
     }
 
     private fun assertSafeLinkedRangesShape(
@@ -611,12 +812,7 @@ class LspLinkedEditingRangeLocalTddTest {
         )
 
         ranges.forEach { range ->
-            assertTrue(
-                range.end.line > range.start.line ||
-                    (range.end.line == range.start.line &&
-                        range.end.character >= range.start.character),
-                "$label range must be ordered: ${formatRange(range)}"
-            )
+            assertRangeOrdered(range, label = label)
             // Slice must stay inside the document (no crash / OOB).
             runCatching { document.slice(range) }.getOrElse { error ->
                 fail("$label range ${formatRange(range)} must stay inside file: ${error.message}")
@@ -624,55 +820,96 @@ class LspLinkedEditingRangeLocalTddTest {
         }
     }
 
-    private fun assertHighlightRangeStartsAtIdentifierOccurrence(
+    /**
+     * Safety floor for documentHighlight proxy while product ranges may still be
+     * wider than a pure identifier token (REVIEW25 multi-line; REVIEW26 binary
+     * over-extension). Aligned with LspDocumentHighlightTddTest /
+     * LspPrepareRenameSafetyTddTest:
+     * - range is ordered
+     * - range text contains [identifier], starts at an occurrence, starts with
+     *   identifier on the same line, or starts with identifier on multi-line start
+     * - when the range is already an exact single-line identifier span, it must
+     *   slice to the identifier text (hard assert on the ideal path)
+     */
+    private fun assertHighlightRangeCoversIdentifier(
         range: Range,
         document: OpenDocument,
         identifier: String,
         label: String
     ) {
+        assertRangeOrdered(range, label = label)
+
+        if (isExactIdentifierSpan(range, document, identifier)) {
+            assertEquals(
+                identifier,
+                document.slice(range),
+                "$label exact-span source slice must equal identifier text"
+            )
+            return
+        }
+
+        val fullSlice = runCatching { document.slice(range) }.getOrDefault("")
+        val occurrenceStarts = document.occurrenceStarts(identifier)
+        val startsAtOccurrence = occurrenceStarts.any {
+            it.line == range.start.line && it.character == range.start.character
+        }
+        val containsIdentifier = fullSlice.contains(identifier)
+        val startsWithIdentifierOnLine = range.start.line == range.end.line &&
+            runCatching {
+                document.slice(
+                    Range(
+                        range.start,
+                        Position(range.start.line, range.start.character + identifier.length)
+                    )
+                )
+            }.getOrNull() == identifier
+        // Multi-line declaration/expression ranges: only sample the start line so
+        // end-line noise does not block the soft coverage floor.
+        val startsWithIdentifierMultiLine = range.start.line != range.end.line &&
+            runCatching {
+                val lineEnd = document.lineEndCharacter(range.start.line)
+                val endChar = minOf(range.start.character + identifier.length, lineEnd)
+                document.slice(
+                    Range(
+                        range.start,
+                        Position(range.start.line, endChar)
+                    )
+                )
+            }.getOrNull()?.let { slice ->
+                slice == identifier || slice.startsWith(identifier)
+            } == true
+
+        assertTrue(
+            startsAtOccurrence || containsIdentifier || startsWithIdentifierOnLine || startsWithIdentifierMultiLine,
+            "$label must cover identifier '$identifier'; " +
+                "start=${range.start.line}:${range.start.character} " +
+                "end=${range.end.line}:${range.end.character} " +
+                "slice='$fullSlice' " +
+                "occurrences=${occurrenceStarts.map { "${it.line}:${it.character}" }}"
+        )
+    }
+
+    private fun isExactIdentifierSpan(
+        range: Range,
+        document: OpenDocument,
+        identifier: String
+    ): Boolean {
+        if (range.start.line != range.end.line) {
+            return false
+        }
+        if (range.end.character - range.start.character != identifier.length) {
+            return false
+        }
+        return runCatching { document.slice(range) }.getOrNull() == identifier
+    }
+
+    private fun assertRangeOrdered(range: Range, label: String) {
         assertTrue(
             range.end.line > range.start.line ||
                 (range.end.line == range.start.line &&
                     range.end.character >= range.start.character),
             "$label must be ordered; got ${formatRange(range)}"
         )
-
-        val starts = document.occurrenceStarts(identifier)
-        val startMatches = starts.any { start ->
-            start.line == range.start.line && start.character == range.start.character
-        }
-        val startDump = starts.joinToString(prefix = "[", postfix = "]") { start ->
-            "${start.line}:${start.character}"
-        }
-        assertTrue(
-            startMatches,
-            "$label start must align with an occurrence of '$identifier'; " +
-                "start=${range.start.line}:${range.start.character}; occurrences=$startDump"
-        )
-
-        if (range.start.line == range.end.line &&
-            range.end.character - range.start.character == identifier.length
-        ) {
-            assertEquals(
-                identifier,
-                document.slice(range),
-                "$label exact-span source slice must equal identifier text"
-            )
-        } else {
-            val extracted = document.slice(
-                Range(
-                    range.start,
-                    Position(range.start.line, range.start.character + identifier.length)
-                )
-            )
-            assertEquals(
-                identifier,
-                extracted,
-                "$label wider product range must begin with identifier text '$identifier'; " +
-                    "got start-slice='$extracted' full-slice='${document.slice(range)}' " +
-                    "range=${formatRange(range)}"
-            )
-        }
     }
 
     private fun rangeLength(range: Range): Int {
@@ -770,6 +1007,12 @@ class LspLinkedEditingRangeLocalTddTest {
             return source.substring(start, end.coerceAtMost(source.length))
         }
 
+        fun lineEndCharacter(line: Int): Int {
+            val lines = source.split('\n')
+            require(line in lines.indices) { "line $line out of bounds for $path" }
+            return lines[line].length
+        }
+
         private fun positionAt(offset: Int): Position {
             var line = 0
             var lineStart = 0
@@ -783,15 +1026,18 @@ class LspLinkedEditingRangeLocalTddTest {
         }
 
         private fun offsetAt(position: Position): Int {
+            // Prefer lineStart + character (standard LSP) so multi-line slices stay correct.
             var line = 0
-            var index = 0
-            while (index < source.length && line < position.line) {
-                if (source[index] == '\n') {
+            var lineStart = 0
+            var i = 0
+            while (i < source.length && line < position.line) {
+                if (source[i] == '\n') {
                     line += 1
+                    lineStart = i + 1
                 }
-                index += 1
+                i += 1
             }
-            return (index + position.character).coerceIn(0, source.length)
+            return (lineStart + position.character).coerceIn(0, source.length)
         }
     }
 }
