@@ -99,6 +99,14 @@ tasks.named("mingwX64Test") {
         runNativeHostTests.get()
     }
 }
+
+// Parallel JVM tests (Windows self-hosted runner: 8 forks / 4G heap via gradle.properties)
+tasks.withType<Test>().configureEach {
+    maxParallelForks = 8
+    // Avoid one hung suite blocking the whole fork forever without bound
+    // (individual tests still use JUnit defaults unless annotated)
+}
+
 tasks.register<JavaExec>("runLuaLanguageServer") {
     group = "application"
     description = "Run the Lua language server over stdio"

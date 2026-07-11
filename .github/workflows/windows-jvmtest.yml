@@ -1,5 +1,6 @@
 # Windows self-hosted runner only. Does not run on main.
 # Runner labels: self-hosted, Windows, X64 (DINGYI-PC)
+# Parallelism: gradle.properties workers.max=8, Xmx4G; Test maxParallelForks=8
 name: windows-jvmtest
 
 on:
@@ -14,6 +15,7 @@ jobs:
     env:
       JAVA_HOME: C:\Users\dingyi\.jdks\temurin-17.0.11
       ANDROID_HOME: C:\Users\dingyi\AppData\Local\Android\Sdk
+      GRADLE_OPTS: -Dorg.gradle.workers.max=8
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -24,15 +26,16 @@ jobs:
           echo JAVA_HOME=%JAVA_HOME%
           echo ANDROID_HOME=%ANDROID_HOME%
           java -version
+          echo processor_count=%NUMBER_OF_PROCESSORS%
           git rev-parse --short HEAD
 
       - name: Compile test sources
         shell: cmd
-        run: gradlew.bat compileTestKotlinJvm --no-daemon
+        run: gradlew.bat compileTestKotlinJvm --parallel --max-workers=8
 
       - name: Full jvmTest
         shell: cmd
-        run: gradlew.bat jvmTest --no-daemon
+        run: gradlew.bat jvmTest --parallel --max-workers=8
 
       - name: Kill Java processes
         if: always()
