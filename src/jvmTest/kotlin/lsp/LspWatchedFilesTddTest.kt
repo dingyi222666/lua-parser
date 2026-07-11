@@ -33,7 +33,8 @@ class LspWatchedFilesTddTest {
     @Test
     fun watched_create_indexes_new_lua_file_for_symbols_and_require_resolution() {
         val root = tempWorkspace()
-        val main = root.resolve("main.lua").writeLua("local dep = require(\"dep\")\nreturn dep.value")
+        // Align field name used by require resolution with the symbol exported by dep.lua.
+        val main = root.resolve("main.lua").writeLua("local dep = require(\"dep\")\nreturn dep.createdMarker")
         val service = initializedService(root)
         val workspace = LuaWorkspaceService(service)
 
@@ -47,9 +48,10 @@ class LspWatchedFilesTddTest {
         )
 
         val symbols = service.workspaceSymbols("createdMarker")
-        val definitions = service.definition(definitionParams(main, "value"))
+        val definitions = service.definition(definitionParams(main, "createdMarker"))
 
         assertTrue(symbols.any { it.name == "createdMarker" && it.location.uri == dep.uri })
+        assertTrue(definitions.isNotEmpty(), "expected definition for dep.createdMarker after watched create")
         assertEquals(dep.uri, definitions.single().uri)
         assertEquals(1, workspace.lastWatchedFileChanges().size)
         assertEquals(FileChangeType.Created, workspace.lastWatchedFileChanges().single().type)
@@ -66,6 +68,8 @@ class LspWatchedFilesTddTest {
         assertTrue(service.workspaceSymbols("oldName").any { it.location.uri == dep.uri })
 
         dep.path.writeText("local M = {}\nM.newName = 2\nreturn M")
+        // Keep WorkspaceFile position helpers in sync with disk after external rewrite.
+        dep.refreshSourceFromDisk()
         workspace.didChangeWatchedFiles(
             DidChangeWatchedFilesParams(
                 listOf(FileEvent(dep.uri, FileChangeType.Changed))
@@ -283,11 +287,24 @@ class LspWatchedFilesTddTest {
         return ReferenceParams(TextDocumentIdentifier(file.uri), file.positionOf(needle, occurrence), ReferenceContext(true))
     }
 
-    private data class WorkspaceFile(val path: Path) {
+    /**
+     * Test helper for on-disk workspace files. Source is re-read for position lookup so
+     * external rewrites (watched change scenarios) stay aligned with disk content.
+     */
+    private class WorkspaceFile(val path: Path) {
         val uri: String = path.toUri().toString()
-        private val source: String = Files.readString(path)
+        private var source: String = Files.readString(path)
+
+        fun refreshSourceFromDisk() {
+            source = Files.readString(path)
+        }
 
         fun positionOf(needle: String, occurrence: Int = 1): Position {
+            // Always prefer current disk content when the file still exists so watched
+            // change tests do not use a stale snapshot for needle lookup.
+            if (Files.isRegularFile(path)) {
+                source = Files.readString(path)
+            }
             require(occurrence >= 1) { "occurrence must be positive" }
             var index = -1
             var fromIndex = 0
