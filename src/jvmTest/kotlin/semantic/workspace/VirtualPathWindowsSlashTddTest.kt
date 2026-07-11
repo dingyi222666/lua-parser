@@ -25,6 +25,9 @@ import kotlin.test.assertTrue
  * - Drive-letter forms (`C:\...`, `D:/...`) are treated as ordinary segment lists after
  *   separator normalization; the drive token (e.g. `C:`) is kept as the first segment.
  *   Construction must not throw merely because the host is not Windows.
+ * - Because the drive token is an ordinary segment, a single leading `..` after it
+ *   pops the drive and re-roots relatively (no throw). Workspace escape still requires
+ *   popping past an empty segment stack.
  * - UNC-looking inputs (`\\server\share\...`) lose empty leading segments and become
  *   workspace-relative segment lists (no host absolute survival).
  */
@@ -355,21 +358,31 @@ class VirtualPathWindowsSlashTddTest {
 
     @Test
     fun drive_letter_parent_escape_still_enforced_from_drive_root() {
-        // From C:/a, one `..` lands on C:; two `..` would pop C: and escape workspace.
+        // Drive letter is an ordinary first segment after separator rewrite (product contract).
+        // From C:/a, one `..` lands on C:/x; one `..` from C: itself pops the drive token
+        // and re-roots relatively (no throw). Workspace escape only throws when `..` would
+        // pop an empty segment stack.
         val underDrive = VirtualPath.of("C:\\a\\b.lua")
         assertEquals("C:/a/b.lua", underDrive.value)
 
         assertEquals("C:/x.lua", VirtualPath.of("C:\\a\\..\\x.lua").value)
         assertEquals("C:/x.lua", VirtualPath.of("C:/a/../x.lua").value)
 
+        // Popping the drive token is allowed — same as popping any other segment.
+        assertEquals("outside.lua", VirtualPath.of("C:\\..\\outside.lua").value)
+        assertEquals("outside.lua", VirtualPath.of("C:/../outside.lua").value)
+        assertEquals("outside.lua", VirtualPath.of("C:\\a\\..\\..\\outside.lua").value)
+        assertEquals("outside.lua", VirtualPath.of("C:/a/../../outside.lua").value)
+
+        // True workspace escape still rejected (one more `..` after drive is already gone).
         assertFailsWith<IllegalArgumentException> {
-            VirtualPath.of("C:\\..\\outside.lua")
+            VirtualPath.of("C:\\..\\..\\outside.lua")
         }
         assertFailsWith<IllegalArgumentException> {
-            VirtualPath.of("C:/../outside.lua")
+            VirtualPath.of("C:/../../outside.lua")
         }
         assertFailsWith<IllegalArgumentException> {
-            VirtualPath.of("C:\\a\\..\\..\\outside.lua")
+            VirtualPath.of("C:\\a\\..\\..\\..\\outside.lua")
         }
     }
 
@@ -405,7 +418,11 @@ class VirtualPathWindowsSlashTddTest {
             Case("\\\\host\\share\\f.lua", "host/share/f.lua"),
             Case("app\\..\\app\\mod.lua", "app/mod.lua"),
             Case("__jvm__\\classes\\com\\androlua\\LuaActivity.lua",
-                "__jvm__/classes/com/androlua/LuaActivity.lua")
+                "__jvm__/classes/com/androlua/LuaActivity.lua"),
+            // Drive token is ordinary: one `..` pops it and re-roots relatively.
+            Case("C:\\..\\outside.lua", "outside.lua"),
+            Case("C:/../outside.lua", "outside.lua"),
+            Case("C:\\a\\..\\..\\outside.lua", "outside.lua")
         )
 
         for (case in corpus) {
