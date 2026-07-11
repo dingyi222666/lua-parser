@@ -1,9 +1,9 @@
 # Run ONE test slice on Windows self-hosted runner (progress-bar mode).
-# Reads tasks/agent-runs/win-slices/slices.json + progress.json
-# Writes results/<slice>-<runId>.json and updates progress.json status=running/result fields.
+# GATE: must-green-to-advance — only the first non-success slice runs; failures re-run
+# the SAME slice until status=success. Never skip a red slice to go to the next.
 param(
   [string]$Slice = "",
-  [string]$Mode = "auto"  # auto | force
+  [string]$Mode = "auto"  # auto | force (force still only runs requested id; does not mark others success)
 )
 
 $ErrorActionPreference = "Stop"
@@ -41,27 +41,45 @@ function Limit-JavaProcesses {
   }
 }
 
+function Get-SliceStatus($progress, $id) {
+  try { return [string]$progress.slices.$id.status } catch { return "pending" }
+}
+
 if (-not (Test-Path $SlicesPath)) { Write-Error "missing $SlicesPath"; exit 1 }
 if (-not (Test-Path $ProgressPath)) { Write-Error "missing $ProgressPath"; exit 1 }
 
 $slicesDoc = Get-Content -Raw -Path $SlicesPath | ConvertFrom-Json
 $progress = Get-Content -Raw -Path $ProgressPath | ConvertFrom-Json
 
-# Pick slice
+Write-Host "GATE=must-green-to-advance (failure blocks next slice)"
+
+# Find first non-success in order (the blocked head)
+$head = $null
+foreach ($s in $slicesDoc.slices) {
+  $st = Get-SliceStatus $progress $s.id
+  if ($st -ne "success") { $head = $s; break }
+}
+
 $chosen = $null
 if ($Slice -and $Slice.Trim().Length -gt 0) {
-  $chosen = $slicesDoc.slices | Where-Object { $_.id -eq $Slice } | Select-Object -First 1
-  if (-not $chosen) { Write-Error "Unknown slice id: $Slice"; exit 1 }
-} else {
-  foreach ($s in $slicesDoc.slices) {
-    $st = $progress.slices.($s.id).status
-    if ($st -ne "success") { $chosen = $s; break }
+  $req = $slicesDoc.slices | Where-Object { $_.id -eq $Slice } | Select-Object -First 1
+  if (-not $req) { Write-Error "Unknown slice id: $Slice"; exit 1 }
+  # GATE: cannot run a later slice while an earlier one is not green
+  if ($head -and $req.id -ne $head.id) {
+    $headSt = Get-SliceStatus $progress $head.id
+    Write-Host "GATE_BLOCKED requested=$($req.id) but head=$($head.id) status=$headSt"
+    Write-Host "Must fix and green $head.id before running $($req.id)"
+    exit 2
   }
+  $chosen = $req
+} else {
+  $chosen = $head
 }
 
 if (-not $chosen) {
   Write-Host "ALL_SLICES_GREEN"
   $progress.summary.pending = 0
+  $progress.activeSlice = $null
   $progress.updatedAt = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
   ($progress | ConvertTo-Json -Depth 12) | Set-Content -Path $ProgressPath -Encoding UTF8
   exit 0
@@ -75,8 +93,13 @@ if (-not $sha) {
   try { $sha = (git rev-parse HEAD).Trim() } catch { $sha = "unknown" }
 }
 
-Write-Host "SLICE_PICKED=$sliceId runId=$runId"
+$prev = Get-SliceStatus $progress $sliceId
+Write-Host "SLICE_PICKED=$sliceId prevStatus=$prev runId=$runId"
+Write-Host "SLICE_FILE_COUNT=$($chosen.fileCount)"
 Write-Host "SLICE_TESTS=$($chosen.tests -join ', ')"
+if ($prev -eq "failure") {
+  Write-Host "GATE_RERUN same red slice until green — will not advance"
+}
 
 # mark running
 if (-not $progress.slices.PSObject.Properties.Name.Contains($sliceId)) {
@@ -86,17 +109,19 @@ $progress.slices.$sliceId.status = "running"
 $progress.slices.$sliceId.lastRunId = "$runId"
 $progress.slices.$sliceId.lastSha = "$sha"
 $progress.slices.$sliceId.updatedAt = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+$progress.activeSlice = $sliceId
+$progress.strategy = "must-green-to-advance"
 $progress.updatedAt = $progress.slices.$sliceId.updatedAt
 ($progress | ConvertTo-Json -Depth 12) | Set-Content -Path $ProgressPath -Encoding UTF8
 
-# Build gradle args
+# Build gradle args — one FQCN per --tests
 $gArgs = New-Object System.Collections.Generic.List[string]
 $gArgs.Add("jvmTest")
 $gArgs.Add("--parallel")
 $gArgs.Add("--max-workers=5")
 foreach ($pat in $chosen.tests) {
   $gArgs.Add("--tests")
-  $gArgs.Add($pat)
+  $gArgs.Add([string]$pat)
 }
 
 $argLine = ($gArgs | ForEach-Object {
@@ -122,7 +147,7 @@ $sw.Stop()
 $exitCode = $p.ExitCode
 Write-Host "SLICE_GRADLE_EXIT=$exitCode durationSec=$([int]$sw.Elapsed.TotalSeconds)"
 
-# Parse junit xml if present
+# Parse junit xml
 $xmlDir = Join-Path $Root "build\test-results\jvmTest"
 $failed = New-Object System.Collections.Generic.List[string]
 $tests = 0; $failures = 0; $errors = 0; $skipped = 0
@@ -160,6 +185,7 @@ $resultObj = [ordered]@{
   skipped = $skipped
   failedTests = @($failed | Select-Object -Unique)
   testsPatterns = @($chosen.tests)
+  gate = "must-green-to-advance"
   finishedAt = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
 }
 ($resultObj | ConvertTo-Json -Depth 8) | Set-Content -Path $resultPath -Encoding UTF8
@@ -176,34 +202,44 @@ $progress.slices.$sliceId.failedTests = @($failed | Select-Object -Unique)
 $progress.slices.$sliceId.durationSec = [int]$sw.Elapsed.TotalSeconds
 $progress.slices.$sliceId.artifact = "results/$(Split-Path $resultPath -Leaf)"
 $progress.slices.$sliceId.updatedAt = $resultObj.finishedAt
+$progress.activeSlice = $sliceId
+$progress.strategy = "must-green-to-advance"
 $progress.updatedAt = $resultObj.finishedAt
 
-# recount summary
-$succ=0;$fail=0;$pend=0;$runn=0
+$succ=0;$fail=0;$pend=0;$runn=0;$filesDone=0
 foreach ($s in $slicesDoc.slices) {
-  $st = $progress.slices.($s.id).status
+  $st = Get-SliceStatus $progress $s.id
   switch ($st) {
-    "success" { $succ++ }
+    "success" { $succ++; $filesDone += [int]$s.fileCount }
     "failure" { $fail++ }
     "running" { $runn++ }
     default { $pend++ }
   }
 }
-$progress.summary = [ordered]@{ total = $slicesDoc.slices.Count; pending = $pend; success = $succ; failure = $fail; running = $runn }
+$progress.summary = [ordered]@{
+  total = $slicesDoc.slices.Count
+  totalFiles = $slicesDoc.totalFiles
+  pending = $pend
+  success = $succ
+  failure = $fail
+  running = $runn
+  filesDone = $filesDone
+}
 if (-not $progress.history) { $progress.history = @() }
 $hist = [ordered]@{ sliceId=$sliceId; runId="$runId"; status=$status; tests=$tests; failures=($failures+$errors); durationSec=[int]$sw.Elapsed.TotalSeconds; at=$resultObj.finishedAt }
 $progress.history = @($progress.history + $hist) | Select-Object -Last 50
 ($progress | ConvertTo-Json -Depth 12) | Set-Content -Path $ProgressPath -Encoding UTF8
 
-# Human progress bar line
-$done = $succ + $fail
-Write-Host ("PROGRESS_BAR {0}/{1} success={2} failure={3} pending={4} current={5}:{6}" -f $done, $progress.summary.total, $succ, $fail, $pend, $sliceId, $status)
+Write-Host ("PROGRESS_BAR {0}/{1} success={2} failure={3} pending={4} current={5}:{6}" -f ($succ), $progress.summary.total, $succ, $fail, $pend, $sliceId, $status)
+if ($status -eq "success") {
+  Write-Host "GATE_OPEN next slice may run after this progress is committed"
+} else {
+  Write-Host "GATE_CLOSED slice $sliceId is RED — fix then re-run SAME slice; do not advance"
+}
 
-# Also copy result to GITHUB_WORKSPACE root for easy artifact
 try {
   Copy-Item $resultPath (Join-Path $Root "slice-result.json") -Force
   Copy-Item $ProgressPath (Join-Path $Root "slice-progress.json") -Force
 } catch {}
 
-# Exit non-zero on slice failure so Action is red for that slice (expected)
 exit $exitCode

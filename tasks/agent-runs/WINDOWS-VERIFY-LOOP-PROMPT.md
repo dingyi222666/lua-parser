@@ -1,17 +1,23 @@
-# WINDOWS-VERIFY SLICE LOOP PROMPT (fast iteration)
-# Fire on every cron tick. EXECUTE IMMEDIATELY — no recap.
+# WINDOWS-VERIFY SLICE LOOP — MUST-GREEN-TO-ADVANCE
+# Fire every cron tick. EXECUTE IMMEDIATELY.
 
-You are master for lua-parser Windows **file-chunk** verification (NOT full jvmTest).
+You are master for lua-parser Windows file-chunk verification.
+
+## Hard gate
+A slice must be success before the next slice runs.
+- Head = first slice in slices.json order with status != success.
+- RED head -> workers fix -> re-run SAME head only.
+- GREEN head -> advance to next pending.
+- NEVER skip a red slice. NEVER mark red as success without evidence.
 
 ## Mode
-- Branch: `windows-verify` only (never main).
-- CI: Action `windows-jvmtest` runs **one slice** of ~15 test files (10–20).
-- Progress bar: `tasks/agent-runs/win-slices/progress.json` + `PROGRESS.md`
-- Inventory: `tasks/agent-runs/win-slices/slices.json` (25 slices / 367 files / chunk 15)
-- CPU hard-cap: affinity 6/8 + workers=5 still on.
-- Workers: **≤30 concurrent**, 1 task = 1 agent. No docs filler.
-- Full-chain script: `tasks/agent-runs/watch-windows-slice-dispatch.js`
-- Forbidden: Mac full jvmTest; full-suite Windows jvmTest; watch-only without merge/workers/push.
+- Branch: windows-verify only (never main).
+- ~15 test files / Action (25 slices, 367 files).
+- Progress: tasks/agent-runs/win-slices/progress.json + PROGRESS.md
+- strategy: must-green-to-advance
+- Workers: <=30 concurrent, 1 task = 1 agent. No docs filler.
+- Full-chain: tasks/agent-runs/watch-windows-slice-dispatch.js
+- Forbidden: full jvmTest; Mac full suite; watch-only without merge/workers/push.
 
 ## On every tick — NOW
 
@@ -19,30 +25,31 @@ You are master for lua-parser Windows **file-chunk** verification (NOT full jvmT
 ```bash
 cd /Users/dingyi/projects/java_projects/lua-parser
 gh run list --branch windows-verify --workflow=windows-jvmtest.yml --limit 5
-git branch --show-current
-python3 -c "import json;p=json.load(open('tasks/agent-runs/win-slices/progress.json'));print(p['summary'])"
+python3 - <<'PY'
+import json
+p=json.load(open('tasks/agent-runs/win-slices/progress.json'))
+s=json.load(open('tasks/agent-runs/win-slices/slices.json'))
+print('strategy', p.get('strategy'), 'summary', p.get('summary'))
+for sl in s['slices']:
+    st=p['slices'][sl['id']]['status']
+    if st!='success':
+        print('HEAD', sl['id'], st, 'files', sl['fileCount']); break
+else:
+    print('ALL_GREEN')
+PY
 ```
-If `watch-windows-slice-dispatch` already live for current/latest run → status line only.
+If slice full-chain already live -> status line only (no duplicate).
 
 ### 2) State machine
-**A. Action in_progress/queued**
-- Ensure slice full-chain workflow is running (watch→download→merge→≤30 workers→push).
-- Launch `tasks/agent-runs/watch-windows-slice-dispatch.js` if none live.
-
-**B. Action completed**
-- If chain not done for that runId: launch/repair slice full-chain.
-- Chain merges progress bar, materializes ≤30 product tasks for reds, workers, pushes.
-- Push of updated `progress.json` triggers **next** pending slice automatically.
-
-**C. Idle / no run**
-- If pending slices remain and runner free: `git push` if unpushed, else `gh workflow run windows-jvmtest.yml --ref windows-verify`
-- If all slices success: report progress bar complete; consider TASK-043 evidence from accumulated results.
+A. Action in_progress/queued: ensure watch-windows-slice-dispatch.js running.
+B. Action completed: merge progress; if RED: <=30 workers -> push (gate hold, same slice); if GREEN: push progress -> next pending.
+C. Idle + pending/failure head: push if needed or gh workflow run windows-jvmtest.yml --ref windows-verify.
+D. ALL_GREEN: report progress bar complete for TASK-043 evidence path.
 
 ### 3) Status line
-Action URL + slice id if known + progress summary (success/failure/pending) + chain workflow id + workers.
+Action URL + HEAD slice id/status + summary + chain id + workers.
 
 ## Key paths
-- Workflow: `.github/workflows/windows-jvmtest.yml`
-- Slice runner: `scripts/windows-run-slice.ps1`
-- Progress: `tasks/agent-runs/win-slices/`
-- Chain: `tasks/agent-runs/watch-windows-slice-dispatch.js`
+- scripts/windows-run-slice.ps1 (GATE in picker)
+- tasks/agent-runs/win-slices/
+- tasks/agent-runs/watch-windows-slice-dispatch.js

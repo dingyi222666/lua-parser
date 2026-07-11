@@ -20,3 +20,6 @@ Fast iteration: **15 test files per Action run** (range 10–20).
 
 ## Local chain
 `tasks/agent-runs/watch-windows-slice-dispatch.js` — watch → merge progress → workers for reds → push → next chunk.
+
+## Gate: must-green-to-advance
+Head = first non-success slice. RED head is re-run until green. Next slice only after success.

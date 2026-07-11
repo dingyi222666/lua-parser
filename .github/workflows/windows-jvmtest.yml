@@ -1,5 +1,6 @@
 # Windows self-hosted slice runner (progress-bar mode).
 # One small --tests group per run. Does NOT run full jvmTest.
+# GATE: must-green-to-advance — red slice blocks next until fixed.
 # Progress: tasks/agent-runs/win-slices/progress.json
 name: windows-jvmtest
 

@@ -1,7 +1,7 @@
 {
   "version": 2,
-  "updatedAt": "2026-07-11T23:11:12Z",
-  "strategy": "next-pending-file-chunk",
+  "updatedAt": "2026-07-11T23:16:50Z",
+  "strategy": "must-green-to-advance",
   "chunkSize": 15,
   "cycle": 1,
   "summary": {
@@ -365,5 +365,11 @@
       "updatedAt": null
     }
   },
-  "history": []
+  "history": [],
+  "gate": {
+    "rule": "A slice may advance to the next only when its status is success. Failure/pending/running must re-run the same slice until green.",
+    "advanceOnlyIfSuccess": true,
+    "workersPerSliceMax": 30
+  },
+  "activeSlice": null
 }
