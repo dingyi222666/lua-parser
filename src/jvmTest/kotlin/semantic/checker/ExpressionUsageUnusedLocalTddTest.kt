@@ -497,9 +497,8 @@ class ExpressionUsageUnusedLocalTddTest {
     }
 
     private fun unusedLocalName(diagnostic: Diagnostic): String {
-        val match = UNUSED_LOCAL_NAME_REGEX.matchEntire(diagnostic.message)
-        assertNotNull(
-            match,
+        val match = assertNotNull(
+            UNUSED_LOCAL_NAME_REGEX.matchEntire(diagnostic.message),
             "Unused-local message must match '${UNUSED_LOCAL_MESSAGE.format("<name>")}'; got: ${diagnostic.message}"
         )
         return match.groupValues[1]
