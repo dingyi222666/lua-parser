@@ -316,8 +316,11 @@ class LspDidChangeConfigurationRepublishTddTest {
         published.clear()
 
         // Degrade safely: non-map / non-JsonObject settings are ignored.
+        // DidChangeConfigurationParams(@NonNull Object) rejects null at construction
+        // ("Property must not be null: settings"); exercise a missing/null settings field
+        // via the no-arg constructor instead of DidChangeConfigurationParams(null).
         workspace.didChangeConfiguration(DidChangeConfigurationParams(JsonPrimitive("oops")))
-        workspace.didChangeConfiguration(DidChangeConfigurationParams(null))
+        workspace.didChangeConfiguration(DidChangeConfigurationParams())
 
         assertTrue(published.isEmpty(), "invalid follow-up configuration must not republish diagnostics")
         assertEquals(
