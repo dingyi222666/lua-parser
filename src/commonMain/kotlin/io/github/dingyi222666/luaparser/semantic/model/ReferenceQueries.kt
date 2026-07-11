@@ -73,6 +73,7 @@ internal class ReferenceQueries(
         val importedSymbol = importedSymbolAt(position, node)
         localJavaMemberInitializerSymbolAt(position, node)?.let { return it }
         bindClassTargetLocalSymbolAt(node)?.let { return it }
+        importTargetStringSymbolAt(node)?.let { return it }
         val declarationSymbol = resolveDeclarationTokenStartAt(position)
             ?.let { adapters.toDeclarationSymbol(it) }
             ?: resolveExactNodeDeclaration(node)
@@ -86,6 +87,14 @@ internal class ReferenceQueries(
             ?: binder.positionQueries.getSymbolAt(position)
                 ?.let(adapters::toSymbol)
         if (declarationSymbol != null) {
+            // Prefer MODULE-kind imported symbols over synthetic/global fallbacks when the
+            // identifier is an activated import alias (not a true local/parameter declaration).
+            if (
+                declarationSymbol.kind == io.github.dingyi222666.luaparser.semantic.api.SymbolKind.VARIABLE &&
+                importedSymbol != null
+            ) {
+                return toImportedSymbol(importedSymbol)
+            }
             return declarationSymbol
         }
 
@@ -314,6 +323,72 @@ internal class ReferenceQueries(
             .hydrateJavaProviderType(workspaceContext.resolveImportTarget) as? ModuleType
             ?: return null
         return adapters.toDeclarationSymbol(declaration, moduleType, moduleType)
+    }
+
+    private fun importTargetStringSymbolAt(node: BaseASTNode?): Symbol? {
+        val constant = node as? ConstantNode ?: return null
+        if (constant.constantType != ConstantNode.TYPE.STRING) {
+            return null
+        }
+        val call = enclosingCallExpression(constant) ?: return null
+        if (!callArguments(call).any { it === constant }) {
+            return null
+        }
+        if (!isImportCallBase(effectiveCallBase(call))) {
+            return null
+        }
+        val target = constant.stringOf()
+        val imported = resolveLuaJavaImportTarget(target) ?: return null
+        return toImportedSymbol(imported)
+    }
+
+    private fun isImportCallBase(expression: ExpressionNode): Boolean {
+        return expressionResolvesToImportCallable(expression, emptySet(), linkedSetOf())
+    }
+
+    private fun expressionResolvesToImportCallable(
+        expression: ExpressionNode,
+        excludedDeclarations: Set<io.github.dingyi222666.luaparser.semantic.binder.DeclarationId>,
+        visited: MutableSet<io.github.dingyi222666.luaparser.semantic.binder.DeclarationId>
+    ): Boolean {
+        return when (expression) {
+            is Identifier -> {
+                if (expression.name == "import") {
+                    val declaration = findVisibleValueDeclarationWithoutImports(
+                        name = expression.name,
+                        position = expression.range.start,
+                        excludedDeclarations = excludedDeclarations
+                    )
+                    // Bare/global `import` is the Android-Lua import callable.
+                    if (declaration == null || declaration.origin == io.github.dingyi222666.luaparser.semantic.binder.DeclarationOrigin.BUILTIN) {
+                        return true
+                    }
+                }
+                val declaration = findVisibleValueDeclarationWithoutImports(
+                    name = expression.name,
+                    position = expression.range.start,
+                    excludedDeclarations = excludedDeclarations
+                ) ?: return false
+                if (!visited.add(declaration.id)) {
+                    return false
+                }
+                val initializer = localDeclarationInitializer(declaration) ?: return false
+                when (initializer) {
+                    is io.github.dingyi222666.luaparser.parser.ast.node.CallExpression -> {
+                        val callee = effectiveCallBase(initializer) as? Identifier
+                        val requireName = stringCallTarget(initializer)
+                        callee?.name == "require" && requireName == "import"
+                    }
+                    is Identifier -> expressionResolvesToImportCallable(
+                        initializer,
+                        excludedDeclarations + localStatementDeclarationIds(declaration),
+                        visited
+                    )
+                    else -> false
+                }
+            }
+            else -> false
+        }
     }
 
     private fun luaJavaLocalCallType(expression: ExpressionNode): Type? {
@@ -993,7 +1068,7 @@ internal class ReferenceQueries(
             .sortedBy { it.alias }
             .map { imported ->
                 VisibleDeclaration(
-                    declaration = io.github.dingyi222666.luaparser.semantic.binder.globalDeclaration(
+                    declaration = io.github.dingyi222666.luaparser.semantic.binder.moduleDeclaration(
                         id = io.github.dingyi222666.luaparser.semantic.binder.DeclarationId(-1000000 - imported.alias.hashCode()),
                         name = imported.alias,
                         origin = io.github.dingyi222666.luaparser.semantic.binder.DeclarationOrigin.BUILTIN,

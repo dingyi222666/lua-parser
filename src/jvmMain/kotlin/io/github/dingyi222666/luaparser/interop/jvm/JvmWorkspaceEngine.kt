@@ -43,6 +43,7 @@ class JvmWorkspaceEngine(
             baseConfiguration,
             currentFacts?.let { mapOf(path to it) }.orEmpty()
         )
+        // Configured imports are workspace-wide; source imports stay scoped to the current file.
         val configuredImports = collectConfiguredImports(baseConfiguration)
         val sourceImports = collectSourceImports(currentFacts, resolvedConfiguration)
         val activeImports = linkedMapOf<String, WorkspaceImportedSymbol>().apply {
@@ -53,11 +54,18 @@ class JvmWorkspaceEngine(
             currentPath = path,
             workspaceResolver = io.github.dingyi222666.luaparser.semantic.workspace.WorkspaceModuleResolver(snapshot),
             overlayGlobals = snapshot.builtinOverlay.globals,
+            // Only base configured imports go in the context map; document source imports are
+            // re-applied by SemanticWorkspaceContext.withWorkspaceImportEffects() for this path.
+            // Keep activeImports here so current-file analysis already sees both layers.
             importedSymbols = activeImports,
             resolveImportedSymbol = { name ->
                 activeImports[name]
             },
-            resolveImportTarget = { target -> classModuleProvider.importedSymbolForTarget(target, resolvedConfiguration) },
+            // Dynamic import()/import "..." targets must resolve even when not yet on the
+            // sourceImports activation set for this path (engine-level JVM resolution).
+            resolveImportTarget = { target ->
+                classModuleProvider.importedSymbolForTarget(target, resolvedConfiguration)
+            },
             unresolvedLuaJavaTargets = collectUnresolvedLuaJavaTargets(currentFacts, resolvedConfiguration)
         )
     }
