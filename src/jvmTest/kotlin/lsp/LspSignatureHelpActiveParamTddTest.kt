@@ -31,6 +31,13 @@ import kotlin.test.assertTrue
  *
  * Product code is intentionally out of scope (test-only). Verification is
  * review-owned and serial; this worker does not run Gradle.
+ *
+ * Goldens for empty-arg lists and post-call positions follow
+ * SignatureHelpProvider / NodePositionIndex half-open vs inclusive edge policy:
+ * - Empty `f()` argument region is base.range.end..call.range.end (inclusive end).
+ * - Exact call.range.end (cursor immediately after `)`) is still treated as
+ *   within the call by SignatureHelpProvider.contains; only positions after that
+ *   (or non-call tokens) are outside-call null.
  */
 class LspSignatureHelpActiveParamTddTest {
 
@@ -202,23 +209,32 @@ class LspSignatureHelpActiveParamTddTest {
         )
 
         // On the function name at the call site (outside argument region).
-        val onCallee = service.signatureHelp(signatureParams(document, "render("))
+        // Needle includes call args so we do not hit the declaration params list.
+        val onCallee = service.signatureHelp(signatureParams(document, "render(1"))
         // On a local binding / non-call token.
         val onLocal = service.signatureHelp(signatureParams(document, "current"))
         // On the function declaration identifier (not a call).
         val onDecl = service.signatureHelp(signatureParams(document, "function render"))
-        // After the call closes.
-        val afterCall = service.signatureHelp(
-            SignatureHelpParams(
-                TextDocumentIdentifier(document.uri),
-                document.positionAfter("render(1, \"hi\")")
-            )
+        // Immediately after the closing ')' — product SignatureHelpProvider.contains is
+        // end-inclusive on call.range.end, so this is still a call-argument site.
+        val atCallEnd = assertNotNull(
+            service.signatureHelp(
+                SignatureHelpParams(
+                    TextDocumentIdentifier(document.uri),
+                    document.positionAfter("render(1, \"hi\")")
+                )
+            ),
+            "exact call.range.end remains inside argument region per SignatureHelpProvider"
         )
+        // Strictly past the call (next statement / non-call token) is outside.
+        val afterCallOutside = service.signatureHelp(signatureParams(document, "return current"))
 
         assertNull(onCallee, "signature help on callee name should be null (outside args)")
         assertNull(onLocal, "signature help on non-call identifier should be null")
         assertNull(onDecl, "signature help on function declaration should be null")
-        assertNull(afterCall, "signature help after call closes should be null")
+        assertTrue(atCallEnd.signatures.isNotEmpty())
+        assertTrue(atCallEnd.activeParameter >= 0)
+        assertNull(afterCallOutside, "signature help on next statement after call should be null")
     }
 
     @Test
@@ -291,14 +307,16 @@ class LspSignatureHelpActiveParamTddTest {
             """
         )
 
-        // Cursor between the parentheses of an empty argument list.
+        // Cursor between the parentheses of the empty *call* argument list.
+        // Must not use bare "render(" — that matches the declaration first.
         val inside = assertNotNull(
             service.signatureHelp(
                 SignatureHelpParams(
                     TextDocumentIdentifier(document.uri),
-                    document.positionBetween("render(", ")")
+                    document.positionBetween("current = render(", ")")
                 )
-            )
+            ),
+            "empty call-site parens should still yield signature help"
         )
         assertEquals(0, inside.activeParameter)
         assertTrue(inside.signatures.isNotEmpty())
