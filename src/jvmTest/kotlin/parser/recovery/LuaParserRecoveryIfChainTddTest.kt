@@ -210,6 +210,7 @@ class LuaParserRecoveryIfChainTddTest {
                 warningFragments = listOf("The <then> expected")
             ),
             IfChainCase(
+                // Empty branch blocks are valid Lua; included to pin chain structure + trailing stmt.
                 name = "if then empty elseif empty else keeps structure and trailing local",
                 source = "if ready then elseif other then else end\nlocal after = 1",
                 requiredShapeFragments = listOf(
@@ -217,7 +218,8 @@ class LuaParserRecoveryIfChainTddTest {
                     "ElseIf(Id(other):Block[])",
                     "Else(Block[])",
                     "Local(Id(after)=Const(1))"
-                )
+                ),
+                expectStrictRejection = false
             )
         )
     }
@@ -284,13 +286,15 @@ class LuaParserRecoveryIfChainTddTest {
 
     @Test
     fun recoveryDiagnosticsArePresentDeterministicAndDoNotThrow() {
+        // Cases known to emit structured recovery diagnostics (missing then / end / paren).
+        // Missing-expression placeholders may recover via bad nodes without a warning message.
         val cases = listOf(
             "if ready work() end",
             "if first then one() elseif second two() else three() end",
             "if ready then work()",
             "if first then one() elseif second then two() else three()",
-            "if then work() end",
-            "if a then a1() elseif b then b1() elseif c c1() else z1() end"
+            "if a then a1() elseif b then b1() elseif c c1() else z1() end",
+            "if a then one() elseif b then two( else three() end"
         )
 
         cases.forEach { source ->
@@ -307,7 +311,6 @@ class LuaParserRecoveryIfChainTddTest {
                 renderShape(second.chunk),
                 "recovered shape should be deterministic for: $source"
             )
-            // Incomplete chains must surface at least one recovery diagnostic.
             assertTrue(
                 first.recoveryDiagnostics.isNotEmpty(),
                 "expected recovery diagnostics for incomplete if chain: $source"
@@ -319,6 +322,33 @@ class LuaParserRecoveryIfChainTddTest {
                     "diagnostic range start must be positive: ${diagnostic.range}"
                 )
             }
+        }
+    }
+
+    @Test
+    fun incompleteConditionPlaceholdersRecoverWithoutThrowEvenWithoutWarnings() {
+        val sources = listOf(
+            "if then work() end\nprint(1)",
+            "if value + then work() end\nprint(value)",
+            "if first then one() elseif then two() end",
+            "if first then one() elseif second + then two() else three() end"
+        )
+
+        sources.forEach { source ->
+            val first = parseWithDiagnosticsWithoutThrow(source, attempt = "first")
+            val second = parseWithDiagnosticsWithoutThrow(source, attempt = "second")
+            val shape = renderShape(first.chunk)
+
+            assertEquals(renderShape(second.chunk), shape, "shape deterministic for: $source")
+            assertEquals(
+                first.recoveryDiagnostics.map { it.message },
+                second.recoveryDiagnostics.map { it.message },
+                "diagnostics deterministic for: $source"
+            )
+            assertTrue(
+                shape.contains("ExpressionNodeSupport"),
+                "incomplete condition should insert ExpressionNodeSupport for: $source\n$shape"
+            )
         }
     }
 
@@ -336,10 +366,8 @@ class LuaParserRecoveryIfChainTddTest {
         )
 
         incompleteSources.forEach { source ->
-            // recovery path: no throw
             parseRecoveringWithoutThrow(source)
 
-            // strict path: deterministic failure
             val first = assertParseFails(LuaVersion.LUA_5_3, source, recovery = false)
             val second = assertParseFails(LuaVersion.LUA_5_3, source, recovery = false)
             assertEquals(first::class, second::class, "strict failure type for: $source")
@@ -354,7 +382,8 @@ class LuaParserRecoveryIfChainTddTest {
             "if ready then work() else fallback() end",
             "if a then one() elseif b then two() else three() end",
             "if a then if b then nested() end end",
-            "if ready then local x = 1 print(x) end\nprint(ready)"
+            "if ready then local x = 1 print(x) end\nprint(ready)",
+            "if ready then elseif other then else end\nlocal after = 1"
         )
 
         wellFormed.forEach { source ->
@@ -368,7 +397,6 @@ class LuaParserRecoveryIfChainTddTest {
                 renderShape(result.chunk).contains("If("),
                 "well-formed source should produce If shape: $source"
             )
-            // strict parse also succeeds
             val strict = parse(LuaVersion.LUA_5_3, source, recovery = false)
             assertEquals(renderShape(result.chunk), renderShape(strict))
         }
@@ -390,8 +418,6 @@ class LuaParserRecoveryIfChainTddTest {
     // --- helpers -----------------------------------------------------------------
 
     private fun requiredIfChainCases(): List<IfChainCase> {
-        // Mirrors the cases exercised by the focused tests above so inventory
-        // assertions stay coupled to the corpus surface.
         return listOf(
             IfChainCase("if missing then keeps body and later print", "if ready work() end\nprint(ready)", listOf("If("), warningFragments = listOf("The <then> expected")),
             IfChainCase("elseif missing then keeps elseif and else bodies", "if first then one() elseif second two() else three() end", listOf("ElseIf("), warningFragments = listOf("The <then> expected")),
@@ -407,7 +433,7 @@ class LuaParserRecoveryIfChainTddTest {
             IfChainCase("nested if missing inner then keeps outer and trailing print", "if outer then\n  if inner work() end\nend\nprint(outer)", listOf("If(Clause(Id(inner):"), warningFragments = listOf("The <then> expected")),
             IfChainCase("nested if missing inner end keeps outer else and trailing print", "if outer then\n  if inner then work()\nelse\n  fallback()\nend\nprint(done)", listOf("Else(Block[CallStmt(Call(Id(fallback):))])"), warningFragments = listOf("<end> expected")),
             IfChainCase("long elseif chain missing one then keeps remaining branches", "if a then a1()\nelseif b then b1()\nelseif c c1()\nelseif d then d1()\nelse z1()\nend\nprint(z)", listOf("ElseIf(Id(c):"), warningFragments = listOf("The <then> expected")),
-            IfChainCase("if then empty elseif empty else keeps structure and trailing local", "if ready then elseif other then else end\nlocal after = 1", listOf("Local(Id(after)=Const(1))")),
+            IfChainCase("if then empty elseif empty else keeps structure and trailing local", "if ready then elseif other then else end\nlocal after = 1", listOf("Local(Id(after)=Const(1))"), expectStrictRejection = false),
             IfChainCase("then body incomplete assignment keeps else branch and print", "if ready then value = value + else fallback() end\nprint(value)", listOf("Else(Block[CallStmt(Call(Id(fallback):))])"), badShapeFragments = listOf("ExpressionNodeSupport")),
             IfChainCase("elseif body incomplete call keeps later else and print", "if a then one() elseif b then two( else three() end\nprint(b)", listOf("Else(Block[CallStmt(Call(Id(three):))])"), warningFragments = listOf("')' expected")),
             IfChainCase("else body incomplete local keeps trailing return via following print", "if ready then work() else local value = end\nprint(ready)", listOf("Else(Block[Local(Id(value)=ExpressionNodeSupport)])"), badShapeFragments = listOf("ExpressionNodeSupport"))
