@@ -308,7 +308,7 @@ class ReturnMultiValuePackPropagationTddTest {
     fun leadingLiteralThenFinalTailCallExpandsPackAfterFirstSlot() {
         val harness = harness(
             """
-            ---@return string, number
+            ---@return number, boolean
             local function source()
                 return 1, true
             end
