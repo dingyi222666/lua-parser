@@ -7,7 +7,7 @@ param(
   [string[]]$GradleArgs
 )
 
-$ErrorActionPreference = "Continue"
+$ErrorActionPreference = "Stop"
 $AffinityMask = [IntPtr]0x3F  # 6 of 8 cores
 
 $Root = Split-Path -Parent $PSScriptRoot
@@ -15,6 +15,16 @@ if (-not (Test-Path (Join-Path $Root "gradlew.bat"))) {
   $Root = (Get-Location).Path
 }
 Set-Location $Root
+
+if (-not $env:JAVA_HOME -or -not (Test-Path $env:JAVA_HOME)) {
+  $env:JAVA_HOME = "C:\Users\dingyi\.jdks\temurin-17.0.11"
+}
+$javaBin = Join-Path $env:JAVA_HOME "bin"
+if (-not (Test-Path (Join-Path $javaBin "java.exe"))) {
+  Write-Error "java.exe not found under JAVA_HOME=$env:JAVA_HOME"
+  exit 1
+}
+$env:Path = "$javaBin;$env:Path"
 
 if ([string]::IsNullOrWhiteSpace($env:GRADLE_OPTS)) {
   $env:GRADLE_OPTS = "-Dorg.gradle.workers.max=5"
@@ -36,15 +46,20 @@ $argLine = ($GradleArgs | ForEach-Object {
 }) -join ' '
 
 $gradlew = Join-Path $Root "gradlew.bat"
-$psi = New-Object System.Diagnostics.ProcessStartInfo
-$psi.FileName = "cmd.exe"
-$psi.Arguments = "/c `"$gradlew`" $argLine"
-$psi.WorkingDirectory = $Root
-$psi.UseShellExecute = $false
+if (-not (Test-Path $gradlew)) {
+  Write-Error "gradlew.bat not found at $gradlew"
+  exit 1
+}
 
-$p = New-Object System.Diagnostics.Process
-$p.StartInfo = $psi
-[void]$p.Start()
+Write-Host "cpu-cap: JAVA_HOME=$env:JAVA_HOME affinity=0x3F workers soft-cap via GRADLE_OPTS=$env:GRADLE_OPTS"
+Write-Host "cpu-cap: running gradlew $argLine"
+
+# Start via cmd so gradlew.bat works; inherit current process env (JAVA_HOME/Path).
+$p = Start-Process -FilePath "cmd.exe" `
+  -ArgumentList @("/c", "`"$gradlew`" $argLine") `
+  -WorkingDirectory $Root `
+  -PassThru `
+  -NoNewWindow
 
 try {
   $p.ProcessorAffinity = $AffinityMask
@@ -59,4 +74,5 @@ while (-not $p.HasExited) {
 }
 
 Limit-JavaProcesses
+Write-Host "cpu-cap: exit=$($p.ExitCode)"
 exit $p.ExitCode

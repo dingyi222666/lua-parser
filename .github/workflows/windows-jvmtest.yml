@@ -1,6 +1,6 @@
 # Windows self-hosted runner only. Does not run on main.
 # Runner labels: self-hosted, Windows, X64 (DINGYI-PC)
-# CPU HARD CAP (real, not soft):
+# CPU HARD CAP:
 #   scripts/windows-run-gradle-capped.ps1
 #   - ProcessorAffinity 0x3F = 6 of 8 cores (~75-80%)
 #   - BelowNormal priority on cmd/gradle + all java/javaw children
@@ -27,25 +27,32 @@ jobs:
       - name: Show environment
         shell: pwsh
         run: |
+          $env:Path = "$env:JAVA_HOME\bin;$env:Path"
           Write-Host "JAVA_HOME=$env:JAVA_HOME"
           Write-Host "ANDROID_HOME=$env:ANDROID_HOME"
-          java -version
+          Write-Host "PATH_head=$($env:Path.Split(';')[0..2] -join ';')"
+          & "$env:JAVA_HOME\bin\java.exe" -version
           Write-Host "processor_count=$env:NUMBER_OF_PROCESSORS"
           git rev-parse --short HEAD
           Write-Host "cpu_hard_cap=ProcessorAffinity_0x3F_6of8 + BelowNormal + workers=5"
 
       - name: Compile test sources (CPU hard-capped)
         shell: pwsh
-        run: ./scripts/windows-run-gradle-capped.ps1 compileTestKotlinJvm --parallel --max-workers=5
+        run: |
+          $env:Path = "$env:JAVA_HOME\bin;$env:Path"
+          ./scripts/windows-run-gradle-capped.ps1 compileTestKotlinJvm --parallel --max-workers=5
 
       - name: Full jvmTest (CPU hard-capped)
         shell: pwsh
-        run: ./scripts/windows-run-gradle-capped.ps1 jvmTest --parallel --max-workers=5
+        run: |
+          $env:Path = "$env:JAVA_HOME\bin;$env:Path"
+          ./scripts/windows-run-gradle-capped.ps1 jvmTest --parallel --max-workers=5
 
       - name: Stop Gradle and kill leftover Java
         if: always()
         shell: cmd
         run: |
+          set "PATH=%JAVA_HOME%\bin;%PATH%"
           call gradlew.bat --stop
           taskkill /F /IM java.exe 2>nul
           taskkill /F /IM javaw.exe 2>nul
