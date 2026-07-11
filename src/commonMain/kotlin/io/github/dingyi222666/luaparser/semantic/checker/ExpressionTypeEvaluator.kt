@@ -1046,7 +1046,11 @@ class ExpressionTypeEvaluator internal constructor(
         context.localOverrides[identifier.name]?.let { return it }
         val declaration = findVisibleValueDeclaration(identifier.name, identifier.range.start, context)
         declaration?.let { luaJavaLocalInitializerType(it, context) }?.let { return it }
-        return declaration?.declaredType ?: declaration?.let { typeOfDeclaration(it, context) } ?: evaluate(node, context)
+        // Prefer full value derivation over a raw declaredType short-circuit.
+        // TypeResolver materializes bare local functions as `function(...): unknown`; that
+        // incomplete signature must not suppress ordinary body return inference for helpers
+        // that happen to share LuaJava names (e.g. local function createProxy → { value = target }).
+        return declaration?.let { typeOfDeclaration(it, context) } ?: evaluate(node, context)
     }
 
     private fun luaJavaLocalInitializerType(declaration: BinderDeclaration, context: Context): Type? {

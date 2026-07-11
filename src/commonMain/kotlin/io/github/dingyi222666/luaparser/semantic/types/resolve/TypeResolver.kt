@@ -381,15 +381,29 @@ class TypeResolver(
             else -> MultiReturnType(returnTypes)
         }
 
+        val resolvedParameterTypes = linkedMapOf<String, Type>()
+        ownedDeclarations.filter { it.kind == DeclarationKind.PARAMETER }.forEach { parameter ->
+            resolveDeclaration(parameter.id).declaredType?.let { resolvedParameterTypes[parameter.name] = it }
+        }
+
+        // Leave bare undocumentated functions without a declaredType so expression evaluation
+        // can still infer ordinary Lua returns (table literals, etc.). Materializing
+        // `function(...): unknown` here previously suppressed local helper-shadow return inference.
+        val hasDocumentedShape =
+            returnTypes.isNotEmpty() ||
+                typeParameters.isNotEmpty() ||
+                overloadTypes.isNotEmpty() ||
+                resolvedParameterTypes.isNotEmpty() ||
+                parameters.any { it.type != UnknownType }
+        if (!hasDocumentedShape) {
+            return declaration
+        }
+
         val functionType = FunctionType(
             parameters = parameters,
             returnType = returnType,
             typeParameters = typeParameters
         )
-        val resolvedParameterTypes = linkedMapOf<String, Type>()
-        ownedDeclarations.filter { it.kind == DeclarationKind.PARAMETER }.forEach { parameter ->
-            resolveDeclaration(parameter.id).declaredType?.let { resolvedParameterTypes[parameter.name] = it }
-        }
         return declaration.copy(
             declaredType = functionType,
             documentation = declaration.documentation.withResolved(
