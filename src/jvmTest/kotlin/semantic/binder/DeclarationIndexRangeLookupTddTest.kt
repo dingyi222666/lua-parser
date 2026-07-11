@@ -37,7 +37,8 @@ import kotlin.test.assertTrue
  *
  * Test-only; production defects surface as assertion failures (review-owned
  * verification via `jvmTest --tests semantic.binder.DeclarationIndexRangeLookupTddTest`).
- */class DeclarationIndexRangeLookupTddTest {
+ */
+class DeclarationIndexRangeLookupTddTest {
 
     private val parser = LuaParser()
 
