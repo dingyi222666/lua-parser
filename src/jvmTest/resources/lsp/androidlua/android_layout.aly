@@ -1,0 +1,23 @@
+require "import"
+
+import "android.content.Context"
+import "android.view.View"
+import "android.widget.*"
+
+local layout = {
+    LinearLayout,
+    orientation = "vertical",
+    {
+        TextView,
+        id = "statusLabel",
+        text = Context.WINDOW_SERVICE,
+        visibility = View.VISIBLE,
+    },
+    {
+        Button,
+        id = "sendButton",
+        text = "Send",
+    },
+}
+
+return layout
