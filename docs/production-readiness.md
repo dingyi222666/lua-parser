@@ -17,17 +17,41 @@ The repository currently contains:
 
 **This repository is not finally green.** Do not treat partial focused-filter accepts, worker `done` statuses, or this guide as a release statement. TASK-043 must run the serialized Gradle/test suite and TASK-037 must record the final acceptance audit before any global green claim is valid.
 
-### Production readiness gap checklist (TASK-228 refresh)
+### Production readiness gap checklist (TASK-451 refresh, post-TASK-184)
 
-Snapshot date: 2026-07-11 (docs-only inventory from task metadata; no Gradle/tests run by this refresh).
+Snapshot date: 2026-07-11 (docs-only inventory from task metadata and host path checks; no Gradle/tests run by this refresh). Supersedes the TASK-228 gap checklist.
+
+Host paths (read-only checks for this machine; never hard-code `G:/`):
+
+| Path | Purpose | Status |
+| --- | --- | --- |
+| `/Users/dingyi/Library/Android/sdk/platforms/android-35/android.jar` | Preferred host `android.jar` (SDK android-35) | **Present** |
+| `/Users/dingyi/Downloads/android.jar` | Alternate host `android.jar` | **Absent** |
+| `/Users/dingyi/Library/Java/JavaVirtualMachines/corretto-17.0.19/Contents/Home` | Coordinated-wave JDK 17 for verification docs | **Present** |
 
 | Area | Current state | Notes |
 | --- | --- | --- |
-| Global green / release | **Not green** | Final gates TASK-043 (serialized verification) and TASK-037 (acceptance audit) remain **blocked**. |
-| Final verification ledger | **Blocked chain** | TASK-105 blocked on TASK-043; TASK-106 blocked on TASK-105. |
-| Pre-verification inventory | **Blocked chain** | TASK-125 blocked on open deps including TASK-160/161/170/176/177/184. TASK-038 blocked on TASK-125. |
-| Pre-verification traceability | **Blocked chain** | TASK-115 blocked on TASK-125 plus remaining ready/todo backlog (e.g. TASK-160/161/164/170/176/177/178). |
-| Acceptance traceability draft | Stale vs. this checklist | `docs/acceptance-traceability.md` still records older statuses for some rows (for example TASK-144/152/156); use this checklist and task files for current done/blocked state until TASK-115/TASK-106 refresh that matrix. |
+| Global green / release | **Not green** | Final gates TASK-043 (serialized verification) and TASK-037 (acceptance audit) remain **blocked**. TASK-184 acceptance does **not** unlock or satisfy TASK-043. |
+| Final verification ledger | **Blocked chain** | TASK-105 blocked on TASK-043; TASK-106 blocked on TASK-105. Pre-verification inventory drafts may refresh source counts only. |
+| Pre-verification inventory | **Open pre-final path** | TASK-125 is **in_progress** for the final inventory recount after post-TASK-184 corpus growth. TASK-038 is **ready** and still depends on TASK-125. |
+| Pre-verification traceability | **Done draft (not final)** | TASK-115 is **done** for the broader pre-verification AC matrix refresh after the TASK-085–TASK-184 wave. Final AC pass/fail remains reserved for TASK-105/TASK-106 after TASK-043. |
+| Acceptance traceability draft | May lag live task files | Prefer this checklist and individual task files for current blocked/open state until TASK-106 finalizes the matrix after serialized verification. |
+
+#### Closed product gates (post-TASK-184; still not global green)
+
+These formerly open dependency rows are **done** at task level. They reduce product gaps and unblocked the pre-final inventory/trace path, but they are **not** a substitute for TASK-043 command evidence:
+
+| Task | Title | Task status |
+| --- | --- | --- |
+| TASK-160 | Hierarchical document symbols / modern workspace symbols | done |
+| TASK-161 | File URI normalization cross-platform | done |
+| TASK-164 | Final verification ledger inventory snapshot | done |
+| TASK-170 | Android-Lua LSP E2E fixture expectations | done |
+| TASK-176 | Android-Lua import surfaces under scoped activation | done |
+| TASK-177 | JavaBean aliases in member surfaces | done |
+| TASK-178 | Mixed Android-Lua incomplete-call parser recovery | done |
+| TASK-184 | Android-Lua library stub fixture/type surfaces | done |
+| TASK-115 | Pre-verification traceability draft | done |
 
 #### Review-accepted increments (not global green)
 
@@ -39,29 +63,25 @@ These tasks were **accepted by REVIEW19-WAVE-20260711-031147** with focused seri
 | TASK-152 | Model listener setter interface assignment | `semantic.interop.JavaChainedCallTddTest` |
 | TASK-156 | Index workspace folders for LSP snapshots | `lsp.LspWorkspaceFoldersTddTest`; `lsp.LspNavigationSymbolsTddTest` |
 
-Related follow-ons that are now unblocked or progressed after those accepts include TASK-171 (AndroLua switch case AST; later accepted) and ready workspace/LSP follow-ups released from the TASK-156 gate. Treat each as local evidence only.
+Related follow-ons that progressed after those accepts include TASK-171 (AndroLua switch case AST; later accepted) and workspace/LSP follow-ups released from the TASK-156 gate. Treat each as local evidence only.
 
 #### Open blocked chains (authoritative gates remain closed)
 
-| Blocked task | Role | Still-open direct deps (non-done) |
+| Blocked / open task | Role | Still-open direct deps or gate notes (non-done) |
 | --- | --- | --- |
-| TASK-043 | Serialized Gradle verification | TASK-115, TASK-125, TASK-160, TASK-161, TASK-164, TASK-170, TASK-176, TASK-177, TASK-178, TASK-184 |
+| TASK-043 | Serialized Gradle verification | Remains **blocked**. Historical product deps through TASK-184 are done at task level; pre-final inventory path still open: **TASK-125** (in_progress) then **TASK-038** (ready, depends on TASK-125). REVIEW39 notes keep the gate closed until that path completes and review releases verification. |
 | TASK-037 | Final green acceptance audit | TASK-043, TASK-105, TASK-106 |
-| TASK-125 | Final pre-verification inventory counts | TASK-160, TASK-161, TASK-170, TASK-176, TASK-177, TASK-184 |
-| TASK-115 | Pre-verification traceability draft | TASK-125, TASK-160, TASK-161, TASK-164, TASK-170, TASK-176, TASK-177, TASK-178 |
-| TASK-038 | Inventory compile blocker | TASK-125 |
 | TASK-105 | Final verification ledger refresh | TASK-043 |
 | TASK-106 | Finalize acceptance traceability | TASK-105 |
-| TASK-170 | Android-Lua LSP E2E fixture expectations | TASK-176 |
-| TASK-184 | Android-Lua library stub fixture/type surfaces | TASK-176 |
-
-Parser recovery still has an open ready follow-up on the mixed incomplete-call case (**TASK-178**), which remains on the TASK-043/TASK-115 dependency lists. Android-Lua import query surface work (**TASK-176**, ready) continues to gate TASK-170 and TASK-184.
+| TASK-125 | Final pre-verification inventory counts | **in_progress**; product deps including TASK-184 are done; recount/doc refresh still required before inventory is accepted |
+| TASK-038 | Inventory compile / assertion alignment | **ready**; depends on TASK-125 |
 
 #### Explicit non-claims
 
 - No claim that `./gradlew check` or any full suite currently passes.
-- No claim that the 500-test campaign inventory is finally reconciled or verified.
+- No claim that the 500-test campaign inventory is finally reconciled or verified at command level (source-count drafts may already exceed 500 methods; that is not green).
 - No claim that Android-Lua corpus, LuaJava interop, workspace, or LSP surfaces are release-complete.
+- TASK-184 library stub restoration is **done** for product surface work only; it must not be rolled up into a global green statement.
 - Focused PASS notes for TASK-144/152/156 are **local** accepts only; they must not be rolled up into a global green statement.
 
 ## Setup
@@ -242,6 +262,7 @@ The compatibility matrix and known unsupported patterns live in `docs/android-lu
 - Dynamic class names, dynamic `loadfile`/`dofile`/`loadstring` side effects, and non-literal helper targets are not treated as fully resolvable static facts.
 - LSP synthetic provider URIs such as `file:///__jvm__/classes/java/lang/String.lua` are virtual locations, not files on disk.
 - Compact short-call AST/round-trip (TASK-144), listener setter assignment modeling (TASK-152), and workspace-folder indexing (TASK-156) have focused review accepts only; they are not substitutes for full-suite green.
+- Android-Lua library stub fixture/type surfaces (TASK-184) are restored at task level only; command-level suite proof remains pending TASK-043.
 
 ## Extension Guide
 
@@ -261,12 +282,13 @@ Every extension that changes behavior should add or update focused tests and rec
 
 Use these pages when preparing or auditing verification:
 
-- This guide's **Production readiness gap checklist** for the current blocked-chain snapshot and the TASK-144/152/156 local accepts.
+- This guide's **Production readiness gap checklist** for the current blocked-chain snapshot, closed post-TASK-184 product gates, and the TASK-144/152/156 local accepts.
 - `docs/serialized-verification.md` for one-at-a-time Gradle/test execution and locks.
 - `docs/test-strategy.md` for inventory and TDD accounting rules.
 - `docs/android-lua-verification.md` for corpus inputs and the Android-Lua integration gate.
 - `docs/language-server-usage.md` for LSP filters and expected request surface.
 - `docs/android-platform-setup.md` for Android SDK and `android.jar` setup.
-- `docs/acceptance-traceability.md` for the broader AC matrix draft (may lag task status until TASK-115/TASK-106 refresh it).
+- `docs/final-verification.md` for the final verification ledger draft (inventory snapshots only until TASK-043).
+- `docs/acceptance-traceability.md` for the broader AC matrix draft (TASK-115 done for pre-verification refresh; final pass/fail reserved for TASK-105/TASK-106 after TASK-043).
 
 Outside coordinated waves, `./gradlew check` remains the broad local validation shape documented by the README. Inside this worker wave, all Gradle/build/test/compile verification is deferred to TASK-043. Until TASK-043 and TASK-037 complete, do not interpret any documentation page as a global green release certificate.
