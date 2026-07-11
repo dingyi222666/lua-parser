@@ -19,15 +19,18 @@ class JvmWorkspaceEngine(
     override fun extraProviders(input: LuaWorkspaceInput): Map<VirtualPath, WorkspaceSnapshot.FileSnapshot> {
         val baseConfiguration = configuration.overlay(JvmWorkspaceConfiguration.fromMetadata(input.metadata))
         val documentFacts = collectDocumentFacts(input)
-        val resolvedConfiguration = configurationWithWildcardImportPrefixes(baseConfiguration, documentFacts)
-        val sourceDiscoveredClasses = collectSourceDiscoveredClasses(documentFacts, resolvedConfiguration)
         val astImportTargets = collectAstImportTargets(input)
+        val resolvedConfiguration = configurationWithWildcardImportPrefixes(
+            baseConfiguration,
+            documentFacts,
+            astImportTargets
+        )
+        val sourceDiscoveredClasses = collectSourceDiscoveredClasses(documentFacts, resolvedConfiguration, astImportTargets)
         val astDiscoveredClasses = astImportTargets.flatMap { target ->
             classModuleProvider.importedClassNames(target, resolvedConfiguration)
         }.toSet()
         val packageProviders = classModuleProvider.packageProvidersFor(
-            collectWildcardImportTargets(baseConfiguration, documentFacts) +
-                astImportTargets.filter { it.endsWith(".*") },
+            collectWildcardImportTargets(baseConfiguration, documentFacts, astImportTargets),
             resolvedConfiguration
         )
         val providerConfiguration = if (sourceDiscoveredClasses.isEmpty() && astDiscoveredClasses.isEmpty()) {
@@ -45,10 +48,6 @@ class JvmWorkspaceEngine(
         val baseConfiguration = configuration.overlay(JvmWorkspaceConfiguration.fromMetadata(input.metadata))
         val documentFacts = collectDocumentFacts(input)
         val currentFacts = snapshot.files[path]?.documentFacts ?: documentFacts[path]
-        val resolvedConfiguration = configurationWithWildcardImportPrefixes(
-            baseConfiguration,
-            currentFacts?.let { mapOf(path to it) }.orEmpty()
-        )
         // Configured imports are workspace-wide; source imports stay scoped to the current file.
         val configuredImports = collectConfiguredImports(baseConfiguration)
         val currentAstImportTargets = collectAstImportTargets(
@@ -65,6 +64,11 @@ class JvmWorkspaceEngine(
                     standardLibraryOverlayVersion = input.standardLibraryOverlayVersion
                 )
             )
+        val resolvedConfiguration = configurationWithWildcardImportPrefixes(
+            baseConfiguration,
+            currentFacts?.let { mapOf(path to it) }.orEmpty(),
+            currentAstImportTargets
+        )
         val sourceImports = collectSourceImports(
             currentFacts,
             resolvedConfiguration,
@@ -160,7 +164,8 @@ class JvmWorkspaceEngine(
 
     private fun collectSourceDiscoveredClasses(
         documentFacts: Map<VirtualPath, DocumentFacts>,
-        configuration: JvmWorkspaceConfiguration
+        configuration: JvmWorkspaceConfiguration,
+        astImportTargets: Collection<String> = emptyList()
     ): Set<String> {
         return buildSet {
             documentFacts.values.forEach { facts ->
@@ -182,6 +187,9 @@ class JvmWorkspaceEngine(
                         DocumentFacts.JvmClassLoadKind.CREATE_ARRAY_CALL -> Unit
                     }
                 }
+            }
+            astImportTargets.forEach { target ->
+                classModuleProvider.importedClassNames(target, configuration).forEach(::add)
             }
         }
     }
@@ -215,10 +223,36 @@ class JvmWorkspaceEngine(
                 node.arguments.forEach { collectImportTargetsFromNode(it, targets) }
             }
             is io.github.dingyi222666.luaparser.parser.ast.node.StringCallExpression -> {
+                val base = unwrapCallBase(node.base)
+                if (base is io.github.dingyi222666.luaparser.parser.ast.node.Identifier &&
+                    (base.name == "import" || isIdentifierImportAlias(base))
+                ) {
+                    node.arguments.mapNotNull(::stringLiteral).forEach(targets::add)
+                }
                 collectImportTargetsFromNode(node.base, targets)
                 node.arguments.forEach { collectImportTargetsFromNode(it, targets) }
             }
             is io.github.dingyi222666.luaparser.parser.ast.node.TableCallExpression -> {
+                val base = unwrapCallBase(node.base)
+                if (base is io.github.dingyi222666.luaparser.parser.ast.node.Identifier &&
+                    (base.name == "import" || isIdentifierImportAlias(base))
+                ) {
+                    // import { "A", "B" } short table-call form
+                    node.arguments.forEach { arg ->
+                        when (arg) {
+                            is io.github.dingyi222666.luaparser.parser.ast.node.TableConstructorExpression -> {
+                                val values = arg.fields
+                                    .filter { it !is io.github.dingyi222666.luaparser.parser.ast.node.TableKeyString }
+                                    .mapNotNull { stringLiteral(it.value) }
+                                    .ifEmpty { arg.fields.mapNotNull { stringLiteral(it.value) } }
+                                values.forEach(targets::add)
+                            }
+                            is io.github.dingyi222666.luaparser.parser.ast.node.ArrayConstructorExpression ->
+                                arg.values.mapNotNull(::stringLiteral).forEach(targets::add)
+                            else -> stringLiteral(arg)?.let(targets::add)
+                        }
+                    }
+                }
                 collectImportTargetsFromNode(node.base, targets)
                 node.arguments.forEach { collectImportTargetsFromNode(it, targets) }
             }
@@ -344,10 +378,12 @@ class JvmWorkspaceEngine(
                 } else emptyList()
             is io.github.dingyi222666.luaparser.parser.ast.node.ArrayConstructorExpression ->
                 first.values.mapNotNull(::stringLiteral)
-            is io.github.dingyi222666.luaparser.parser.ast.node.TableConstructorExpression ->
-                first.fields
+            is io.github.dingyi222666.luaparser.parser.ast.node.TableConstructorExpression -> {
+                val sequence = first.fields
                     .filter { it !is io.github.dingyi222666.luaparser.parser.ast.node.TableKeyString }
                     .mapNotNull { stringLiteral(it.value) }
+                if (sequence.isNotEmpty()) sequence else first.fields.mapNotNull { stringLiteral(it.value) }
+            }
             else -> emptyList()
         }
     }
@@ -363,7 +399,8 @@ class JvmWorkspaceEngine(
 
     private fun collectWildcardImportTargets(
         configuration: JvmWorkspaceConfiguration,
-        documentFacts: Map<VirtualPath, DocumentFacts>
+        documentFacts: Map<VirtualPath, DocumentFacts>,
+        astImportTargets: Collection<String> = emptyList()
     ): Set<String> {
         return buildSet {
             configuration.normalized().androluaImports.forEach { importText ->
@@ -378,12 +415,18 @@ class JvmWorkspaceEngine(
                     }
                 }
             }
+            astImportTargets.forEach { target ->
+                if (wildcardImportPrefix(target) != null) {
+                    add(target)
+                }
+            }
         }
     }
 
     private fun configurationWithWildcardImportPrefixes(
         configuration: JvmWorkspaceConfiguration,
-        documentFacts: Map<VirtualPath, DocumentFacts>
+        documentFacts: Map<VirtualPath, DocumentFacts>,
+        astImportTargets: Collection<String> = emptyList()
     ): JvmWorkspaceConfiguration {
         val normalized = configuration.normalized()
         val wildcardPrefixes = linkedSetOf<String>().apply {
@@ -395,6 +438,9 @@ class JvmWorkspaceEngine(
             facts.sourceImports.forEach { importFact ->
                 wildcardImportPrefix(importFact.target)?.let(wildcardPrefixes::add)
             }
+        }
+        astImportTargets.forEach { target ->
+            wildcardImportPrefix(target)?.let(wildcardPrefixes::add)
         }
         if (wildcardPrefixes.isEmpty()) {
             return normalized

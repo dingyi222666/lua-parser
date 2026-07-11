@@ -78,23 +78,28 @@ class LuaWorkspaceQueryFacade(
         val node = semanticFile.nodeAt(position)
         val modelSymbol = model.getSymbolAt(position)
         val memberExport = exportedMemberAt(semanticFile, path, position, node)
+        val importCallLocal = importCallTargetHoverSymbol(semanticFile, path, node)
         val symbol = importRequireSymbol(path, position)
             ?: memberExport?.let(::exportSymbol)
+            ?: importCallLocal
             ?: modelSymbol
             ?: importedSymbolAt(path, position, node, semanticFile)?.let(::importedSymbol)
             ?: resolver.exportAt(path, position)?.let(::exportSymbol)
         val memberType = if (memberExport == null) memberReceiverType(model, node, symbol) else null
         val exportType = memberExport?.let(::exportTypeInfo)
         val nodeType = node?.let(model::getTypeAt)
+        val preferred = if (symbol?.symbolId?.startsWith("builtin-import:") == true) {
+            symbol.type
+        } else {
+            // Prefer import-call local MODULE typing (carries moduleName) over coarse node types.
+            preferredHoverType(importCallLocal?.type ?: symbol?.type, exportType ?: memberType ?: nodeType)
+                ?: preferredHoverType(nodeType, symbol?.type)
+        }
         return WorkspaceHoverResult(
             path = path,
             position = position,
             symbol = symbol,
-            typeInfo = if (symbol?.symbolId?.startsWith("builtin-import:") == true) {
-                symbol.type
-            } else {
-                exportType ?: memberType ?: preferredHoverType(nodeType, symbol?.type)
-            }
+            typeInfo = preferred
         )
     }
 
@@ -120,6 +125,7 @@ class LuaWorkspaceQueryFacade(
             ?: semanticFile?.let { importedSymbolAt(path, position, node, it) }?.let {
                 WorkspaceLocation(it.providerPath, syntheticModuleRange(it.alias))
             }
+            ?: semanticFile?.let { importCallLocalDefinition(it, path, node, symbol) }
         if (importDefinition != null) {
             return listOf(importDefinition)
         }
@@ -650,7 +656,7 @@ class LuaWorkspaceQueryFacade(
                     detail = "table",
                     typeKey = primary.typeKey,
                     kind = TypeInfoKind.TABLE,
-                    moduleName = primary.moduleName
+                    moduleName = primary.moduleName ?: fallback?.moduleName
                 )
             }
             // Prefer Android-Lua multi-import Array<> display over the structural union[] form
@@ -658,6 +664,20 @@ class LuaWorkspaceQueryFacade(
             primary.displayName.endsWith("[]") &&
                 fallback?.displayName?.startsWith("Array<") == true -> fallback
             primary.displayName == "unknown" && fallback != null -> fallback
+            // Dynamic import() locals often evaluate as unknown/any at the node while the
+            // symbol surface already carries the resolved MODULE type (moduleName / fun(...)).
+            primary.moduleName.isNullOrBlank() && !fallback?.moduleName.isNullOrBlank() -> {
+                fallback!!.copy(
+                    displayName = primary.displayName.takeUnless {
+                        it.isBlank() || it == "unknown" || it == "any"
+                    } ?: fallback.displayName,
+                    detail = primary.detail?.takeUnless {
+                        it.isBlank() || it == "unknown" || it == "any"
+                    } ?: fallback.detail
+                )
+            }
+            !primary.displayName.contains("fun(") &&
+                fallback?.displayName?.contains("fun(") == true -> fallback
             else -> primary
         }
     }
@@ -786,8 +806,7 @@ class LuaWorkspaceQueryFacade(
             is Identifier -> runCatching { node.parent }.getOrNull() as? MemberExpression
             else -> null
         } ?: return null
-        val moduleType = semanticFile.model.getTypeAt(memberExpression.base) as? ModuleType ?: return null
-        return moduleType.moduleName.takeIf { it.isNotBlank() }
+        return receiverModuleName(semanticFile, memberExpression.base)
     }
 
     private fun resolveRequiredModuleNameForLocal(
@@ -1213,8 +1232,7 @@ class LuaWorkspaceQueryFacade(
             if (receiver is CallExpression) {
                 builtinRequireModuleName(semanticFile, receiver)?.let(::add)
             }
-            (semanticFile.model.getTypeAt(receiver) as? ModuleType)
-                ?.moduleName
+            receiverModuleName(semanticFile, receiver)
                 ?.takeIf { it.isNotBlank() }
                 ?.let(::add)
         }
@@ -1223,6 +1241,153 @@ class LuaWorkspaceQueryFacade(
             .filter { it.isNotBlank() }
             .distinct()
             .firstNotNullOfOrNull { moduleName -> resolveWorkspaceRequire(path, moduleName) }
+    }
+
+    private fun receiverModuleName(
+        semanticFile: WorkspaceSemanticFile,
+        receiver: BaseASTNode
+    ): String? {
+        // Prefer model TypeInfo.moduleName: SemanticModel.getTypeAt returns TypeInfo, not ModuleType.
+        semanticFile.model.getTypeAt(receiver)?.moduleName?.takeIf { it.isNotBlank() }?.let { return it }
+        if (receiver is Identifier) {
+            val symbol = semanticFile.model.getSymbolAt(receiver.range.start)
+            symbol?.type?.moduleName?.takeIf { it.isNotBlank() }?.let { return it }
+            val declaration = localDeclarationForSymbol(semanticFile, symbol?.symbolId)
+                ?: visibleLocalValueDeclaration(semanticFile, receiver.name, receiver.range.start)
+            if (declaration != null) {
+                importCallTargetModuleName(semanticFile, pathOf(semanticFile), declaration)?.let { return it }
+            }
+        }
+        return null
+    }
+
+    private fun pathOf(semanticFile: WorkspaceSemanticFile): VirtualPath = semanticFile.path
+
+    private fun importCallTargetModuleName(
+        semanticFile: WorkspaceSemanticFile,
+        path: VirtualPath,
+        declaration: BinderDeclaration
+    ): String? {
+        if (declaration.kind != DeclarationKind.LOCAL || declaration.anchorNode !is Identifier) {
+            return null
+        }
+        val initializer = requireInitializerForLocal(declaration) ?: return null
+        if (!isImportCallee(semanticFile, effectiveCallBase(initializer))) {
+            return null
+        }
+        val targets = importCallStringTargets(initializer)
+        if (targets.size != 1) {
+            return null
+        }
+        val imported = resolver.importTargetSymbolFor(path, targets.single())
+            ?: resolver.importTargetSymbol(targets.single())
+            ?: return null
+        return imported.moduleType.moduleName.takeIf { it.isNotBlank() }
+    }
+
+    private fun importCallStringTargets(call: CallExpression): List<String> {
+        val firstArgument = callArguments(call).firstOrNull()
+        return when (firstArgument) {
+            is ConstantNode -> {
+                if (firstArgument.constantType == ConstantNode.TYPE.STRING) {
+                    listOf(firstArgument.stringOf())
+                } else {
+                    emptyList()
+                }
+            }
+            is io.github.dingyi222666.luaparser.parser.ast.node.ArrayConstructorExpression ->
+                firstArgument.values.mapNotNull { expression ->
+                    (expression as? ConstantNode)
+                        ?.takeIf { it.constantType == ConstantNode.TYPE.STRING }
+                        ?.stringOf()
+                }
+            is io.github.dingyi222666.luaparser.parser.ast.node.TableConstructorExpression ->
+                firstArgument.fields.mapNotNull { field ->
+                    (field.value as? ConstantNode)
+                        ?.takeIf { it.constantType == ConstantNode.TYPE.STRING }
+                        ?.stringOf()
+                }
+            else -> emptyList()
+        }
+    }
+
+    private fun importCallTargetHoverSymbol(
+        semanticFile: WorkspaceSemanticFile,
+        path: VirtualPath,
+        node: BaseASTNode?
+    ): io.github.dingyi222666.luaparser.semantic.api.Symbol? {
+        val identifier = node as? Identifier ?: return null
+        val parent = runCatching { identifier.parent }.getOrNull()
+        if (parent is MemberExpression && parent.identifier === identifier) {
+            return null
+        }
+        val declaration = exactLocalDeclarationForIdentifier(semanticFile, identifier)
+            ?: visibleLocalValueDeclaration(semanticFile, identifier.name, identifier.range.start)
+            ?: return null
+        if (declaration.kind != DeclarationKind.LOCAL) {
+            return null
+        }
+        val initializer = requireInitializerForLocal(declaration) ?: return null
+        if (!isImportCallee(semanticFile, effectiveCallBase(initializer))) {
+            return null
+        }
+        val targets = importCallStringTargets(initializer)
+        if (targets.isEmpty()) {
+            return null
+        }
+        val imported = targets.mapNotNull { target ->
+            resolver.importTargetSymbolFor(path, target) ?: resolver.importTargetSymbol(target)
+        }
+        if (imported.isEmpty()) {
+            return null
+        }
+        return if (targets.size == 1 && imported.size == 1) {
+            importedSymbol(imported.single())
+        } else {
+            val moduleNames = imported.map { it.moduleType.moduleName }.distinct()
+            val display = "Array<${moduleNames.joinToString("|")}>"
+            io.github.dingyi222666.luaparser.semantic.api.Symbol(
+                name = declaration.name,
+                kind = SymbolKind.LOCAL,
+                range = declaration.range,
+                type = TypeInfo(
+                    displayName = display,
+                    detail = display,
+                    kind = TypeInfoKind.UNKNOWN
+                ),
+                declaredType = TypeInfo(
+                    displayName = display,
+                    detail = display,
+                    kind = TypeInfoKind.UNKNOWN
+                ),
+                detail = display,
+                symbolId = declaration.symbolId?.let { "binder:$it" } ?: "declaration:${declaration.id.value}"
+            )
+        }
+    }
+
+    private fun importCallLocalDefinition(
+        semanticFile: WorkspaceSemanticFile,
+        path: VirtualPath,
+        node: BaseASTNode?,
+        symbol: io.github.dingyi222666.luaparser.semantic.api.Symbol?
+    ): WorkspaceLocation? {
+        val identifier = node as? Identifier ?: return null
+        val parent = runCatching { identifier.parent }.getOrNull()
+        if (parent is MemberExpression && parent.identifier === identifier) {
+            return null
+        }
+        val declaration = localDeclarationForSymbol(semanticFile, symbol?.symbolId)
+            ?: exactLocalDeclarationForIdentifier(semanticFile, identifier)
+            ?: visibleLocalValueDeclaration(semanticFile, identifier.name, identifier.range.start)
+            ?: return null
+        val moduleName = importCallTargetModuleName(semanticFile, path, declaration)
+            ?: symbol?.type?.moduleName?.takeIf { it.isNotBlank() }
+            ?: return null
+        val provider = resolver.activeProvider(moduleName)
+            ?: resolver.classProviderForAlias(moduleName)
+            ?: return null
+        return WorkspaceLocation(provider.path, syntheticModuleRange(moduleName))
     }
 
     private fun memberExpressionAt(

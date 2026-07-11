@@ -98,6 +98,23 @@ internal class ReferenceQueries(
             ) {
                 return toImportedSymbol(importedSymbol)
             }
+            // Dynamic import() locals often bind as plain LOCAL with unknown declaredType.
+            // Prefer the resolved import-call module/package/array type for hover/goto.
+            if (
+                declarationSymbol.kind == io.github.dingyi222666.luaparser.semantic.api.SymbolKind.LOCAL ||
+                declarationSymbol.kind == io.github.dingyi222666.luaparser.semantic.api.SymbolKind.VARIABLE
+            ) {
+                importCallTargetLocalSymbolAt(node)?.let { importLocal ->
+                    val declaredDisplay = declarationSymbol.type?.displayName
+                    val needsImportSurface = declaredDisplay.isNullOrBlank() ||
+                        declaredDisplay == "unknown" ||
+                        declaredDisplay == "any" ||
+                        (importLocal.type?.moduleName != null && declarationSymbol.type?.moduleName.isNullOrBlank())
+                    if (needsImportSurface) {
+                        return importLocal
+                    }
+                }
+            }
             // True local/parameter/function declarations always win over imported MODULE aliases
             // so local shadowing (`local File = { ... }`) stays preferred after declaration.
             return declarationSymbol
@@ -824,7 +841,7 @@ internal class ReferenceQueries(
                     }
                     put(name, MemberSurface(name, surfaceType, MemberAccessKind.METHOD, syntheticRange = workspaceMember?.member?.range, syntheticHandle = workspaceMember?.handle))
                 }
-                (normalized.fields["__class"] as? JavaClassType)?.let { classType ->
+                javaClassSurfaceFromModule(normalized)?.let { classType ->
                     collectJavaStaticMemberSurface(classType).forEach { (name, surface) ->
                         if (name !in this) {
                             put(name, surface.copy(syntheticHandle = surface.syntheticHandle ?: "java:${classType.javaName.binaryName}:static:$name"))
@@ -1362,13 +1379,17 @@ internal class ReferenceQueries(
         return "imported:${imported.providerPath.value}:$memberName"
     }
 
+    private fun javaClassSurfaceFromModule(moduleType: ModuleType): JavaClassType? {
+        return when (val classSurface = moduleType.fields["__class"]) {
+            is JavaClassType -> classSurface
+            is JavaInstanceType -> classSurface.classType
+            else -> null
+        }
+    }
+
     private fun javaFallbackClassType(baseType: Type): JavaClassType? {
         return when (baseType) {
-            is ModuleType -> when (val classSurface = baseType.fields["__class"]) {
-                is JavaClassType -> classSurface
-                is JavaInstanceType -> classSurface.classType
-                else -> null
-            }
+            is ModuleType -> javaClassSurfaceFromModule(baseType)
             is JavaClassType -> baseType
             is JavaInstanceType -> baseType.classType
             is IntersectionType -> baseType.types.firstNotNullOfOrNull { branch -> javaFallbackClassType(branch) }
