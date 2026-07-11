@@ -4,6 +4,7 @@ import io.github.dingyi222666.luaparser.interop.jvm.JvmWorkspaceEngine
 import io.github.dingyi222666.luaparser.parser.LuaParser
 import io.github.dingyi222666.luaparser.parser.LuaVersion
 import io.github.dingyi222666.luaparser.parser.ast.node.BaseASTNode
+import io.github.dingyi222666.luaparser.parser.ast.node.AttributeIdentifier
 import io.github.dingyi222666.luaparser.parser.ast.node.BlockNode
 import io.github.dingyi222666.luaparser.parser.ast.node.ChunkNode
 import io.github.dingyi222666.luaparser.parser.ast.node.ExpressionNode
@@ -148,17 +149,29 @@ class AndroidLuaMixedLuajavaIntegrationTddTest {
     fun mixed_wildcard_import_and_bind_class_exposes_completions_from_both_paths() {
         val harness = jvmHarness("main.lua" to MIXED_WILDCARD_IMPORT_AND_BIND_CLASS)
 
+        // Completions at a free local identifier (not a member access) should expose:
+        // - simple names from wildcard `import "java.io.*"` (File, ...)
+        // - the local bindClass result (Integer)
+        // Product surfaces imported class aliases through lexical value completions as VARIABLE
+        // (globalDeclaration-backed). Facade importCompletions may also offer MODULE, but
+        // mergeCompletions prefers the lexical base item, so the stable golden is VARIABLE.
         val completions = harness.queries.completions(
             harness.path("main.lua"),
             harness.positionOf("main.lua", "current")
         )
 
-        assertCompletion(completions, "File", CompletionItemKind.MODULE)
-        assertTrue(
-            completions.any { it.label == "Integer" },
-            "Expected local Integer (bindClass) in completions; actual: ${completions.map { "${it.label}:${it.kind}" }}"
-        )
+        assertCompletion(completions, "File", CompletionItemKind.VARIABLE)
+        assertCompletion(completions, "Integer", CompletionItemKind.VARIABLE)
         assertProviderPath(harness, "java.lang.Integer")
+        assertProviderPath(harness, "java.io.File")
+
+        // Both paths remain queryable beyond completions: static File member + Integer provider.
+        val separatorHover = harness.queries.hover(
+            harness.path("main.lua"),
+            harness.positionOf("main.lua", "separator")
+        )
+        assertEquals(SymbolKind.FIELD, separatorHover?.symbol?.kind)
+        assertEquals("string", separatorHover?.typeInfo?.displayName)
     }
 
     @Test
@@ -461,6 +474,10 @@ class AndroidLuaMixedLuajavaIntegrationTddTest {
             override fun visitExpressionNode(node: ExpressionNode, value: Unit) {
                 record(node)
                 super<ASTVisitor>.visitExpressionNode(node, value)
+            }
+
+            override fun visitAttributeIdentifier(identifier: AttributeIdentifier, value: Unit) {
+                record(identifier)
             }
         }
         visitor.visitChunkNode(chunk, Unit)
