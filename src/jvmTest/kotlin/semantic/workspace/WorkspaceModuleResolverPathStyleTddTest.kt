@@ -152,62 +152,107 @@ class WorkspaceModuleResolverPathStyleTddTest {
     fun slash_style_require_string_is_not_silently_rewritten_when_unmatched() {
         // Documented require style uses dots. A slash-form module string that does not
         // match any registered provider must degrade conservatively (no invented provider).
+        // resolveRequire(path, name) only follows edges recorded for that consumer file, so
+        // documented dotted acceptance is checked via lookupModule / a dotted consumer, not
+        // by re-querying the slash-only consumer with a different name.
         val harness = harness(
             "feature/profile.lua" to "return { title = \"profile\" }",
             "main.lua" to """
                 local profile = require("feature/profile")
                 return profile
+            """.trimIndent(),
+            "dotted_consumer.lua" to """
+                local profile = require("feature.profile")
+                return profile
             """.trimIndent()
         )
 
         val main = harness.path("main.lua")
+        val providerPath = harness.path("feature/profile.lua")
         val slashResolved = harness.queries.resolveRequire(main, "feature/profile")
-        val dottedResolved = harness.queries.resolveRequire(main, "feature.profile")
+        val dottedLookedUp = harness.queries.lookupModule("feature.profile")
+        val dottedConsumerResolved = harness.queries.resolveRequire(
+            harness.path("dotted_consumer.lua"),
+            "feature.profile"
+        )
         val unresolved = harness.snapshot.graph.unresolvedStaticRequires[main].orEmpty()
 
-        // Path-derived dotted name still works as the documented module style.
-        assertEquals(harness.path("feature/profile.lua"), dottedResolved.provider?.path)
+        // Path-derived dotted module remains the documented style (global index + dotted require).
+        assertEquals(providerPath, dottedLookedUp.provider?.path)
+        assertEquals(
+            WorkspaceModuleGraph.ProviderSource.VIRTUAL_PATH,
+            dottedLookedUp.provider?.source
+        )
+        assertEquals(providerPath, dottedConsumerResolved.provider?.path)
+        assertEquals("feature.profile", dottedConsumerResolved.moduleName)
 
         // Slash-form require is either accepted as an alias of the dotted module, or left
-        // unresolved — never bound to an unrelated fabricated path.
+        // unresolved — never bound to an unrelated fabricated path, and never registered as
+        // an active provider key in slash form.
         if (slashResolved.provider != null) {
-            assertEquals(harness.path("feature/profile.lua"), slashResolved.provider?.path)
+            assertEquals(providerPath, slashResolved.provider?.path)
             assertEquals(
-                dottedResolved.exportSurface?.moduleType?.moduleName,
+                dottedLookedUp.exportSurface?.moduleType?.moduleName,
                 slashResolved.exportSurface?.moduleType?.moduleName
             )
         } else {
             assertNull(slashResolved.exportSurface)
             assertTrue(unresolved.any { it.moduleName == "feature/profile" })
             assertFalse(harness.snapshot.graph.activeProviders.containsKey("feature/profile"))
+            // Consumer that only used slash form must not invent a dotted dependency edge either.
+            assertTrue(
+                harness.snapshot.graph.resolvedDependencies[main].orEmpty().none {
+                    it.moduleName == "feature.profile"
+                }
+            )
         }
     }
 
     @Test
     fun mixed_separator_require_does_not_fabricate_provider() {
+        // Mixed separators are not a documented require style. Product may alias them to the
+        // unique dotted provider or leave them unresolved; it must not invent a path.
+        // Documented dotted resolution is asserted via lookupModule / a dotted consumer because
+        // resolveRequire(path, name) is edge-based on the consumer's recorded require string.
         val harness = harness(
             "a/b/c.lua" to "return { ok = true }",
             "main.lua" to """
                 local bad = require("a.b/c")
                 return bad
+            """.trimIndent(),
+            "dotted_consumer.lua" to """
+                local ok = require("a.b.c")
+                return ok
             """.trimIndent()
         )
 
         val main = harness.path("main.lua")
+        val providerPath = harness.path("a/b/c.lua")
         val mixed = harness.queries.resolveRequire(main, "a.b/c")
-        val dotted = harness.queries.resolveRequire(main, "a.b.c")
+        val dottedLookedUp = harness.queries.lookupModule("a.b.c")
+        val dottedConsumerResolved = harness.queries.resolveRequire(
+            harness.path("dotted_consumer.lua"),
+            "a.b.c"
+        )
 
-        assertEquals(harness.path("a/b/c.lua"), dotted.provider?.path)
-        // Mixed separators are ambiguous: resolve only if product explicitly aliases them
-        // to the unique provider; otherwise stay unresolved without inventing a path.
+        assertEquals(providerPath, dottedLookedUp.provider?.path)
+        assertEquals(providerPath, dottedConsumerResolved.provider?.path)
+        assertEquals("a.b.c", dottedConsumerResolved.moduleName)
+
         if (mixed.provider != null) {
-            assertEquals(harness.path("a/b/c.lua"), mixed.provider?.path)
+            assertEquals(providerPath, mixed.provider?.path)
         } else {
             assertNull(mixed.exportSurface)
             assertTrue(
                 harness.snapshot.graph.unresolvedStaticRequires[main]
                     .orEmpty()
                     .any { it.moduleName == "a.b/c" }
+            )
+            assertFalse(harness.snapshot.graph.activeProviders.containsKey("a.b/c"))
+            assertTrue(
+                harness.snapshot.graph.resolvedDependencies[main].orEmpty().none {
+                    it.moduleName == "a.b.c"
+                }
             )
         }
     }
