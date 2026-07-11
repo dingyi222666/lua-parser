@@ -9,12 +9,18 @@ import io.github.dingyi222666.luaparser.parser.ast.node.MemberExpression
 import io.github.dingyi222666.luaparser.parser.ast.node.Position
 import io.github.dingyi222666.luaparser.parser.ast.node.Range
 import io.github.dingyi222666.luaparser.semantic.api.CompletionItem
+import io.github.dingyi222666.luaparser.semantic.api.CompletionItemKind
 import io.github.dingyi222666.luaparser.semantic.api.Diagnostic
 import io.github.dingyi222666.luaparser.semantic.api.SignatureHelp
+import io.github.dingyi222666.luaparser.semantic.api.SymbolKind
 import io.github.dingyi222666.luaparser.semantic.api.TypeInfo
+import io.github.dingyi222666.luaparser.semantic.api.TypeInfoKind
+import io.github.dingyi222666.luaparser.semantic.WorkspaceImportedSymbol
 import io.github.dingyi222666.luaparser.semantic.binder.BinderDeclaration
+import io.github.dingyi222666.luaparser.semantic.binder.DeclarationId
 import io.github.dingyi222666.luaparser.semantic.binder.DeclarationKind
 import io.github.dingyi222666.luaparser.semantic.binder.DeclarationOrigin
+import io.github.dingyi222666.luaparser.semantic.binder.DeclarationOwner
 import io.github.dingyi222666.luaparser.semantic.types.model.ModuleType
 import io.github.dingyi222666.luaparser.semantic.model.toSymbolHandle
 
@@ -42,13 +48,24 @@ class LuaWorkspaceQueryFacade(
     }
 
     fun resolveRequire(path: VirtualPath, position: Position): WorkspaceModuleLookupResult? {
-        val callSite = requireCallSite(path, position) ?: return null
-        val resolved = resolver.resolveRequire(path, callSite.moduleName)
-        return WorkspaceModuleLookupResult(callSite.moduleName, resolved?.provider, resolved?.surface)
+        val callSite = requireCallSite(path, position)
+        if (callSite != null) {
+            return workspaceModuleLookup(path, callSite.moduleName)
+        }
+        return requireBackedModuleNameAtPosition(path, position)?.let { workspaceModuleLookup(path, it) }
     }
 
     fun completions(path: VirtualPath, position: Position): List<CompletionItem> {
-        return snapshot.files[path]?.semanticFile?.model?.getCompletionsAt(position).orEmpty()
+        val semanticFile = snapshot.files[path]?.semanticFile
+        val baseCompletions = semanticFile?.model?.getCompletionsAt(position).orEmpty()
+        if (semanticFile == null) {
+            return baseCompletions
+        }
+        val memberExpression = memberExpressionAt(semanticFile, position)
+        if (memberExpression != null) {
+            return mergeCompletions(baseCompletions, workspaceMemberCompletions(path, semanticFile, memberExpression))
+        }
+        return mergeCompletions(baseCompletions, importCompletions(path, position, semanticFile))
     }
 
     fun signatureHelp(path: VirtualPath, position: Position): SignatureHelp? {
@@ -59,22 +76,42 @@ class LuaWorkspaceQueryFacade(
         val semanticFile = snapshot.files[path]?.semanticFile ?: return null
         val model = semanticFile.model
         val node = semanticFile.nodeAt(position)
-        val symbol = model.getSymbolAt(position) ?: resolver.exportAt(path, position)?.let(::exportSymbol)
-        val memberType = memberReceiverType(model, node, symbol)
+        val modelSymbol = model.getSymbolAt(position)
+        val memberExport = exportedMemberAt(semanticFile, path, position, node)
+        val symbol = importRequireSymbol(path, position)
+            ?: memberExport?.let(::exportSymbol)
+            ?: modelSymbol
+            ?: importedSymbolAt(path, position, node, semanticFile)?.let(::importedSymbol)
+            ?: resolver.exportAt(path, position)?.let(::exportSymbol)
+        val memberType = if (memberExport == null) memberReceiverType(model, node, symbol) else null
+        val exportType = memberExport?.let(::exportTypeInfo)
         val nodeType = node?.let(model::getTypeAt)
         return WorkspaceHoverResult(
             path = path,
             position = position,
             symbol = symbol,
-            typeInfo = memberType ?: preferredHoverType(nodeType, symbol?.type)
+            typeInfo = if (symbol?.symbolId?.startsWith("builtin-import:") == true) {
+                symbol.type
+            } else {
+                exportType ?: memberType ?: preferredHoverType(nodeType, symbol?.type)
+            }
         )
     }
 
     fun gotoDefinition(path: VirtualPath, position: Position): List<WorkspaceLocation> {
         val semanticFile = snapshot.files[path]?.semanticFile
         val node = semanticFile?.nodeAt(position)
+        val importTargetDefinition = semanticFile?.let { importTargetDefinition(path, it, node) }
+        if (importTargetDefinition != null) {
+            return listOf(importTargetDefinition)
+        }
         val symbol = semanticFile?.model?.getSymbolAt(position)
+            ?: semanticFile?.let { importedSymbolAt(path, position, node, it)?.let(::importedSymbol) }
+        val memberExport = semanticFile?.let { navigationExportedMemberAt(it, path, position, node) }
         val importDefinition = symbol?.symbolId?.let(::importedSymbolLocation)
+            ?: semanticFile?.let { importedSymbolAt(path, position, node, it) }?.let {
+                WorkspaceLocation(it.providerPath, syntheticModuleRange(it.alias))
+            }
         if (importDefinition != null) {
             return listOf(importDefinition)
         }
@@ -82,16 +119,22 @@ class LuaWorkspaceQueryFacade(
         if (requireCallDefinition != null) {
             return listOf(requireCallDefinition)
         }
-        val requireBackedDefinition = semanticFile?.let { requireBackedDefinition(it, path, node, symbol) }
-        if (requireBackedDefinition != null) {
-            return listOf(requireBackedDefinition)
+        if (memberExport != null) {
+            return listOf(exportLocation(memberExport))
+        }
+        val requireBackedLocalDefinition = semanticFile?.let { requireBackedLocalDefinition(it, path, node, symbol) }
+        if (requireBackedLocalDefinition != null) {
+            return listOf(requireBackedLocalDefinition)
         }
         val export = symbol?.symbolId?.let(resolver::exportedMemberByHandle)
             ?: resolver.exportAt(path, position)
             ?: exportFromMemberBase(node, symbol)
         if (export != null) {
-            return export.member.range?.let { listOf(WorkspaceLocation(export.definitionProviderPath, it)) }
-                ?: listOf(WorkspaceLocation(export.definitionProviderPath, syntheticModuleRange(export.member.name)))
+            return listOf(exportLocation(export))
+        }
+        val requireBackedDefinition = semanticFile?.let { requireBackedDefinition(it, path, node, symbol) }
+        if (requireBackedDefinition != null) {
+            return listOf(requireBackedDefinition)
         }
         return symbol?.range?.let { listOf(WorkspaceLocation(path, it)) }.orEmpty()
     }
@@ -99,14 +142,28 @@ class LuaWorkspaceQueryFacade(
     fun declaration(path: VirtualPath, position: Position): List<WorkspaceLocation> {
         val semanticFile = snapshot.files[path]?.semanticFile
         val node = semanticFile?.nodeAt(position)
+        val importTargetDefinition = semanticFile?.let { importTargetDefinition(path, it, node) }
+        if (importTargetDefinition != null) {
+            return listOf(importTargetDefinition)
+        }
         val symbol = semanticFile?.model?.getSymbolAt(position)
+            ?: semanticFile?.let { importedSymbolAt(path, position, node, it)?.let(::importedSymbol) }
+        val memberExport = semanticFile?.let { navigationExportedMemberAt(it, path, position, node) }
+
+        if (memberExport != null) {
+            return listOf(exportLocation(memberExport))
+        }
 
         val localDeclaration = semanticFile?.let { declarationLocationForSymbol(it, path, symbol?.symbolId) }
-        if (localDeclaration != null) {
+        // Local AST declarations win only when they are true locals, not imported MODULE aliases.
+        if (localDeclaration != null && symbol?.kind != SymbolKind.MODULE) {
             return listOf(localDeclaration)
         }
 
         val importDeclaration = symbol?.symbolId?.let(::importedSymbolLocation)
+            ?: semanticFile?.let { importedSymbolAt(path, position, node, it) }?.let {
+                WorkspaceLocation(it.providerPath, syntheticModuleRange(it.alias))
+            }
         if (importDeclaration != null) {
             return listOf(importDeclaration)
         }
@@ -115,8 +172,7 @@ class LuaWorkspaceQueryFacade(
             ?: resolver.exportAt(path, position)
             ?: exportFromMemberBase(node, symbol)
         if (export != null) {
-            return export.member.range?.let { listOf(WorkspaceLocation(export.definitionProviderPath, it)) }
-                ?: listOf(WorkspaceLocation(export.definitionProviderPath, syntheticModuleRange(export.member.name)))
+            return listOf(exportLocation(export))
         }
 
         val requireCallDeclaration = requireCallDefinition(path, position)
@@ -129,27 +185,32 @@ class LuaWorkspaceQueryFacade(
 
     fun references(path: VirtualPath, position: Position): List<WorkspaceLocation> {
         val semanticFile = snapshot.files[path]?.semanticFile
+        val node = semanticFile?.nodeAt(position)
         val symbol = semanticFile?.model?.getSymbolAt(position)
+            ?: semanticFile?.let { importedSymbolAt(path, position, node, it)?.let(::importedSymbol) }
+        val memberExport = semanticFile?.let { exportedMemberAt(it, path, position, node) }
         val importedHandle = symbol?.symbolId?.takeIf(::isImportedSymbolHandle)
         if (importedHandle != null) {
             return importedSymbolReferences(importedHandle)
         }
 
         val localReferences = semanticFile
+            ?.takeIf { memberExport == null }
             ?.let { localSymbolReferences(it, path, symbol) }
             ?.takeIf { it.isNotEmpty() }
         if (localReferences != null) {
             return localReferences
         }
 
-        val targetHandle = symbol?.symbolId?.takeIf { ModuleExportIdentity.parse(it) != null }
+        val targetHandle = memberExport?.handle
+            ?: symbol?.symbolId?.takeIf { ModuleExportIdentity.parse(it) != null }
             ?: resolver.exportAt(path, position)?.handle
             ?: return symbol?.range?.let { listOf(WorkspaceLocation(path, it)) }.orEmpty()
 
         val locations = linkedMapOf<String, WorkspaceLocation>()
         resolver.exportedMemberByHandle(targetHandle)?.let { export ->
             val range = export.member.range ?: syntheticModuleRange(export.member.name)
-            val providerPath = export.definitionProviderPath
+            val providerPath = providerPathForExport(export)
             locations["${providerPath.value}:${range.start.line}:${range.start.column}"] = WorkspaceLocation(providerPath, range)
         }
 
@@ -157,8 +218,9 @@ class LuaWorkspaceQueryFacade(
             .mapNotNull { it.semanticFile }
             .forEach { file ->
                 file.memberExpressions.forEach { expression ->
-                    val usage = file.model.getSymbolAt(expression.identifier.range.start) ?: return@forEach
-                    if (usage.symbolId == targetHandle) {
+                    val usage = file.model.getSymbolAt(expression.identifier.range.start)
+                    val workspaceExport = exportedMemberForExpression(file, file.path, expression)
+                    if (usage?.symbolId == targetHandle || workspaceExport?.handle == targetHandle) {
                         locations["${file.path.value}:${expression.identifier.range.start.line}:${expression.identifier.range.start.column}"] =
                             WorkspaceLocation(file.path, expression.identifier.range)
                     }
@@ -171,9 +233,13 @@ class LuaWorkspaceQueryFacade(
 
     fun documentHighlights(path: VirtualPath, position: Position): List<WorkspaceLocation> {
         val semanticFile = snapshot.files[path]?.semanticFile ?: return emptyList()
+        val node = semanticFile.nodeAt(position)
         val symbol = semanticFile.model.getSymbolAt(position)
+            ?: importedSymbolAt(path, position, node, semanticFile)?.let(::importedSymbol)
+        val memberExport = exportedMemberAt(semanticFile, path, position, node)
         val highlights = linkedMapOf<String, WorkspaceLocation>()
         val includeCrossFileHighlights =
+            memberExport != null ||
             symbol?.symbolId?.let { isImportedSymbolHandle(it) || ModuleExportIdentity.parse(it) != null } == true ||
                 resolver.exportAt(path, position) != null
 
@@ -194,6 +260,376 @@ class LuaWorkspaceQueryFacade(
 
         return symbol?.range?.let { listOf(WorkspaceLocation(path, it)) }.orEmpty()
     }
+
+    fun documentSymbols(path: VirtualPath): List<WorkspaceDocumentSymbol> {
+        val semanticFile = snapshot.files[path]?.semanticFile
+            ?: snapshot.extraProviders[path]?.semanticFile
+        if (semanticFile == null) {
+            return hierarchicalExportSymbols(path)
+        }
+        val declarations = semanticFile.snapshot.binder.declarationIndex.declarations
+            .filter(::isNavigableDocumentSymbolDeclaration)
+        val byId = declarations.associateBy(BinderDeclaration::id)
+        val childrenByOwner = linkedMapOf<DeclarationId, MutableList<BinderDeclaration>>()
+        val roots = mutableListOf<BinderDeclaration>()
+
+        declarations.forEach { declaration ->
+            val ownerId = (declaration.owner as? DeclarationOwner.Declaration)?.declarationId
+            if (ownerId != null && ownerId in byId) {
+                childrenByOwner.getOrPut(ownerId) { mutableListOf() }.add(declaration)
+            } else {
+                roots += declaration
+            }
+        }
+
+        fun buildNode(declaration: BinderDeclaration): WorkspaceDocumentSymbol {
+            val range = declaration.range
+                ?: declaration.anchorNode?.range
+                ?: syntheticModuleRange(declaration.name)
+            val children = childrenByOwner[declaration.id]
+                .orEmpty()
+                .sortedWith(
+                    compareBy<BinderDeclaration>(
+                        { it.range?.start?.line ?: Int.MAX_VALUE },
+                        { it.range?.start?.column ?: Int.MAX_VALUE },
+                        { it.name }
+                    )
+                )
+                .map(::buildNode)
+            return WorkspaceDocumentSymbol(
+                name = declaration.name,
+                kind = declaration.kind.toWorkspaceSymbolKind(),
+                range = range,
+                selectionRange = range,
+                detail = declaration.declaredType?.displayName,
+                children = children
+            )
+        }
+
+        val declarationNodes = roots
+            .sortedWith(
+                compareBy<BinderDeclaration>(
+                    { it.range?.start?.line ?: Int.MAX_VALUE },
+                    { it.range?.start?.column ?: Int.MAX_VALUE },
+                    { it.name }
+                )
+            )
+            .map(::buildNode)
+
+        val exportNodes = hierarchicalExportSymbols(path)
+        return mergeDocumentSymbolRoots(declarationNodes, exportNodes)
+    }
+
+    fun workspaceSymbolEntries(query: String): List<WorkspaceSymbolEntry> {
+        val normalizedQuery = query.trim()
+        return allWorkspaceSymbolEntries()
+            .asSequence()
+            .filter { normalizedQuery.isBlank() || it.name.contains(normalizedQuery, ignoreCase = true) }
+            .toList()
+    }
+
+    private fun allWorkspaceSymbolEntries(): List<WorkspaceSymbolEntry> {
+        val entries = buildList {
+            snapshot.files.forEach { (path, file) ->
+                addAll(fileSymbolEntries(path, file))
+            }
+            snapshot.extraProviders.forEach { (path, file) ->
+                moduleWorkspaceSymbolEntry(path, file)?.let(::add)
+                addAll(fileSymbolEntries(path, file))
+            }
+        }
+        return entries
+            .distinctBy { entry ->
+                listOf(
+                    entry.path.value,
+                    entry.name,
+                    entry.kind.name,
+                    entry.range.start.line.toString(),
+                    entry.range.start.column.toString(),
+                    entry.containerName.orEmpty()
+                ).joinToString(":")
+            }
+            .sortedWith(
+                compareBy<WorkspaceSymbolEntry>(
+                    { it.name },
+                    { it.path.value },
+                    { it.range.start.line },
+                    { it.range.start.column }
+                )
+            )
+    }
+
+    private fun fileSymbolEntries(
+        path: VirtualPath,
+        file: WorkspaceSnapshot.FileSnapshot
+    ): List<WorkspaceSymbolEntry> {
+        val semanticFile = file.semanticFile
+        val declarations = if (semanticFile != null) {
+            declarationWorkspaceSymbolEntries(
+                path,
+                semanticFile.snapshot.binder.declarationIndex.declarations
+            )
+        } else {
+            emptyList()
+        }
+        val exports = moduleExportWorkspaceSymbolEntries(path, file, declarations)
+        return declarations + exports
+    }
+
+    private fun declarationWorkspaceSymbolEntries(
+        path: VirtualPath,
+        declarations: List<BinderDeclaration>
+    ): List<WorkspaceSymbolEntry> {
+        val declarationsById = declarations.associateBy(BinderDeclaration::id)
+        return declarations
+            .asSequence()
+            .filter(::isNavigableDocumentSymbolDeclaration)
+            .mapNotNull { declaration ->
+                declaration.range?.let { range ->
+                    WorkspaceSymbolEntry(
+                        name = declaration.name,
+                        kind = declaration.kind.toWorkspaceSymbolKind(),
+                        path = path,
+                        range = range,
+                        containerName = workspaceContainerNameFor(declaration, declarationsById)
+                    )
+                }
+            }
+            .toList()
+    }
+
+    private fun moduleWorkspaceSymbolEntry(
+        path: VirtualPath,
+        file: WorkspaceSnapshot.FileSnapshot
+    ): WorkspaceSymbolEntry? {
+        val moduleName = file.moduleExportSurface?.moduleType?.moduleName?.takeIf { it.isNotBlank() }
+            ?: return null
+        return WorkspaceSymbolEntry(
+            name = moduleName,
+            kind = SymbolKind.MODULE,
+            path = path,
+            range = syntheticModuleRange(moduleName),
+            containerName = null
+        )
+    }
+
+    private fun moduleExportWorkspaceSymbolEntries(
+        path: VirtualPath,
+        file: WorkspaceSnapshot.FileSnapshot,
+        existingDeclarations: List<WorkspaceSymbolEntry> = emptyList()
+    ): List<WorkspaceSymbolEntry> {
+        val surface = file.moduleExportSurface ?: return emptyList()
+        val moduleName = surface.moduleType.moduleName.takeIf { it.isNotBlank() }
+        val declarationKeys = existingDeclarations
+            .asSequence()
+            .map { workspaceSymbolEntryKey(it.path, it.name, it.kind, it.range) }
+            .toSet()
+
+        return surface.members
+            .asSequence()
+            .filter { isUserFacingExportName(it.name) }
+            .map { member ->
+                val range = member.range ?: syntheticModuleRange(member.name)
+                WorkspaceSymbolEntry(
+                    name = member.name,
+                    kind = member.kind,
+                    path = path,
+                    range = range,
+                    containerName = moduleName
+                )
+            }
+            .filterNot { workspaceSymbolEntryKey(it.path, it.name, it.kind, it.range) in declarationKeys }
+            .toList()
+    }
+
+    private fun hierarchicalExportSymbols(path: VirtualPath): List<WorkspaceDocumentSymbol> {
+        val file = snapshot.files[path] ?: snapshot.extraProviders[path] ?: return emptyList()
+        val surface = file.moduleExportSurface ?: return emptyList()
+        val members = surface.members
+            .asSequence()
+            .filter { isUserFacingExportName(it.name) && it.exportPath.isNotEmpty() }
+            .sortedWith(
+                compareBy(
+                    { it.exportPath.size },
+                    { it.range?.start?.line ?: Int.MAX_VALUE },
+                    { it.range?.start?.column ?: Int.MAX_VALUE },
+                    { it.exportPath.joinToString(".") }
+                )
+            )
+            .toList()
+        if (members.isEmpty()) {
+            return emptyList()
+        }
+
+        data class MutableSymbol(
+            val name: String,
+            var kind: SymbolKind,
+            var range: Range,
+            val children: LinkedHashMap<String, MutableSymbol> = linkedMapOf()
+        ) {
+            fun toDocumentSymbol(): WorkspaceDocumentSymbol {
+                val childSymbols = children.values
+                    .sortedWith(
+                        compareBy(
+                            { it.range.start.line },
+                            { it.range.start.column },
+                            { it.name }
+                        )
+                    )
+                    .map { it.toDocumentSymbol() }
+                return WorkspaceDocumentSymbol(
+                    name = name,
+                    kind = kind,
+                    range = range,
+                    selectionRange = range,
+                    children = childSymbols
+                )
+            }
+        }
+
+        val roots = linkedMapOf<String, MutableSymbol>()
+
+        fun ensurePath(exportPath: List<String>, kind: SymbolKind, range: Range): MutableSymbol {
+            var currentChildren = roots
+            var current: MutableSymbol? = null
+            exportPath.forEachIndexed { index, segment ->
+                val isLeaf = index == exportPath.lastIndex
+                val existing = currentChildren[segment]
+                current = if (existing == null) {
+                    MutableSymbol(
+                        name = segment,
+                        kind = if (isLeaf) kind else SymbolKind.FIELD,
+                        range = if (isLeaf) range else syntheticModuleRange(segment)
+                    ).also { currentChildren[segment] = it }
+                } else {
+                    if (isLeaf) {
+                        existing.kind = preferredDocumentSymbolKind(existing.kind, kind)
+                        existing.range = range
+                    }
+                    existing
+                }
+                currentChildren = current!!.children
+            }
+            return current ?: error("export path must not be empty")
+        }
+
+        members.forEach { member ->
+            val range = member.range ?: syntheticModuleRange(member.name)
+            ensurePath(member.exportPath, member.kind, range)
+        }
+
+        return roots.values
+            .sortedWith(
+                compareBy(
+                    { it.range.start.line },
+                    { it.range.start.column },
+                    { it.name }
+                )
+            )
+            .map { it.toDocumentSymbol() }
+    }
+
+    private fun mergeDocumentSymbolRoots(
+        declarations: List<WorkspaceDocumentSymbol>,
+        exports: List<WorkspaceDocumentSymbol>
+    ): List<WorkspaceDocumentSymbol> {
+        if (exports.isEmpty()) {
+            return declarations
+        }
+        if (declarations.isEmpty()) {
+            return exports
+        }
+
+        val byName = linkedMapOf<String, WorkspaceDocumentSymbol>()
+        declarations.forEach { byName[it.name] = it }
+
+        exports.forEach { export ->
+            val existing = byName[export.name]
+            if (existing == null) {
+                byName[export.name] = export
+            } else {
+                byName[export.name] = existing.copy(
+                    kind = preferredDocumentSymbolKind(existing.kind, export.kind),
+                    children = mergeDocumentSymbolRoots(existing.children, export.children)
+                )
+            }
+        }
+
+        return byName.values
+            .sortedWith(
+                compareBy(
+                    { it.range.start.line },
+                    { it.range.start.column },
+                    { it.name }
+                )
+            )
+            .toList()
+    }
+
+    private fun preferredDocumentSymbolKind(left: SymbolKind, right: SymbolKind): SymbolKind {
+        val rank = listOf(
+            SymbolKind.MODULE,
+            SymbolKind.CLASS,
+            SymbolKind.METHOD,
+            SymbolKind.FUNCTION,
+            SymbolKind.FIELD,
+            SymbolKind.TYPE_ALIAS,
+            SymbolKind.LOCAL,
+            SymbolKind.VARIABLE,
+            SymbolKind.PARAMETER,
+            SymbolKind.UNKNOWN
+        )
+        return listOf(left, right).minBy { rank.indexOf(it).takeIf { index -> index >= 0 } ?: Int.MAX_VALUE }
+    }
+
+    private fun isNavigableDocumentSymbolDeclaration(declaration: BinderDeclaration): Boolean {
+        if (declaration.name.isBlank() || declaration.range == null) {
+            return false
+        }
+        if (declaration.origin == DeclarationOrigin.BUILTIN) {
+            return false
+        }
+        return declaration.kind != DeclarationKind.PARAMETER && declaration.kind != DeclarationKind.TYPE_PARAMETER
+    }
+
+    private fun workspaceContainerNameFor(
+        declaration: BinderDeclaration,
+        declarationsById: Map<DeclarationId, BinderDeclaration>
+    ): String? {
+        val ownerId = (declaration.owner as? DeclarationOwner.Declaration)?.declarationId ?: return null
+        return declarationsById[ownerId]?.name?.takeIf { it.isNotBlank() }
+    }
+
+    private fun workspaceSymbolEntryKey(
+        path: VirtualPath,
+        name: String,
+        kind: SymbolKind,
+        range: Range
+    ): String {
+        return listOf(
+            path.value,
+            name,
+            kind.name,
+            range.start.line.toString(),
+            range.start.column.toString()
+        ).joinToString(":")
+    }
+
+    private fun DeclarationKind.toWorkspaceSymbolKind(): SymbolKind {
+        return when (this) {
+            DeclarationKind.LOCAL,
+            DeclarationKind.GLOBAL -> SymbolKind.VARIABLE
+            DeclarationKind.PARAMETER -> SymbolKind.PARAMETER
+            DeclarationKind.FUNCTION -> SymbolKind.FUNCTION
+            DeclarationKind.MODULE -> SymbolKind.MODULE
+            DeclarationKind.CLASS -> SymbolKind.CLASS
+            DeclarationKind.TYPE_ALIAS -> SymbolKind.TYPE_ALIAS
+            DeclarationKind.TYPE_PARAMETER -> SymbolKind.TYPE_ALIAS
+            DeclarationKind.FIELD -> SymbolKind.FIELD
+            DeclarationKind.METHOD -> SymbolKind.METHOD
+        }
+    }
+
 
     private fun preferredHoverType(primary: TypeInfo?, fallback: TypeInfo?): TypeInfo? {
         return when {
@@ -239,10 +675,22 @@ class LuaWorkspaceQueryFacade(
     ): WorkspaceLocation? {
         val moduleName = requireBackedModuleNames(semanticFile, node, symbol)
             .firstNotNullOfOrNull { candidate ->
-                resolver.resolveRequire(path, candidate)?.provider?.path?.let { candidate to it }
+                resolveWorkspaceRequire(path, candidate)?.provider?.path?.let { candidate to it }
             }
             ?: return null
         return WorkspaceLocation(moduleName.second, syntheticModuleRange(moduleName.first))
+    }
+
+    private fun requireBackedLocalDefinition(
+        semanticFile: WorkspaceSemanticFile,
+        path: VirtualPath,
+        node: BaseASTNode?,
+        symbol: io.github.dingyi222666.luaparser.semantic.api.Symbol?
+    ): WorkspaceLocation? {
+        val identifier = node as? Identifier
+        val moduleName = resolveRequiredModuleNameForLocal(semanticFile, symbol?.symbolId, identifier) ?: return null
+        val providerPath = resolveWorkspaceRequire(path, moduleName)?.provider?.path ?: return null
+        return WorkspaceLocation(providerPath, syntheticModuleRange(moduleName))
     }
 
     private fun requireBackedModuleNames(
@@ -267,6 +715,45 @@ class LuaWorkspaceQueryFacade(
         }
     }
 
+    private fun navigationExportedMemberAt(
+        semanticFile: WorkspaceSemanticFile,
+        path: VirtualPath,
+        position: Position,
+        node: BaseASTNode?
+    ): WorkspaceModuleResolver.ResolvedExportMember? {
+        val memberExpression = memberAccessAt(node, position)
+            ?: semanticFile.memberExpressions.lastOrNull { rangeContains(it.identifier.range, position) }
+            ?: return null
+        val memberName = memberExpression.identifier.name.takeIf { it.isNotBlank() } ?: return null
+        val resolved = resolvedRequireForNavigationReceiver(semanticFile, path, memberExpression.base) ?: return null
+        return resolver.exportedMember(resolved.provider.path, memberName)
+    }
+
+    private fun resolvedRequireForNavigationReceiver(
+        semanticFile: WorkspaceSemanticFile,
+        path: VirtualPath,
+        receiver: BaseASTNode
+    ): WorkspaceModuleResolver.ResolvedRequire? {
+        if (receiver is Identifier) {
+            val receiverSymbol = semanticFile.model.getSymbolAt(receiver.range.start)
+            resolveRequiredModuleNameForVisibleLocal(semanticFile, receiverSymbol?.symbolId, receiver)
+                ?.let { moduleName -> resolveWorkspaceRequire(path, moduleName) }
+                ?.let { return it }
+        }
+        return resolvedRequireForReceiver(semanticFile, path, receiver)
+    }
+
+    private fun resolveRequiredModuleNameForVisibleLocal(
+        semanticFile: WorkspaceSemanticFile,
+        symbolId: String?,
+        identifier: Identifier
+    ): String? {
+        val declaration = localDeclarationForSymbol(semanticFile, symbolId)
+            ?: visibleLocalValueDeclaration(semanticFile, identifier.name, identifier.range.start)
+            ?: return null
+        return requiredModuleNameForDeclaration(semanticFile, declaration)
+    }
+
     private fun exportedModuleNameFromMemberBase(
         semanticFile: WorkspaceSemanticFile,
         node: BaseASTNode?
@@ -283,20 +770,28 @@ class LuaWorkspaceQueryFacade(
     private fun resolveRequiredModuleNameForLocal(
         semanticFile: WorkspaceSemanticFile,
         symbolId: String?,
-        identifier: Identifier
+        identifier: Identifier?
     ): String? {
         val declaration = localDeclarationForSymbol(semanticFile, symbolId)
-            ?: semanticFile.snapshot.binder.positionQueries.getDeclarationAt(identifier.range.start)
+            ?: identifier?.let { exactLocalDeclarationForIdentifier(semanticFile, it) }
+            ?: identifier?.let { visibleLocalValueDeclaration(semanticFile, it.name, it.range.start) }
             ?: return null
+        return requiredModuleNameForDeclaration(semanticFile, declaration)
+    }
+
+    private fun requiredModuleNameForDeclaration(
+        semanticFile: WorkspaceSemanticFile,
+        declaration: BinderDeclaration
+    ): String? {
         if (declaration.kind != DeclarationKind.LOCAL || declaration.anchorNode !is Identifier) {
             return null
         }
         val localStatement = declaration.anchorNode.parent as? LocalStatement ?: return null
-        val initializerIndex = localStatement.init.indexOf(declaration.anchorNode)
-        if (initializerIndex < 0) {
+        val localIndex = localStatement.init.indexOf(declaration.anchorNode)
+        if (localIndex < 0) {
             return null
         }
-        val initializer = localStatement.variables.getOrNull(initializerIndex) as? CallExpression ?: return null
+        val initializer = localStatement.variables.getOrNull(localIndex) as? CallExpression ?: return null
         return builtinRequireModuleName(semanticFile, initializer)
     }
 
@@ -312,6 +807,15 @@ class LuaWorkspaceQueryFacade(
                 .getDeclaration(io.github.dingyi222666.luaparser.semantic.binder.DeclarationId(handle.declarationId))
             else -> null
         }
+    }
+
+    private fun exactLocalDeclarationForIdentifier(
+        semanticFile: WorkspaceSemanticFile,
+        identifier: Identifier
+    ): BinderDeclaration? {
+        return semanticFile.snapshot.binder.declarationIndex
+            .getDeclarations(identifier)
+            .firstOrNull { it.kind == DeclarationKind.LOCAL && it.anchorNode === identifier }
     }
 
     private fun declarationLocationForSymbol(
@@ -359,7 +863,7 @@ class LuaWorkspaceQueryFacade(
 
     private fun requireCallDefinition(path: VirtualPath, position: Position): WorkspaceLocation? {
         val callSite = requireCallSite(path, position) ?: return null
-        val providerPath = resolver.resolveRequire(path, callSite.moduleName)?.provider?.path ?: return null
+        val providerPath = resolveWorkspaceRequire(path, callSite.moduleName)?.provider?.path ?: return null
         return WorkspaceLocation(providerPath, syntheticModuleRange(callSite.moduleName))
     }
 
@@ -371,13 +875,73 @@ class LuaWorkspaceQueryFacade(
         if (callee.name != "require") {
             return null
         }
-        val declaration = semanticFile.snapshot.binder.positionQueries.getDeclarationAt(callee.range.start) ?: return null
+        val declaration = visibleLocalValueDeclaration(
+            semanticFile,
+            callee.name,
+            callee.range.start,
+            localInitializerDeclarationIds(semanticFile, call)
+        ) ?: return null
         if (declaration.origin != DeclarationOrigin.BUILTIN || declaration.name != "require") {
             return null
         }
         return (call.arguments.singleOrNull() as? ConstantNode)
             ?.takeIf { it.constantType == ConstantNode.TYPE.STRING }
             ?.stringOf()
+    }
+
+    private fun importTargetDefinition(
+        path: VirtualPath,
+        semanticFile: WorkspaceSemanticFile,
+        node: BaseASTNode?
+    ): WorkspaceLocation? {
+        val constant = node as? ConstantNode ?: return null
+        if (constant.constantType != ConstantNode.TYPE.STRING) {
+            return null
+        }
+        val call = enclosingCallExpression(constant) ?: return null
+        if (!callArguments(call).any { it === constant }) {
+            return null
+        }
+        if (!isImportCallee(semanticFile, effectiveCallBase(call))) {
+            return null
+        }
+        val target = constant.stringOf()
+        val imported = resolver.importTargetSymbolFor(path, target)
+            ?: resolver.importTargetSymbol(target)
+            ?: return null
+        return WorkspaceLocation(imported.providerPath, syntheticModuleRange(imported.alias))
+    }
+
+    private fun callArguments(call: CallExpression): List<io.github.dingyi222666.luaparser.parser.ast.node.ExpressionNode> {
+        val stringCallBase = call.base as? io.github.dingyi222666.luaparser.parser.ast.node.StringCallExpression
+        return buildList {
+            if (stringCallBase != null) {
+                addAll(stringCallBase.arguments)
+            }
+            addAll(call.arguments)
+        }
+    }
+
+    private fun effectiveCallBase(call: CallExpression): io.github.dingyi222666.luaparser.parser.ast.node.ExpressionNode {
+        val base = if (call.base is io.github.dingyi222666.luaparser.parser.ast.node.StringCallExpression && call.arguments.isEmpty()) {
+            call.base
+        } else {
+            call.base
+        }
+        return if (base is io.github.dingyi222666.luaparser.parser.ast.node.StringCallExpression) base.base else base
+    }
+
+    private fun isImportCallee(
+        semanticFile: WorkspaceSemanticFile,
+        expression: io.github.dingyi222666.luaparser.parser.ast.node.ExpressionNode
+    ): Boolean {
+        val identifier = expression as? Identifier ?: return false
+        if (identifier.name == "import") {
+            return true
+        }
+        val declaration = visibleLocalValueDeclaration(semanticFile, identifier.name, identifier.range.start)
+            ?: return false
+        return requiredModuleNameForDeclaration(semanticFile, declaration) == "import"
     }
 
     private fun importedSymbolLocation(symbolId: String): WorkspaceLocation? {
@@ -415,6 +979,411 @@ class LuaWorkspaceQueryFacade(
         return ImportedSymbolIdentity.parse(symbolId) != null
     }
 
+    private fun workspaceModuleLookup(path: VirtualPath, moduleName: String): WorkspaceModuleLookupResult? {
+        val resolved = resolveWorkspaceRequire(path, moduleName) ?: return null
+        return WorkspaceModuleLookupResult(moduleName, resolved.provider, resolved.surface)
+    }
+
+    private fun resolveWorkspaceRequire(
+        path: VirtualPath,
+        moduleName: String
+    ): WorkspaceModuleResolver.ResolvedRequire? {
+        resolver.resolveRequire(path, moduleName)?.let { return it }
+        val provider = resolver.activeProvider(moduleName) ?: return null
+        val surface = resolver.exportSurface(provider) ?: return null
+        return WorkspaceModuleResolver.ResolvedRequire(moduleName, provider, surface)
+    }
+
+    private fun requireBackedModuleNameAtPosition(path: VirtualPath, position: Position): String? {
+        val semanticFile = snapshot.files[path]?.semanticFile ?: return null
+        val node = semanticFile.nodeAt(position) as? Identifier ?: return null
+        val symbol = semanticFile.model.getSymbolAt(position)
+        return resolveRequiredModuleNameForLocal(semanticFile, symbol?.symbolId, node)
+    }
+
+    private fun importRequireSymbol(
+        path: VirtualPath,
+        position: Position
+    ): io.github.dingyi222666.luaparser.semantic.api.Symbol? {
+        val resolved = resolveRequire(path, position) ?: return null
+        if (resolved.moduleName != "import") {
+            return null
+        }
+        val callType = resolved.exportSurface?.moduleType?.fields?.get("__call") ?: return null
+        return io.github.dingyi222666.luaparser.semantic.api.Symbol(
+            name = "import",
+            kind = SymbolKind.FUNCTION,
+            range = null,
+            type = TypeInfo(
+                displayName = callType.displayName,
+                detail = callType.displayName,
+                kind = TypeInfoKind.FUNCTION
+            ),
+            declaredType = TypeInfo(
+                displayName = callType.displayName,
+                detail = callType.displayName,
+                kind = TypeInfoKind.FUNCTION
+            ),
+            detail = callType.displayName,
+            symbolId = "builtin-import:${resolved.provider?.path?.value.orEmpty()}"
+        )
+    }
+
+    private fun providerPathForExport(export: WorkspaceModuleResolver.ResolvedExportMember): VirtualPath {
+        return if (export.member.type is ModuleType) {
+            resolver.classProviderForMember(export.providerPath, export.member.name)?.path
+                ?: export.definitionProviderPath
+        } else {
+            export.definitionProviderPath
+        }
+    }
+
+    private fun exportLocation(export: WorkspaceModuleResolver.ResolvedExportMember): WorkspaceLocation {
+        val providerPath = providerPathForExport(export)
+        val range = export.member.range ?: syntheticModuleRange(export.member.name)
+        return WorkspaceLocation(providerPath, range)
+    }
+
+    private fun workspaceMemberCompletions(
+        path: VirtualPath,
+        semanticFile: WorkspaceSemanticFile,
+        memberExpression: MemberExpression
+    ): List<CompletionItem> {
+        val resolved = resolvedRequireForCompletionReceiver(semanticFile, path, memberExpression.base)
+            ?: return emptyList()
+        return resolved.surface.members
+            .asSequence()
+            .filter { it.exportPath.size == 1 && isUserFacingExportName(it.name) }
+            .distinctBy { it.name }
+            .map { member ->
+                CompletionItem(
+                    label = member.name,
+                    kind = member.kind.toCompletionItemKind(),
+                    detail = member.type.displayName,
+                    insertText = member.name,
+                    sortText = "4:0000:${member.name}"
+                )
+            }
+            .toList()
+    }
+
+    private fun resolvedRequireForCompletionReceiver(
+        semanticFile: WorkspaceSemanticFile,
+        path: VirtualPath,
+        receiver: BaseASTNode
+    ): WorkspaceModuleResolver.ResolvedRequire? {
+        if (receiver is Identifier) {
+            val receiverSymbol = semanticFile.model.getSymbolAt(receiver.range.start)
+            resolveRequiredModuleNameForVisibleLocal(semanticFile, receiverSymbol?.symbolId, receiver)
+                ?.let { moduleName -> resolveWorkspaceRequire(path, moduleName) }
+                ?.let { return it }
+        }
+        return resolvedRequireForReceiver(semanticFile, path, receiver)
+    }
+
+    private fun exportedMemberAt(
+        semanticFile: WorkspaceSemanticFile,
+        path: VirtualPath,
+        position: Position,
+        node: BaseASTNode?
+    ): WorkspaceModuleResolver.ResolvedExportMember? {
+        val memberExpression = memberAccessAt(node, position) ?: return null
+        return exportedMemberForExpression(semanticFile, path, memberExpression)
+    }
+
+    private fun exportedMemberForExpression(
+        semanticFile: WorkspaceSemanticFile,
+        path: VirtualPath,
+        memberExpression: MemberExpression
+    ): WorkspaceModuleResolver.ResolvedExportMember? {
+        val memberName = memberExpression.identifier.name.takeIf { it.isNotBlank() } ?: return null
+        val resolved = resolvedRequireForWorkspaceMemberReceiver(semanticFile, path, memberExpression.base) ?: return null
+        return resolver.exportedMember(resolved.provider.path, memberName)
+    }
+
+    private fun resolvedRequireForWorkspaceMemberReceiver(
+        semanticFile: WorkspaceSemanticFile,
+        path: VirtualPath,
+        receiver: BaseASTNode
+    ): WorkspaceModuleResolver.ResolvedRequire? {
+        if (receiver is Identifier) {
+            val receiverSymbol = semanticFile.model.getSymbolAt(receiver.range.start)
+            val declaration = localDeclarationForSymbol(semanticFile, receiverSymbol?.symbolId)
+                ?: visibleLocalValueDeclaration(semanticFile, receiver.name, receiver.range.start)
+            declaration
+                ?.let { requireInitializerForLocal(it) }
+                ?.let { builtinRequireModuleName(semanticFile, it) }
+                ?.let { moduleName -> resolveWorkspaceRequire(path, moduleName) }
+                ?.let { return it }
+        }
+        return resolvedRequireForReceiver(semanticFile, path, receiver)
+    }
+
+    private fun requireInitializerForLocal(declaration: BinderDeclaration): CallExpression? {
+        if (declaration.kind != DeclarationKind.LOCAL || declaration.anchorNode !is Identifier) {
+            return null
+        }
+        val localStatement = declaration.anchorNode.parent as? LocalStatement ?: return null
+        val localIndex = localStatement.init.indexOf(declaration.anchorNode)
+        if (localIndex < 0) {
+            return null
+        }
+        return localStatement.variables.getOrNull(localIndex) as? CallExpression
+    }
+
+    private fun resolvedRequireForReceiver(
+        semanticFile: WorkspaceSemanticFile,
+        path: VirtualPath,
+        receiver: BaseASTNode
+    ): WorkspaceModuleResolver.ResolvedRequire? {
+        val candidates = buildList {
+            if (receiver is Identifier) {
+                val receiverSymbol = semanticFile.model.getSymbolAt(receiver.range.start)
+                addAll(requireBackedModuleNames(semanticFile, receiver, receiverSymbol))
+            }
+            if (receiver is CallExpression) {
+                builtinRequireModuleName(semanticFile, receiver)?.let(::add)
+            }
+            (semanticFile.model.getTypeAt(receiver) as? ModuleType)
+                ?.moduleName
+                ?.takeIf { it.isNotBlank() }
+                ?.let(::add)
+        }
+        return candidates
+            .asSequence()
+            .filter { it.isNotBlank() }
+            .distinct()
+            .firstNotNullOfOrNull { moduleName -> resolveWorkspaceRequire(path, moduleName) }
+    }
+
+    private fun memberExpressionAt(
+        semanticFile: WorkspaceSemanticFile,
+        position: Position
+    ): MemberExpression? {
+        val node = semanticFile.nodeAt(position)
+        memberAccessAt(node, position)?.let { return it }
+        if (node is Identifier) {
+            val parent = runCatching { node.parent }.getOrNull() as? MemberExpression
+            if (
+                parent?.base === node &&
+                comparePositions(node.range.end, position) <= 0 &&
+                memberCompletionRangeContains(parent.range, position)
+            ) {
+                return parent
+            }
+            return null
+        }
+        return semanticFile.memberExpressions.lastOrNull {
+            memberCompletionRangeContains(it.range, position) ||
+                rangeContains(it.identifier.range, position)
+        }
+    }
+
+    private fun memberCompletionRangeContains(range: Range, position: Position): Boolean {
+        if (rangeContains(range, position)) {
+            return true
+        }
+        return position.line == range.end.line && position.column == range.end.column + 1
+    }
+
+    private fun memberAccessAt(node: BaseASTNode?, position: Position): MemberExpression? {
+        val memberExpression = when (node) {
+            is MemberExpression -> node
+            is Identifier -> runCatching { node.parent }.getOrNull() as? MemberExpression
+            else -> null
+        } ?: return null
+        return when {
+            node is MemberExpression && rangeContains(memberExpression.identifier.range, position) -> memberExpression
+            node is Identifier && memberExpression.identifier === node -> memberExpression
+            else -> null
+        }
+    }
+
+    private fun SymbolKind.toCompletionItemKind(): CompletionItemKind {
+        return when (this) {
+            SymbolKind.FUNCTION -> CompletionItemKind.FUNCTION
+            SymbolKind.METHOD -> CompletionItemKind.METHOD
+            SymbolKind.FIELD -> CompletionItemKind.FIELD
+            SymbolKind.CLASS -> CompletionItemKind.CLASS
+            SymbolKind.TYPE_ALIAS -> CompletionItemKind.TYPE_ALIAS
+            SymbolKind.MODULE -> CompletionItemKind.MODULE
+            SymbolKind.PARAMETER -> CompletionItemKind.PARAMETER
+            SymbolKind.LOCAL,
+            SymbolKind.VARIABLE -> CompletionItemKind.VARIABLE
+            SymbolKind.UNKNOWN -> CompletionItemKind.TEXT
+        }
+    }
+
+    private fun isUserFacingExportName(name: String): Boolean {
+        return name.isNotBlank() && !name.startsWith("__")
+    }
+
+    private fun importCompletions(
+        path: VirtualPath,
+        position: Position,
+        semanticFile: WorkspaceSemanticFile
+    ): List<CompletionItem> {
+        val localNames = visibleLocalValueNames(semanticFile, position)
+        return resolver.importedSymbolsFor(path)
+            .values
+            .asSequence()
+            .filter { it.alias !in localNames }
+            .distinctBy { it.alias }
+            .map { symbol ->
+                CompletionItem(
+                    label = symbol.alias,
+                    kind = CompletionItemKind.MODULE,
+                    detail = symbol.moduleType.displayName,
+                    insertText = symbol.alias,
+                    sortText = "8:0000:${symbol.alias}"
+                )
+            }
+            .toList()
+    }
+
+    private fun mergeCompletions(
+        base: List<CompletionItem>,
+        imports: List<CompletionItem>
+    ): List<CompletionItem> {
+        if (imports.isEmpty()) {
+            return base
+        }
+        val byLabel = linkedMapOf<String, CompletionItem>()
+        base.forEach { byLabel[it.label] = it }
+        imports.forEach { item ->
+            val existing = byLabel[item.label]
+            // Prefer MODULE import kinds so Java/Android class completions do not degrade to VARIABLE.
+            if (existing == null || (existing.kind != CompletionItemKind.MODULE && item.kind == CompletionItemKind.MODULE)) {
+                byLabel[item.label] = item
+            }
+        }
+        return byLabel.values.sortedBy { it.sortText ?: it.label }
+    }
+
+    private fun importedSymbolAt(
+        path: VirtualPath,
+        position: Position,
+        node: BaseASTNode?,
+        semanticFile: WorkspaceSemanticFile
+    ): WorkspaceImportedSymbol? {
+        val identifier = node as? Identifier ?: return null
+        val parent = runCatching { identifier.parent }.getOrNull()
+        if (parent is MemberExpression && parent.identifier === identifier) {
+            return null
+        }
+        if (visibleLocalValueNames(semanticFile, position).contains(identifier.name)) {
+            return null
+        }
+        return resolver.importedSymbolFor(path, identifier.name)
+    }
+
+    private fun importedSymbol(imported: WorkspaceImportedSymbol): io.github.dingyi222666.luaparser.semantic.api.Symbol {
+        return io.github.dingyi222666.luaparser.semantic.api.Symbol(
+            name = imported.alias,
+            kind = io.github.dingyi222666.luaparser.semantic.api.SymbolKind.MODULE,
+            range = null,
+            type = TypeInfo(
+                displayName = imported.moduleType.name,
+                kind = TypeInfoKind.MODULE,
+                moduleName = imported.moduleType.moduleName
+            ),
+            declaredType = TypeInfo(
+                displayName = imported.moduleType.name,
+                kind = TypeInfoKind.MODULE,
+                moduleName = imported.moduleType.moduleName
+            ),
+            detail = imported.moduleType.displayName,
+            symbolId = importedSymbolHandle(imported)
+        )
+    }
+
+    private fun importedSymbolHandle(imported: WorkspaceImportedSymbol): String {
+        return "imported:${imported.providerPath.value}:${imported.alias}"
+    }
+
+    private fun localInitializerDeclarationIds(
+        semanticFile: WorkspaceSemanticFile,
+        node: BaseASTNode
+    ): Set<DeclarationId> {
+        var current: BaseASTNode? = node
+        while (current != null) {
+            val parent = runCatching { current.parent }.getOrNull()
+            if (parent is LocalStatement) {
+                if (parent.variables.none { it === current }) {
+                    return emptySet()
+                }
+                return parent.init.mapNotNull { identifier ->
+                    semanticFile.snapshot.binder.declarationIndex
+                        .getDeclarations(identifier)
+                        .firstOrNull { it.kind == DeclarationKind.LOCAL }
+                        ?.id
+                }.toSet()
+            }
+            current = parent as? BaseASTNode
+        }
+        return emptySet()
+    }
+
+    private fun visibleLocalValueNames(
+        semanticFile: WorkspaceSemanticFile,
+        position: Position
+    ): Set<String> {
+        val names = linkedSetOf<String>()
+        var scope = semanticFile.snapshot.binder.positionQueries.getScopeAt(position)
+        while (scope != null) {
+            scope.declarationIds
+                .asReversed()
+                .mapNotNull(semanticFile.snapshot.binder.declarationIndex::getDeclaration)
+                .forEach { declaration ->
+                    if (
+                        declaration.kind.namespace == io.github.dingyi222666.luaparser.semantic.binder.DeclarationNamespace.VALUE &&
+                        isDeclarationVisibleAt(declaration, position)
+                    ) {
+                        names += declaration.name
+                    }
+                }
+            scope = scope.parentId?.let(semanticFile.snapshot.binder.scopeGraph::getScope)
+        }
+        return names
+    }
+
+    private fun visibleLocalValueDeclaration(
+        semanticFile: WorkspaceSemanticFile,
+        name: String,
+        position: Position,
+        excludedDeclarations: Set<DeclarationId> = emptySet()
+    ): BinderDeclaration? {
+        var scope = semanticFile.snapshot.binder.positionQueries.getScopeAt(position)
+        while (scope != null) {
+            scope.declarationIds
+                .asReversed()
+                .mapNotNull(semanticFile.snapshot.binder.declarationIndex::getDeclaration)
+                .firstOrNull { declaration ->
+                    declaration.name == name &&
+                        declaration.kind.namespace == io.github.dingyi222666.luaparser.semantic.binder.DeclarationNamespace.VALUE &&
+                        declaration.id !in excludedDeclarations &&
+                        isDeclarationVisibleAt(declaration, position)
+                }
+                ?.let { return it }
+            scope = scope.parentId?.let(semanticFile.snapshot.binder.scopeGraph::getScope)
+        }
+        return null
+    }
+
+    private fun isDeclarationVisibleAt(declaration: BinderDeclaration, position: Position): Boolean {
+        val range = declaration.range ?: return true
+        return comparePositions(range.start, position) <= 0
+    }
+
+    private fun comparePositions(left: Position, right: Position): Int {
+        val lineComparison = left.line.compareTo(right.line)
+        if (lineComparison != 0) {
+            return lineComparison
+        }
+        return left.column.compareTo(right.column)
+    }
+
+
     private fun syntheticModuleRange(moduleName: String): Range {
         return Range(
             start = Position(1, 1),
@@ -423,13 +1392,36 @@ class LuaWorkspaceQueryFacade(
     }
 
     private fun exportSymbol(export: WorkspaceModuleResolver.ResolvedExportMember): io.github.dingyi222666.luaparser.semantic.api.Symbol {
+        val typeInfo = exportTypeInfo(export)
         return io.github.dingyi222666.luaparser.semantic.api.Symbol(
             name = export.member.name,
             kind = export.member.kind,
             range = export.member.range,
+            type = typeInfo,
+            declaredType = typeInfo,
             detail = export.member.type.displayName,
             symbolId = export.handle
         )
+    }
+
+    private fun exportTypeInfo(export: WorkspaceModuleResolver.ResolvedExportMember): TypeInfo {
+        val memberType = export.member.type
+        val moduleType = memberType as? ModuleType
+        return TypeInfo(
+            displayName = memberType.displayName,
+            detail = memberType.displayName,
+            kind = when {
+                moduleType != null -> TypeInfoKind.MODULE
+                export.member.kind == SymbolKind.FUNCTION || export.member.kind == SymbolKind.METHOD -> TypeInfoKind.FUNCTION
+                export.member.kind == SymbolKind.CLASS -> TypeInfoKind.CLASS
+                else -> TypeInfoKind.UNKNOWN
+            },
+            moduleName = moduleType?.moduleName
+        )
+    }
+
+    private fun rangeContains(range: Range, position: Position): Boolean {
+        return comparePositions(range.start, position) <= 0 && comparePositions(position, range.end) <= 0
     }
 
     private fun requireCallSite(path: VirtualPath, position: Position): RequireCallSite? {
@@ -439,7 +1431,12 @@ class LuaWorkspaceQueryFacade(
         if (callee.name != "require") {
             return null
         }
-        val declaration = semanticFile.snapshot.binder.positionQueries.getDeclarationAt(callee.range.start) ?: return null
+        val declaration = visibleLocalValueDeclaration(
+            semanticFile,
+            callee.name,
+            callee.range.start,
+            localInitializerDeclarationIds(semanticFile, call)
+        ) ?: return null
         if (declaration.origin != DeclarationOrigin.BUILTIN || declaration.name != "require") {
             return null
         }
@@ -487,3 +1484,20 @@ class LuaWorkspaceQueryFacade(
         }
     }
 }
+
+data class WorkspaceDocumentSymbol(
+    val name: String,
+    val kind: SymbolKind,
+    val range: Range,
+    val selectionRange: Range = range,
+    val detail: String? = null,
+    val children: List<WorkspaceDocumentSymbol> = emptyList()
+)
+
+data class WorkspaceSymbolEntry(
+    val name: String,
+    val kind: SymbolKind,
+    val path: VirtualPath,
+    val range: Range,
+    val containerName: String? = null
+)
