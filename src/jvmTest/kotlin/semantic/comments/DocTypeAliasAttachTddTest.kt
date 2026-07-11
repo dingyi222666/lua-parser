@@ -23,6 +23,10 @@ import kotlin.test.assertTrue
  * aliases). Unknown type names and malformed tags must not crash the attach pass.
  *
  * Test-only; verification is review-owned (no Gradle in worker waves).
+ *
+ * AST note (legacy naming on AssignmentStatement / LocalStatement):
+ * - LocalStatement.init = declared names (LHS); LocalStatement.variables = RHS values
+ * - AssignmentStatement.init = LHS targets; AssignmentStatement.variables = RHS values
  */
 class DocTypeAliasAttachTddTest {
 
@@ -64,7 +68,8 @@ class DocTypeAliasAttachTddTest {
         val assignments = chunk.body.statements.filterIsInstance<AssignmentStatement>()
         assertEquals(2, assignments.size)
         val typedAssign = assignments[1]
-        assertEquals("value", assertIs<Identifier>(typedAssign.variables.single()).name)
+        // AssignmentStatement.init holds LHS targets (legacy naming).
+        assertEquals("value", assertIs<Identifier>(typedAssign.init.single()).name)
 
         val index = attachPass.attach(chunk)
         val doc = assertNotNull(index.getDocComment(typedAssign))
