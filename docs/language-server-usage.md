@@ -61,10 +61,10 @@ Workspace-folder selection during `initialize` follows the policy in [Workspace 
 | Definition | `textDocument/definition` returns location lists |
 | References | `textDocument/references` returns location lists |
 | Document highlight | `textDocument/documentHighlight` |
-| Document symbols | `textDocument/documentSymbol`, returned as `SymbolInformation` |
-| Workspace symbols | `workspace/symbol`, returned as `SymbolInformation` |
+| Document symbols | `textDocument/documentSymbol` dual-path: hierarchical `DocumentSymbol` when the client advertises hierarchical support, otherwise flattened `SymbolInformation` |
+| Workspace symbols | `workspace/symbol` currently returned as flattened `SymbolInformation`; modern `WorkspaceSymbol` helper exists but wire is pending TASK-397 |
 
-The implementation returns LSP4J `Either` wrappers where required by the protocol, but currently uses location lists and `SymbolInformation` rather than `LocationLink`, hierarchical `DocumentSymbol`, or `WorkspaceSymbol` objects.
+The implementation returns LSP4J `Either` wrappers where required by the protocol. Navigation still uses location lists rather than `LocationLink`. Document-symbol and workspace-symbol shapes are described in [Hierarchical Document Symbols And Modern Workspace Symbols](#hierarchical-document-symbols-and-modern-workspace-symbols).
 
 Capability advertisement and request behavior are pending serialized confirmation in TASK-043. Final production-readiness claims remain pending TASK-037.
 
@@ -142,10 +142,66 @@ The request surface is backed by `LuaWorkspaceQueryFacade` over the current work
 - Signature help returns callable labels, parameter labels, optional Markdown documentation, active signature, and active parameter. Method receiver offsets and Lua short-string call syntax are implemented in the query layer and covered by pending LSP tests.
 - Definition and declaration resolve locals, module aliases, module fields, reflected JVM class/member providers, and Android-Lua/LuaJava class-load facts when the current snapshot can identify them.
 - References and document highlights collect known occurrences from the current workspace snapshot and provider surfaces.
-- Document symbols list navigable non-builtin declarations in the requested open document, excluding parameters and type parameters.
-- Workspace symbols search indexed workspace documents, open document overlays, and synthetic provider entries. Blank queries return all indexed symbols; nonblank queries use case-insensitive substring matching.
+- Document symbols list navigable non-builtin declarations in the requested open document, excluding parameters and type parameters. Response shape is dual-path: nested hierarchical `DocumentSymbol` when the client advertised `hierarchicalDocumentSymbolSupport`, otherwise flattened `SymbolInformation` (see [Hierarchical Document Symbols And Modern Workspace Symbols](#hierarchical-document-symbols-and-modern-workspace-symbols)).
+- Workspace symbols search indexed workspace documents, open document overlays, and synthetic provider entries. Blank queries return all indexed symbols; nonblank queries use case-insensitive substring matching. The live wire currently returns flattened `SymbolInformation` (`Either.left`); a modern `WorkspaceSymbol` helper is present for the pending TASK-397 dual-path wire.
 
 The current implementation uses a full engine rebuild on cold `initialize` and on metadata configuration changes. Open/change/close and watched-file updates use incremental snapshot deltas when a prior snapshot is ready. Folder indexing runs during initialization; later disk create/change/delete visibility depends on `workspace/didChangeWatchedFiles` as described above.
+
+
+## Hierarchical Document Symbols And Modern Workspace Symbols
+
+This section documents the current document-symbol and workspace-symbol helper surface and wire status for the JVM LSP. Product code for hierarchical document symbols was wired under TASK-396; modern workspace-symbol dual-path selection remains pending TASK-397. Command-level confirmation is deferred to TASK-043.
+
+### Hierarchical `textDocument/documentSymbol` (TASK-396 wired)
+
+At `initialize`, `LuaLanguageService` captures the client capability:
+
+```text
+textDocument.documentSymbol.hierarchicalDocumentSymbolSupport
+```
+
+`LuaTextDocumentService.documentSymbol` then chooses the response shape:
+
+| Client capability | Response branch | Helper |
+| --- | --- | --- |
+| `hierarchicalDocumentSymbolSupport == true` | `Either.forRight` nested `DocumentSymbol` list | `LuaLanguageService.hierarchicalDocumentSymbols(path)` |
+| `false`, unset, or absent | `Either.forLeft` flattened `SymbolInformation` list | `LuaLanguageService.documentSymbols(path)` |
+
+Supporting APIs on `LuaLanguageService`:
+
+- `supportsHierarchicalDocumentSymbols()` — test- and service-visible flag stored from the initialize capability.
+- `hierarchicalDocumentSymbols(path)` — maps the workspace query facade document-symbol tree (`WorkspaceDocumentSymbol` with children) into LSP4J `DocumentSymbol` nodes (`name`, `kind`, `range`, `selectionRange`, optional `detail`, nested `children`).
+- `documentSymbols(path)` — flattens the same hierarchical tree into legacy `SymbolInformation` entries, preserving container names from parent symbol names.
+
+Server capabilities still advertise `documentSymbolProvider` as `DocumentSymbolOptions` (boolean-or-options right branch). The hierarchical vs flat choice is driven only by the client capability above; the server does not advertise a separate hierarchical-only capability bit beyond standard document-symbol options.
+
+Symbol content is unchanged from the request surface above: navigable non-builtin declarations for the requested document, excluding parameters and type parameters, with module export nodes merged when the workspace query facade supplies them.
+
+### Modern `workspace/symbol` helper status (pending TASK-397)
+
+`LuaLanguageService` already exposes both helpers over the same query-facade entries:
+
+| Helper | LSP type | Status |
+| --- | --- | --- |
+| `workspaceSymbols(query)` | `List<SymbolInformation>` | **Wired** — used by `LuaWorkspaceService.symbol` today via `Either.forLeft` |
+| `modernWorkspaceSymbols(query)` | `List<WorkspaceSymbol>` | **Helper present, dual-path wire pending TASK-397** — maps each `WorkspaceSymbolEntry` to `WorkspaceSymbol` (`name`, `kind`, `Either.forLeft(Location)`, optional `containerName`) |
+
+Current live behavior:
+
+1. `LuaWorkspaceService.symbol` reads `params.query` (blank → all indexed symbols; nonblank → case-insensitive substring match via the query facade).
+2. It always calls `languageService.workspaceSymbols(query)` and completes with `Either.forLeft` `SymbolInformation` lists.
+3. It does **not** yet inspect a client capability for modern workspace symbols / resolve support, and it does **not** yet call `modernWorkspaceSymbols()`.
+
+TASK-397 acceptance is to reuse the existing `modernWorkspaceSymbols()` helper and return `Either.forRight` when the client supports modern `WorkspaceSymbol` (including resolve-oriented modern shapes as implemented by that task), otherwise keep the current `SymbolInformation` left branch. Until TASK-397 lands, clients and harnesses must treat `workspace/symbol` as flat `SymbolInformation` only.
+
+Both helpers search the same surfaces: indexed workspace documents, open-document overlays, and synthetic provider entries (including JVM/Android-Lua virtual provider URIs).
+
+### Capability and verification notes
+
+- Capability advertisement remains `documentSymbolProvider = DocumentSymbolOptions` and `workspaceSymbolProvider = WorkspaceSymbolOptions` on `initialize`.
+- Dual-path document-symbol selection is implemented in product code (TASK-396 under review at documentation time) but still needs serialized jvmTest confirmation under TASK-043 (`LspNavigationSymbolsTddTest` / hierarchical document-symbol coverage as owned by verification).
+- Modern workspace-symbol dual-path selection is **not** claimed as live behavior until TASK-397 wires it; only the helper and the pending task status are documented here.
+- Location-link navigation (`LocationLink` for definition/declaration) is still out of scope for this page section; navigation remains location lists.
 
 ## Workspace Configuration
 
@@ -448,6 +504,7 @@ Do not run those commands outside the serialized verification phase. The final g
 - Reflected JVM providers expose public reflection surfaces only. Generic signatures, annotations, JavaDoc, Android API-level metadata, hidden APIs, and runtime side effects are not modeled.
 - Android support reads `android.jar` metadata and does not emulate Android runtime behavior, resources, devices, dex loading, or app class loader semantics.
 - Wildcard package enumeration is shallow and classpath-dependent. It exposes directly loadable top-level classes, not a complete Android or JVM package index.
-- Synthetic provider URIs are virtual and may appear in definitions, declarations, references, and workspace symbols.
+- Synthetic provider URIs are virtual and may appear in definitions, declarations, references, document symbols, and workspace symbols.
+- Hierarchical document symbols are dual-path (TASK-396 wire); modern workspace-symbol dual-path remains pending TASK-397 while the `modernWorkspaceSymbols()` helper already exists.
 - Configuration is supplied through `workspace/didChangeConfiguration`; current code does not read `ANDROID_HOME`, `ANDROID_SDK_ROOT`, or editor-specific setting names directly.
 - Launch, LSP transport behavior, and pending TDD fixture coverage must be confirmed in TASK-043 before TASK-036 uses this page for final production-readiness documentation.
