@@ -403,9 +403,10 @@ class AndroidLuaImportNegativePathTddTest {
 
     @Test
     fun malformed_package_provider_targets_return_empty_without_throw() {
-        val providers = runCatching {
+        // Truly malformed / non-wildcard targets must not mount package providers.
+        val malformedOnly = runCatching {
             provider.packageProvidersFor(
-                importTargets = listOf("", "   ", ".*", "*", "not-a-package", "import ", "dexPath:java.io.*"),
+                importTargets = listOf("", "   ", ".*", "*", "not-a-package", "import "),
                 configuration = JvmWorkspaceConfiguration()
             )
         }.getOrElse { error ->
@@ -413,9 +414,40 @@ class AndroidLuaImportNegativePathTddTest {
         }
 
         assertTrue(
-            providers.isEmpty(),
-            "Malformed package targets must not mount providers; actual: ${providers.keys.map { it.value }}"
+            malformedOnly.isEmpty(),
+            "Malformed package targets must not mount providers; actual: ${malformedOnly.keys.map { it.value }}"
         )
+
+        // Unsupported path-prefix wildcards still parse the className side (java.io.*) and fall back to
+        // the default classloader for package enumeration — non-throwing, mounts the JDK package.
+        // REVIEW24 golden alignment: dexPath:java.io.* → __jvm__/packages/java/io.lua.
+        val prefixedWildcard = runCatching {
+            provider.packageProvidersFor(
+                importTargets = listOf(
+                    "",
+                    "   ",
+                    ".*",
+                    "*",
+                    "not-a-package",
+                    "import ",
+                    "dexPath:java.io.*"
+                ),
+                configuration = JvmWorkspaceConfiguration()
+            )
+        }.getOrElse { error ->
+            fail(
+                "Prefixed wildcard package provider targets must not throw; " +
+                    "got ${error::class.simpleName}: ${error.message}"
+            )
+        }
+
+        assertEquals(
+            setOf(VirtualPath.of("__jvm__/packages/java/io.lua")),
+            prefixedWildcard.keys,
+            "Unsupported prefix + resolvable package wildcard mounts fallback package only; " +
+                "actual: ${prefixedWildcard.keys.map { it.value }}"
+        )
+        assertNotNull(prefixedWildcard[VirtualPath.of("__jvm__/packages/java/io.lua")])
     }
 
     @Test
