@@ -2,6 +2,7 @@ package io.github.dingyi222666.luaparser.interop.jvm
 
 import io.github.dingyi222666.luaparser.parser.LuaParser
 import io.github.dingyi222666.luaparser.semantic.SemanticWorkspaceContext
+import io.github.dingyi222666.luaparser.semantic.UnresolvedLuaJavaTarget
 import io.github.dingyi222666.luaparser.semantic.WorkspaceImportedSymbol
 import io.github.dingyi222666.luaparser.semantic.workspace.DocumentFacts
 import io.github.dingyi222666.luaparser.semantic.workspace.DocumentFactsCollector
@@ -19,13 +20,16 @@ class JvmWorkspaceEngine(
         val baseConfiguration = configuration.overlay(JvmWorkspaceConfiguration.fromMetadata(input.metadata))
         val documentFacts = collectDocumentFacts(input)
         val resolvedConfiguration = configurationWithWildcardImportPrefixes(baseConfiguration, documentFacts)
-        val sourceImportedClasses = collectSourceImportedClasses(documentFacts, resolvedConfiguration)
-        val packageProviders = classModuleProvider.packageProvidersFor(collectWildcardImportTargets(documentFacts), resolvedConfiguration)
-        val providerConfiguration = if (sourceImportedClasses.isEmpty()) {
+        val sourceDiscoveredClasses = collectSourceDiscoveredClasses(documentFacts, resolvedConfiguration)
+        val packageProviders = classModuleProvider.packageProvidersFor(
+            collectWildcardImportTargets(baseConfiguration, documentFacts),
+            resolvedConfiguration
+        )
+        val providerConfiguration = if (sourceDiscoveredClasses.isEmpty()) {
             resolvedConfiguration
         } else {
             resolvedConfiguration.copy(
-                classes = (resolvedConfiguration.classes + sourceImportedClasses).toCollection(linkedSetOf())
+                classes = (resolvedConfiguration.classes + sourceDiscoveredClasses).toCollection(linkedSetOf())
             )
         }
         return classModuleProvider.providersFor(providerConfiguration) + packageProviders
@@ -34,36 +38,90 @@ class JvmWorkspaceEngine(
     internal override fun workspaceContext(input: LuaWorkspaceInput, path: io.github.dingyi222666.luaparser.semantic.workspace.VirtualPath, snapshot: WorkspaceSnapshot): SemanticWorkspaceContext {
         val baseConfiguration = configuration.overlay(JvmWorkspaceConfiguration.fromMetadata(input.metadata))
         val documentFacts = collectDocumentFacts(input)
-        val resolvedConfiguration = configurationWithWildcardImportPrefixes(baseConfiguration, documentFacts)
-        val importedSymbols = collectImportedSymbols(documentFacts, resolvedConfiguration)
+        val currentFacts = snapshot.files[path]?.documentFacts ?: documentFacts[path]
+        val resolvedConfiguration = configurationWithWildcardImportPrefixes(
+            baseConfiguration,
+            currentFacts?.let { mapOf(path to it) }.orEmpty()
+        )
+        val configuredImports = collectConfiguredImports(baseConfiguration)
+        val sourceImports = collectSourceImports(currentFacts, resolvedConfiguration)
+        val activeImports = linkedMapOf<String, WorkspaceImportedSymbol>().apply {
+            putAll(configuredImports)
+            putAll(sourceImports)
+        }
         return SemanticWorkspaceContext(
             currentPath = path,
             workspaceResolver = io.github.dingyi222666.luaparser.semantic.workspace.WorkspaceModuleResolver(snapshot),
             overlayGlobals = snapshot.builtinOverlay.globals,
-            importedSymbols = importedSymbols,
+            importedSymbols = activeImports,
             resolveImportedSymbol = { name ->
-                importedSymbols[name] ?: classModuleProvider.importedSymbol(name, resolvedConfiguration)
+                activeImports[name]
             },
-            resolveImportTarget = { target -> classModuleProvider.importedSymbolForTarget(target, resolvedConfiguration) }
+            resolveImportTarget = { target -> classModuleProvider.importedSymbolForTarget(target, resolvedConfiguration) },
+            unresolvedLuaJavaTargets = collectUnresolvedLuaJavaTargets(currentFacts, resolvedConfiguration)
         )
     }
 
-    private fun collectImportedSymbols(
-        documentFacts: Map<VirtualPath, DocumentFacts>,
+    private fun collectUnresolvedLuaJavaTargets(
+        facts: DocumentFacts?,
+        configuration: JvmWorkspaceConfiguration
+    ): List<UnresolvedLuaJavaTarget> {
+        if (facts == null) {
+            return emptyList()
+        }
+        return facts.jvmClassLoads
+            .asSequence()
+            .filter { it.kind in diagnosticLuaJavaClassLoadKinds }
+            .filter { classModuleProvider.importedClassName(it.target, configuration) == null }
+            .map { fact ->
+                UnresolvedLuaJavaTarget(
+                    target = fact.target,
+                    helperName = luaJavaHelperName(fact.kind),
+                    range = fact.range
+                )
+            }
+            .distinctBy { target ->
+                listOf(
+                    target.range?.start?.line,
+                    target.range?.start?.column,
+                    target.range?.end?.line,
+                    target.range?.end?.column,
+                    target.helperName,
+                    target.target
+                )
+            }
+            .toList()
+    }
+
+    private fun collectConfiguredImports(
         configuration: JvmWorkspaceConfiguration
     ): Map<String, WorkspaceImportedSymbol> {
         val imported = linkedMapOf<String, WorkspaceImportedSymbol>()
-        documentFacts.values.forEach { facts ->
-            facts.sourceImports.forEach { importFact ->
-                classModuleProvider.importedClassNames(importFact.target, configuration)
-                    .mapNotNull { classModuleProvider.importedSymbol(it, configuration) }
-                    .forEach { imported[it.alias] = it }
-            }
+        configuration.normalized().androluaImports.forEach { importText ->
+            classModuleProvider.importedClassNames(importText, configuration)
+                .mapNotNull { classModuleProvider.importedSymbol(it, configuration) }
+                .forEach { imported[it.alias] = it }
         }
         return imported
     }
 
-    private fun collectSourceImportedClasses(
+    private fun collectSourceImports(
+        facts: DocumentFacts?,
+        configuration: JvmWorkspaceConfiguration
+    ): Map<String, WorkspaceImportedSymbol> {
+        if (facts == null) {
+            return emptyMap()
+        }
+        val imported = linkedMapOf<String, WorkspaceImportedSymbol>()
+        facts.sourceImports.forEach { importFact ->
+            classModuleProvider.importedClassNames(importFact.target, configuration)
+                .mapNotNull { classModuleProvider.importedSymbol(it, configuration) }
+                .forEach { imported[it.alias] = it }
+        }
+        return imported
+    }
+
+    private fun collectSourceDiscoveredClasses(
         documentFacts: Map<VirtualPath, DocumentFacts>,
         configuration: JvmWorkspaceConfiguration
     ): Set<String> {
@@ -83,14 +141,24 @@ class JvmWorkspaceEngine(
                             classModuleProvider.importedClassName(fact.target, configuration)
                                 ?.let(::add)
                         }
+
+                        DocumentFacts.JvmClassLoadKind.CREATE_ARRAY_CALL -> Unit
                     }
                 }
             }
         }
     }
 
-    private fun collectWildcardImportTargets(documentFacts: Map<VirtualPath, DocumentFacts>): Set<String> {
+    private fun collectWildcardImportTargets(
+        configuration: JvmWorkspaceConfiguration,
+        documentFacts: Map<VirtualPath, DocumentFacts>
+    ): Set<String> {
         return buildSet {
+            configuration.normalized().androluaImports.forEach { importText ->
+                if (wildcardImportPrefix(importText) != null) {
+                    add(importText)
+                }
+            }
             documentFacts.values.forEach { facts ->
                 facts.sourceImports.forEach { importFact ->
                     if (wildcardImportPrefix(importFact.target) != null) {
@@ -106,7 +174,11 @@ class JvmWorkspaceEngine(
         documentFacts: Map<VirtualPath, DocumentFacts>
     ): JvmWorkspaceConfiguration {
         val normalized = configuration.normalized()
-        val wildcardPrefixes = linkedSetOf<String>()
+        val wildcardPrefixes = linkedSetOf<String>().apply {
+            normalized.androluaImports.forEach { importText ->
+                wildcardImportPrefix(importText)?.let { add(it) }
+            }
+        }
         documentFacts.values.forEach { facts ->
             facts.sourceImports.forEach { importFact ->
                 wildcardImportPrefix(importFact.target)?.let(wildcardPrefixes::add)
@@ -130,8 +202,28 @@ class JvmWorkspaceEngine(
 
     private fun collectDocumentFacts(input: LuaWorkspaceInput): Map<VirtualPath, DocumentFacts> {
         return input.files.mapValues { (path, source) ->
-            DocumentFactsCollector.collect(path, workspaceParserFactory().parse(source))
+            DocumentFactsCollector.collect(path, parseWorkspaceSource(source))
         }
+    }
+
+    private fun luaJavaHelperName(kind: DocumentFacts.JvmClassLoadKind): String {
+        return when (kind) {
+            DocumentFacts.JvmClassLoadKind.BIND_CLASS_CALL -> "bindClass"
+            DocumentFacts.JvmClassLoadKind.NEW_INSTANCE_CALL -> "newInstance"
+            DocumentFacts.JvmClassLoadKind.CREATE_PROXY_CALL -> "createProxy"
+            DocumentFacts.JvmClassLoadKind.LOAD_LIB_CALL -> "loadLib"
+            DocumentFacts.JvmClassLoadKind.IMPORT_CALL,
+            DocumentFacts.JvmClassLoadKind.CREATE_ARRAY_CALL -> kind.name
+        }
+    }
+
+    private companion object {
+        val diagnosticLuaJavaClassLoadKinds: Set<DocumentFacts.JvmClassLoadKind> = setOf(
+            DocumentFacts.JvmClassLoadKind.BIND_CLASS_CALL,
+            DocumentFacts.JvmClassLoadKind.NEW_INSTANCE_CALL,
+            DocumentFacts.JvmClassLoadKind.CREATE_PROXY_CALL,
+            DocumentFacts.JvmClassLoadKind.LOAD_LIB_CALL
+        )
     }
 
 }
