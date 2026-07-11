@@ -30,10 +30,14 @@ import kotlin.test.assertTrue
  * This corpus exercises both the raw index-built range query and the binder
  * positionQueries surface over declarationIndex entries.
  *
+ * Fixture note: avoid multi-identifier returns such as `return left, right` —
+ * the current parser rejects those with IllegalStateException near eof. Use
+ * single returns / body locals instead (same constraint as sibling binder
+ * corpora).
+ *
  * Test-only; production defects surface as assertion failures (review-owned
  * verification via `jvmTest --tests semantic.binder.DeclarationIndexRangeLookupTddTest`).
- */
-class DeclarationIndexRangeLookupTddTest {
+ */class DeclarationIndexRangeLookupTddTest {
 
     private val parser = LuaParser()
 
@@ -114,9 +118,13 @@ class DeclarationIndexRangeLookupTddTest {
 
     @Test
     fun multiParameter_rangeLookupReturnsOnlyIntersectingParam() {
+        // Body uses both params without multi-identifier return (`return left, right`
+        // currently fails parse with IllegalStateException near eof).
         val source = """
             local function pack(left, right)
-                return left, right
+                local combined = left
+                local other = right
+                return combined
             end
             """.trimIndent()
         val result = bind(source)
@@ -130,6 +138,9 @@ class DeclarationIndexRangeLookupTddTest {
         assertEquals(right, result.positionQueries.getDeclarationAt(positionOf(source, "right", occurrence = 1)))
         // Comma between params is outside both parameter ranges.
         assertEquals(emptyList(), index.query(positionOf(source, ",")))
+        // Usage sites are not declaration-range hits.
+        assertEquals(emptyList(), index.query(positionOf(source, "left", occurrence = 2)))
+        assertEquals(emptyList(), index.query(positionOf(source, "right", occurrence = 2)))
     }
 
     @Test
