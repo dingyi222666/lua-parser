@@ -562,6 +562,111 @@ class JavaChainedCallTddTest {
     }
 
     @Test
+    fun completion_after_file_instance_includes_javabean_property_aliases() {
+        val harness = jvmHarness(
+            "main.lua" to """
+                local File = luajava.bindClass("java.io.File")
+                local parent = File("src/main/kotlin").parent
+                return parent
+            """.trimIndent()
+        )
+
+        // Readable JavaBean aliases are exported as fields without hiding direct getters.
+        assertCompletionAt(harness, "parent", "parentFile", CompletionItemKind.FIELD)
+        assertCompletionAt(harness, "parent", "name", CompletionItemKind.FIELD)
+        assertCompletionAt(harness, "parent", "getParentFile", CompletionItemKind.METHOD)
+        assertCompletionAt(harness, "parent", "getName", CompletionItemKind.METHOD)
+    }
+
+    @Test
+    fun completion_after_array_list_includes_boolean_is_getter_alias() {
+        val harness = jvmHarness(
+            "main.lua" to """
+                local ArrayList = luajava.bindClass("java.util.ArrayList")
+                local list = ArrayList()
+                local empty = list.empty
+                return empty
+            """.trimIndent()
+        )
+
+        assertCompletionAt(harness, "empty", "empty", CompletionItemKind.FIELD)
+        assertCompletionAt(harness, "empty", "isEmpty", CompletionItemKind.METHOD)
+    }
+
+    @Test
+    fun completion_after_mutable_bean_includes_title_alias_and_direct_methods() {
+        val harness = jvmHarness(
+            "main.lua" to """
+                local Bean = luajava.bindClass("semantic.interop.JavaChainedCallTddTest${'$'}MutableJavaBean")
+                local bean = Bean()
+                local title = bean.title
+                return title
+            """.trimIndent()
+        )
+
+        assertCompletionAt(harness, "title", "title", CompletionItemKind.FIELD)
+        assertCompletionAt(harness, "title", "getTitle", CompletionItemKind.METHOD)
+        assertCompletionAt(harness, "title", "setTitle", CompletionItemKind.METHOD)
+    }
+
+    @Test
+    fun completion_after_static_system_includes_properties_alias() {
+        val harness = jvmHarness(
+            "main.lua" to """
+                local System = luajava.bindClass("java.lang.System")
+                local props = System.properties
+                return props
+            """.trimIndent(),
+            classes = setOf("java.util.Properties")
+        )
+
+        assertCompletionAt(harness, "properties", "properties", CompletionItemKind.FIELD)
+        assertCompletionAt(harness, "properties", "getProperties", CompletionItemKind.METHOD)
+    }
+
+    @Test
+    fun completion_excludes_overloaded_and_write_only_javabean_aliases() {
+        val overloaded = jvmHarness(
+            "main.lua" to """
+                local Bean = luajava.bindClass("semantic.interop.JavaChainedCallTddTest${'$'}OverloadedGetterBean")
+                local bean = Bean()
+                local property = bean.code
+                return property
+            """.trimIndent()
+        )
+        val overloadedCompletions = overloaded.queries.completions(
+            overloaded.path("main.lua"),
+            overloaded.positionOf("main.lua", "code")
+        )
+        assertFalse(
+            overloadedCompletions.any { it.label == "code" && it.kind == CompletionItemKind.FIELD },
+            "Overloaded getter must not export a readable JavaBean alias; actual: ${'$'}{overloadedCompletions.map { "${'$'}{it.label}:${'$'}{it.kind}" }}"
+        )
+        assertCompletion(overloadedCompletions, "getCode", CompletionItemKind.METHOD)
+
+        val writeOnly = jvmHarness(
+            "main.lua" to """
+                local Bean = luajava.bindClass("semantic.interop.JavaChainedCallTddTest${'$'}WriteOnlyBean")
+                local bean = Bean()
+                local token = bean.token
+                return token
+            """.trimIndent()
+        )
+        val writeOnlyCompletions = writeOnly.queries.completions(
+            writeOnly.path("main.lua"),
+            writeOnly.positionOf("main.lua", "token")
+        )
+        assertFalse(
+            writeOnlyCompletions.any { it.label == "token" && it.kind == CompletionItemKind.FIELD },
+            "Write-only setter must not export a readable JavaBean alias; actual: ${'$'}{writeOnlyCompletions.map { "${'$'}{it.label}:${'$'}{it.kind}" }}"
+        )
+        assertCompletion(writeOnlyCompletions, "setToken", CompletionItemKind.METHOD)
+    }
+
+    // TASK-177 note: assignable JavaBean setter write-through remains deferred (TASK-151 read-alias-only).
+    // Completions expose readable aliases only; bean.title = value is not modeled as write semantics here.
+
+    @Test
     fun completion_after_file_constructor_chain_includes_get_parent_file() {
         val harness = jvmHarness(
             "main.lua" to """

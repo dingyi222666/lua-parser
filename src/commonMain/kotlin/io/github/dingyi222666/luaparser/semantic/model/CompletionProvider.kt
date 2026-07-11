@@ -45,12 +45,15 @@ internal class CompletionProvider(
     }
 
     private fun memberCompletions(expression: MemberExpression): List<CompletionItem> {
+        // Member surface includes conservative JavaBean property aliases as FIELD symbols
+        // (from ReferenceQueries) alongside direct getter/setter METHOD members.
         return referenceQueries.resolveMemberCompletionSurface(expression)
             .mapIndexed { index, symbol ->
                 val prefix = if (expression.indexer == ":") {
                     if (symbol.kind == SymbolKind.METHOD) "0" else "1"
                 } else {
-                    // Prefer fields (including Java static fields on bindClass targets) over methods for `.` members.
+                    // Prefer fields (including Java static fields and JavaBean aliases on bindClass
+                    // targets) over methods for `.` members.
                     if (symbol.kind == SymbolKind.FIELD || isMemberFieldLike(symbol)) "0" else "1"
                 }
                 memberCompletionItem(symbol, prefix, index)

@@ -26,6 +26,8 @@ import io.github.dingyi222666.luaparser.semantic.comments.MethodTagSyntax
 import io.github.dingyi222666.luaparser.semantic.checker.ExpressionTypeEvaluator
 import io.github.dingyi222666.luaparser.semantic.checker.MemberAccessKind
 import io.github.dingyi222666.luaparser.semantic.checker.MemberResolver
+import io.github.dingyi222666.luaparser.semantic.checker.allReadableInstanceJavaBeanProperties
+import io.github.dingyi222666.luaparser.semantic.checker.allReadableStaticJavaBeanProperties
 import io.github.dingyi222666.luaparser.semantic.checker.hydrateJavaProviderType
 import io.github.dingyi222666.luaparser.semantic.checker.isJavaBackedModule
 import io.github.dingyi222666.luaparser.semantic.checker.isJavaProviderClassReference
@@ -870,6 +872,22 @@ internal class ReferenceQueries(
                 )
             )
         }
+        // Conservative readable JavaBean aliases (TASK-177). Never hide direct getter/setter methods.
+        classType.allReadableStaticJavaBeanProperties().forEach { property ->
+            if (property.name !in this) {
+                val surfaceType = property.valueType.hydrateJavaProviderType(workspaceContext.resolveImportTarget)
+                put(
+                    property.name,
+                    MemberSurface(
+                        name = property.name,
+                        type = surfaceType,
+                        accessKind = MemberAccessKind.FIELD,
+                        declaredType = surfaceType,
+                        syntheticHandle = "java:${classType.javaName.binaryName}:static-bean:${property.name}"
+                    )
+                )
+            }
+        }
     }
 
     private fun collectJavaInstanceMemberSurface(instanceType: JavaInstanceType): Map<String, MemberSurface> = buildMap {
@@ -896,6 +914,22 @@ internal class ReferenceQueries(
                     syntheticHandle = workspaceMember?.handle ?: "java:${member.owner.binaryName}:instance:$name"
                 )
             )
+        }
+        // Conservative readable JavaBean aliases (TASK-177). Never hide direct getter/setter methods.
+        instanceType.allReadableInstanceJavaBeanProperties().forEach { property ->
+            if (property.name !in this) {
+                val surfaceType = property.valueType.hydrateJavaProviderType(workspaceContext.resolveImportTarget)
+                put(
+                    property.name,
+                    MemberSurface(
+                        name = property.name,
+                        type = surfaceType,
+                        accessKind = MemberAccessKind.FIELD,
+                        declaredType = surfaceType,
+                        syntheticHandle = "java:${instanceType.classType.javaName.binaryName}:instance-bean:${property.name}"
+                    )
+                )
+            }
         }
     }
 

@@ -53,6 +53,12 @@ internal fun ClassType.isJavaProviderClassReference(): Boolean {
     return name.contains('.') || name.contains('$')
 }
 
+/**
+ * Conservative readable JavaBean property surface derived from unambiguous getter methods.
+ *
+ * [setterName] is informational only for now: member/completion export remains read-alias-only
+ * (TASK-151/TASK-177). Assignable setter/write-through semantics are intentionally deferred.
+ */
 internal data class JavaBeanPropertySurface(
     val name: String,
     val valueType: Type,
@@ -96,6 +102,22 @@ internal fun JavaClassType.resolveStaticJavaBeanProperty(propertyName: String): 
 
 internal fun JavaInstanceType.resolveInstanceJavaBeanProperty(propertyName: String): JavaBeanPropertySurface? {
     return resolveJavaBeanProperty(propertyName, allInstanceMembers().values)
+}
+
+/**
+ * Enumerates conservative readable JavaBean property aliases for static member surfaces.
+ * Direct getter/setter method names are never renamed or removed by this export.
+ */
+internal fun JavaClassType.allReadableStaticJavaBeanProperties(): List<JavaBeanPropertySurface> {
+    return allReadableJavaBeanProperties(allStaticMembers().values)
+}
+
+/**
+ * Enumerates conservative readable JavaBean property aliases for instance member surfaces.
+ * Direct getter/setter method names are never renamed or removed by this export.
+ */
+internal fun JavaInstanceType.allReadableInstanceJavaBeanProperties(): List<JavaBeanPropertySurface> {
+    return allReadableJavaBeanProperties(allInstanceMembers().values)
 }
 
 internal fun Type.hydrateJavaProviderType(resolveImportTarget: JavaImportResolver): Type {
@@ -170,6 +192,18 @@ internal fun Type.withJavaCallableSurface(
             signatureMetadata = this.signatureMetadata
         )
         else -> hydrateJavaProviderType(resolveImportTarget)
+    }
+}
+
+private fun allReadableJavaBeanProperties(members: Collection<JavaMemberType>): List<JavaBeanPropertySurface> {
+    val candidateNames = linkedSetOf<String>()
+    members.forEach { member ->
+        if (member.memberKind == JavaMemberKind.METHOD) {
+            javaBeanGetterPropertyName(member.memberName)?.let { candidateNames += it }
+        }
+    }
+    return candidateNames.mapNotNull { propertyName ->
+        resolveJavaBeanProperty(propertyName, members)
     }
 }
 
