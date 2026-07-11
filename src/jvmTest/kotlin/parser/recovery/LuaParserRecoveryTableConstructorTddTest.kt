@@ -56,11 +56,15 @@ import parser.renderShape
  * reachable where the current product keeps them reachable. Test-only until
  * review expands production scope.
  *
- * Goldens track current product behaviour (REVIEW21C rework):
- * - following statement-start tokens that are also expression starts (e.g.
- *   `print(...)`) may be absorbed as array-field values inside an unclosed `{`;
- * - bare `Name` fields without `=` recover as bad [TableKeyString] placeholders
- *   rather than implicit array keys when recovery is enabled;
+ * Goldens track current product behaviour (WAVE22B after REVIEW20/21C):
+ * - unclosed empty `{` after a line break uses statement-start recovery:
+ *   following `print(...)` / `local` stay siblings after a missing array-field
+ *   ExpressionNodeSupport placeholder;
+ * - bare Name without `=` recovers as bad TableKeyString; failed recoverToken('=')
+ *   leaves the lexer on the next significant token, so a following next-line
+ *   expression start is absorbed as the field value
+ *   (TableKeyString(Id(one)=Call(...))), not a sibling CallStmt;
+ * - completed named/bracket fields leave following print as sibling CallStmt;
  * - trailing field separators (`,` / `;`) are valid Lua and must not be treated
  *   as strict-parse failures.
  */
@@ -298,14 +302,15 @@ class LuaParserRecoveryTableConstructorTddTest {
             warningFragments = listOf("'}' expected")
         ),
         RecoveryCase(
-            // Following print(...) is also a valid table array-field expression, so the
-            // current product absorbs it into the unclosed constructor rather than
-            // leaving a sibling CallStmt. Document that shape explicitly.
-            name = "unclosed empty table absorbs following print call as array field",
+            // Empty `{` + next-line statement-start uses parseExpressionOrMissing
+            // line-break recovery: missing array field placeholder, then sibling print.
+            name = "unclosed empty table keeps following print after missing field",
             source = "local config = {\nprint(config)",
             requiredShapeFragments = listOf(
-                "Local(Id(config)=Table(TableKey(Const(1)=Call(Id(print):Id(config)))))"
+                "Local(Id(config)=Table(TableKey(Const(1)=ExpressionNodeSupport)))",
+                "CallStmt(Call(Id(print):Id(config)))"
             ),
+            badShapeFragments = listOf("ExpressionNodeSupport"),
             warningFragments = listOf("'}' expected")
         ),
         RecoveryCase(
@@ -321,17 +326,18 @@ class LuaParserRecoveryTableConstructorTddTest {
             warningFragments = listOf("'}' expected")
         ),
         RecoveryCase(
-            // Bare Name without '=' recovers as a bad named field; linebreak + statement
-            // start yields a missing value placeholder so print stays a sibling.
-            name = "unclosed bare name field recovers as named field and keeps following print",
+            // Bare Name without '=' recovers as a bad named field. Failed recoverToken('=')
+            // advances to the next significant token and pushbacks while leaving currentState
+            // on that token, so hasLineBreakBeforeNextSignificantToken() no longer sees the
+            // break between `one` and `print` — print is absorbed as the field value.
+            // Shape: Chunk(Block[Local(Id(config)=Table(TableKeyString(Id(one)=Call(Id(print):Id(config)))))])
+            name = "unclosed bare name field recovers as named field absorbing following print",
             source = "local config = { one\nprint(config)",
             requiredShapeFragments = listOf(
-                "Local(Id(config)=Table(TableKeyString(Id(one)=ExpressionNodeSupport)))",
-                "CallStmt(Call(Id(print):Id(config)))"
+                "Local(Id(config)=Table(TableKeyString(Id(one)=Call(Id(print):Id(config)))))"
             ),
             badShapeFragments = listOf(
-                "TableKeyString(Id(one)=ExpressionNodeSupport)",
-                "ExpressionNodeSupport"
+                "TableKeyString(Id(one)=Call(Id(print):Id(config)))"
             ),
             warningFragments = listOf("'=' expected", "'}' expected")
         ),
