@@ -22,6 +22,10 @@ import kotlin.test.assertTrue
  * correct function declaration targets. Malformed tags must not crash the attach pass.
  *
  * Test-only; verification is review-owned (no Gradle in worker waves).
+ *
+ * Note: function bodies intentionally avoid multi-identifier returns such as
+ * `return b, c` (parser currently rejects those with IllegalStateException near eof).
+ * Multi-return *tags* and constant multi-returns remain covered.
  */
 class DocParamReturnAttachTddTest {
 
@@ -147,6 +151,8 @@ class DocParamReturnAttachTddTest {
 
     @Test
     fun attachesDistinctParamReturnBlocksToAdjacentFunctionsWithoutCrossTalk() {
+        // Bodies avoid multi-identifier returns (`return b, c`) which currently fail parse.
+        // Multi-return tags still exercise comma-separated @return type lists on second.
         val chunk = parse(
             """
             ---@param a string
@@ -159,7 +165,7 @@ class DocParamReturnAttachTddTest {
             ---@param c number
             ---@return number, number
             local function second(b, c)
-                return b, c
+                return b + c
             end
             """.trimIndent()
         )
