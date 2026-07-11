@@ -15,7 +15,9 @@ import io.github.dingyi222666.luaparser.semantic.binder.DeclarationOwner
 import io.github.dingyi222666.luaparser.semantic.workspace.LuaWorkspaceInput
 import io.github.dingyi222666.luaparser.semantic.workspace.LuaWorkspaceQueryFacade
 import io.github.dingyi222666.luaparser.semantic.workspace.VirtualPath
+import io.github.dingyi222666.luaparser.semantic.workspace.WorkspaceDelta
 import io.github.dingyi222666.luaparser.semantic.workspace.WorkspaceSnapshot
+import io.github.dingyi222666.luaparser.semantic.workspace.WorkspaceUpdateResult
 import org.eclipse.lsp4j.CompletionItem
 import org.eclipse.lsp4j.CompletionList
 import org.eclipse.lsp4j.CompletionOptions
@@ -81,18 +83,30 @@ class LuaLanguageService(
     private val documentUris = linkedMapOf<VirtualPath, String>()
     private var workspaceMetadata: Map<String, String> = emptyMap()
     private var workspaceFolders: List<WorkspaceFolder> = emptyList()
+    /** Files last applied to [snapshot] via build/update (indexed + open overlays). */
+    private var lastSyncedFiles: Map<VirtualPath, String> = emptyMap()
+    private var snapshotReady: Boolean = false
+
+    /** Counts full engine.build invocations (initialize / metadata invalidation). Test-visible. */
+    internal var fullRebuildCount: Int = 0
+        private set
+    /** Counts engine.update delta invocations for open/change/close/watched paths. Test-visible. */
+    internal var incrementalUpdateCount: Int = 0
+        private set
 
     fun initialize(params: InitializeParams): InitializeResult = synchronized(stateLock) {
         workspaceFolders = configuredWorkspaceFolders(params)
         refreshWorkspaceFolderUriPrefixes()
         refreshWorkspaceFolderIndex()
-        rebuild()
+        // Cold start always uses a full rebuild so the first snapshot is authoritative.
+        rebuildFull()
         InitializeResult(serverCapabilities())
     }
 
     fun setWorkspaceMetadata(metadata: Map<String, String>) = synchronized(stateLock) {
         workspaceMetadata = metadata.toMap()
-        rebuild()
+        // Configuration that invalidates global metadata falls back to a full rebuild.
+        rebuildFull()
     }
 
     /**
@@ -140,7 +154,7 @@ class LuaLanguageService(
             }
         }
         if (mutated) {
-            rebuild()
+            refreshIncremental()
         }
     }
 
@@ -149,7 +163,7 @@ class LuaLanguageService(
         val path = pathOf(document)
         openDocuments[path] = document.text
         documentUris[path] = document.uri
-        rebuild()
+        refreshIncremental()
         publishDiagnostics(path)
     }
 
@@ -157,7 +171,7 @@ class LuaLanguageService(
         val path = pathOf(params.textDocument)
         openDocuments[path] = applyContentChanges(openDocuments[path].orEmpty(), params.contentChanges)
         documentUris[path] = params.textDocument.uri
-        rebuild()
+        refreshIncremental()
         publishDiagnostics(path)
     }
 
@@ -166,7 +180,7 @@ class LuaLanguageService(
         val path = pathOf(uri)
         openDocuments.remove(path)
         documentUris.remove(path)
-        rebuild()
+        refreshIncremental()
         PublishDiagnosticsParams(uri, emptyList())
     }
 
@@ -315,18 +329,71 @@ class LuaLanguageService(
         }
     }
 
-    private fun rebuild() {
+    private fun currentWorkspaceFiles(): Map<VirtualPath, String> {
         val files = linkedMapOf<VirtualPath, String>()
         files.putAll(indexedWorkspaceFiles)
         files.putAll(openDocuments)
+        return files
+    }
+
+    private fun applyWorkspaceResult(result: WorkspaceUpdateResult, files: Map<VirtualPath, String>) {
+        snapshot = result.snapshot
+        queries = LuaWorkspaceQueryFacade(snapshot)
+        lastSyncedFiles = files.toMap()
+        snapshotReady = true
+    }
+
+    /** Full workspace rebuild used for cold start and metadata invalidation. */
+    private fun rebuildFull() {
+        val files = currentWorkspaceFiles()
         val result = engine.build(
             LuaWorkspaceInput(
                 files = files,
                 metadata = workspaceMetadata
             )
         )
-        snapshot = result.snapshot
-        queries = LuaWorkspaceQueryFacade(snapshot)
+        fullRebuildCount += 1
+        applyWorkspaceResult(result, files)
+    }
+
+    /**
+     * Incremental path: compute a [WorkspaceDelta] against the last applied file map
+     * and call engine.update (LuaWorkspaceEngine.update). Falls back to a full
+     * rebuild when no snapshot has been established yet.
+     */
+    private fun refreshIncremental() {
+        val files = currentWorkspaceFiles()
+        if (!snapshotReady) {
+            rebuildFull()
+            return
+        }
+
+        val upserts = linkedMapOf<VirtualPath, String>()
+        val removals = linkedSetOf<VirtualPath>()
+        for ((path, source) in files) {
+            if (lastSyncedFiles[path] != source) {
+                upserts[path] = source
+            }
+        }
+        for (path in lastSyncedFiles.keys) {
+            if (path !in files) {
+                removals += path
+            }
+        }
+
+        if (upserts.isEmpty() && removals.isEmpty()) {
+            return
+        }
+
+        val result = engine.update(
+            previous = snapshot,
+            delta = WorkspaceDelta(
+                upserts = upserts,
+                removals = removals
+            )
+        )
+        incrementalUpdateCount += 1
+        applyWorkspaceResult(result, files)
     }
 
     private fun configuredWorkspaceFolders(params: InitializeParams): List<WorkspaceFolder> {

@@ -11,7 +11,7 @@ open class LuaWorkspaceEngine(
 ) {
     private val semanticPipeline = SemanticPipeline()
 
-    fun build(
+    open fun build(
         input: LuaWorkspaceInput,
         reporter: ProgressReporter = ProgressReporter.NONE
     ): WorkspaceUpdateResult {
@@ -69,7 +69,7 @@ open class LuaWorkspaceEngine(
         )
     }
 
-    fun update(
+    open fun update(
         previous: WorkspaceSnapshot,
         delta: WorkspaceDelta,
         standardLibraryOverlayVersion: LuaVersion = previous.builtinOverlay.version,
@@ -77,9 +77,24 @@ open class LuaWorkspaceEngine(
     ): WorkspaceUpdateResult {
         val builtinOverlay = BuiltinOverlayLoader.load(standardLibraryOverlayVersion, ::analyzeFile)
         val nextMetadata = delta.metadata ?: previous.metadata
+
+        // Merge previous snapshot sources with the delta so extraProviders and dirty
+        // re-analysis see the full workspace, not only the upserted paths.
+        val nextSources = linkedMapOf<VirtualPath, String>()
+        previous.files.forEach { (path, fileSnapshot) ->
+            if (path in delta.removals) {
+                return@forEach
+            }
+            val source = fileSnapshot.semanticFile?.source
+            if (source != null) {
+                nextSources[path] = source
+            }
+        }
+        nextSources.putAll(delta.upserts)
+
         val extraProviders = extraProviders(
             LuaWorkspaceInput(
-                files = delta.upserts,
+                files = nextSources,
                 metadata = nextMetadata,
                 standardLibraryOverlayVersion = standardLibraryOverlayVersion
             )
@@ -128,7 +143,7 @@ open class LuaWorkspaceEngine(
 
         val snapshot = attachSemanticState(
             baseSnapshot = baseSnapshot,
-            sources = delta.upserts,
+            sources = nextSources,
             pathsToAnalyze = dirtyPlan.affectedDocuments,
             previous = previous
         )
@@ -174,9 +189,9 @@ open class LuaWorkspaceEngine(
                 }
                 return@mapValues fileSnapshot
             }
-            val chunk = sources[path]?.let { parserFactory().parse(it) }
+            val chunk = sources[path]?.let(::parseWorkspaceSource)
                 ?: previous?.files?.get(path)?.semanticFile?.chunk
-                ?: parserFactory().parse("")
+                ?: parseWorkspaceSource("")
             val semanticSnapshot = semanticPipeline.analyzeSnapshot(
                 chunk,
                 workspaceContext(
@@ -205,7 +220,7 @@ open class LuaWorkspaceEngine(
     }
 
     private fun analyzeFile(path: VirtualPath, source: String): WorkspaceSnapshot.FileSnapshot {
-        val chunk = parserFactory().parse(source)
+        val chunk = parseWorkspaceSource(source)
         val facts = DocumentFactsCollector.collect(path, chunk)
         val legacyEnvironment = LegacyModuleEnvironmentPass.analyze(path, facts)
         val exportSurface = ModuleExportCollector.collect(chunk, facts, legacyEnvironment)
@@ -219,6 +234,12 @@ open class LuaWorkspaceEngine(
             moduleExportSurface = exportSurface,
             publicFingerprint = publicFingerprint
         )
+    }
+
+    protected fun parseWorkspaceSource(source: String) = try {
+        parserFactory().parseWorkspaceSnippet(source)
+    } catch (_: IllegalStateException) {
+        parserFactory().parseWorkspaceSnippet("")
     }
 
     private fun reportBindingProgress(
