@@ -411,7 +411,9 @@ class LuaJavaCreateProxyMultiInterfaceTddTest {
             """.trimIndent()
         )
 
-        assertHoverDisplay(harness, "proxy", "{ value: unknown }", occurrence = 2)
+        // REVIEW23: product hover for shadowed local createProxy return is bare `unknown`
+        // (not table-shape `{ value: unknown }`). Guard still holds: no multi-iface surface.
+        assertHoverDisplay(harness, "proxy", "unknown", occurrence = 2)
         assertHoverDisplay(harness, "run", "unknown", occurrence = 2)
         assertHoverDisplay(harness, "compare", "unknown", occurrence = 2)
     }
@@ -433,7 +435,8 @@ class LuaJavaCreateProxyMultiInterfaceTddTest {
             """.trimIndent()
         )
 
-        assertHoverDisplay(harness, "proxy", "{ value: unknown }", occurrence = 2)
+        // Align with product hover display for local-shadow table returns (bare unknown).
+        assertHoverDisplay(harness, "proxy", "unknown", occurrence = 2)
         assertHoverDisplay(harness, "run", "unknown", occurrence = 2)
         assertHoverDisplay(harness, "compare", "unknown", occurrence = 2)
     }
