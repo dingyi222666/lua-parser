@@ -253,7 +253,7 @@ class Lua53GotoLabelCorpusTddTest {
         val chunk = parseWithoutThrow(source)
 
         assertEquals(
-            "Chunk(Block[Goto(Id(target));Do(Block[Local(Id(hidden)=Const(1));Label(Id(target));CallStmt(Call(Id(use):Id(hidden))])])",
+            "Chunk(Block[Goto(Id(target));Do(Block[Local(Id(hidden)=Const(1));Label(Id(target));CallStmt(Call(Id(use):Id(hidden)))])])",
             renderShape(chunk)
         )
 
@@ -295,6 +295,7 @@ class Lua53GotoLabelCorpusTddTest {
         val labels = collectStatements<LabelStatement>(chunk)
         val gotos = collectStatements<GotoStatement>(chunk)
 
+        // DFS pre-order: labels outer→nested; gotos nested if/else then while-body tail.
         assertEquals(listOf("root", "inner"), labels.map { it.identifier.name })
         assertEquals(listOf("inner", "root", "root"), gotos.map { it.identifier.name })
 
@@ -340,12 +341,15 @@ class Lua53GotoLabelCorpusTddTest {
         }
     }
 
+    /**
+     * Collect statements of type [T] in depth-first pre-order (source nesting
+     * order). Nested control-flow bodies are visited immediately so gotos inside
+     * for/if appear before sibling gotos in outer blocks.
+     */
     private inline fun <reified T : StatementNode> collectStatements(chunk: ChunkNode): List<T> {
         val out = mutableListOf<T>()
-        val queue = ArrayDeque<BlockNode>()
-        queue.add(chunk.body)
-        while (queue.isNotEmpty()) {
-            val block = queue.removeFirst()
+
+        fun walkBlock(block: BlockNode) {
             val statements = buildList {
                 addAll(block.statements)
                 block.returnStatement?.let { add(it) }
@@ -355,17 +359,19 @@ class Lua53GotoLabelCorpusTddTest {
                     out += statement
                 }
                 when (statement) {
-                    is DoStatement -> queue.add(statement.body)
-                    is WhileStatement -> queue.add(statement.body)
-                    is RepeatStatement -> queue.add(statement.body)
-                    is ForNumericStatement -> queue.add(statement.body)
-                    is ForGenericStatement -> queue.add(statement.body)
-                    is IfStatement -> statement.causes.forEach { queue.add(it.body) }
-                    is FunctionDeclaration -> statement.body?.let(queue::add)
+                    is DoStatement -> walkBlock(statement.body)
+                    is WhileStatement -> walkBlock(statement.body)
+                    is RepeatStatement -> walkBlock(statement.body)
+                    is ForNumericStatement -> walkBlock(statement.body)
+                    is ForGenericStatement -> walkBlock(statement.body)
+                    is IfStatement -> statement.causes.forEach { walkBlock(it.body) }
+                    is FunctionDeclaration -> statement.body?.let(::walkBlock)
                     else -> Unit
                 }
             }
         }
+
+        walkBlock(chunk.body)
         return out
     }
 }
