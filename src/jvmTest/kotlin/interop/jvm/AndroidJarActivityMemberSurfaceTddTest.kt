@@ -237,13 +237,14 @@ class AndroidJarActivityMemberSurfaceTddTest {
     @Test
     fun workspace_engine_activity_instance_member_hover_uses_reflected_surface() {
         requireAndroidJarOrSkip()
+        // Match the JVM instance-member corpus shape (StringBuilder.append): construct via
+        // luajava.newInstance so the receiver is a reflected Java instance, then hover the
+        // member identifier. Emmy ---@type receivers alone can degrade hover away from METHOD.
         val harness = WorkspaceSemanticHarness.build(
             "main.lua" to """
-                local Activity = require("Activity")
-                ---@type android.app.Activity
-                local host
-                local view = host:findViewById(1)
-                return view
+                local host = luajava.newInstance("android.app.Activity")
+                local current = host.findViewById
+                return current
             """.trimIndent(),
             metadata = mapOf(
                 JvmClassModuleProvider.IMPORTS_METADATA_KEY to "Activity",
@@ -257,25 +258,26 @@ class AndroidJarActivityMemberSurfaceTddTest {
             harness.path("main.lua"),
             harness.positionOf("main.lua", "findViewById")
         )
-        // Soft floor: when the reflected surface is wired, hover should name the member or method kind.
-        // Product may still degrade for Emmy-annotated receivers; non-null is preferred but empty is
-        // not asserted hard — the reflection surface tests above own non-empty acceptance.
-        if (hover != null) {
-            val text = buildString {
-                append(hover.symbol?.name.orEmpty())
-                append(' ')
-                append(hover.symbol?.kind?.name.orEmpty())
-                append(' ')
-                append(hover.typeInfo?.displayName.orEmpty())
-            }
-            assertTrue(
-                text.contains("findViewById", ignoreCase = true) ||
-                    hover.symbol?.kind == SymbolKind.METHOD ||
-                    text.contains("fun", ignoreCase = true),
-                "Expected hover to mention findViewById / METHOD surface; got: $text"
-            )
+        assertNotNull(
+            hover,
+            "Expected hover on Activity instance member findViewById when android.jar present."
+        )
+        val text = buildString {
+            append(hover.symbol?.name.orEmpty())
+            append(' ')
+            append(hover.symbol?.kind?.name.orEmpty())
+            append(' ')
+            append(hover.typeInfo?.displayName.orEmpty())
         }
+        assertTrue(
+            text.contains("findViewById", ignoreCase = true) ||
+                hover.symbol?.kind == SymbolKind.METHOD ||
+                text.contains("fun", ignoreCase = true),
+            "Expected hover to mention findViewById / METHOD surface; got: $text"
+        )
     }
+
+
 
     @Test
     fun missing_android_jar_does_not_mount_activity_provider() {
