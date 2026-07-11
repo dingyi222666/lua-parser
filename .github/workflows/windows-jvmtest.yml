@@ -37,10 +37,14 @@ jobs:
         shell: cmd
         run: gradlew.bat jvmTest --parallel --max-workers=8
 
-      - name: Kill Java processes
+      - name: Stop Gradle and kill leftover Java
         if: always()
         shell: cmd
-        run: taskkill /F /IM java.exe 2>nul & exit /b 0
+        run: |
+          call gradlew.bat --stop
+          taskkill /F /IM java.exe 2>nul
+          taskkill /F /IM javaw.exe 2>nul
+          exit /b 0
 
       - name: Upload JUnit XML
         if: always()
