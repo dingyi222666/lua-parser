@@ -75,6 +75,7 @@ internal class ReferenceQueries(
         val importedSymbol = importedSymbolAt(position, node)
         localJavaMemberInitializerSymbolAt(position, node)?.let { return it }
         bindClassTargetLocalSymbolAt(node)?.let { return it }
+        importCallTargetLocalSymbolAt(node)?.let { return it }
         importTargetStringSymbolAt(node)?.let { return it }
         val declarationSymbol = resolveDeclarationTokenStartAt(position)
             ?.let { adapters.toDeclarationSymbol(it) }
@@ -97,6 +98,8 @@ internal class ReferenceQueries(
             ) {
                 return toImportedSymbol(importedSymbol)
             }
+            // True local/parameter/function declarations always win over imported MODULE aliases
+            // so local shadowing (`local File = { ... }`) stays preferred after declaration.
             return declarationSymbol
         }
 
@@ -325,6 +328,74 @@ internal class ReferenceQueries(
             .hydrateJavaProviderType(workspaceContext.resolveImportTarget) as? ModuleType
             ?: return null
         return adapters.toDeclarationSymbol(declaration, moduleType, moduleType)
+    }
+
+    private fun importCallTargetLocalSymbolAt(node: BaseASTNode?): Symbol? {
+        val identifier = node as? Identifier ?: return null
+        val parent = runCatching { identifier.parent }.getOrNull()
+        if (parent is MemberExpression && parent.identifier === identifier) {
+            return null
+        }
+        val declaration = findVisibleValueDeclarationWithoutImports(
+            name = identifier.name,
+            position = identifier.range.start,
+            excludedDeclarations = emptySet()
+        ) ?: return null
+        if (declaration.kind != DeclarationKind.LOCAL) {
+            return null
+        }
+        val initializer = localDeclarationInitializer(declaration)
+            as? io.github.dingyi222666.luaparser.parser.ast.node.CallExpression
+            ?: return null
+        if (!isImportCallBase(effectiveCallBase(initializer))) {
+            return null
+        }
+        val targets = importCallTargets(initializer)
+        if (targets.isEmpty()) {
+            return null
+        }
+        val importedTypes = targets.mapNotNull { target ->
+            resolveLuaJavaImportTarget(target)?.moduleType
+        }
+        if (importedTypes.isEmpty()) {
+            return null
+        }
+        val resolvedType = if (targets.size == 1 && importedTypes.size == 1) {
+            importedTypes.single()
+        } else {
+            val element = unionTypeOf(importedTypes)
+            io.github.dingyi222666.luaparser.semantic.types.model.ArrayType(
+                elementType = element,
+                name = "Array<${element.displayName}>"
+            )
+        }
+        return adapters.toDeclarationSymbol(declaration, resolvedType, resolvedType)
+    }
+
+    private fun importCallTargets(node: io.github.dingyi222666.luaparser.parser.ast.node.CallExpression): List<String> {
+        val firstArgument = callArguments(node).firstOrNull()
+        return when (firstArgument) {
+            is ConstantNode -> {
+                if (firstArgument.constantType == ConstantNode.TYPE.STRING) {
+                    listOf(firstArgument.stringOf())
+                } else {
+                    emptyList()
+                }
+            }
+            is io.github.dingyi222666.luaparser.parser.ast.node.ArrayConstructorExpression ->
+                firstArgument.values.mapNotNull { expression ->
+                    (expression as? ConstantNode)
+                        ?.takeIf { it.constantType == ConstantNode.TYPE.STRING }
+                        ?.stringOf()
+                }
+            is io.github.dingyi222666.luaparser.parser.ast.node.TableConstructorExpression ->
+                firstArgument.fields.mapNotNull { field ->
+                    (field.value as? ConstantNode)
+                        ?.takeIf { it.constantType == ConstantNode.TYPE.STRING }
+                        ?.stringOf()
+                }
+            else -> emptyList()
+        }
     }
 
     private fun importTargetStringSymbolAt(node: BaseASTNode?): Symbol? {

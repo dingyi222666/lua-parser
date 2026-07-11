@@ -29,6 +29,16 @@ internal class WorkspaceModuleResolver(
         }
 
         if (moduleName == "import") {
+            // Prefer a real Android-Lua STANDARD_LIBRARY_OVERLAY provider when present so
+            // require("import") does not fall back to synthetic globals-only surfaces.
+            val overlayProvider = snapshot.graph.providersByModuleName[moduleName]
+                .orEmpty()
+                .firstOrNull { it.source == WorkspaceModuleGraph.ProviderSource.STANDARD_LIBRARY_OVERLAY }
+            val overlaySurface = overlayProvider?.let(::exportSurface)
+            if (overlayProvider != null && overlaySurface != null) {
+                return ResolvedRequire(moduleName, overlayProvider, overlaySurface)
+            }
+
             val provider = activeProvider(moduleName)
             val surface = provider?.let(::exportSurface)
             if (provider != null && surface != null) {
@@ -241,9 +251,17 @@ internal class WorkspaceModuleResolver(
     }
 
     private fun syntheticImportSurface(): ModuleExportSurface {
+        // Match Android-Lua import callable display: fun(...: any...): any
         val importType = FunctionType(
-            parameters = listOf(FunctionParameter(name = "...", type = VarargType(PrimitiveType.ANY), vararg = true)),
-            returnType = PrimitiveType.ANY
+            parameters = listOf(
+                FunctionParameter(
+                    name = "...",
+                    type = VarargType(PrimitiveType.ANY),
+                    vararg = true
+                )
+            ),
+            returnType = PrimitiveType.ANY,
+            name = "fun(...: any...): any"
         )
         val moduleType = ModuleType(
             moduleName = "import",

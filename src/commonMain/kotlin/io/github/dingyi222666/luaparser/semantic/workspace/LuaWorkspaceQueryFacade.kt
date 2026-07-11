@@ -107,6 +107,14 @@ class LuaWorkspaceQueryFacade(
         }
         val symbol = semanticFile?.model?.getSymbolAt(position)
             ?: semanticFile?.let { importedSymbolAt(path, position, node, it)?.let(::importedSymbol) }
+        // Local AST declarations win for true locals (including shadowing of imported modules).
+        // Imported MODULE aliases continue through the import-definition path below.
+        if (symbol != null && symbol.kind != SymbolKind.MODULE && symbol.kind != SymbolKind.FUNCTION) {
+            val localDeclaration = semanticFile?.let { declarationLocationForSymbol(it, path, symbol.symbolId) }
+            if (localDeclaration != null) {
+                return listOf(localDeclaration)
+            }
+        }
         val memberExport = semanticFile?.let { navigationExportedMemberAt(it, path, position, node) }
         val importDefinition = symbol?.symbolId?.let(::importedSymbolLocation)
             ?: semanticFile?.let { importedSymbolAt(path, position, node, it) }?.let {
@@ -634,6 +642,21 @@ class LuaWorkspaceQueryFacade(
     private fun preferredHoverType(primary: TypeInfo?, fallback: TypeInfo?): TypeInfo? {
         return when {
             primary == null -> fallback
+            // Prefer coarse table kind for local table shadows so hover does not expose
+            // the concrete structural table literal display.
+            primary.kind == TypeInfoKind.TABLE && primary.displayName.startsWith("{") -> {
+                TypeInfo(
+                    displayName = "table",
+                    detail = "table",
+                    typeKey = primary.typeKey,
+                    kind = TypeInfoKind.TABLE,
+                    moduleName = primary.moduleName
+                )
+            }
+            // Prefer Android-Lua multi-import Array<> display over the structural union[] form
+            // produced by generic ArrayType.displayName ("T[]").
+            primary.displayName.endsWith("[]") &&
+                fallback?.displayName?.startsWith("Array<") == true -> fallback
             primary.displayName == "unknown" && fallback != null -> fallback
             else -> primary
         }
@@ -709,9 +732,9 @@ class LuaWorkspaceQueryFacade(
             exportedModuleNameFromMemberBase(semanticFile, node)
                 ?.takeIf { it.isNotBlank() && it !in this }
                 ?.let(::add)
-            identifier?.name
-                ?.takeIf { it.isNotBlank() && it !in this }
-                ?.let(::add)
+            // Do NOT fall back to bare identifier names. Source-activated JVM class providers are
+            // mounted workspace-wide for hydration, but simple-name visibility must stay scoped to
+            // the file that performed the import (TASK-155 / TASK-176 sibling isolation).
         }
     }
 
@@ -937,11 +960,50 @@ class LuaWorkspaceQueryFacade(
     ): Boolean {
         val identifier = expression as? Identifier ?: return false
         if (identifier.name == "import") {
+            val local = visibleLocalValueDeclaration(semanticFile, identifier.name, identifier.range.start)
+            if (local == null || local.origin == DeclarationOrigin.BUILTIN) {
+                return true
+            }
+            return requiredModuleNameForDeclaration(semanticFile, local) == "import"
+        }
+        return aliasResolvesToImportCallable(semanticFile, identifier, emptySet(), linkedSetOf())
+    }
+
+    private fun aliasResolvesToImportCallable(
+        semanticFile: WorkspaceSemanticFile,
+        identifier: Identifier,
+        excludedDeclarations: Set<DeclarationId>,
+        visited: MutableSet<DeclarationId>
+    ): Boolean {
+        val declaration = visibleLocalValueDeclaration(
+            semanticFile,
+            identifier.name,
+            identifier.range.start,
+            excludedDeclarations
+        ) ?: return false
+        if (!visited.add(declaration.id)) {
+            return false
+        }
+        if (requiredModuleNameForDeclaration(semanticFile, declaration) == "import") {
             return true
         }
-        val declaration = visibleLocalValueDeclaration(semanticFile, identifier.name, identifier.range.start)
-            ?: return false
-        return requiredModuleNameForDeclaration(semanticFile, declaration) == "import"
+        val initializer = requireInitializerForLocal(declaration)
+        if (initializer != null) {
+            return builtinRequireModuleName(semanticFile, initializer) == "import"
+        }
+        val localStatement = declaration.anchorNode?.parent as? LocalStatement ?: return false
+        val localIndex = localStatement.init.indexOf(declaration.anchorNode)
+        if (localIndex < 0) {
+            return false
+        }
+        val initExpression = localStatement.variables.getOrNull(localIndex) as? Identifier ?: return false
+        val hopExclusions = localStatement.init.mapNotNull { localId ->
+            semanticFile.snapshot.binder.declarationIndex
+                .getDeclarations(localId)
+                .firstOrNull { it.kind == DeclarationKind.LOCAL }
+                ?.id
+        }.toSet()
+        return aliasResolvesToImportCallable(semanticFile, initExpression, hopExclusions, visited)
     }
 
     private fun importedSymbolLocation(symbolId: String): WorkspaceLocation? {
@@ -1010,21 +1072,28 @@ class LuaWorkspaceQueryFacade(
             return null
         }
         val callType = resolved.exportSurface?.moduleType?.fields?.get("__call") ?: return null
+        // Normalize Android-Lua import callable display regardless of vararg name formatting.
+        val displayName = when {
+            callType.displayName == "fun(...: any...): any" -> callType.displayName
+            callType.displayName.contains("any...") || callType.displayName.startsWith("fun(") ->
+                "fun(...: any...): any"
+            else -> callType.displayName
+        }
         return io.github.dingyi222666.luaparser.semantic.api.Symbol(
             name = "import",
             kind = SymbolKind.FUNCTION,
             range = null,
             type = TypeInfo(
-                displayName = callType.displayName,
-                detail = callType.displayName,
+                displayName = displayName,
+                detail = displayName,
                 kind = TypeInfoKind.FUNCTION
             ),
             declaredType = TypeInfo(
-                displayName = callType.displayName,
-                detail = callType.displayName,
+                displayName = displayName,
+                detail = displayName,
                 kind = TypeInfoKind.FUNCTION
             ),
-            detail = callType.displayName,
+            detail = displayName,
             symbolId = "builtin-import:${resolved.provider?.path?.value.orEmpty()}"
         )
     }
