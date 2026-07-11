@@ -16,6 +16,7 @@ import io.github.dingyi222666.luaparser.semantic.checker.MemberResolver
 import io.github.dingyi222666.luaparser.semantic.comments.CommentAttachPass
 import io.github.dingyi222666.luaparser.semantic.types.model.FunctionParameter
 import io.github.dingyi222666.luaparser.semantic.types.model.FunctionType
+import io.github.dingyi222666.luaparser.semantic.types.model.LiteralType
 import io.github.dingyi222666.luaparser.semantic.types.model.PrimitiveType
 import io.github.dingyi222666.luaparser.semantic.types.model.TableType
 import io.github.dingyi222666.luaparser.semantic.types.model.Type
@@ -230,13 +231,12 @@ class MemberResolverMultiLevelChainTddTest {
         val leaf = harness.returnExpression()
         val type = harness.evaluator.evaluate(leaf)
 
-        // Inferred string literal leaf → string (or literal subtype / unknown if
-        // inference is incomplete; never crash).
+        // Inferred string literal leaf may be PrimitiveType.STRING, a
+        // LiteralType("hi", STRING) whose displayName is `"hi"` (quotes, not the
+        // word "string"), or UnknownType if inference is incomplete. Never crash.
         assertTrue(
-            type == PrimitiveType.STRING ||
-                type.displayName.contains("string", ignoreCase = true) ||
-                type == UnknownType,
-            "expected string-ish or unknown leaf, got ${type.displayName}"
+            isStringishOrUnknown(type),
+            "expected string-ish or unknown leaf, got ${type.displayName} (${type::class.simpleName})"
         )
         assertNotNull(type)
     }
@@ -333,6 +333,23 @@ class MemberResolverMultiLevelChainTddTest {
     }
 
     // --- helpers ------------------------------------------------------------
+
+    /**
+     * Accepts string primitive, string literal types (`"hi"` → displayName `"hi"`),
+     * or unknown degradation for incomplete inference.
+     */
+    private fun isStringishOrUnknown(type: Type): Boolean {
+        if (type == UnknownType || type == PrimitiveType.STRING) return true
+        if (type is LiteralType && type.baseType == PrimitiveType.STRING) return true
+        val name = type.displayName
+        if (name.equals("string", ignoreCase = true)) return true
+        // Quoted string literal display names: "hi", 'hi'
+        if (name.length >= 2) {
+            val q = name.first()
+            if ((q == '"' || q == '\'') && name.last() == q) return true
+        }
+        return name.contains("string", ignoreCase = true)
+    }
 
     private fun resolver(source: String = ""): ResolverHarness {
         val chunk = parser.parse(source)
