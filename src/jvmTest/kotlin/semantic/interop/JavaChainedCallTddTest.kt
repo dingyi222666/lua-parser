@@ -563,11 +563,13 @@ class JavaChainedCallTddTest {
 
     @Test
     fun completion_after_file_instance_includes_javabean_property_aliases() {
+        // Keep local names distinct from member needles so completion is requested on the
+        // Java member expression (TASK-177), not the lexical local binding.
         val harness = jvmHarness(
             "main.lua" to """
                 local File = luajava.bindClass("java.io.File")
-                local parent = File("src/main/kotlin").parent
-                return parent
+                local result = File("src/main/kotlin").parent
+                return result
             """.trimIndent()
         )
 
@@ -584,8 +586,8 @@ class JavaChainedCallTddTest {
             "main.lua" to """
                 local ArrayList = luajava.bindClass("java.util.ArrayList")
                 local list = ArrayList()
-                local empty = list.empty
-                return empty
+                local result = list.empty
+                return result
             """.trimIndent()
         )
 
@@ -599,8 +601,8 @@ class JavaChainedCallTddTest {
             "main.lua" to """
                 local Bean = luajava.bindClass("semantic.interop.JavaChainedCallTddTest${'$'}MutableJavaBean")
                 local bean = Bean()
-                local title = bean.title
-                return title
+                local result = bean.title
+                return result
             """.trimIndent()
         )
 
@@ -614,8 +616,8 @@ class JavaChainedCallTddTest {
         val harness = jvmHarness(
             "main.lua" to """
                 local System = luajava.bindClass("java.lang.System")
-                local props = System.properties
-                return props
+                local result = System.properties
+                return result
             """.trimIndent(),
             classes = setOf("java.util.Properties")
         )
@@ -630,8 +632,8 @@ class JavaChainedCallTddTest {
             "main.lua" to """
                 local Bean = luajava.bindClass("semantic.interop.JavaChainedCallTddTest${'$'}OverloadedGetterBean")
                 local bean = Bean()
-                local property = bean.code
-                return property
+                local result = bean.code
+                return result
             """.trimIndent()
         )
         val overloadedCompletions = overloaded.queries.completions(
@@ -640,7 +642,8 @@ class JavaChainedCallTddTest {
         )
         assertFalse(
             overloadedCompletions.any { it.label == "code" && it.kind == CompletionItemKind.FIELD },
-            "Overloaded getter must not export a readable JavaBean alias; actual: ${'$'}{overloadedCompletions.map { "${'$'}{it.label}:${'$'}{it.kind}" }}"
+            "Overloaded getter must not export a readable JavaBean alias; actual: " +
+                overloadedCompletions.map { "${it.label}:${it.kind}" }
         )
         assertCompletion(overloadedCompletions, "getCode", CompletionItemKind.METHOD)
 
@@ -648,8 +651,8 @@ class JavaChainedCallTddTest {
             "main.lua" to """
                 local Bean = luajava.bindClass("semantic.interop.JavaChainedCallTddTest${'$'}WriteOnlyBean")
                 local bean = Bean()
-                local token = bean.token
-                return token
+                local result = bean.token
+                return result
             """.trimIndent()
         )
         val writeOnlyCompletions = writeOnly.queries.completions(
@@ -658,7 +661,8 @@ class JavaChainedCallTddTest {
         )
         assertFalse(
             writeOnlyCompletions.any { it.label == "token" && it.kind == CompletionItemKind.FIELD },
-            "Write-only setter must not export a readable JavaBean alias; actual: ${'$'}{writeOnlyCompletions.map { "${'$'}{it.label}:${'$'}{it.kind}" }}"
+            "Write-only setter must not export a readable JavaBean alias; actual: " +
+                writeOnlyCompletions.map { "${it.label}:${it.kind}" }
         )
         assertCompletion(writeOnlyCompletions, "setToken", CompletionItemKind.METHOD)
     }
@@ -975,9 +979,13 @@ class JavaChainedCallTddTest {
         harness: WorkspaceSemanticHarness,
         memberNeedle: String,
         label: String,
-        kind: CompletionItemKind
+        kind: CompletionItemKind,
+        occurrence: Int = 1
     ) {
-        val completions = harness.queries.completions(harness.path("main.lua"), harness.positionOf("main.lua", memberNeedle))
+        val completions = harness.queries.completions(
+            harness.path("main.lua"),
+            harness.positionOf("main.lua", memberNeedle, occurrence)
+        )
         assertCompletion(completions, label, kind)
     }
 

@@ -312,12 +312,17 @@ private fun javaBeanGetterReturnType(member: JavaMemberType): Type? {
         return null
     }
     val signatures = (member.valueType as? CallableType)?.callSignatures ?: return null
-    if (signatures.size != 1) {
+    // Readable JavaBean getters are the unique zero-argument overload. Methods that also
+    // expose parameterised overloads (e.g. System.getProperties() / getProperties(String))
+    // still contribute a conservative property alias from the zero-arg surface.
+    val zeroArgSignatures = signatures.filter { signature ->
+        signature.parameters.isEmpty()
+    }
+    if (zeroArgSignatures.size != 1) {
         return null
     }
-    val signature = signatures.single()
+    val signature = zeroArgSignatures.single()
     if (
-        signature.parameters.isNotEmpty() ||
         signature.returnType == PrimitiveType.NIL ||
         signature.returnType == PrimitiveType.UNKNOWN ||
         signature.returnType == UnknownType
