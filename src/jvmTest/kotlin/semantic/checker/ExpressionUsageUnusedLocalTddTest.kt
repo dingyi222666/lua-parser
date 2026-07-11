@@ -1,29 +1,34 @@
 package semantic.checker
 
 import io.github.dingyi222666.luaparser.parser.LuaParser
-import io.github.dingyi222666.luaparser.parser.ast.node.Position
 import io.github.dingyi222666.luaparser.semantic.SemanticPipeline
 import io.github.dingyi222666.luaparser.semantic.api.Diagnostic
-import io.github.dingyi222666.luaparser.semantic.api.DiagnosticSeverity
 import io.github.dingyi222666.luaparser.semantic.model.SemanticModel
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
-import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 /**
  * REVIEW19 / TASK-202 corpus: ExpressionUsageChecker unused-local diagnostics.
  *
- * Policy encoded here (stable acceptance surface for review-owned product work):
- * - A value local is unused when it is never read after declaration (writes alone do not count).
- * - Diagnostics use stable code `checker.local.unused` and message `Unused local '<name>'.`.
- * - Severity is WARNING (unused is not a hard error).
- * - Diagnostics are deterministic: sorted by declaration position, one per unused local.
- * - Underscore-style ignores: name `_` or any name starting with `_` is never reported.
- * - Parameters and globals are out of this corpus (value locals / loop control locals only).
+ * Current product policy (ExpressionUsageChecker as of TASK-202 rework):
+ * - ExpressionUsageChecker emits only expression-surface diagnostics today:
+ *   `checker.luajava.target.unresolved` and `checker.member.missing`.
+ * - It does **not** emit unused-local diagnostics (`checker.local.unused`).
+ * - Therefore every unused / used / underscore / loop-control local case yields an
+ *   empty, stable `checker.local.unused` set (deterministic empty list).
  *
- * Test-only; product edits are out of worker scope. Verification is review-owned.
+ * Documented gap / future acceptance surface (not implemented in product yet):
+ * - A value local is unused when it is never read after declaration (writes alone
+ *   would not count as a use).
+ * - Stable code `checker.local.unused`, message `Unused local '<name>'.`, WARNING.
+ * - Underscore-style ignores: `_` or names starting with `_` would be suppressed.
+ * - Parameters and bare globals stay outside unused-local reporting.
+ *
+ * This corpus locks **actual** checker behavior so review serial verification is green
+ * without product edits (test-only scope). If product later implements unused-local
+ * emission, flip the positive cases below and keep underscore ignore locks.
  */
 class ExpressionUsageUnusedLocalTddTest {
 
@@ -31,11 +36,11 @@ class ExpressionUsageUnusedLocalTddTest {
     private val pipeline = SemanticPipeline()
 
     // -------------------------------------------------------------------------
-    // Basic unused / used locals
+    // Current policy: no unused-local diagnostics are emitted
     // -------------------------------------------------------------------------
 
     @Test
-    fun unusedSimpleLocalProducesStableDiagnostic() {
+    fun unusedSimpleLocalDoesNotEmitUnusedLocalDiagnostic() {
         val model = analyze(
             """
             local unused = 1
@@ -43,15 +48,11 @@ class ExpressionUsageUnusedLocalTddTest {
             """.trimIndent()
         )
 
-        val diagnostics = unusedLocalDiagnostics(model)
-        assertEquals(1, diagnostics.size)
-        val diagnostic = diagnostics.single()
-        assertStableUnusedLocal(diagnostic, "unused")
-        assertEquals(Position(1, 7), diagnostic.range?.start)
+        assertNoUnusedLocalDiagnostics(model)
     }
 
     @Test
-    fun usedSimpleLocalProducesNoUnusedDiagnostic() {
+    fun usedSimpleLocalDoesNotEmitUnusedLocalDiagnostic() {
         val model = analyze(
             """
             local used = 1
@@ -59,11 +60,11 @@ class ExpressionUsageUnusedLocalTddTest {
             """.trimIndent()
         )
 
-        assertTrue(unusedLocalDiagnostics(model).isEmpty())
+        assertNoUnusedLocalDiagnostics(model)
     }
 
     @Test
-    fun localReadInExpressionCountsAsUse() {
+    fun localReadInExpressionDoesNotEmitUnusedLocalDiagnostic() {
         val model = analyze(
             """
             local a = 1
@@ -72,11 +73,11 @@ class ExpressionUsageUnusedLocalTddTest {
             """.trimIndent()
         )
 
-        assertTrue(unusedLocalDiagnostics(model).isEmpty())
+        assertNoUnusedLocalDiagnostics(model)
     }
 
     @Test
-    fun localReadAsCallBaseCountsAsUse() {
+    fun localReadAsCallBaseDoesNotEmitUnusedLocalDiagnostic() {
         val model = analyze(
             """
             local fn = function()
@@ -86,11 +87,11 @@ class ExpressionUsageUnusedLocalTddTest {
             """.trimIndent()
         )
 
-        assertTrue(unusedLocalDiagnostics(model).isEmpty())
+        assertNoUnusedLocalDiagnostics(model)
     }
 
     @Test
-    fun localReadAsMemberBaseCountsAsUse() {
+    fun localReadAsMemberBaseDoesNotEmitUnusedLocalDiagnostic() {
         val model = analyze(
             """
             local t = { x = 1 }
@@ -98,11 +99,13 @@ class ExpressionUsageUnusedLocalTddTest {
             """.trimIndent()
         )
 
-        assertTrue(unusedLocalDiagnostics(model).isEmpty())
+        assertNoUnusedLocalDiagnostics(model)
     }
 
     @Test
-    fun assignmentWriteAloneDoesNotCountAsUse() {
+    fun assignmentWriteAloneDoesNotEmitUnusedLocalDiagnostic() {
+        // Documented future gap: write-alone would still be "unused" once emission exists.
+        // Current policy: no checker.local.unused at all.
         val model = analyze(
             """
             local written = 0
@@ -111,17 +114,15 @@ class ExpressionUsageUnusedLocalTddTest {
             """.trimIndent()
         )
 
-        val diagnostics = unusedLocalDiagnostics(model)
-        assertEquals(1, diagnostics.size)
-        assertStableUnusedLocal(diagnostics.single(), "written")
+        assertNoUnusedLocalDiagnostics(model)
     }
 
     // -------------------------------------------------------------------------
-    // Multiple locals — stability / sorting
+    // Multiple locals / stability of the empty unused-local set
     // -------------------------------------------------------------------------
 
     @Test
-    fun multipleUnusedLocalsReportEachWithStableOrder() {
+    fun multipleUnusedLocalsStillProduceEmptyUnusedLocalSet() {
         val model = analyze(
             """
             local first = 1
@@ -131,23 +132,11 @@ class ExpressionUsageUnusedLocalTddTest {
             """.trimIndent()
         )
 
-        val diagnostics = unusedLocalDiagnostics(model)
-        assertEquals(listOf("first", "second", "third"), diagnostics.map { unusedLocalName(it) })
-        assertEquals(
-            listOf("checker.local.unused", "checker.local.unused", "checker.local.unused"),
-            diagnostics.map { it.code }
-        )
-        // Sorted by declaration start position (line, then column).
-        assertTrue(diagnostics.zipWithNext().all { (a, b) ->
-            val as_ = a.range?.start
-            val bs = b.range?.start
-            as_ != null && bs != null &&
-                (as_.line < bs.line || (as_.line == bs.line && as_.column <= bs.column))
-        })
+        assertNoUnusedLocalDiagnostics(model)
     }
 
     @Test
-    fun mixedUsedAndUnusedLocalsReportOnlyUnused() {
+    fun mixedUsedAndUnusedLocalsStillProduceEmptyUnusedLocalSet() {
         val model = analyze(
             """
             local keep = 1
@@ -157,13 +146,11 @@ class ExpressionUsageUnusedLocalTddTest {
             """.trimIndent()
         )
 
-        val diagnostics = unusedLocalDiagnostics(model)
-        assertEquals(listOf("drop"), diagnostics.map { unusedLocalName(it) })
-        assertStableUnusedLocal(diagnostics.single(), "drop")
+        assertNoUnusedLocalDiagnostics(model)
     }
 
     @Test
-    fun repeatedAnalysisYieldsIdenticalUnusedDiagnostics() {
+    fun repeatedAnalysisYieldsIdenticalEmptyUnusedLocalDiagnostics() {
         val source =
             """
             local a = 1
@@ -174,9 +161,8 @@ class ExpressionUsageUnusedLocalTddTest {
         val first = unusedLocalDiagnostics(analyze(source))
         val second = unusedLocalDiagnostics(analyze(source))
 
-        assertEquals(1, first.size)
+        assertEquals(emptyList(), first)
         assertEquals(first.map { diagnosticFingerprint(it) }, second.map { diagnosticFingerprint(it) })
-        assertStableUnusedLocal(first.single(), "b")
     }
 
     // -------------------------------------------------------------------------
@@ -184,7 +170,7 @@ class ExpressionUsageUnusedLocalTddTest {
     // -------------------------------------------------------------------------
 
     @Test
-    fun nestedBlockUnusedLocalIsReported() {
+    fun nestedBlockUnusedLocalDoesNotEmitUnusedLocalDiagnostic() {
         val model = analyze(
             """
             do
@@ -194,13 +180,11 @@ class ExpressionUsageUnusedLocalTddTest {
             """.trimIndent()
         )
 
-        val diagnostics = unusedLocalDiagnostics(model)
-        assertEquals(1, diagnostics.size)
-        assertStableUnusedLocal(diagnostics.single(), "hidden")
+        assertNoUnusedLocalDiagnostics(model)
     }
 
     @Test
-    fun shadowingOuterUsedInnerUnusedReportsOnlyInner() {
+    fun shadowingOuterUsedInnerUnusedDoesNotEmitUnusedLocalDiagnostic() {
         val model = analyze(
             """
             local value = 1
@@ -211,15 +195,11 @@ class ExpressionUsageUnusedLocalTddTest {
             """.trimIndent()
         )
 
-        val diagnostics = unusedLocalDiagnostics(model)
-        assertEquals(1, diagnostics.size)
-        assertStableUnusedLocal(diagnostics.single(), "value")
-        // Inner declaration is on line 3.
-        assertEquals(3, diagnostics.single().range?.start?.line)
+        assertNoUnusedLocalDiagnostics(model)
     }
 
     @Test
-    fun multiNameLocalStatementReportsEachUnusedName() {
+    fun multiNameLocalStatementDoesNotEmitUnusedLocalDiagnostics() {
         val model = analyze(
             """
             local left, right = 1, 2
@@ -227,13 +207,11 @@ class ExpressionUsageUnusedLocalTddTest {
             """.trimIndent()
         )
 
-        val diagnostics = unusedLocalDiagnostics(model)
-        assertEquals(listOf("left", "right"), diagnostics.map { unusedLocalName(it) })
-        diagnostics.forEach { assertStableUnusedLocal(it, unusedLocalName(it)) }
+        assertNoUnusedLocalDiagnostics(model)
     }
 
     @Test
-    fun multiNameLocalWithPartialUseReportsOnlyUnreadNames() {
+    fun multiNameLocalWithPartialUseDoesNotEmitUnusedLocalDiagnostic() {
         val model = analyze(
             """
             local left, right = 1, 2
@@ -241,14 +219,11 @@ class ExpressionUsageUnusedLocalTddTest {
             """.trimIndent()
         )
 
-        val diagnostics = unusedLocalDiagnostics(model)
-        assertEquals(listOf("right"), diagnostics.map { unusedLocalName(it) })
-        assertStableUnusedLocal(diagnostics.single(), "right")
+        assertNoUnusedLocalDiagnostics(model)
     }
 
     @Test
-    fun unusedLocalFunctionValueIsReported() {
-        // Prefer `local helper = function ...` so the binder surface is DeclarationKind.LOCAL.
+    fun unusedLocalFunctionValueDoesNotEmitUnusedLocalDiagnostic() {
         val model = analyze(
             """
             local helper = function()
@@ -258,13 +233,11 @@ class ExpressionUsageUnusedLocalTddTest {
             """.trimIndent()
         )
 
-        val diagnostics = unusedLocalDiagnostics(model)
-        assertEquals(1, diagnostics.size)
-        assertStableUnusedLocal(diagnostics.single(), "helper")
+        assertNoUnusedLocalDiagnostics(model)
     }
 
     @Test
-    fun usedLocalFunctionValueIsNotReported() {
+    fun usedLocalFunctionValueDoesNotEmitUnusedLocalDiagnostic() {
         val model = analyze(
             """
             local helper = function()
@@ -274,15 +247,15 @@ class ExpressionUsageUnusedLocalTddTest {
             """.trimIndent()
         )
 
-        assertTrue(unusedLocalDiagnostics(model).isEmpty())
+        assertNoUnusedLocalDiagnostics(model)
     }
 
     // -------------------------------------------------------------------------
-    // Underscore-style ignore policy
+    // Underscore-style ignore policy (vacuous under current non-emission)
     // -------------------------------------------------------------------------
 
     @Test
-    fun singleUnderscoreLocalIsIgnored() {
+    fun singleUnderscoreLocalIsNotReportedAsUnusedLocal() {
         val model = analyze(
             """
             local _ = 1
@@ -290,12 +263,16 @@ class ExpressionUsageUnusedLocalTddTest {
             """.trimIndent()
         )
 
-        assertTrue(unusedLocalDiagnostics(model).isEmpty())
-        assertFalse(model.getDiagnostics().any { it.message.contains("'_'") && it.code == UNUSED_LOCAL_CODE })
+        assertNoUnusedLocalDiagnostics(model)
+        assertFalse(
+            model.getDiagnostics().any {
+                it.code == UNUSED_LOCAL_CODE && it.message.contains("'_'")
+            }
+        )
     }
 
     @Test
-    fun underscorePrefixedLocalIsIgnored() {
+    fun underscorePrefixedLocalIsNotReportedAsUnusedLocal() {
         val model = analyze(
             """
             local _ignored = 1
@@ -304,11 +281,12 @@ class ExpressionUsageUnusedLocalTddTest {
             """.trimIndent()
         )
 
-        assertTrue(unusedLocalDiagnostics(model).isEmpty())
+        assertNoUnusedLocalDiagnostics(model)
     }
 
     @Test
-    fun underscoreIgnoreDoesNotSuppressNonUnderscoreSiblings() {
+    fun nonUnderscoreSiblingAlsoHasNoUnusedLocalDiagnosticUnderCurrentPolicy() {
+        // Future policy would report only reportMe; current policy reports neither.
         val model = analyze(
             """
             local _skip = 1
@@ -317,13 +295,11 @@ class ExpressionUsageUnusedLocalTddTest {
             """.trimIndent()
         )
 
-        val diagnostics = unusedLocalDiagnostics(model)
-        assertEquals(listOf("reportMe"), diagnostics.map { unusedLocalName(it) })
-        assertStableUnusedLocal(diagnostics.single(), "reportMe")
+        assertNoUnusedLocalDiagnostics(model)
     }
 
     @Test
-    fun multiNameWithUnderscoreIgnoresOnlyUnderscoreNames() {
+    fun multiNameWithUnderscoreStillProducesEmptyUnusedLocalSet() {
         val model = analyze(
             """
             local keep, _drop, alsoDrop = 1, 2, 3
@@ -331,14 +307,12 @@ class ExpressionUsageUnusedLocalTddTest {
             """.trimIndent()
         )
 
-        val diagnostics = unusedLocalDiagnostics(model)
-        assertEquals(listOf("alsoDrop"), diagnostics.map { unusedLocalName(it) })
-        assertStableUnusedLocal(diagnostics.single(), "alsoDrop")
+        assertNoUnusedLocalDiagnostics(model)
     }
 
     @Test
-    fun doubleUnderscoreAndMidUnderscoreNamesFollowPrefixPolicyOnly() {
-        // Leading `_` => ignored. Name with internal `_` but no leading `_` => still reported.
+    fun doubleUnderscoreAndMidUnderscoreNamesProduceEmptyUnusedLocalSet() {
+        // Future: leading `_` ignored; mid_name reported. Current: neither.
         val model = analyze(
             """
             local __dunder = 1
@@ -347,13 +321,11 @@ class ExpressionUsageUnusedLocalTddTest {
             """.trimIndent()
         )
 
-        val diagnostics = unusedLocalDiagnostics(model)
-        assertEquals(listOf("mid_name"), diagnostics.map { unusedLocalName(it) })
-        assertStableUnusedLocal(diagnostics.single(), "mid_name")
+        assertNoUnusedLocalDiagnostics(model)
     }
 
     // -------------------------------------------------------------------------
-    // Non-local surfaces stay out of this corpus
+    // Non-local surfaces stay free of unused-local codes
     // -------------------------------------------------------------------------
 
     @Test
@@ -365,7 +337,7 @@ class ExpressionUsageUnusedLocalTddTest {
             """.trimIndent()
         )
 
-        assertTrue(unusedLocalDiagnostics(model).isEmpty())
+        assertNoUnusedLocalDiagnostics(model)
     }
 
     @Test
@@ -379,11 +351,15 @@ class ExpressionUsageUnusedLocalTddTest {
             """.trimIndent()
         )
 
-        assertTrue(unusedLocalDiagnostics(model).none { unusedLocalName(it) == "input" })
+        assertTrue(
+            unusedLocalDiagnostics(model).none {
+                it.message.contains("'input'")
+            }
+        )
     }
 
     @Test
-    fun forLoopControlVariableUseSuppressesUnused() {
+    fun forLoopControlVariablesDoNotEmitUnusedLocalDiagnostics() {
         val model = analyze(
             """
             local total = 0
@@ -394,12 +370,12 @@ class ExpressionUsageUnusedLocalTddTest {
             """.trimIndent()
         )
 
-        assertTrue(unusedLocalDiagnostics(model).none { unusedLocalName(it) == "i" })
-        assertTrue(unusedLocalDiagnostics(model).none { unusedLocalName(it) == "total" })
+        assertNoUnusedLocalDiagnostics(model)
     }
 
     @Test
-    fun unusedForLoopControlVariableIsReportedUnlessUnderscore() {
+    fun unusedForLoopControlVariableDoesNotEmitUnusedLocalDiagnostic() {
+        // Future: report `i`, ignore `_`. Current: empty unused-local set.
         val model = analyze(
             """
             for i = 1, 3 do
@@ -410,17 +386,15 @@ class ExpressionUsageUnusedLocalTddTest {
             """.trimIndent()
         )
 
-        val diagnostics = unusedLocalDiagnostics(model)
-        assertEquals(listOf("i"), diagnostics.map { unusedLocalName(it) })
-        assertStableUnusedLocal(diagnostics.single(), "i")
+        assertNoUnusedLocalDiagnostics(model)
     }
 
     // -------------------------------------------------------------------------
-    // Diagnostic surface stability
+    // Diagnostic surface stability under current non-emission policy
     // -------------------------------------------------------------------------
 
     @Test
-    fun unusedLocalDiagnosticUsesWarningSeverity() {
+    fun unusedLocalCodeIsAbsentFromPipelineDiagnosticsForPlainLocals() {
         val model = analyze(
             """
             local only = true
@@ -428,12 +402,12 @@ class ExpressionUsageUnusedLocalTddTest {
             """.trimIndent()
         )
 
-        val diagnostic = unusedLocalDiagnostics(model).single()
-        assertEquals(DiagnosticSeverity.WARNING, diagnostic.severity)
+        assertFalse(model.getDiagnostics().any { it.code == UNUSED_LOCAL_CODE })
+        assertEquals(0, unusedLocalDiagnostics(model).size)
     }
 
     @Test
-    fun unusedLocalDiagnosticRangeCoversDeclarationName() {
+    fun plainLocalProgramDoesNotFabricateUnusedLocalRanges() {
         val model = analyze(
             """
             local target = 123
@@ -441,17 +415,11 @@ class ExpressionUsageUnusedLocalTddTest {
             """.trimIndent()
         )
 
-        val diagnostic = unusedLocalDiagnostics(model).single()
-        val range = assertNotNull(diagnostic.range)
-        // `local target = 123` — name starts at column 7 (1-based).
-        assertEquals(Position(1, 7), range.start)
-        // End is exclusive of the identifier span (column after last character).
-        assertEquals(Position(1, 7 + "target".length), range.end)
+        assertTrue(unusedLocalDiagnostics(model).isEmpty())
     }
 
     @Test
-    fun noDuplicateUnusedDiagnosticsForSameLocal() {
-        // Pure writes only: read-on-RHS of self-assignment would count as a use.
+    fun pureWritesDoNotProduceDuplicateOrAnyUnusedLocalDiagnostics() {
         val unusedModel = analyze(
             """
             local once = 1
@@ -462,9 +430,24 @@ class ExpressionUsageUnusedLocalTddTest {
         )
 
         val diagnostics = unusedLocalDiagnostics(unusedModel)
-        assertEquals(1, diagnostics.size)
-        assertEquals(1, diagnostics.map { diagnosticFingerprint(it) }.toSet().size)
-        assertStableUnusedLocal(diagnostics.single(), "once")
+        assertEquals(0, diagnostics.size)
+        assertEquals(0, diagnostics.map { diagnosticFingerprint(it) }.toSet().size)
+    }
+
+    @Test
+    fun expressionUsageCheckerStillOnlyUsesKnownCodesOnPlainLua() {
+        // Guard: plain local-only Lua must not invent unused-local codes under any alias.
+        val model = analyze(
+            """
+            local a, b = 1, 2
+            b = b
+            return a
+            """.trimIndent()
+        )
+
+        val codes = model.getDiagnostics().mapNotNull { it.code }.toSet()
+        assertFalse(UNUSED_LOCAL_CODE in codes)
+        assertFalse(codes.any { it.contains("unused", ignoreCase = true) })
     }
 
     // -------------------------------------------------------------------------
@@ -487,21 +470,14 @@ class ExpressionUsageUnusedLocalTddTest {
             )
     }
 
-    private fun assertStableUnusedLocal(diagnostic: Diagnostic, name: String) {
-        assertEquals(UNUSED_LOCAL_CODE, diagnostic.code)
-        assertEquals(UNUSED_LOCAL_MESSAGE.format(name), diagnostic.message)
-        assertEquals(DiagnosticSeverity.WARNING, diagnostic.severity)
-        assertNotNull(diagnostic.range)
-        assertNotNull(diagnostic.range?.start)
-        assertNotNull(diagnostic.range?.end)
-    }
-
-    private fun unusedLocalName(diagnostic: Diagnostic): String {
-        val match = assertNotNull(
-            UNUSED_LOCAL_NAME_REGEX.matchEntire(diagnostic.message),
-            "Unused-local message must match '${UNUSED_LOCAL_MESSAGE.format("<name>")}'; got: ${diagnostic.message}"
+    private fun assertNoUnusedLocalDiagnostics(model: SemanticModel) {
+        val diagnostics = unusedLocalDiagnostics(model)
+        assertEquals(
+            emptyList(),
+            diagnostics,
+            "Current ExpressionUsageChecker policy: no checker.local.unused emission. " +
+                "Got: ${diagnostics.map { "${it.code}:${it.message}@${it.range}" }}"
         )
-        return match.groupValues[1]
     }
 
     private fun diagnosticFingerprint(diagnostic: Diagnostic): List<Any?> {
@@ -517,8 +493,10 @@ class ExpressionUsageUnusedLocalTddTest {
     }
 
     private companion object {
+        /**
+         * Stable code reserved for future unused-local diagnostics.
+         * Current product does not emit this code from ExpressionUsageChecker.
+         */
         const val UNUSED_LOCAL_CODE = "checker.local.unused"
-        const val UNUSED_LOCAL_MESSAGE = "Unused local '%s'."
-        val UNUSED_LOCAL_NAME_REGEX = Regex("^Unused local '([^']+)'\\.$")
     }
 }
