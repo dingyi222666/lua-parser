@@ -19,6 +19,11 @@ import kotlin.test.assertTrue
  * - Unrelated files remain clean.
  *
  * Test-only; product code is out of scope. Verification is review-owned (no Gradle here).
+ *
+ * Note: synthetic graphs must populate [WorkspaceModuleGraph.stronglyConnectedComponentByFile]
+ * (at least singleton components) to match [WorkspaceModuleGraphBuilder]. The planner's
+ * [WorkspaceDirtySetPlanner.Result.affectedDocuments] is derived from reverse-dirty seeds
+ * expanded through SCCs; empty SCC maps would drop legitimate reverse dependents.
  */
 class WorkspaceDirtySetPlannerTddTest {
 
@@ -234,10 +239,11 @@ class WorkspaceDirtySetPlannerTddTest {
                     left to setOf(right),
                     right to setOf(left)
                 ),
-                stronglyConnectedComponents = listOf(scc),
+                stronglyConnectedComponents = listOf(scc, setOf(unrelated)),
                 stronglyConnectedComponentByFile = mapOf(
                     left to scc,
-                    right to scc
+                    right to scc,
+                    unrelated to setOf(unrelated)
                 )
             )
         )
@@ -268,24 +274,27 @@ class WorkspaceDirtySetPlannerTddTest {
                 consumer to fileSnapshot(fingerprint = "main-v1", modules = setOf("main")),
                 unrelated to fileSnapshot(fingerprint = "other-v1", modules = setOf("other"))
             ),
-            graph = WorkspaceModuleGraph(
-                activeProviders = mapOf(
-                    "main" to provider("main", consumer),
-                    "other" to provider("other", unrelated)
-                ),
-                providersByModuleName = mapOf(
-                    "main" to listOf(provider("main", consumer)),
-                    "other" to listOf(provider("other", unrelated))
-                ),
-                unresolvedStaticRequires = mapOf(
-                    consumer to listOf(
-                        WorkspaceModuleGraph.UnresolvedRequire(
-                            consumerPath = consumer,
-                            moduleName = "dep",
-                            range = Range.EMPTY
+            graph = withSingletonSccs(
+                graph = WorkspaceModuleGraph(
+                    activeProviders = mapOf(
+                        "main" to provider("main", consumer),
+                        "other" to provider("other", unrelated)
+                    ),
+                    providersByModuleName = mapOf(
+                        "main" to listOf(provider("main", consumer)),
+                        "other" to listOf(provider("other", unrelated))
+                    ),
+                    unresolvedStaticRequires = mapOf(
+                        consumer to listOf(
+                            WorkspaceModuleGraph.UnresolvedRequire(
+                                consumerPath = consumer,
+                                moduleName = "dep",
+                                range = Range.EMPTY
+                            )
                         )
                     )
-                )
+                ),
+                paths = setOf(consumer, unrelated)
             )
         )
 
@@ -421,6 +430,10 @@ class WorkspaceDirtySetPlannerTddTest {
         range = Range.EMPTY
     )
 
+    /**
+     * Build a linear/DAG module graph with reverse edges and singleton SCCs for every
+     * participating file (mirrors WorkspaceModuleGraphBuilder output shape).
+     */
     private fun chainGraph(
         providers: Map<String, VirtualPath>,
         edges: List<WorkspaceModuleGraph.ResolvedDependency>
@@ -432,11 +445,42 @@ class WorkspaceDirtySetPlannerTddTest {
         edges.forEach { edge ->
             reverse.getOrPut(edge.provider.path) { linkedSetOf() } += edge.consumerPath
         }
+        val allPaths = linkedSetOf<VirtualPath>()
+        allPaths += providers.values
+        edges.forEach { edge ->
+            allPaths += edge.consumerPath
+            allPaths += edge.provider.path
+        }
+        val singletonComponents = allPaths.map { setOf(it) }
+        val componentByFile = allPaths.associateWith { setOf(it) }
         return WorkspaceModuleGraph(
             activeProviders = active,
             providersByModuleName = byModule,
             resolvedDependencies = resolved,
-            reverseDependencies = reverse.mapValues { (_, consumers) -> consumers.toSet() }
+            reverseDependencies = reverse.mapValues { (_, consumers) -> consumers.toSet() },
+            stronglyConnectedComponents = singletonComponents,
+            stronglyConnectedComponentByFile = componentByFile
+        )
+    }
+
+    /** Ensure every path has a singleton SCC entry (required for affectedDocuments expansion). */
+    private fun withSingletonSccs(
+        graph: WorkspaceModuleGraph,
+        paths: Set<VirtualPath>
+    ): WorkspaceModuleGraph {
+        val allPaths = linkedSetOf<VirtualPath>()
+        allPaths += paths
+        allPaths += graph.activeProviders.values.map { it.path }
+        allPaths += graph.resolvedDependencies.keys
+        allPaths += graph.resolvedDependencies.values.flatten().map { it.provider.path }
+        allPaths += graph.unresolvedStaticRequires.keys
+        allPaths += graph.reverseDependencies.keys
+        allPaths += graph.reverseDependencies.values.flatten()
+        val components = allPaths.map { setOf(it) }
+        val byFile = allPaths.associateWith { setOf(it) }
+        return graph.copy(
+            stronglyConnectedComponents = components,
+            stronglyConnectedComponentByFile = byFile
         )
     }
 }
