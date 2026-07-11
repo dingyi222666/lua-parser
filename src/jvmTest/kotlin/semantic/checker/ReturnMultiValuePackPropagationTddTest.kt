@@ -33,7 +33,7 @@ import kotlin.test.assertTrue
  *
  * Complements [ReturnMultiValueCorpusTddTest] by focusing on pack length
  * stability and tail-call degradation rather than broad slot-mismatch coverage.
- * Production defects surface as assertion failures; no product edits.
+ * Production defects surface as assertion failures.
  */
 class ReturnMultiValuePackPropagationTddTest {
 
@@ -144,6 +144,36 @@ class ReturnMultiValuePackPropagationTddTest {
             listOf(PrimitiveType.STRING, PrimitiveType.NUMBER, PrimitiveType.BOOLEAN),
             pack.fixed
         )
+    }
+
+    @Test
+    fun bareUnknownReturnIsFlaggedAsUnconstrainedFreeformShape() {
+        val bare = ValueSequence.of(UnknownType)
+        assertTrue(bare.isBareUnknownReturn)
+        assertEquals(1, bare.fixed.size)
+        assertFalse(bare.isOpenEnded)
+    }
+
+    @Test
+    fun multiUnknownPackIsNotBareUnknownReturn() {
+        val multi = ValueSequence.of(MultiReturnType(listOf(UnknownType, UnknownType)))
+        assertFalse(multi.isBareUnknownReturn)
+        assertEquals(2, multi.fixed.size)
+    }
+
+    @Test
+    fun freeformMultiValueReturnAgainstBareUnknownIsSilent() {
+        // Product policy (TASK-555): unannotated freeform multi-return must not
+        // emit extraValues solely because bare Unknown is a single closed slot.
+        val harness = harness(
+            """
+            local function freeform()
+                return "a", 1, true
+            end
+            """.trimIndent()
+        )
+
+        assertTrue(harness.check("freeform").isEmpty())
     }
 
     // --- final-position tail-call pack propagation ------------------------------

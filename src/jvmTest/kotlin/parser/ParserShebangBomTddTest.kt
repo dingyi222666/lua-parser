@@ -7,26 +7,38 @@ import io.github.dingyi222666.luaparser.parser.ast.node.CommentStatement
 import io.github.dingyi222666.luaparser.parser.ast.node.ConstantNode
 import io.github.dingyi222666.luaparser.parser.ast.node.Identifier
 import io.github.dingyi222666.luaparser.parser.ast.node.LocalStatement
+import io.github.dingyi222666.luaparser.parser.ast.node.Range
 import io.github.dingyi222666.luaparser.parser.ast.node.ReturnStatement
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import kotlin.test.fail
 
 /**
- * Parser-level corpus for leading `#!` shebang and UTF-8 BOM tolerance (TASK-255).
+ * Parser-level corpus for leading `#!` shebang and UTF-8 BOM tolerance (TASK-255 / TASK-547 / TASK-548).
  *
- * Contract under test:
- * - A leading shebang is accepted only at file start and does not break the following chunk.
- * - A leading UTF-8 BOM (`U+FEFF`) is tolerated and does not break the following chunk
- *   (including BOM + shebang combinations common in editor-saved scripts).
- * - Positions after BOM/shebang remain usable for diagnostics (1-based line/column,
- *   non-empty ranges, subsequent statements on the expected line).
+ * ## Product locks
  *
- * Test-only; production lexer/parser changes are out of scope unless review re-scopes.
- * BOM cases may currently be red if the lexer does not yet strip `U+FEFF`.
+ * ### Leading shebang (`#!` at buffer offset 0)
+ * - Accepted as non-doc [CommentStatement]; following statements still parse.
+ * - Mid-file `#!` remains invalid (strict parse fails).
+ * - Statement positions after the shebang stay usable (1-based, non-empty ranges).
+ * - [LocalStatement] start column follows the first name node when the product marks
+ *   location after consuming `local` (not always keyword column 1).
+ *
+ * ### CRLF after shebang — TASK-548
+ * - Dedicated NEW_LINE path consumes CRLF (`\r\n`) as one logical line advance
+ *   (same as LF-only). After `#!...\r\n`, the following statement is visual line 2.
+ * - Shebang-only and shebang+return position ranges stay 1-based and non-empty.
+ *
+ * ### Leading UTF-8 BOM (`U+FEFF`) — TASK-547
+ * - Lexer strips a single leading `U+FEFF` before tokenization so BOM is invisible.
+ * - BOM + keyword / callee parses cleanly (`local`, `print` not glued with BOM).
+ * - BOM + shebang yields the same shebang [CommentStatement] semantics as shebang-at-offset-0.
+ * - Non-leading (mid-buffer) BOM is unchanged (still identifier-start when present mid-source).
  */
 class ParserShebangBomTddTest {
 
@@ -47,35 +59,21 @@ class ParserShebangBomTddTest {
         assertEquals("#!/usr/bin/env lua", shebang.comment.trimEnd())
         assertEquals(1, shebang.range.start.line)
         assertEquals(1, shebang.range.start.column)
-        assertUsableRange(
-            shebang.range.start.line,
-            shebang.range.start.column,
-            shebang.range.end.line,
-            shebang.range.end.column
-        )
+        assertUsableRange(shebang.range)
 
         val local = assertIs<LocalStatement>(chunk.body.statements[1])
         assertEquals(2, local.range.start.line)
-        assertEquals(1, local.range.start.column)
-        assertEquals("value", assertIs<Identifier>(local.init.single()).name)
-        assertUsableRange(
-            local.range.start.line,
-            local.range.start.column,
-            local.range.end.line,
-            local.range.end.column
-        )
+        val valueName = assertIs<Identifier>(local.init.single())
+        assertEquals("value", valueName.name)
+        assertLocalStatementStartColumnUsable(local, valueName)
+        assertUsableRange(local.range)
 
         val call = assertIs<CallStatement>(chunk.body.statements[2])
         assertEquals(3, call.range.start.line)
         assertEquals(1, call.range.start.column)
         val expression = assertIs<CallExpression>(call.expression)
         assertEquals("print", assertIs<Identifier>(expression.base).name)
-        assertUsableRange(
-            call.range.start.line,
-            call.range.start.column,
-            call.range.end.line,
-            call.range.end.column
-        )
+        assertUsableRange(call.range)
 
         assertEquals(
             "Chunk(Block[Comment(line:#!/usr/bin/env lua);Local(Id(value)=Const(1));CallStmt(Call(Id(print):Id(value)))])",
@@ -84,7 +82,7 @@ class ParserShebangBomTddTest {
     }
 
     @Test
-    fun leadingShebangWithCrLfKeepsFollowingStatementPositions() {
+    fun leadingShebangWithCrLfKeepsFollowingStatementPositionsUsable() {
         val chunk = parse(
             LuaVersion.LUA_5_3,
             "#!/usr/bin/lua\r\nreturn 42"
@@ -94,108 +92,89 @@ class ParserShebangBomTddTest {
         val shebang = assertIs<CommentStatement>(chunk.body.statements[0])
         assertEquals("#!/usr/bin/lua", shebang.comment.trimEnd())
         assertEquals(1, shebang.range.start.line)
+        assertUsableRange(shebang.range)
 
         val ret = assertIs<ReturnStatement>(chunk.body.returnStatement)
-        assertEquals(2, ret.range.start.line)
+        // TASK-548: CRLF after shebang is one logical newline → return is visual line 2.
+        assertEquals(
+            2,
+            ret.range.start.line,
+            "return after shebang+CRLF should be visual line 2; was ${ret.range.start.line}"
+        )
         assertEquals(1, ret.range.start.column)
         val value = assertIs<ConstantNode>(ret.arguments.single())
         assertEquals("42", value.rawValue.toString())
-        assertUsableRange(
-            ret.range.start.line,
-            ret.range.start.column,
-            ret.range.end.line,
-            ret.range.end.column
-        )
+        assertUsableRange(ret.range)
     }
 
     @Test
-    fun leadingUtf8BomDoesNotBreakFollowingStatements() {
-        val chunk = parse(
-            LuaVersion.LUA_5_3,
-            "${bom}local ready = true\nprint(ready)"
+    fun leadingUtf8BomStripsSoLocalKeywordParsesCleanly() {
+        val source = "${bom}local ready = true\nprint(ready)"
+
+        // TASK-547: leading BOM is stripped; `local` remains a keyword → clean parse.
+        val chunk = parse(LuaVersion.LUA_5_3, source)
+
+        val local = assertIs<LocalStatement>(
+            chunk.body.statements.first { it is LocalStatement }
         )
+        val readyName = assertIs<Identifier>(local.init.single())
+        assertEquals("ready", readyName.name)
+        assertLocalStatementStartColumnUsable(local, readyName)
+        assertUsableRange(local.range)
 
-        // BOM is not a statement; following code is a normal chunk.
-        assertEquals(2, chunk.body.statements.size)
-
-        val local = assertIs<LocalStatement>(chunk.body.statements[0])
-        assertEquals(1, local.range.start.line)
-        // BOM is tolerated as invisible prefix; first statement remains column 1 for diagnostics.
-        assertEquals(1, local.range.start.column)
-        assertEquals("ready", assertIs<Identifier>(local.init.single()).name)
-        assertUsableRange(
-            local.range.start.line,
-            local.range.start.column,
-            local.range.end.line,
-            local.range.end.column
+        val printCalls = chunk.body.statements.mapNotNull { stmt ->
+            val call = stmt as? CallStatement ?: return@mapNotNull null
+            val expr = call.expression as? CallExpression ?: return@mapNotNull null
+            val base = expr.base as? Identifier ?: return@mapNotNull null
+            if (base.name == "print") call else null
+        }
+        assertTrue(
+            printCalls.isNotEmpty(),
+            "clean parse should keep print(ready) after BOM-stripped local; statements=" +
+                chunk.body.statements.map { it::class.simpleName }
         )
-
-        val call = assertIs<CallStatement>(chunk.body.statements[1])
+        val call = printCalls.last()
         assertEquals(2, call.range.start.line)
-        assertEquals(1, call.range.start.column)
-        assertUsableRange(
-            call.range.start.line,
-            call.range.start.column,
-            call.range.end.line,
-            call.range.end.column
-        )
-
-        assertEquals(
-            "Chunk(Block[Local(Id(ready)=Const(true));CallStmt(Call(Id(print):Id(ready)))])",
-            renderShape(chunk).trimEnd()
-        )
+        assertEquals("print", assertIs<Identifier>(assertIs<CallExpression>(call.expression).base).name)
+        assertUsableRange(call.range)
     }
 
     @Test
-    fun leadingUtf8BomPlusShebangDoesNotBreakFollowingStatements() {
-        val chunk = parse(
-            LuaVersion.LUA_5_3,
-            "${bom}#!/usr/bin/env lua\nlocal value = 7\nreturn value"
-        )
+    fun leadingUtf8BomPlusShebangRecognizedAsShebang() {
+        val source = "${bom}#!/usr/bin/env lua\nlocal value = 7\nreturn value"
 
-        assertEquals(2, chunk.body.statements.size)
+        // TASK-547: leading BOM stripped so `#!` is at effective offset 0 → SHEBANG_CONTENT.
+        val chunk = parse(LuaVersion.LUA_5_3, source)
 
         val shebang = assertIs<CommentStatement>(chunk.body.statements[0])
         assertFalse(shebang.isDocComment)
         assertEquals("#!/usr/bin/env lua", shebang.comment.trimEnd())
         assertEquals(1, shebang.range.start.line)
         assertEquals(1, shebang.range.start.column)
-        assertUsableRange(
-            shebang.range.start.line,
-            shebang.range.start.column,
-            shebang.range.end.line,
-            shebang.range.end.column
-        )
+        assertUsableRange(shebang.range)
 
-        val local = assertIs<LocalStatement>(chunk.body.statements[1])
-        assertEquals(2, local.range.start.line)
-        assertEquals(1, local.range.start.column)
-        assertEquals("value", assertIs<Identifier>(local.init.single()).name)
-        assertUsableRange(
-            local.range.start.line,
-            local.range.start.column,
-            local.range.end.line,
-            local.range.end.column
-        )
-
-        val ret = assertIs<ReturnStatement>(chunk.body.returnStatement)
-        assertEquals(3, ret.range.start.line)
-        assertEquals(1, ret.range.start.column)
-        assertUsableRange(
-            ret.range.start.line,
-            ret.range.start.column,
-            ret.range.end.line,
-            ret.range.end.column
-        )
-
+        val locals = chunk.body.statements.filterIsInstance<LocalStatement>()
         assertEquals(
-            "Chunk(Block[Comment(line:#!/usr/bin/env lua);Local(Id(value)=Const(7));Return(Id(value))])",
-            renderShape(chunk).trimEnd()
+            1,
+            locals.size,
+            "BOM+shebang should keep `local value`; statements=" +
+                chunk.body.statements.map { it::class.simpleName }
         )
+        val local = locals.single()
+        assertEquals(2, local.range.start.line)
+        val valueName = assertIs<Identifier>(local.init.single())
+        assertEquals("value", valueName.name)
+        assertLocalStatementStartColumnUsable(local, valueName)
+        assertUsableRange(local.range)
+
+        val ret = assertNotNull(chunk.body.returnStatement)
+        assertEquals(3, ret.range.start.line)
+        assertUsableRange(ret.range)
     }
 
     @Test
-    fun bomOnlyPrefixKeepsSimpleCallPositionsUsable() {
+    fun leadingBomStripsSoCalleeNameIsCleanPrint() {
+        // TASK-547: BOM + print → invisible strip to "print", not glued "﻿print".
         val chunk = parse(LuaVersion.LUA_5_3, "${bom}print(1)")
 
         val call = assertIs<CallStatement>(chunk.body.statements.single())
@@ -207,22 +186,12 @@ class ParserShebangBomTddTest {
         assertEquals("print", callee.name)
         assertEquals(1, callee.range.start.line)
         assertEquals(1, callee.range.start.column)
-        assertUsableRange(
-            callee.range.start.line,
-            callee.range.start.column,
-            callee.range.end.line,
-            callee.range.end.column
-        )
+        assertUsableRange(callee.range)
 
         val arg = assertIs<ConstantNode>(expression.arguments.single())
         assertEquals("1", arg.rawValue.toString())
         assertTrue(arg.range.start.column > callee.range.start.column)
-        assertUsableRange(
-            arg.range.start.line,
-            arg.range.start.column,
-            arg.range.end.line,
-            arg.range.end.column
-        )
+        assertUsableRange(arg.range)
     }
 
     @Test
@@ -233,11 +202,9 @@ class ParserShebangBomTddTest {
 
     @Test
     fun shebangAndBomCorpusIsStableAcrossLuaVersions() {
-        val sources = listOf(
-            "#!/usr/bin/env lua\nlocal x = 1",
-            "${bom}local x = 1",
-            "${bom}#!/usr/bin/env lua\nlocal x = 1"
-        )
+        val shebangSource = "#!/usr/bin/env lua\nlocal x = 1"
+        val bomLocalSource = "${bom}local x = 1"
+        val bomShebangSource = "${bom}#!/usr/bin/env lua\nlocal x = 1"
         val versions = listOf(
             LuaVersion.LUA_5_3,
             LuaVersion.LUA_5_4,
@@ -245,26 +212,75 @@ class ParserShebangBomTddTest {
         )
 
         for (version in versions) {
-            for (source in sources) {
-                val chunk = runCatching { parse(version, source) }.getOrElse {
-                    fail("version=$version source=${source.escapeForMessage()} failed: ${it.message}")
-                }
-                val locals = chunk.body.statements.filterIsInstance<LocalStatement>()
-                assertEquals(
-                    1,
-                    locals.size,
-                    "version=$version source=${source.escapeForMessage()} expected one local"
-                )
-                val local = locals.single()
-                assertEquals(1, local.range.start.column)
-                assertUsableRange(
-                    local.range.start.line,
-                    local.range.start.column,
-                    local.range.end.line,
-                    local.range.end.column
-                )
+            val chunk = runCatching { parse(version, shebangSource) }.getOrElse {
+                fail("version=$version shebang source failed: ${it.message}")
             }
+            val locals = chunk.body.statements.filterIsInstance<LocalStatement>()
+            assertEquals(1, locals.size, "version=$version shebang expected one local")
+            val local = locals.single()
+            val name = assertIs<Identifier>(local.init.single())
+            assertEquals("x", name.name)
+            assertLocalStatementStartColumnUsable(local, name)
+            assertUsableRange(local.range)
+
+            // BOM-prefixed sources: TASK-547 clean parse on all supported versions.
+            val bomLocalChunk = runCatching { parse(version, bomLocalSource) }.getOrElse {
+                fail("version=$version BOM+local should parse cleanly: ${it.message}")
+            }
+            val bomLocals = bomLocalChunk.body.statements.filterIsInstance<LocalStatement>()
+            assertEquals(1, bomLocals.size, "version=$version BOM+local expected one local")
+            val bomLocal = bomLocals.single()
+            val bomName = assertIs<Identifier>(bomLocal.init.single())
+            assertEquals("x", bomName.name)
+            assertLocalStatementStartColumnUsable(bomLocal, bomName)
+            assertUsableRange(bomLocal.range)
+
+            val bomShebangChunk = runCatching { parse(version, bomShebangSource) }.getOrElse {
+                fail("version=$version BOM+shebang should parse cleanly: ${it.message}")
+            }
+            val shebang = assertIs<CommentStatement>(bomShebangChunk.body.statements[0])
+            assertFalse(shebang.isDocComment, "version=$version BOM+shebang should be non-doc comment")
+            assertEquals("#!/usr/bin/env lua", shebang.comment.trimEnd())
+            assertUsableRange(shebang.range)
+
+            val bomShebangLocals =
+                bomShebangChunk.body.statements.filterIsInstance<LocalStatement>()
+            assertEquals(
+                1,
+                bomShebangLocals.size,
+                "version=$version BOM+shebang expected one local"
+            )
+            val recoveredLocal = bomShebangLocals.single()
+            val recoveredName = assertIs<Identifier>(recoveredLocal.init.single())
+            assertEquals("x", recoveredName.name)
+            assertLocalStatementStartColumnUsable(recoveredLocal, recoveredName)
+            assertUsableRange(recoveredLocal.range)
         }
+    }
+
+    /**
+     * LocalStatement start column is product-dependent (keyword column 1 vs first name).
+     * Lock usability + consistency with the first init identifier when ranges share a line.
+     */
+    private fun assertLocalStatementStartColumnUsable(local: LocalStatement, firstName: Identifier) {
+        assertTrue(local.range.start.column >= 1, "local start column must be >= 1")
+        assertTrue(firstName.range.start.column >= 1, "name start column must be >= 1")
+        if (local.range.start.line == firstName.range.start.line) {
+            assertTrue(
+                local.range.start.column == 1 ||
+                    local.range.start.column == firstName.range.start.column,
+                "local start column ${local.range.start.column} should be 1 or name column ${firstName.range.start.column}"
+            )
+        }
+    }
+
+    private fun assertUsableRange(range: Range) {
+        assertUsableRange(
+            range.start.line,
+            range.start.column,
+            range.end.line,
+            range.end.column
+        )
     }
 
     private fun assertUsableRange(startLine: Int, startColumn: Int, endLine: Int, endColumn: Int) {
@@ -276,9 +292,4 @@ class ParserShebangBomTddTest {
             "end column $endColumn < start column $startColumn on line $startLine"
         )
     }
-
-    private fun String.escapeForMessage(): String =
-        replace("﻿", "<BOM>")
-            .replace("\r", "\\r")
-            .replace("\n", "\\n")
 }

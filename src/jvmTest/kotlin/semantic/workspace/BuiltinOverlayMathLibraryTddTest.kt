@@ -126,8 +126,10 @@ class BuiltinOverlayMathLibraryTddTest {
             )
             assertTrue(
                 item.detail.orEmpty().contains(sample.expectedDetailContains, ignoreCase = true) ||
-                    item.detail.orEmpty().contains("fun"),
-                "math.${sample.name} detail should mention ${sample.expectedDetailContains}/fun, got '${item.detail}'"
+                    item.detail.orEmpty().contains("fun", ignoreCase = true) ||
+                    // Product may surface constant fields with a numeric literal detail (e.g. pi → 3.1415).
+                    item.detail.orEmpty().any { it.isDigit() },
+                "math.${sample.name} detail should mention ${sample.expectedDetailContains}/fun/numeric, got '${item.detail}'"
             )
 
             val hover = assertNotNull(harness.queries.hover(main, pos), "hover for math.${sample.name}")

@@ -115,6 +115,23 @@ class TypeSyntaxParserTest {
     }
 
     @Test
+    fun parsePrefixKeepsCompleteUnionBeforeCommentAndDelimiterBoundaries() {
+        val withComment = TypeSyntaxParser.parsePrefix("string | number -- note")
+        assertEquals(
+            UnionTypeSyntax(listOf(NamedTypeSyntax("string"), NamedTypeSyntax("number"))),
+            withComment.syntax
+        )
+        assertEquals("-- note", withComment.remainder.trimStart())
+
+        val withDelimiter = TypeSyntaxParser.parsePrefix("string | number) tail")
+        assertEquals(
+            UnionTypeSyntax(listOf(NamedTypeSyntax("string"), NamedTypeSyntax("number"))),
+            withDelimiter.syntax
+        )
+        assertEquals(") tail", withDelimiter.remainder.trimStart())
+    }
+
+    @Test
     fun parseOrNullReturnsNullForInvalidInput() {
         assertEquals(null, TypeSyntaxParser.parseOrNull("Foo<"))
     }

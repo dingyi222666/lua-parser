@@ -449,10 +449,26 @@ object TypeSyntaxParser {
             }
 
             skipWhitespace()
-            val boundary = peek()
-            val validBoundary = boundary == null || boundary in listOf(',', '|', '&', ')', ']', '}', '>')
+            // A continuation arm is kept only when the arm itself is a complete type
+            // prefix: EOF, another type-syntax delimiter, or a Lua line comment that
+            // terminates the type for doc-comment consumers (`string | number -- note`).
+            // Non-boundary prose after a candidate arm (e.g. `trailing prose`) rejects
+            // the arm so parsePrefix can stop before the operator without throwing.
+            val validBoundary = isValidContinuationBoundary()
             currentIndex = checkpoint
             return validBoundary
+        }
+
+        private fun isValidContinuationBoundary(): Boolean {
+            val boundary = peek() ?: return true
+            if (boundary in listOf(',', '|', '&', ')', ']', '}', '>')) {
+                return true
+            }
+            // Lua line comment starts a non-type tail after a complete arm.
+            if (boundary == '-' && peek(1) == '-') {
+                return true
+            }
+            return false
         }
 
         private fun parseIdentifier(): String {

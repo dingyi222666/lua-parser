@@ -1,0 +1,10 @@
+# Android framework package model manifest.
+# Format: package | class index | compact model resource
+
+android.app | packages/android.app.index | models/android-app.lua
+android.content | packages/android.content.index | models/android-content.lua
+android.view | packages/android.view.index | models/android-view.lua
+android.widget | packages/android.widget.index | models/android-widget.lua
+android.graphics | packages/android.graphics.index | models/android-graphics.lua
+android.graphics.drawable | packages/android.graphics.drawable.index | models/android-graphics-drawable.lua
+android.supporting | packages/supporting.index | models/android-supporting.lua

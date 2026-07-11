@@ -12,11 +12,27 @@ internal class WorkspaceModuleResolver(
     private val snapshot: WorkspaceSnapshot
 ) {
     fun activeProvider(moduleName: String): WorkspaceModuleGraph.ModuleProvider? {
-        return snapshot.graph.activeProviders[moduleName]
+        snapshot.graph.activeProviders[moduleName]?.let { return it }
+        // Extra JVM providers are claimed by moduleName during graph build; if a claim was lost
+        // (duplicate simple names), still recover the exact class/package provider path.
+        return findExtraClassProviderByAlias(moduleName)
+            ?: snapshot.extraProviders.entries.firstOrNull { (_, file) ->
+                file.moduleExportSurface?.moduleType?.moduleName == moduleName
+            }?.let { (path, _) ->
+                WorkspaceModuleGraph.ModuleProvider(
+                    moduleName = moduleName,
+                    path = path,
+                    source = WorkspaceModuleGraph.ProviderSource.EXTRA_WORKSPACE_PROVIDER
+                )
+            }
+            // Free-form Android-Lua layout modules (.aly) may exist in the workspace without a
+            // pre-built dependency edge (e.g. partial graph rebuilds). Recover by path/module alias.
+            ?: findAlyLayoutProvider(moduleName)
     }
 
     fun exportSurface(provider: WorkspaceModuleGraph.ModuleProvider): ModuleExportSurface? {
         return fileSnapshot(provider.path)?.moduleExportSurface
+            ?: syntheticAlyLayoutSurface(provider)
     }
 
     fun resolveRequire(consumerPath: VirtualPath, moduleName: String): ResolvedRequire? {
@@ -24,7 +40,11 @@ internal class WorkspaceModuleResolver(
             .orEmpty()
             .firstOrNull { it.moduleName == moduleName }
         if (dependency != null) {
-            val surface = exportSurface(dependency.provider) ?: return null
+            // Always keep the resolved provider. Free-form .aly modules historically dropped here
+            // when export collection was partial (`exportSurface(...) ?: return null`).
+            val surface = exportSurface(dependency.provider)
+                ?: syntheticAlyLayoutSurface(dependency.provider)
+                ?: return null
             return ResolvedRequire(moduleName, dependency.provider, surface)
         }
 
@@ -58,7 +78,12 @@ internal class WorkspaceModuleResolver(
             )
         }
 
-        return null
+        // Generic fallback: active provider (workspace VIRTUAL_PATH / .aly / extra / overlay).
+        // Previously only "import" recovered here, so require("…representative_layout") without a
+        // dependency edge returned null even when the .aly file was present in the workspace.
+        val provider = activeProvider(moduleName) ?: return null
+        val surface = exportSurface(provider) ?: syntheticAlyLayoutSurface(provider) ?: return null
+        return ResolvedRequire(moduleName, provider, surface)
     }
 
     fun exportedMember(providerPath: VirtualPath, memberName: String): ResolvedExportMember? {
@@ -104,11 +129,37 @@ internal class WorkspaceModuleResolver(
                 imported[symbol.alias] = symbol
             }
         }
+        // Also index by the last path segment so bare Locale/File lookups succeed even when a
+        // provider surface temporarily reports a non-simple moduleName alias.
+        activeImportTargets(facts).forEach { target ->
+            val normalized = normalizeImportTarget(target)
+            if (normalized.endsWith(".*")) {
+                return@forEach
+            }
+            val simpleName = normalized.substringAfterLast('.').substringAfterLast('$').substringAfterLast('_')
+            if (simpleName.isNotBlank() && simpleName !in imported) {
+                importedClassSymbol(normalized)?.let { symbol ->
+                    imported[simpleName] = symbol.copy(alias = simpleName)
+                }
+            }
+        }
         return imported
     }
 
     fun importedSymbolFor(path: VirtualPath, alias: String): WorkspaceImportedSymbol? {
-        return importedSymbolsFor(path)[alias]
+        importedSymbolsFor(path)[alias]?.let { return it }
+        // Path-scoped bare-name recovery: only when this file actively imported a matching target.
+        val facts = snapshot.files[path]?.documentFacts ?: return null
+        val match = activeImportTargets(facts).firstOrNull { target ->
+            val normalized = normalizeImportTarget(target)
+            if (normalized.endsWith(".*")) {
+                false
+            } else {
+                val simpleName = normalized.substringAfterLast('.').substringAfterLast('$').substringAfterLast('_')
+                simpleName == alias || normalized == alias
+            }
+        } ?: return null
+        return importedClassSymbol(match)?.copy(alias = alias)
     }
 
     fun importTargetSymbol(target: String): WorkspaceImportedSymbol? {
@@ -125,7 +176,14 @@ internal class WorkspaceModuleResolver(
         val facts = snapshot.files[path]?.documentFacts ?: return null
         val activeTargets = activeImportTargets(facts)
         if (normalized !in activeTargets) {
-            return null
+            // Allow simple-name activation only for targets that this file imported.
+            val matched = activeTargets.firstOrNull { active ->
+                val activeNormalized = normalizeImportTarget(active)
+                activeNormalized == normalized ||
+                    (!activeNormalized.endsWith(".*") &&
+                        activeNormalized.substringAfterLast('.').substringAfterLast('$') == normalized)
+            } ?: return null
+            return importTargetSymbol(matched)
         }
         return importTargetSymbol(normalized)
     }
@@ -140,7 +198,9 @@ internal class WorkspaceModuleResolver(
     }
 
     fun classProviderForAlias(alias: String): WorkspaceModuleGraph.ModuleProvider? {
-        val provider = activeProvider(alias) ?: return null
+        val provider = activeProvider(alias)
+            ?: findExtraClassProviderByAlias(alias)
+            ?: return null
         val moduleType = exportSurface(provider)?.moduleType ?: return null
         return if (moduleType.fields.containsKey("__class")) provider else null
     }
@@ -178,8 +238,11 @@ internal class WorkspaceModuleResolver(
         val aliases = classAliasCandidates(importText)
         val provider = aliases.firstNotNullOfOrNull(::classProviderForAlias) ?: return null
         val surface = exportSurface(provider) ?: return null
+        val simpleName = aliases.firstOrNull { it == surface.moduleType.moduleName }
+            ?: aliases.firstOrNull { !it.contains('.') && !it.contains('$') && !it.contains('_') }
+            ?: surface.moduleType.moduleName
         return WorkspaceImportedSymbol(
-            alias = surface.moduleType.moduleName,
+            alias = simpleName,
             moduleName = surface.moduleType.moduleName,
             providerPath = provider.path,
             moduleType = surface.moduleType
@@ -216,9 +279,99 @@ internal class WorkspaceModuleResolver(
     }
 
     private fun packageProvider(packageName: String): WorkspaceModuleGraph.ModuleProvider? {
-        val provider = activeProvider(packageName) ?: return null
+        val provider = activeProvider(packageName)
+            ?: snapshot.extraProviders.entries.firstOrNull { (path, file) ->
+                path.value == "__jvm__/packages/${packageName.replace('.', '/')}.lua" ||
+                    file.moduleExportSurface?.moduleType?.moduleName == packageName
+            }?.let { (path, _) ->
+                WorkspaceModuleGraph.ModuleProvider(
+                    moduleName = packageName,
+                    path = path,
+                    source = WorkspaceModuleGraph.ProviderSource.EXTRA_WORKSPACE_PROVIDER
+                )
+            }
+            ?: return null
         val surface = exportSurface(provider) ?: return null
         return if (surface.moduleType.moduleName == packageName) provider else null
+    }
+
+    private fun findExtraClassProviderByAlias(alias: String): WorkspaceModuleGraph.ModuleProvider? {
+        if (alias.isBlank() || alias.contains('/')) {
+            return null
+        }
+        val match = snapshot.extraProviders.entries.firstOrNull { (path, file) ->
+            val moduleName = file.moduleExportSurface?.moduleType?.moduleName
+            moduleName == alias ||
+                path.value.endsWith("/$alias.lua") ||
+                path.value.endsWith("\$$alias.lua")
+        } ?: return null
+        val moduleName = match.value.moduleExportSurface?.moduleType?.moduleName ?: alias
+        return WorkspaceModuleGraph.ModuleProvider(
+            moduleName = moduleName,
+            path = match.key,
+            source = WorkspaceModuleGraph.ProviderSource.EXTRA_WORKSPACE_PROVIDER
+        )
+    }
+
+    /**
+     * Recover an Android-Lua `.aly` layout provider for [moduleName] when graph active-provider
+     * lookup missed it (path-derived claim not indexed, or only present as a workspace file).
+     *
+     * Never invents a fabricated `.lua` / JVM / stdlib path: only real workspace `.aly` files.
+     */
+    private fun findAlyLayoutProvider(moduleName: String): WorkspaceModuleGraph.ModuleProvider? {
+        if (moduleName.isBlank()) {
+            return null
+        }
+        val dotted = moduleName.replace('\\', '/')
+        val candidates = listOf(
+            "$dotted.aly",
+            "${dotted.replace('.', '/')}.aly"
+        )
+        val match = snapshot.files.entries.firstOrNull { (path, _) ->
+            val value = path.value
+            if (!value.endsWith(".aly")) {
+                return@firstOrNull false
+            }
+            val pathModule = alyModuleNameFromPath(path)
+            pathModule == moduleName ||
+                candidates.any { candidate ->
+                    value == candidate || value.endsWith("/$candidate") || value.endsWith(candidate)
+                }
+        } ?: return null
+        return WorkspaceModuleGraph.ModuleProvider(
+            moduleName = moduleName,
+            path = match.key,
+            source = WorkspaceModuleGraph.ProviderSource.VIRTUAL_PATH
+        )
+    }
+
+    private fun alyModuleNameFromPath(path: VirtualPath): String? {
+        val normalized = path.value.replace('\\', '/')
+        if (!normalized.endsWith(".aly")) {
+            return null
+        }
+        return normalized.removeSuffix(".aly").replace('/', '.')
+    }
+
+    /**
+     * Synthetic LuaLayoutSpec-like export for free-form `.aly` modules when AST export collection
+     * did not produce a surface (e.g. sparse layout tables with only sequence view-class children).
+     */
+    private fun syntheticAlyLayoutSurface(provider: WorkspaceModuleGraph.ModuleProvider): ModuleExportSurface? {
+        if (!provider.path.value.endsWith(".aly")) {
+            return null
+        }
+        val moduleName = provider.moduleName.ifBlank {
+            alyModuleNameFromPath(provider.path) ?: provider.path.value
+        }
+        return ModuleExportCollector.alyLayoutExportSurface(
+            moduleName = moduleName,
+            fields = emptyMap(),
+            methods = emptyMap(),
+            members = emptyList(),
+            sourceForm = ModuleExportSurface.SourceForm.RETURN_IDENTIFIER
+        )
     }
 
     private fun normalizeImportTarget(target: String): String {

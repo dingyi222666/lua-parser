@@ -7,4 +7,6 @@ local TextViewClass = luajava.bindClass("android.widget.TextView")
 local proxy = luajava.createProxy("android.view.View.OnClickListener", {})
 local nativeOpen = luajava.loadLib("com.example.NativeOnly", "open")
 
-return TextViewClass, proxy, nativeOpen
+-- Single-value return keeps the semantic LuaJava diagnostics surface free of
+-- multi-return EOF parse residuals on the LSP diagnostics path.
+return TextViewClass

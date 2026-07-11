@@ -324,7 +324,7 @@ class LuaLanguageServiceTest {
         service.setWorkspaceMetadata(mapOf(JvmClassModuleProvider.CLASSES_METADATA_KEY to "java.util.Arrays"))
 
         val published = mutableListOf<String>()
-        val textDocuments = LuaTextDocumentService(service) { published += it.uri }
+        val textDocuments = LuaTextDocumentService(service, publishDiagnostics = { diagnostics -> published += diagnostics.uri })
         val uri = "file:///workspace/main.lua"
         textDocuments.didOpen(
             DidOpenTextDocumentParams(
@@ -447,7 +447,38 @@ class LuaLanguageServiceTest {
     }
 
     @Test
-    fun language_service_resolves_android_lua_default_prefix_fallbacks_without_explicit_imports() {
+    fun language_service_uses_androlua_overlay_globals_by_default() {
+        val service = LuaLanguageService()
+        service.initialize(InitializeParams())
+
+        val uri = "file:///workspace/androlua-overlay.lua"
+        service.didOpen(
+            DidOpenTextDocumentParams(
+                TextDocumentItem(uri, "lua", 1, "return import, loadlayout, loadbitmap, loadmenu")
+            )
+        )
+
+        val importDefinition = service.definition(
+            DefinitionParams(TextDocumentIdentifier(uri), Position(0, 7))
+        )
+        val loadlayoutDefinition = service.definition(
+            DefinitionParams(TextDocumentIdentifier(uri), Position(0, 15))
+        )
+        val loadbitmapDefinition = service.definition(
+            DefinitionParams(TextDocumentIdentifier(uri), Position(0, 27))
+        )
+        val loadmenuDefinition = service.definition(
+            DefinitionParams(TextDocumentIdentifier(uri), Position(0, 39))
+        )
+
+        assertTrue(importDefinition.isEmpty())
+        assertTrue(loadlayoutDefinition.isEmpty())
+        assertTrue(loadbitmapDefinition.isEmpty())
+        assertTrue(loadmenuDefinition.isEmpty())
+    }
+
+    @Test
+    fun language_service_still_exposes_jvm_default_prefix_fallbacks_with_androlua_overlay() {
         val service = LuaLanguageService()
         service.initialize(InitializeParams())
 

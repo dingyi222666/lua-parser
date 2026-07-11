@@ -24,6 +24,13 @@ import kotlin.test.assertTrue
  * table/local (and assignment) declarations when present. Malformed tags must not
  * crash CommentAttachPass.
  *
+ * AST field mapping used by this parser (historical names, inverted vs Lua AST
+ * convention elsewhere):
+ * - LocalStatement.init: declared names (Identifier list)
+ * - LocalStatement.variables: initializer expressions
+ * - AssignmentStatement.init: LHS targets
+ * - AssignmentStatement.variables: RHS expressions
+ *
  * Test-only; verification is review-owned (no Gradle in worker waves).
  */
 class DocClassFieldAttachTddTest {
@@ -44,8 +51,8 @@ class DocClassFieldAttachTddTest {
         )
 
         val local = chunk.body.statements.filterIsInstance<LocalStatement>().single()
-        assertEquals("widget", assertIs<Identifier>(local.variables.single()).name)
-        assertIs<TableConstructorExpression>(local.init.single())
+        assertEquals("widget", assertIs<Identifier>(local.init.single()).name)
+        assertIs<TableConstructorExpression>(local.variables.single())
 
         val index = attachPass.attach(chunk)
         val doc = assertNotNull(index.getDocComment(local))
@@ -103,8 +110,9 @@ class DocClassFieldAttachTddTest {
         )
 
         val assignment = chunk.body.statements.filterIsInstance<AssignmentStatement>().single()
-        assertEquals("Widget", assertIs<Identifier>(assignment.variables.single()).name)
-        assertIs<TableConstructorExpression>(assignment.init.single())
+        // AssignmentStatement.init = LHS targets; variables = RHS values.
+        assertEquals("Widget", assertIs<Identifier>(assignment.init.single()).name)
+        assertIs<TableConstructorExpression>(assignment.variables.single())
 
         val index = attachPass.attach(chunk)
         val doc = assertNotNull(index.getDocComment(assignment))
@@ -167,8 +175,8 @@ class DocClassFieldAttachTddTest {
 
         val locals = chunk.body.statements.filterIsInstance<LocalStatement>()
         assertEquals(2, locals.size)
-        assertEquals("first", assertIs<Identifier>(locals[0].variables.single()).name)
-        assertEquals("second", assertIs<Identifier>(locals[1].variables.single()).name)
+        assertEquals("first", assertIs<Identifier>(locals[0].init.single()).name)
+        assertEquals("second", assertIs<Identifier>(locals[1].init.single()).name)
 
         val index = attachPass.attach(chunk)
 
@@ -202,7 +210,7 @@ class DocClassFieldAttachTddTest {
         val outerFn = chunk.body.statements.filterIsInstance<FunctionDeclaration>().single()
         val innerLocal = outerFn.body!!.statements.filterIsInstance<LocalStatement>().single()
         assertEquals("outer", assertIs<Identifier>(outerFn.identifier).name)
-        assertEquals("inner", assertIs<Identifier>(innerLocal.variables.single()).name)
+        assertEquals("inner", assertIs<Identifier>(innerLocal.init.single()).name)
 
         val index = attachPass.attach(chunk)
 

@@ -1,0 +1,29 @@
+# Compact Android graphics drawable package catalog for Android-Lua framework
+# overlays. Focuses on drawable classes used to style Lua-built views.
+
+android.graphics.drawable.Animatable
+android.graphics.drawable.AnimatedStateListDrawable
+android.graphics.drawable.AnimationDrawable
+android.graphics.drawable.BitmapDrawable
+android.graphics.drawable.ClipDrawable
+android.graphics.drawable.ColorDrawable
+android.graphics.drawable.Drawable
+android.graphics.drawable.Drawable$Callback
+android.graphics.drawable.Drawable$ConstantState
+android.graphics.drawable.DrawableContainer
+android.graphics.drawable.GradientDrawable
+android.graphics.drawable.GradientDrawable$Orientation
+android.graphics.drawable.Icon
+android.graphics.drawable.InsetDrawable
+android.graphics.drawable.LayerDrawable
+android.graphics.drawable.LevelListDrawable
+android.graphics.drawable.NinePatchDrawable
+android.graphics.drawable.PictureDrawable
+android.graphics.drawable.RippleDrawable
+android.graphics.drawable.RotateDrawable
+android.graphics.drawable.ScaleDrawable
+android.graphics.drawable.ShapeDrawable
+android.graphics.drawable.ShapeDrawable$ShaderFactory
+android.graphics.drawable.StateListDrawable
+android.graphics.drawable.TransitionDrawable
+android.graphics.drawable.VectorDrawable

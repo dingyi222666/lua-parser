@@ -2,6 +2,9 @@ package io.github.dingyi222666.luaparser.source
 
 import io.github.dingyi222666.luaparser.parser.ast.node.*
 import io.github.dingyi222666.luaparser.parser.ast.visitor.ASTVisitor
+import io.github.dingyi222666.luaparser.parser.compactCallArguments
+import io.github.dingyi222666.luaparser.parser.compactCallBase
+import io.github.dingyi222666.luaparser.parser.isCompactShortCall
 import kotlin.math.max
 
 /**
@@ -29,19 +32,15 @@ class AST2Lua : ASTVisitor<StringBuilder> {
     }
 
     private fun appendCompactCallSuffix(value: StringBuilder, arguments: List<ExpressionNode>) {
-        if (arguments.size == 1) {
-            when (val argument = arguments.single()) {
-                is ConstantNode -> if (argument.constantType == ConstantNode.TYPE.STRING) {
-                    value.append(" ")
-                    appendExpression(value, argument)
-                    return
+        if (arguments.firstOrNull()?.canStartCompactCallSuffix() == true) {
+            value.append(" ")
+            arguments.forEachIndexed { index, argument ->
+                if (index != 0) {
+                    value.append(", ")
                 }
-                is TableConstructorExpression -> {
-                    value.append(" ")
-                    appendExpression(value, argument)
-                    return
-                }
+                appendExpression(value, argument)
             }
+            return
         }
 
         value.append("(")
@@ -107,8 +106,14 @@ class AST2Lua : ASTVisitor<StringBuilder> {
 
 
     override fun visitFunctionDeclaration(node: FunctionDeclaration, value: StringBuilder) {
-        value.append("function ")
-        node.identifier?.let { visitExpressionNode(it, value) }
+        if (node.isLocal) {
+            value.append("local ")
+        }
+        value.append("function")
+        node.identifier?.let {
+            value.append(" ")
+            visitExpressionNode(it, value)
+        }
         value.append("(")
         node.params.forEachIndexed { index, baseASTNode ->
             if (index != 0) {
@@ -148,7 +153,11 @@ class AST2Lua : ASTVisitor<StringBuilder> {
             }
             visitExpressionNode(baseASTNode, value)
         }
-        value.append(" then")
+        // AndroLua case: `then` is optional. Emit only when CaseCause.hasThen records presence
+        // (parser sets this from source; hand-built nodes default hasThen=true).
+        if (node.hasThen) {
+            value.append(" then")
+        }
 
         visitBlockNode(node.body, value)
 
@@ -335,13 +344,21 @@ class AST2Lua : ASTVisitor<StringBuilder> {
         appendExpression(value, node)
     }
 
+    override fun visitTableCallExpression(node: TableCallExpression, value: StringBuilder) {
+        appendExpression(value, node)
+    }
+
     override fun visitTableConstructorExpression(node: TableConstructorExpression, value: StringBuilder) {
         value.append("{")
-        node.fields.forEachIndexed { index, baseASTNode ->
-            if (index != 0) {
-                value.append(", ")
+        if (node.fields.isNotEmpty()) {
+            value.append(" ")
+            node.fields.forEachIndexed { index, baseASTNode ->
+                if (index != 0) {
+                    value.append(", ")
+                }
+                visitExpressionNode(baseASTNode, value)
             }
-            visitExpressionNode(baseASTNode, value)
+            value.append(" ")
         }
         value.append("}")
     }
@@ -368,9 +385,11 @@ class AST2Lua : ASTVisitor<StringBuilder> {
         value.append("when ")
         visitExpressionNode(node.condition, value)
         value.append(" ")
-        visitStatementNode(node.ifCause, value)
-        value.append(" ")
-        node.elseCause?.let { visitStatementNode(it, value) }
+        appendInlineWhenCause(node.ifCause, value)
+        node.elseCause?.let {
+            value.append(" else ")
+            appendInlineWhenCause(it, value)
+        }
     }
 
     override fun visitWhileStatement(node: WhileStatement, value: StringBuilder) {
@@ -502,16 +521,21 @@ class AST2Lua : ASTVisitor<StringBuilder> {
                 )
             }
 
+            is StringCallExpression -> {
+                appendCompactCallExpression(value, expression)
+            }
+
+            is TableCallExpression -> {
+                appendCompactCallExpression(value, expression)
+            }
+
             is CallExpression -> {
-                appendExpression(value, expression.base, expressionPrecedence(expression), null, false)
-                value.append("(")
-                expression.arguments.forEachIndexed { index, baseASTNode ->
-                    if (index != 0) {
-                        value.append(", ")
-                    }
-                    appendExpression(value, baseASTNode)
+                if (expression.isCompactShortCall()) {
+                    appendCompactCallExpression(value, expression)
+                } else {
+                    appendExpression(value, expression.base, expressionPrecedence(expression), null, false)
+                    appendParenthesizedCallArguments(value, expression.arguments)
                 }
-                value.append(")")
             }
 
             is MemberExpression -> {
@@ -544,17 +568,43 @@ class AST2Lua : ASTVisitor<StringBuilder> {
             is FunctionDeclaration -> visitFunctionDeclaration(node, value)
             is LambdaDeclaration -> visitLambdaDeclaration(node, value)
             is StringCallExpression -> {
-                appendExpression(value, node.base, expressionPrecedence(node), null, false)
-                appendCompactCallSuffix(value, node.arguments)
+                appendCompactCallExpression(value, node)
             }
             is TableCallExpression -> {
-                appendExpression(value, node.base, expressionPrecedence(node), null, false)
-                appendCompactCallSuffix(value, node.arguments)
+                appendCompactCallExpression(value, node)
             }
             is TableConstructorExpression -> visitTableConstructorExpression(node, value)
             is VarargLiteral -> visitVarargLiteral(node, value)
             ExpressionNode.EMPTY -> Unit
             else -> error("Unsupported expression node: ${node::class.simpleName}")
+        }
+    }
+
+    private fun appendCompactCallExpression(value: StringBuilder, expression: CallExpression) {
+        appendExpression(value, expression.compactCallBase(), expressionPrecedence(expression), null, false)
+        appendCompactCallSuffix(value, expression.compactCallArguments())
+    }
+
+    private fun appendParenthesizedCallArguments(value: StringBuilder, arguments: List<ExpressionNode>) {
+        value.append("(")
+        appendExpressionList(value, arguments)
+        value.append(")")
+    }
+
+    private fun appendExpressionList(value: StringBuilder, expressions: List<ExpressionNode>) {
+        expressions.forEachIndexed { index, expression ->
+            if (index != 0) {
+                value.append(", ")
+            }
+            appendExpression(value, expression)
+        }
+    }
+
+    private fun appendInlineWhenCause(statement: StatementNode, value: StringBuilder) {
+        when (statement) {
+            is AssignmentStatement -> visitAssignmentStatement(statement, value)
+            is CallStatement -> visitCallStatement(statement, value)
+            else -> visitStatementNode(statement, value)
         }
     }
 
@@ -624,4 +674,9 @@ class AST2Lua : ASTVisitor<StringBuilder> {
         }
         return key.range.start == key.range.end
     }
+
+    private fun ExpressionNode.canStartCompactCallSuffix(): Boolean {
+        return this is TableConstructorExpression || this is ConstantNode && constantType == ConstantNode.TYPE.STRING
+    }
+
 }

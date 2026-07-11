@@ -42,13 +42,16 @@ import kotlin.test.assertTrue
  *   [LuaLanguageService.documentSymbols]
  * - Connected [LuaLanguageServer] client publish path
  *
- * Dual-path notes (no invented APIs; red OK until review when product gaps exist):
+ * Dual-path notes (no invented APIs; goldens aligned to product):
  * - Version gate: stale/equal versions must not publish (hard lock).
  * - Null version: product currently accepts and applies ([CURRENTLY_ACCEPTS] path);
  *   ideal may reject or treat as "always apply" — both non-crash outcomes accepted
  *   when explicitly dual-pathed.
  * - Same-text version bump: product currently republishes even when text is
  *   unchanged ([CURRENTLY_ACCEPTS]); ideal may suppress no-op publishes.
+ * - Incomplete local initializer (`local x =\nreturn x`): recovery may insert a
+ *   placeholder without emitting a recovery diagnostic ([CURRENTLY_ACCEPTS]
+ *   empty-or-nonempty). Hard-lock invalid forms use bare `local =` (`<name>`).
  * - Unknown / closed documents: no publish (hard lock).
  * - Sibling isolation: changing one open URI must not republish siblings (hard lock).
  *
@@ -297,20 +300,26 @@ class LspDiagnosticsPublishOnChangeTddTest {
     fun range_edit_repairing_parse_error_clears_diagnostics() {
         val harness = harness()
         val uri = "file:///workspace/change-range-repair.lua"
-        val broken = "local first =\nreturn first"
+        // Hard-lock invalid: bare `local =` emits `<name> expected` recovery diagnostic.
+        // Incomplete initializer forms (`local first =\nreturn first`) are CURRENTLY_ACCEPTS
+        // empty-or-nonempty and are covered by the incomplete dual-path corpus case.
+        val broken = "local first = 1\nlocal =\nreturn first"
         harness.textDocuments.didOpen(openParams(uri, broken, version = 1))
-        assertTrue(lastPublishedFor(harness.published, uri).diagnostics.isNotEmpty())
+        assertTrue(
+            lastPublishedFor(harness.published, uri).diagnostics.isNotEmpty(),
+            "open of hard-lock invalid local-name form must publish diagnostics"
+        )
         harness.published.clear()
 
-        // Insert " 1" after '=' on line 0: "local first = 1"
+        // Repair the broken second line: "local =" → "local second = 2"
         harness.textDocuments.didChange(
             DidChangeTextDocumentParams(
                 VersionedTextDocumentIdentifier(uri, 2),
                 listOf(
                     TextDocumentContentChangeEvent(
-                        Range(Position(0, 13), Position(0, 13)),
-                        0,
-                        " 1"
+                        Range(Position(1, 0), Position(1, 7)),
+                        7,
+                        "local second = 2"
                     )
                 )
             )
@@ -319,12 +328,13 @@ class LspDiagnosticsPublishOnChangeTddTest {
         assertEquals(listOf(uri), harness.published.map { it.uri })
         assertTrue(
             harness.published.single().diagnostics.isEmpty(),
-            "range repair of incomplete local must clear diagnostics"
+            "range repair of bare local-name error must clear diagnostics"
         )
-        assertTrue(
-            harness.languageService.documentSymbols("workspace/change-range-repair.lua")
-                .any { it.name == "first" }
-        )
+        val symbols = harness.languageService
+            .documentSymbols("workspace/change-range-repair.lua")
+            .map { it.name }
+        assertTrue("first" in symbols)
+        assertTrue("second" in symbols)
     }
 
     @Test
@@ -461,7 +471,8 @@ class LspDiagnosticsPublishOnChangeTddTest {
         val steps = listOf(
             2 to INVALID,
             3 to VALID_B,
-            4 to "local value =\nreturn value",
+            // Incomplete RHS is dual-path empty-or-nonempty; still require publish↔query match.
+            4 to INCOMPLETE_LOCAL,
             5 to VALID_C
         )
         steps.forEach { (version, text) ->
@@ -562,7 +573,11 @@ class LspDiagnosticsPublishOnChangeTddTest {
             val openSource: String,
             val changeVersion: Int,
             val changeSource: String,
-            val expectEmptyAfterChange: Boolean,
+            /**
+             * null = dual-path CURRENTLY_ACCEPTS (empty or non-empty both OK);
+             * true = must be empty; false = must be non-empty hard lock.
+             */
+            val expectEmptyAfterChange: Boolean?,
             val expectedSymbol: String?
         )
 
@@ -585,19 +600,22 @@ class LspDiagnosticsPublishOnChangeTddTest {
                 true,
                 "valueB"
             ),
+            // Incomplete local initializer: product recovery may placeholder without
+            // recovery diagnostic (CURRENTLY_ACCEPTS empty) or emit expression expected.
             Case(
                 "file:///workspace/change-table-2.lua",
                 "workspace/change-table-2.lua",
                 VALID_C,
                 2,
-                "local value =\nreturn value",
-                false,
-                null
+                INCOMPLETE_LOCAL,
+                null,
+                "value"
             ),
             Case(
                 "file:///workspace/change-table-3.lua",
                 "workspace/change-table-3.lua",
-                "local temp =",
+                // Bare name error is hard-lock non-empty on open; repair clears.
+                "local =",
                 2,
                 VALID_REPAIRED,
                 true,
@@ -611,6 +629,16 @@ class LspDiagnosticsPublishOnChangeTddTest {
                 VALID_A,
                 true,
                 "valueA"
+            ),
+            // Hard-lock invalid form distinct from incomplete RHS dual-path case.
+            Case(
+                "file:///workspace/change-table-5.lua",
+                "workspace/change-table-5.lua",
+                VALID_B,
+                2,
+                "local = 1",
+                false,
+                null
             )
         )
 
@@ -634,11 +662,25 @@ class LspDiagnosticsPublishOnChangeTddTest {
         cases.forEachIndexed { index, case ->
             val payload = harness.published[index]
             assertEquals(case.uri, payload.uri)
-            if (case.expectEmptyAfterChange) {
-                assertTrue(payload.diagnostics.isEmpty(), "${case.uri} expected clean after change")
-            } else {
-                assertTrue(payload.diagnostics.isNotEmpty(), "${case.uri} expected diagnostics")
-                assertTrue(payload.diagnostics.all { it.severity == DiagnosticSeverity.Error })
+            when (case.expectEmptyAfterChange) {
+                true -> assertTrue(
+                    payload.diagnostics.isEmpty(),
+                    "${case.uri} expected clean after change"
+                )
+                false -> {
+                    assertTrue(
+                        payload.diagnostics.isNotEmpty(),
+                        "${case.uri} expected diagnostics (hard-lock invalid form)"
+                    )
+                    assertTrue(payload.diagnostics.all { it.severity == DiagnosticSeverity.Error })
+                }
+                null -> {
+                    // CURRENTLY_ACCEPTS dual-path for incomplete initializer recovery.
+                    assertTrue(
+                        payload.diagnostics.all { it.severity == DiagnosticSeverity.Error },
+                        "${case.uri} dual-path incomplete: any diagnostics must be Error"
+                    )
+                }
             }
             assertDiagnosticsMatch(payload, harness.languageService.diagnostics(case.path))
             case.expectedSymbol?.let { symbol ->
@@ -706,6 +748,34 @@ class LspDiagnosticsPublishOnChangeTddTest {
         }
         assertTrue(harness.languageService.diagnostics(path).diagnostics.isEmpty())
         assertTrue(harness.languageService.documentSymbols(path).any { it.name == "valueA" })
+    }
+
+    @Test
+    fun incomplete_local_initializer_change_dual_path_empty_or_nonempty() {
+        val harness = harness()
+        val uri = "file:///workspace/change-incomplete-local.lua"
+        val path = "workspace/change-incomplete-local.lua"
+
+        harness.textDocuments.didOpen(openParams(uri, VALID_A, version = 1))
+        harness.published.clear()
+
+        harness.textDocuments.didChange(fullChange(uri, version = 2, text = INCOMPLETE_LOCAL))
+
+        assertEquals(listOf(uri), harness.published.map { it.uri })
+        val payload = harness.published.single()
+        // CURRENTLY_ACCEPTS: recovery may placeholder without recovery diagnostic.
+        // Ideal may emit `<expression> expected`. Either is dual-path safe; never crash.
+        assertTrue(
+            payload.diagnostics.all { it.severity == DiagnosticSeverity.Error },
+            "incomplete local dual-path: any published diagnostics must be Error severity"
+        )
+        assertDiagnosticsMatch(payload, harness.languageService.diagnostics(path))
+        assertDiagnosticsMatch(payload, harness.languageService.diagnosticsForUri(uri))
+        // Symbol for the declared local name should still surface under recovery.
+        assertTrue(
+            harness.languageService.documentSymbols(path).any { it.name == "value" },
+            "incomplete local should still expose declared name under recovery"
+        )
     }
 
     // --- helpers -----------------------------------------------------------------
@@ -826,6 +896,12 @@ class LspDiagnosticsPublishOnChangeTddTest {
         private const val VALID_B = "local valueB = 2\nreturn valueB"
         private const val VALID_C = "local valueC = 3\nreturn valueC"
         private const val VALID_REPAIRED = "local repaired = 1\nreturn repaired"
+        /** Hard-lock invalid: missing name after `local` emits recovery diagnostic. */
         private const val INVALID = "local ="
+        /**
+         * Incomplete local initializer. Product recovery currently inserts a placeholder
+         * and may emit zero recovery diagnostics (CURRENTLY_ACCEPTS empty path).
+         */
+        private const val INCOMPLETE_LOCAL = "local value =\nreturn value"
     }
 }

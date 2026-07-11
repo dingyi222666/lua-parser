@@ -23,87 +23,88 @@ import kotlin.test.assertTrue
 import kotlin.test.fail
 
 /**
- * Binder global assignment **range** corpus (TASK-436).
+ * Binder global assignment **range** corpus (TASK-436 / TASK-558).
  *
- * Complements [BinderGlobalAssignmentDeclarationTddTest] (TASK-286, identity /
- * non-declarative bare writes) by locking positional / range surface:
+ * Complements [BinderGlobalAssignmentDeclarationTddTest] by locking positional /
+ * range surface for declarative free-name first-write (TASK-558):
  *
- * Product binder contract (aligned with TASK-286 / [BinderMultiAssignRangeTddTest]):
- * - Assignment statements are **not** a declaration source. Bare free-name writes
- *   do not create/update GLOBAL AST declarations and therefore expose **no**
- *   declaration-range anchors at assignment LHS sites.
- * - GLOBAL AST declarations come from non-local [FunctionDeclaration] (and
- *   builtins via [DeclarationOrigin.BUILTIN]); their ranges are the identifier
- *   token, not the whole statement and not any later bare write.
- * - Multi-LHS bare assignment keeps each name non-queryable; commas between
- *   names do not invent ranges.
- * - Local introducers keep their own identifier ranges; subsequent assignment
- *   to a local does not move or fork the declaration range.
+ * - First bare free-name write invents AST GLOBAL with **identifier-only** range
+ *   (not whole AssignmentStatement span).
+ * - Multi-LHS bare assignment keeps per-name disjoint identifier ranges; commas
+ *   invent no ranges.
+ * - Repeated writes keep the first invent range; later assign sites are not
+ *   declaration-range anchors.
+ * - GLOBAL from non-local [FunctionDeclaration] keeps identifier-token range.
+ * - Local introducers keep their own identifier ranges; member/index LHS stay
+ *   non-GLOBAL.
  *
- * Dual-path / CURRENTLY_ACCEPTS:
- * - If a future product path starts inventing GLOBAL AST decls at bare
- *   assignment sites, those decls **must** still use per-identifier ranges
- *   (not whole-statement spans) and remain queryable only on the name token.
- *   Today the CURRENTLY_ACCEPTS path is "no AST GLOBAL / null at assign site".
- * - Incomplete assignment RHS / multi-identifier return footguns dual-path
- *   strict parse reject vs bind-with-no-assign-decl (same class as TASK-392).
- *
- * Test-only; no production edits. Verification review-owned / TASK-043:
+ * Test-only; verification review-owned / TASK-043:
  * `jvmTest --tests semantic.binder.BinderGlobalAssignmentRangeTddTest`
  */
 class BinderGlobalAssignmentRangeTddTest {
 
     private val parser = LuaParser()
 
-    // --- product hard path: bare assignment has no declaration range -----------
+    // --- product hard path: bare assignment invents identifier-only GLOBAL range -
 
     @Test
-    fun bareSingleAssignment_lhsHasNoDeclarationRangeOrQueryHit() {
+    fun bareSingleAssignment_lhsHasIdentifierOnlyDeclarationRange() {
         val source = "config = 1"
-        val result = bind(source)
+        val chunk = parser.parse(source)
+        val result = BinderPass().bind(chunk, CommentAttachPass().attach(chunk))
+        val statement = chunk.body.statements.filterIsInstance<AssignmentStatement>().single()
+        val lhs = assertIs<Identifier>(statement.init.single())
 
-        assertNoAstGlobal(result, "config")
-        assertNull(result.positionQueries.getDeclarationAt(positionOf(source, "config")))
-        assertTrue(result.positionQueries.getDeclarationsAt(positionOf(source, "config")).isEmpty())
-        assertNull(result.positionQueries.getSymbolAt(positionOf(source, "config")))
+        val decl = globalOf(result, "config")
+        assertEquals(lhs, decl.anchorNode)
+        assertEquals(lhs.range, decl.range)
+        assertNotEquals(statement.range, decl.range)
+        assertTrue(isProperSubRange(decl.range!!, statement.range))
+        assertPerNameGlobalRange(source, decl, "config")
+        assertEquals(decl, result.positionQueries.getDeclarationAt(positionOf(source, "config")))
+        assertNotNull(result.positionQueries.getSymbolAt(positionOf(source, "config")))
     }
 
     @Test
-    fun bareAssignmentWithNilRhs_lhsStillHasNoDeclarationRange() {
+    fun bareAssignmentWithNilRhs_lhsHasIdentifierOnlyDeclarationRange() {
         val source = "flag = nil"
         val result = bind(source)
 
-        assertNoAstGlobal(result, "flag")
-        assertNull(result.positionQueries.getDeclarationAt(positionOf(source, "flag")))
+        val decl = globalOf(result, "flag")
+        assertPerNameGlobalRange(source, decl, "flag")
+        assertEquals(decl, result.positionQueries.getDeclarationAt(positionOf(source, "flag")))
     }
 
     @Test
-    fun multiLhsBareAssignment_eachNameHasNoDeclarationRange() {
+    fun multiLhsBareAssignment_eachNameHasDisjointIdentifierRange() {
         val source = "alpha, beta = 1, 2"
         val result = bind(source)
 
-        for (name in listOf("alpha", "beta")) {
-            assertNoAstGlobal(result, name)
-            assertNull(result.positionQueries.getDeclarationAt(positionOf(source, name)))
-            assertTrue(result.positionQueries.getDeclarationsAt(positionOf(source, name)).isEmpty())
-        }
+        val alpha = globalOf(result, "alpha")
+        val beta = globalOf(result, "beta")
+        assertPerNameGlobalRange(source, alpha, "alpha")
+        assertPerNameGlobalRange(source, beta, "beta")
+        assertRangesDisjoint(alpha.range!!, beta.range!!)
+        assertEquals(alpha, result.positionQueries.getDeclarationAt(positionOf(source, "alpha")))
+        assertEquals(beta, result.positionQueries.getDeclarationAt(positionOf(source, "beta")))
         // Comma between multi-LHS names must not invent a declaration range either.
         assertNull(result.positionQueries.getDeclarationAt(positionOf(source, ",")))
     }
 
     @Test
-    fun unbalancedMultiLhsBareAssignment_stillNoDeclarationRanges() {
+    fun unbalancedMultiLhsBareAssignment_eachNameHasDeclarationRange() {
         val source = "u, v, w = 1"
         val result = bind(source)
 
         for (name in listOf("u", "v", "w")) {
-            assertNoAstGlobal(result, name)
-            assertNull(result.positionQueries.getDeclarationAt(positionOf(source, name)))
+            val decl = globalOf(result, name)
+            assertPerNameGlobalRange(source, decl, name)
+            assertEquals(decl, result.positionQueries.getDeclarationAt(positionOf(source, name)))
         }
     }
 
     @Test
-    fun repeatedBareAssignments_neverInventDeclarationRangesAtAnyWrite() {
+    fun repeatedBareAssignments_onlyFirstWriteHasDeclarationRange() {
         val source = """
             counter = 1
             counter = 2
@@ -111,8 +112,12 @@ class BinderGlobalAssignmentRangeTddTest {
             """.trimIndent()
         val result = bind(source)
 
-        assertTrue(astGlobalsNamed(result, "counter").isEmpty())
-        for (occurrence in 1..3) {
+        assertEquals(1, astGlobalsNamed(result, "counter").size)
+        val first = assertNotNull(
+            result.positionQueries.getDeclarationAt(positionOf(source, "counter", occurrence = 1))
+        )
+        assertPerNameGlobalRange(source, first, "counter", occurrence = 1)
+        for (occurrence in 2..3) {
             assertNull(
                 result.positionQueries.getDeclarationAt(
                     positionOf(source, "counter", occurrence = occurrence)
@@ -122,7 +127,7 @@ class BinderGlobalAssignmentRangeTddTest {
     }
 
     @Test
-    fun nestedBlockBareAssignment_hasNoChunkGlobalRange() {
+    fun nestedBlockBareAssignment_hasChunkGlobalIdentifierRange() {
         val source = """
             do
                 shared = 42
@@ -130,12 +135,13 @@ class BinderGlobalAssignmentRangeTddTest {
             """.trimIndent()
         val result = bind(source)
 
-        assertNoAstGlobal(result, "shared")
-        assertNull(result.positionQueries.getDeclarationAt(positionOf(source, "shared")))
+        val decl = globalOf(result, "shared")
+        assertPerNameGlobalRange(source, decl, "shared")
+        assertEquals(decl, result.positionQueries.getDeclarationAt(positionOf(source, "shared")))
     }
 
     @Test
-    fun bareAssignmentInsideFunction_freeNameHasNoGlobalRange() {
+    fun bareAssignmentInsideFunction_freeNameHasGlobalIdentifierRange() {
         val source = """
             function host()
                 freeGlobal = true
@@ -143,8 +149,9 @@ class BinderGlobalAssignmentRangeTddTest {
             """.trimIndent()
         val result = bind(source)
 
-        assertNoAstGlobal(result, "freeGlobal")
-        assertNull(result.positionQueries.getDeclarationAt(positionOf(source, "freeGlobal")))
+        val free = globalOf(result, "freeGlobal")
+        assertPerNameGlobalRange(source, free, "freeGlobal")
+        assertEquals(free, result.positionQueries.getDeclarationAt(positionOf(source, "freeGlobal")))
 
         // `host` GLOBAL range remains the function identifier only.
         val host = globalOf(result, "host")
@@ -200,7 +207,7 @@ class BinderGlobalAssignmentRangeTddTest {
     }
 
     @Test
-    fun bareAssignmentThenGlobalFunction_onlyFunctionCreatesQueryableRange() {
+    fun bareAssignmentThenGlobalFunction_bothSitesQueryableWithIdentifierRanges() {
         val source = """
             draw = nil
             function draw()
@@ -208,14 +215,21 @@ class BinderGlobalAssignmentRangeTddTest {
             """.trimIndent()
         val result = bind(source)
 
-        assertNull(result.positionQueries.getDeclarationAt(positionOf(source, "draw", occurrence = 1)))
+        val assignSite = assertNotNull(
+            result.positionQueries.getDeclarationAt(positionOf(source, "draw", occurrence = 1))
+        )
         val functionSite = assertNotNull(
             result.positionQueries.getDeclarationAt(positionOf(source, "draw", occurrence = 2))
         )
+        assertEquals(DeclarationKind.GLOBAL, assignSite.kind)
         assertEquals(DeclarationKind.GLOBAL, functionSite.kind)
+        assertEquals(DeclarationOrigin.AST, assignSite.origin)
         assertEquals(DeclarationOrigin.AST, functionSite.origin)
+        assertPerNameGlobalRange(source, assignSite, "draw", occurrence = 1)
         assertPerNameGlobalRange(source, functionSite, "draw", occurrence = 2)
-        assertEquals(1, astGlobalsNamed(result, "draw").size)
+        assertRangesDisjoint(assignSite.range!!, functionSite.range!!)
+        assertEquals(assignSite.symbolId, functionSite.symbolId)
+        assertEquals(2, astGlobalsNamed(result, "draw").size)
     }
 
     @Test
@@ -308,7 +322,7 @@ class BinderGlobalAssignmentRangeTddTest {
     }
 
     @Test
-    fun mixedLocalAndBareGlobal_onlyLocalHasDeclarationRange() {
+    fun mixedLocalAndBareGlobal_localAndBareEachHaveOwnDeclarationRange() {
         val source = """
             local onlyLocal = 1
             onlyGlobal = 2
@@ -322,26 +336,32 @@ class BinderGlobalAssignmentRangeTddTest {
         assertPerNameLocalRange(source, local, "onlyLocal")
         assertEquals(local, result.positionQueries.getDeclarationAt(positionOf(source, "onlyLocal", occurrence = 1)))
         assertNull(result.positionQueries.getDeclarationAt(positionOf(source, "onlyLocal", occurrence = 2)))
-        assertNoAstGlobal(result, "onlyGlobal")
-        assertNull(result.positionQueries.getDeclarationAt(positionOf(source, "onlyGlobal")))
+
+        val onlyGlobal = globalOf(result, "onlyGlobal")
+        assertPerNameGlobalRange(source, onlyGlobal, "onlyGlobal")
+        assertEquals(onlyGlobal, result.positionQueries.getDeclarationAt(positionOf(source, "onlyGlobal")))
     }
 
-    // --- multi-line bare assignment layout (still non-declarative) -------------
+    // --- multi-line bare assignment layout (declarative, identifier-only) ------
 
     @Test
-    fun multiLineBareAssignment_lhsSitesRemainNonQueryable() {
+    fun multiLineBareAssignment_lhsHasIdentifierOnlyRange() {
         val source = """
             config =
                 1
             """.trimIndent()
-        val result = bind(source)
-
-        assertNoAstGlobal(result, "config")
-        assertNull(result.positionQueries.getDeclarationAt(positionOf(source, "config")))
+        val chunk = parser.parse(source)
+        val result = BinderPass().bind(chunk, CommentAttachPass().attach(chunk))
+        val statement = chunk.body.statements.filterIsInstance<AssignmentStatement>().single()
+        val decl = globalOf(result, "config")
+        assertPerNameGlobalRange(source, decl, "config")
+        assertNotEquals(statement.range, decl.range)
+        assertTrue(isProperSubRange(decl.range!!, statement.range))
+        assertEquals(decl, result.positionQueries.getDeclarationAt(positionOf(source, "config")))
     }
 
     @Test
-    fun multiLineMultiLhsBareAssignment_eachNameNonQueryableCommaNotARange() {
+    fun multiLineMultiLhsBareAssignment_eachNameDisjointCommaNotARange() {
         val source = """
             alpha,
             beta =
@@ -350,49 +370,37 @@ class BinderGlobalAssignmentRangeTddTest {
             """.trimIndent()
         val result = bind(source)
 
-        for (name in listOf("alpha", "beta")) {
-            assertNoAstGlobal(result, name)
-            assertNull(result.positionQueries.getDeclarationAt(positionOf(source, name)))
-        }
+        val alpha = globalOf(result, "alpha")
+        val beta = globalOf(result, "beta")
+        assertPerNameGlobalRange(source, alpha, "alpha")
+        assertPerNameGlobalRange(source, beta, "beta")
+        assertRangesDisjoint(alpha.range!!, beta.range!!)
         assertNull(result.positionQueries.getDeclarationAt(positionOf(source, ",")))
     }
 
-    // --- dual-path: if bare assign ever declares, range must be identifier-only -
+    // --- hard product path (former dual-path CURRENTLY_ACCEPTS upgraded) -------
 
     @Test
-    fun dualPath_bareAssignmentAsPotentialGlobalIntroducer_rangeContract() {
-        // CURRENTLY_ACCEPTS: product invents no AST GLOBAL at bare assignment.
-        // IDEAL future: if a GLOBAL AST decl appears for free `mode`, its range
-        // must be the identifier token (not whole AssignmentStatement) and must
-        // be queryable only on that token.
+    fun bareAssignmentAsGlobalIntroducer_rangeIsIdentifierOnly() {
         val source = "mode = \"a\""
         when (val outcome = tryBind(source)) {
             is BindOutcome.Ok -> {
                 val globals = astGlobalsNamed(outcome.result, "mode")
-                if (globals.isEmpty()) {
-                    // CURRENTLY_ACCEPTS product path.
-                    assertNull(
-                        outcome.result.positionQueries.getDeclarationAt(positionOf(source, "mode"))
-                    )
-                } else {
-                    // IDEAL / future declarative-assign path: identifier-only ranges.
-                    val decl = globals.first()
-                    assertPerNameGlobalRange(source, decl, "mode")
-                    assertEquals(
-                        decl,
-                        outcome.result.positionQueries.getDeclarationAt(positionOf(source, "mode"))
-                    )
-                    val statement = outcome.chunk.body.statements
-                        .filterIsInstance<AssignmentStatement>()
-                        .singleOrNull()
-                    if (statement != null && decl.range != null) {
-                        assertNotEquals(statement.range, decl.range)
-                        assertTrue(
-                            isProperSubRange(decl.range!!, statement.range),
-                            "future bare-assign GLOBAL range must be narrower than AssignmentStatement"
-                        )
-                    }
-                }
+                assertEquals(1, globals.size)
+                val decl = globals.single()
+                assertPerNameGlobalRange(source, decl, "mode")
+                assertEquals(
+                    decl,
+                    outcome.result.positionQueries.getDeclarationAt(positionOf(source, "mode"))
+                )
+                val statement = outcome.chunk.body.statements
+                    .filterIsInstance<AssignmentStatement>()
+                    .single()
+                assertNotEquals(statement.range, decl.range)
+                assertTrue(
+                    isProperSubRange(decl.range!!, statement.range),
+                    "bare-assign GLOBAL range must be narrower than AssignmentStatement"
+                )
             }
             is BindOutcome.ParseRejected -> {
                 fail("well-formed bare assignment must parse: ${outcome.message}", outcome.error)
@@ -401,26 +409,18 @@ class BinderGlobalAssignmentRangeTddTest {
     }
 
     @Test
-    fun dualPath_multiLhsBareAssignment_ifDeclaredMustUseDisjointIdentifierRanges() {
+    fun multiLhsBareAssignment_usesDisjointIdentifierRanges() {
         val source = "left, right = 1, 2"
         when (val outcome = tryBind(source)) {
             is BindOutcome.Ok -> {
                 val lefts = astGlobalsNamed(outcome.result, "left")
                 val rights = astGlobalsNamed(outcome.result, "right")
-                if (lefts.isEmpty() && rights.isEmpty()) {
-                    // CURRENTLY_ACCEPTS: non-declarative multi-LHS bare assign.
-                    assertNull(outcome.result.positionQueries.getDeclarationAt(positionOf(source, "left")))
-                    assertNull(outcome.result.positionQueries.getDeclarationAt(positionOf(source, "right")))
-                    assertNull(outcome.result.positionQueries.getDeclarationAt(positionOf(source, ",")))
-                } else {
-                    // IDEAL: each declared free name keeps its own identifier range.
-                    assertEquals(1, lefts.size)
-                    assertEquals(1, rights.size)
-                    assertPerNameGlobalRange(source, lefts.single(), "left")
-                    assertPerNameGlobalRange(source, rights.single(), "right")
-                    assertRangesDisjoint(lefts.single().range!!, rights.single().range!!)
-                    assertNull(outcome.result.positionQueries.getDeclarationAt(positionOf(source, ",")))
-                }
+                assertEquals(1, lefts.size)
+                assertEquals(1, rights.size)
+                assertPerNameGlobalRange(source, lefts.single(), "left")
+                assertPerNameGlobalRange(source, rights.single(), "right")
+                assertRangesDisjoint(lefts.single().range!!, rights.single().range!!)
+                assertNull(outcome.result.positionQueries.getDeclarationAt(positionOf(source, ",")))
             }
             is BindOutcome.ParseRejected -> {
                 fail("well-formed multi-LHS assignment must parse: ${outcome.message}", outcome.error)
@@ -429,14 +429,13 @@ class BinderGlobalAssignmentRangeTddTest {
     }
 
     @Test
-    fun dualPath_incompleteBareAssignmentRhs_documentsStrictRejectOrNonDeclarativeBind() {
+    fun incompleteBareAssignmentRhs_documentsStrictRejectOrIdentifierOnlyGlobal() {
         // Recovery-ish incomplete form; strict binder path dual-paths.
         val incomplete = "orphan =\n"
         when (val outcome = tryBind(incomplete)) {
             is BindOutcome.Ok -> {
-                // If strict parse accepts trailing `=`, free name still must not
-                // invent a GLOBAL range under current product; if it does, range
-                // is identifier-only.
+                // If strict parse accepts trailing `=`, free name invents identifier-only GLOBAL
+                // when product path binds; otherwise stays non-declarative.
                 val globals = astGlobalsNamed(outcome.result, "orphan")
                 if (globals.isEmpty()) {
                     assertNull(
@@ -454,11 +453,15 @@ class BinderGlobalAssignmentRangeTddTest {
             }
         }
 
-        // Complete control remains non-declarative under product binder.
+        // Complete control is declarative under product binder.
         val complete = "orphan = 1"
         val completeResult = bind(complete)
-        assertNoAstGlobal(completeResult, "orphan")
-        assertNull(completeResult.positionQueries.getDeclarationAt(positionOf(complete, "orphan")))
+        val completeDecl = globalOf(completeResult, "orphan")
+        assertPerNameGlobalRange(complete, completeDecl, "orphan")
+        assertEquals(
+            completeDecl,
+            completeResult.positionQueries.getDeclarationAt(positionOf(complete, "orphan"))
+        )
     }
 
     @Test
@@ -479,9 +482,9 @@ class BinderGlobalAssignmentRangeTddTest {
                     pack,
                     outcome.result.positionQueries.getDeclarationAt(positionOf(source, "pack"))
                 )
-                // Free names in return are not declaration ranges.
-                assertNoAstGlobal(outcome.result, "left")
-                assertNoAstGlobal(outcome.result, "right")
+                // Free names in return are not declaration ranges (reads, not bare writes).
+                assertTrue(astGlobalsNamed(outcome.result, "left").isEmpty())
+                assertTrue(astGlobalsNamed(outcome.result, "right").isEmpty())
             }
             is BindOutcome.ParseRejected -> {
                 assertTrue(
@@ -505,7 +508,7 @@ class BinderGlobalAssignmentRangeTddTest {
     }
 
     @Test
-    fun dualPath_builtinNameBareAssignment_noAstPeerRangeAtAssignSite() {
+    fun builtinNameBareAssignment_noAstPeerRangeAtAssignSite() {
         val source = "print = function() end"
         val result = bind(source)
 
@@ -524,7 +527,7 @@ class BinderGlobalAssignmentRangeTddTest {
 
         val atAssign = result.positionQueries.getDeclarationAt(positionOf(source, "print"))
         if (atAssign != null) {
-            // CURRENTLY_ACCEPTS only if hit is still the same builtin (doc range coincidence).
+            // Only acceptable if hit is still the same builtin (doc range coincidence).
             assertEquals(symbol.id, atAssign.symbolId)
             assertEquals(DeclarationOrigin.BUILTIN, atAssign.origin)
         }
@@ -549,25 +552,27 @@ class BinderGlobalAssignmentRangeTddTest {
     }
 
     @Test
-    fun crossChunkBareAssignments_remainNonQueryableInEachChunk() {
-        val chunkA = bind(
-            """
+    fun crossChunkBareAssignments_eachChunkQueryableAtFirstWriteIdentifier() {
+        val sourceA = """
             g = 1
             g = 2
             """.trimIndent()
-        )
-        val chunkB = bind(
-            """
+        val sourceB = """
             g = 3
             g = 4
             g = 5
             """.trimIndent()
-        )
+        val chunkA = bind(sourceA)
+        val chunkB = bind(sourceB)
 
-        assertNoAstGlobal(chunkA, "g")
-        assertNoAstGlobal(chunkB, "g")
-        assertNull(chunkA.positionQueries.getDeclarationAt(positionOf("g = 1\ng = 2", "g", occurrence = 1)))
-        assertNull(chunkB.positionQueries.getDeclarationAt(positionOf("g = 3\ng = 4\ng = 5", "g", occurrence = 1)))
+        val a = globalOf(chunkA, "g")
+        val b = globalOf(chunkB, "g")
+        assertPerNameGlobalRange(sourceA, a, "g", occurrence = 1)
+        assertPerNameGlobalRange(sourceB, b, "g", occurrence = 1)
+        assertEquals(a, chunkA.positionQueries.getDeclarationAt(positionOf(sourceA, "g", occurrence = 1)))
+        assertEquals(b, chunkB.positionQueries.getDeclarationAt(positionOf(sourceB, "g", occurrence = 1)))
+        assertNull(chunkA.positionQueries.getDeclarationAt(positionOf(sourceA, "g", occurrence = 2)))
+        assertEquals(identityKey(a), identityKey(b))
     }
 
     // --- helpers --------------------------------------------------------------
@@ -611,13 +616,6 @@ class BinderGlobalAssignmentRangeTddTest {
             }
         }
         return matches.first()
-    }
-
-    private fun assertNoAstGlobal(result: BinderPassResult, name: String) {
-        assertTrue(
-            astGlobalsNamed(result, name).isEmpty(),
-            "Expected no non-builtin GLOBAL declaration for '$name' under product binder"
-        )
     }
 
     private fun identityKey(

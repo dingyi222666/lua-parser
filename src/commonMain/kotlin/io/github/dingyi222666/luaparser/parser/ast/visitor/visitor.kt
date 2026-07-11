@@ -260,7 +260,7 @@ interface ASTVisitor<T> {
     }
 
     fun visitTableKey(node: TableKey, value: T) {
-        // key always null
+        visitExpressionNode(node.key, value)
         visitExpressionNode(node.value, value)
     }
 
@@ -382,7 +382,7 @@ interface ASTModifier<T> {
         node.variable = visitIdentifier(node.variable, value).also {
             it.parent = node
         }
-        node.step = visitExpressionNode(node.start, value).also {
+        node.start = visitExpressionNode(node.start, value).also {
             it.parent = node
         }
         node.end = visitExpressionNode(node.end, value).also {
@@ -515,9 +515,13 @@ interface ASTModifier<T> {
 
     fun visitLambdaDeclaration(node: LambdaDeclaration, value: T): LambdaDeclaration {
         node.params.forEachIndexed { index, identifier ->
-            node.params[index] = visitIdentifier(identifier, value)
+            node.params[index] = visitIdentifier(identifier, value).also {
+                it.parent = node
+            }
         }
-        node.expression = visitExpressionNode(node.expression, value)
+        node.expression = visitExpressionNode(node.expression, value).also {
+            it.parent = node
+        }
         return node
     }
 
@@ -624,13 +628,9 @@ interface ASTModifier<T> {
 
     fun visitCallExpression(node: CallExpression, value: T): CallExpression {
         when (node) {
-            is StringCallExpression -> return visitStringCallExpression(node, value).also {
-                it.parent = node
-            }
+            is StringCallExpression -> return visitStringCallExpression(node, value)
 
-            is TableCallExpression -> return visitTableCallExpression(node, value).also {
-                it.parent = node
-            }
+            is TableCallExpression -> return visitTableCallExpression(node, value)
         }
         node.base = visitExpressionNode(node.base, value).also {
             it.parent = node
@@ -659,7 +659,9 @@ interface ASTModifier<T> {
     }
 
     fun visitStringCallExpression(node: StringCallExpression, value: T): StringCallExpression {
-        node.base = visitExpressionNode(node.base, value)
+        node.base = visitExpressionNode(node.base, value).also {
+            it.parent = node
+        }
 
         node.arguments.forEachIndexed { index, expressionNode ->
             node.arguments[index] = visitExpressionNode(expressionNode, value).also {
@@ -720,7 +722,9 @@ interface ASTModifier<T> {
     }
 
     fun visitTableKey(node: TableKey, value: T): TableKey {
-        // key always null
+        node.key = visitExpressionNode(node.key, value).also {
+            it.parent = node
+        }
         node.value = visitExpressionNode(node.value, value).also {
             it.parent = node
         }
@@ -773,7 +777,9 @@ interface ASTModifier<T> {
 
     fun visitBlockNode(node: BlockNode, value: T): BlockNode {
         node.statements.forEachIndexed { index, it ->
-            node.statements[index] = visitStatementNode(it, value)
+            node.statements[index] = visitStatementNode(it, value).also {
+                it.parent = node
+            }
         }
 
         val returnStatement = node.returnStatement

@@ -24,9 +24,9 @@ import kotlin.test.assertTrue
  * Focused ReturnChecker multi-value return-shape corpus.
  *
  * Documents annotated multi-return slot checking, open-ended / vararg tails,
- * final-call multi-return expansion, and unannotated unknown-slot behaviour as
- * implemented by ReturnChecker (Unknown is a single closed expected slot).
- * Production defects surface as assertion failures (test-only; no product edits).
+ * final-call multi-return expansion, and unannotated freeform unknown-return
+ * silence (bare Unknown is unconstrained for extraValues; annotated shapes stay hard).
+ * Production defects surface as assertion failures.
  */
 class ReturnMultiValueCorpusTddTest {
 
@@ -458,7 +458,7 @@ class ReturnMultiValueCorpusTddTest {
         assertTrue(harness.check("outer").isEmpty())
     }
 
-    // --- unannotated: Unknown is a single closed expected slot --------------
+    // --- unannotated freeform: bare Unknown is unconstrained for extraValues ---
 
     @Test
     fun unannotatedFunctionDeclaredReturnIsUnknown() {
@@ -476,9 +476,10 @@ class ReturnMultiValueCorpusTddTest {
     }
 
     @Test
-    fun unannotatedMultiValueReturnReportsExtraValuesAgainstUnknownSlot() {
-        // ValueSequence.of(UnknownType) is a single closed fixed slot. Multi-value
-        // returns therefore report extraValues; slot assignability is skipped for Unknown.
+    fun unannotatedMultiValueReturnIsUnknownFriendlyWithoutExtraValues() {
+        // ValueSequence.of(UnknownType) is one closed fixed slot, but freeform /
+        // unannotated returns treat bare Unknown as unconstrained: multi-value
+        // `return a, b` must not emit extraValues solely for exceeding that slot.
         val harness = harness(
             """
             local function freeform()
@@ -487,10 +488,7 @@ class ReturnMultiValueCorpusTddTest {
             """.trimIndent()
         )
 
-        val diagnostics = harness.check("freeform")
-        assertEquals(1, diagnostics.size)
-        assertEquals("checker.function.return.extraValues", diagnostics.single().code)
-        assertContains(diagnostics.single().message, "extra values")
+        assertTrue(harness.check("freeform").isEmpty())
     }
 
     @Test
@@ -519,7 +517,7 @@ class ReturnMultiValueCorpusTddTest {
     }
 
     @Test
-    fun unannotatedHeterogeneousBranchesReportExtraOnMultiValuePath() {
+    fun unannotatedHeterogeneousBranchesStayUnknownFriendlyOnMultiValuePath() {
         val harness = harness(
             """
             local function freeform(flag)
@@ -531,9 +529,8 @@ class ReturnMultiValueCorpusTddTest {
             """.trimIndent()
         )
 
-        val diagnostics = harness.check("freeform")
-        assertEquals(1, diagnostics.size)
-        assertEquals("checker.function.return.extraValues", diagnostics.single().code)
+        // Multi-value branch must not invent extraValues against bare Unknown.
+        assertTrue(harness.check("freeform").isEmpty())
     }
 
     @Test
@@ -601,12 +598,10 @@ class ReturnMultiValueCorpusTddTest {
         assertContains(diagnostics.single().message, "expected number")
     }
 
-    // --- GLOBAL functions: TypeResolver does not attach ---@return to GLOBAL ---
-    // ReturnChecker still accepts GLOBAL when declaredType is FunctionType, so
-    // inject multi-return shape to exercise the GLOBAL declaration path.
+    // --- GLOBAL functions: TypeResolver materializes ---@return like local FUNCTION ---
 
     @Test
-    fun globalWithoutInjectedFunctionTypeIsSkippedByReturnChecker() {
+    fun annotatedGlobalMultiReturnMismatchReportsWithoutInjection() {
         val harness = harness(
             """
             ---@return boolean, string
@@ -618,28 +613,7 @@ class ReturnMultiValueCorpusTddTest {
 
         val declaration = harness.function("exportPair")
         assertEquals(DeclarationKind.GLOBAL, declaration.kind)
-        // resolveValueDeclaration only materializes declaredTypeSyntax; bare ---@return
-        // does not yield FunctionType, so ReturnChecker exits without diagnostics.
-        assertTrue(declaration.declaredType !is FunctionType)
-        assertTrue(harness.checker.checkDeclaration(declaration).isEmpty())
-    }
-
-    @Test
-    fun globalWithInjectedMultiReturnMismatchReportsDiagnostics() {
-        val harness = harness(
-            """
-            function exportPair()
-                return "no", 1
-            end
-            """.trimIndent()
-        )
-
-        val declaration = harness.function("exportPair").copy(
-            declaredType = FunctionType(
-                parameters = emptyList(),
-                returnType = MultiReturnType(listOf(PrimitiveType.BOOLEAN, PrimitiveType.STRING))
-            )
-        )
+        assertTrue(declaration.declaredType is FunctionType)
 
         val diagnostics = harness.checker.checkDeclaration(declaration)
         assertTrue(diagnostics.isNotEmpty())
@@ -648,7 +622,44 @@ class ReturnMultiValueCorpusTddTest {
     }
 
     @Test
-    fun globalWithInjectedMultiReturnExactMatchIsClean() {
+    fun annotatedGlobalMultiReturnExactMatchIsCleanWithoutInjection() {
+        val harness = harness(
+            """
+            ---@return boolean, string
+            function exportPair()
+                return true, "ok"
+            end
+            """.trimIndent()
+        )
+
+        val declaration = harness.function("exportPair")
+        assertEquals(DeclarationKind.GLOBAL, declaration.kind)
+        assertTrue(declaration.declaredType is FunctionType)
+        assertTrue(harness.checker.checkDeclaration(declaration).isEmpty())
+    }
+
+    @Test
+    fun annotatedGlobalExtraValuesReportsWithoutInjection() {
+        val harness = harness(
+            """
+            ---@return boolean
+            function exportOne()
+                return true, "extra"
+            end
+            """.trimIndent()
+        )
+
+        val declaration = harness.function("exportOne")
+        assertEquals(DeclarationKind.GLOBAL, declaration.kind)
+        assertTrue(declaration.declaredType is FunctionType)
+
+        val diagnostics = harness.checker.checkDeclaration(declaration)
+        assertEquals(1, diagnostics.size)
+        assertEquals("checker.function.return.extraValues", diagnostics.single().code)
+    }
+
+    @Test
+    fun undocumentedGlobalFunctionHasNoSyntheticFunctionType() {
         val harness = harness(
             """
             function exportPair()
@@ -657,13 +668,11 @@ class ReturnMultiValueCorpusTddTest {
             """.trimIndent()
         )
 
-        val declaration = harness.function("exportPair").copy(
-            declaredType = FunctionType(
-                parameters = emptyList(),
-                returnType = MultiReturnType(listOf(PrimitiveType.BOOLEAN, PrimitiveType.STRING))
-            )
-        )
-
+        val declaration = harness.function("exportPair")
+        assertEquals(DeclarationKind.GLOBAL, declaration.kind)
+        // Mirror resolveFunctionDeclaration bare-shape guard: no ---@param/@return/@overload
+        // must not invent function(...): unknown and suppress inference.
+        assertTrue(declaration.declaredType !is FunctionType)
         assertTrue(harness.checker.checkDeclaration(declaration).isEmpty())
     }
 

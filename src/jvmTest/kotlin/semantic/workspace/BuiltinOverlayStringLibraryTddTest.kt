@@ -5,6 +5,7 @@ import io.github.dingyi222666.luaparser.parser.LuaParser
 import io.github.dingyi222666.luaparser.parser.LuaVersion
 import io.github.dingyi222666.luaparser.semantic.api.CompletionItemKind
 import io.github.dingyi222666.luaparser.semantic.api.SymbolKind
+import io.github.dingyi222666.luaparser.semantic.workspace.VirtualPath
 import io.github.dingyi222666.luaparser.semantic.workspace.WorkspaceSnapshot
 import io.github.dingyi222666.luaparser.semantic.workspace.std.BuiltinOverlayLoader
 import semantic.support.WorkspaceSemanticHarness
@@ -126,11 +127,22 @@ class BuiltinOverlayStringLibraryTddTest {
 
     @Test
     fun androlua_overlay_still_exposes_string_provider_members() {
+        // AndroLua inherits Lua 5.3 stdlib string at __lua_std__/androlua5.3/string.lua, but the
+        // Android framework overlay also registers alias providers named "string"
+        // (e.g. android.R$string). Select the stdlib provider by path, not singleOrNull(moduleName).
         val overlay = BuiltinOverlayLoader.load(LuaVersion.ANDROLUA_5_3) { _, _ -> WorkspaceSnapshot.FileSnapshot() }
-        val provider = assertNotNull(overlay.providerModules.values.singleOrNull { it.moduleName == "string" })
+        val stdPath = VirtualPath.of("__lua_std__/androlua5.3/string.lua")
+        val provider = assertNotNull(
+            overlay.providerModules[stdPath],
+            "AndroLua overlay must include stdlib string provider at ${stdPath.value}; " +
+                "string-named modules=${overlay.providerModules.filterValues { it.moduleName == "string" }.keys.map { it.value }}"
+        )
+        assertEquals("string", provider.moduleName)
+        assertEquals(LuaVersion.ANDROLUA_5_3, overlay.version)
         val surface = assertNotNull(provider.file.moduleExportSurface)
         val actual = surface.members.map { it.name }.filter { it.isNotEmpty() }.toSet()
-        assertTrue((EXPECTED_STRING_MEMBERS - actual).isEmpty(), "AndroLua string missing ${EXPECTED_STRING_MEMBERS - actual}")
+        val missing = EXPECTED_STRING_MEMBERS - actual
+        assertTrue(missing.isEmpty(), "AndroLua string missing $missing (actual=$actual)")
     }
 
     private fun stringHarness(source: String) = WorkspaceSemanticHarness.build(

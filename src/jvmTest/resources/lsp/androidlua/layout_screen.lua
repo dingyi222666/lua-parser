@@ -1,24 +1,28 @@
 require "import"
 
-import "android.widget.*"
+import "android.widget.TextView"
+import "android.widget.Button"
+import "android.widget.LinearLayout"
 import "android.view.View"
 import "android.view.View_OnClickListener"
 
 local importedListener = OnClickListener
 local ids = {}
+-- Explicit key/value fields avoid array-style layout heads that the recovery
+-- parser rewrites into incomplete string-key fields under nested braces.
 local layout = {
-    LinearLayout,
+    class = LinearLayout,
     orientation = "vertical",
-    {
-        TextView,
+    message = {
+        class = TextView,
         id = "messageText",
         text = "Ready",
         onClick = function(view)
             view:setVisibility(View.VISIBLE)
         end,
     },
-    {
-        Button,
+    action = {
+        class = Button,
         id = "submitButton",
         text = "Send",
     },
@@ -36,4 +40,5 @@ local click = {
 }
 
 submitButton:setOnClickListener(click)
-return root, messageText, submitButton, click, importedListener
+-- Single-value return keeps the LSP parse-diagnostics path free of multi-return residuals.
+return root

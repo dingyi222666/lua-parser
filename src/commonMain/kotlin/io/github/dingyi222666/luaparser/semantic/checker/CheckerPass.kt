@@ -22,7 +22,8 @@ class CheckerPass {
             )
         }
 
-        val diagnostics = declarations
+        val expressionChecker = ExpressionUsageChecker(binder, context)
+        val diagnostics = (declarations
             .flatMap { declaration ->
                 buildList {
                     addAll(signatureChecker.checkDeclaration(declaration))
@@ -30,7 +31,7 @@ class CheckerPass {
                         addAll(returnChecker.checkDeclaration(declaration))
                     }
                 }
-            }
+            } + expressionChecker.check(chunk))
             .distinctBy { diagnostic ->
                 listOf(
                     diagnostic.range?.start?.line,

@@ -17,6 +17,7 @@ import io.github.dingyi222666.luaparser.semantic.model.SemanticModel
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class SemanticModelFacadeTest {
@@ -214,6 +215,64 @@ class SemanticModelFacadeTest {
         assertTrue(scope.symbols.any { it.name == "render" })
         assertEquals(1, scope.symbols.count { it.name == "outer" })
         assertEquals(harness.positionOf("outer", occurrence = 2), scope.symbols.single { it.name == "outer" }.range?.start)
+    }
+
+    @Test
+    fun getSignatureHelpAtRanksActiveSignatureForDocOverloads() {
+        // TASK-561: multi-signature help must expose overloads and rank activeSignature
+        // by CallChecker match for current argument types (not always 0).
+        val harness = semanticModelHarness(
+            """
+            ---@overload fun(value: string): string
+            ---@param value number
+            ---@return number
+            local function normalize(value)
+                return value
+            end
+            local a = normalize(1)
+            local b = normalize("x")
+            """.trimIndent()
+        )
+
+        val numberHelp = assertNotNull(harness.model.getSignatureHelpAt(harness.positionOf("1)")))
+        val stringHelp = assertNotNull(harness.model.getSignatureHelpAt(harness.positionOf("\"x\"")))
+
+        assertTrue(numberHelp.signatures.size >= 2, numberHelp.signatures.map { it.label }.toString())
+        val numberIndex = numberHelp.signatures.indexOfFirst {
+            it.label.contains("number") && !it.label.contains("string")
+        }.takeIf { it >= 0 } ?: numberHelp.signatures.indexOfFirst { it.label.contains("number") }
+        val stringIndex = stringHelp.signatures.indexOfFirst {
+            it.label.contains("string") && !it.label.contains("number")
+        }.takeIf { it >= 0 } ?: stringHelp.signatures.indexOfFirst { it.label.contains("string") }
+
+        assertTrue(numberIndex >= 0 && stringIndex >= 0)
+        assertEquals(numberIndex, numberHelp.activeSignature)
+        assertEquals(stringIndex, stringHelp.activeSignature)
+        assertTrue(numberHelp.activeParameter >= 0)
+        assertTrue(stringHelp.activeParameter >= 0)
+        assertTrue(numberHelp.activeParameter < numberHelp.signatures[numberHelp.activeSignature].parameters.size ||
+            numberHelp.signatures[numberHelp.activeSignature].parameters.isEmpty())
+    }
+
+    @Test
+    fun getSignatureHelpAtReturnsNullForUnknownCalleeAndNonCallPositions() {
+        // TASK-561: freeform unknown callees / non-call positions stay null without throw.
+        val harness = semanticModelHarness(
+            """
+            local freeform = unknownCallee(1, 2)
+            local plain = 1
+            """.trimIndent()
+        )
+
+        // On a non-call binding / identifier.
+        assertNull(harness.model.getSignatureHelpAt(harness.positionOf("plain")))
+        // On the freeform call site: unknown callee has no documented/callable surface.
+        assertNull(
+            harness.model.getSignatureHelpAt(harness.positionOf("1,")),
+            "Unknown freeform callee should return null signature help"
+        )
+        // Outside any call (start of file).
+        assertNull(harness.model.getSignatureHelpAt(Position(1, 1)))
     }
 }
 

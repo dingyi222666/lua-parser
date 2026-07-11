@@ -27,7 +27,7 @@ class ParserRecoveryRegressionTest {
         val path = "/parser/regressions/recovery/doc_member_if_repeat.lua"
         val source = loadParserRegressionResource(path)
 
-        assertRecoveryPair(LuaVersion.LUA_5_3, source) { recovered ->
+        assertRecoveringParseWithStrictRejection(LuaVersion.LUA_5_3, source) { recovered ->
             assertEquals(loadParserRegressionShape(path).trimEnd(), renderShape(recovered).trimEnd())
 
             val statements = recovered.body.statements
@@ -40,7 +40,7 @@ class ParserRecoveryRegressionTest {
 
     @Test
     fun recoversIncompleteLocalAttributeSyntax() {
-        assertRecoveryPair(LuaVersion.LUA_5_4, "local value<const = 1") { recovered ->
+        assertRecoveringParseWithStrictRejection(LuaVersion.LUA_5_4, "local value<const = 1") { recovered ->
             val statement = recovered.firstStatement<LocalStatement>()
             val localName = assertIs<AttributeIdentifier>(statement.init.single())
 
@@ -55,7 +55,7 @@ class ParserRecoveryRegressionTest {
 
     @Test
     fun recoversMalformedWhenBranches() {
-        assertRecoveryPair(LuaVersion.ANDROLUA_5_3, "when ready print(1) else fallback") { recovered ->
+        assertRecoveringParseWithStrictRejection(LuaVersion.ANDROLUA_5_3, "when ready print(1) else fallback") { recovered ->
             val statement = recovered.firstStatement<WhenStatement>()
 
             assertEquals("Id(ready)", renderShape(statement.condition))
@@ -70,7 +70,10 @@ class ParserRecoveryRegressionTest {
 
     @Test
     fun recoversMalformedSwitchBodies() {
-        assertRecoveryPair(LuaVersion.ANDROLUA_5_3, "switch value do case 1 fallback end") { recovered ->
+        assertRecoveringParseWithStrictRejection(
+            LuaVersion.ANDROLUA_5_3,
+            "switch value do case 1 fallback end"
+        ) { recovered ->
             val statement = recovered.firstStatement<SwitchStatement>()
             val cause = assertIs<CaseCause>(statement.causes.single())
 
@@ -91,7 +94,7 @@ class ParserRecoveryRegressionTest {
             "return lambda value - value" to "Id(value)",
             "return lambda value ->" to "ExpressionNodeSupport"
         ).forEach { (source, expectedBodyShape) ->
-            assertRecoveryPair(LuaVersion.ANDROLUA_5_3, source) { recovered ->
+            assertRecoveringParseWithStrictRejection(LuaVersion.ANDROLUA_5_3, source) { recovered ->
                 val lambda = assertIs<LambdaDeclaration>(recovered.returnExpression())
 
                 assertContentEquals(listOf("value"), lambda.params.map { it.name })
@@ -106,7 +109,7 @@ class ParserRecoveryRegressionTest {
             "---@type fun()\nobj.\nprint(1)" to "CallStmt(Call(Member(Id(obj).):))",
             "---@type fun()\nobj:\nprint(1)" to "CallStmt(Call(Member(Id(obj):):))"
         ).forEach { (source, brokenShape) ->
-            assertRecoveryPair(LuaVersion.LUA_5_3, source) { recovered ->
+            assertRecoveringParseWithStrictRejection(LuaVersion.LUA_5_3, source) { recovered ->
                 val statements = recovered.body.statements
                 val comment = assertIs<CommentStatement>(statements[0])
 
@@ -121,7 +124,7 @@ class ParserRecoveryRegressionTest {
 
     @Test
     fun recoversMissingThenDoEndAndUntil() {
-        assertRecoveryPair(LuaVersion.LUA_5_3, "if ready local value = 1 end") { recovered ->
+        assertRecoveringParseWithStrictRejection(LuaVersion.LUA_5_3, "if ready local value = 1 end") { recovered ->
             val statement = recovered.firstStatement<IfStatement>()
             val clause = statement.causes.single()
 
@@ -130,7 +133,7 @@ class ParserRecoveryRegressionTest {
             assertIs<LocalStatement>(clause.body.statements.single())
         }
 
-        assertRecoveryPair(LuaVersion.LUA_5_3, "while ready local value = 1 end") { recovered ->
+        assertRecoveringParseWithStrictRejection(LuaVersion.LUA_5_3, "while ready local value = 1 end") { recovered ->
             val statement = recovered.firstStatement<WhileStatement>()
 
             assertEquals("Id(ready)", renderShape(statement.condition))
@@ -138,14 +141,14 @@ class ParserRecoveryRegressionTest {
             assertIs<LocalStatement>(statement.body.statements.single())
         }
 
-        assertRecoveryPair(LuaVersion.LUA_5_3, "do local value = 1") { recovered ->
+        assertRecoveringParseWithStrictRejection(LuaVersion.LUA_5_3, "do local value = 1") { recovered ->
             val statement = recovered.firstStatement<DoStatement>()
 
             assertEquals(1, statement.body.statements.size)
             assertIs<LocalStatement>(statement.body.statements.single())
         }
 
-        assertRecoveryPair(LuaVersion.LUA_5_3, "repeat local value = 1") { recovered ->
+        assertRecoveringParseWithStrictRejection(LuaVersion.LUA_5_3, "repeat local value = 1") { recovered ->
             val statement = recovered.firstStatement<RepeatStatement>()
 
             assertEquals(1, statement.body.statements.size)
@@ -155,7 +158,7 @@ class ParserRecoveryRegressionTest {
         }
     }
 
-    private fun assertRecoveryPair(
+    private fun assertRecoveringParseWithStrictRejection(
         version: LuaVersion,
         source: String,
         expectedStrictMessage: String? = null,

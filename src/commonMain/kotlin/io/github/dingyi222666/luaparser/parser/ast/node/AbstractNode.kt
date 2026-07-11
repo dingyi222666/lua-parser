@@ -30,7 +30,10 @@ interface ExpressionNode : BaseASTNode {
             }
 
             override fun clone(): ExpressionNode {
-                return EMPTY
+                return ExpressionNodeSupport().also {
+                    it.range = range.copy()
+                    it.bad = bad
+                }
             }
 
             override var bad = false

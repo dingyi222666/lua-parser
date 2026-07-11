@@ -1,7 +1,8 @@
 package semantic.checker
 
 import io.github.dingyi222666.luaparser.parser.LuaParser
-import io.github.dingyi222666.luaparser.semantic.SemanticModel
+import io.github.dingyi222666.luaparser.semantic.model.SemanticModel
+
 import io.github.dingyi222666.luaparser.semantic.SemanticPipeline
 import kotlin.test.Test
 import kotlin.test.assertFalse

@@ -3,7 +3,31 @@ package io.github.dingyi222666.luaparser.parser.ast.node
 import io.github.dingyi222666.luaparser.parser.ast.visitor.ASTVisitor
 import io.github.dingyi222666.luaparser.util.parseLuaString
 import kotlin.jvm.Transient
+import kotlin.math.pow
 import kotlin.properties.Delegates
+
+private fun <T : BaseASTNode> T.copyExpressionCloneMetadataFrom(source: BaseASTNode): T = also {
+    range = source.range.copy()
+    bad = source.bad
+}
+
+private fun <T : BaseASTNode> T.withExpressionCloneParent(parentNode: BaseASTNode): T = also {
+    parent = parentNode
+}
+
+private fun BlockNode.cloneExpressionBlockFor(parentNode: BaseASTNode): BlockNode =
+    clone().copyExpressionCloneMetadataFrom(this).withExpressionCloneParent(parentNode).also { block ->
+        block.statements.forEach { it.parent = block }
+        block.returnStatement?.parent = block
+    }
+
+private fun <T : CallExpression> T.copyCallExpressionFrom(source: CallExpression): T =
+    copyExpressionCloneMetadataFrom(source).also { expression ->
+        expression.base = source.base.clone().withExpressionCloneParent(expression)
+        for (argument in source.arguments) {
+            expression.arguments.add(argument.clone().withExpressionCloneParent(expression))
+        }
+    }
 
 
 /**
@@ -23,7 +47,7 @@ open class Identifier(open var name: String = "") : ExpressionNode, ASTNode() {
     }
 
     override fun clone(): Identifier {
-        return Identifier(name = name).also {
+        return Identifier(name = name).copyExpressionCloneMetadataFrom(this).also {
             it.isLocal = isLocal
         }
     }
@@ -45,7 +69,7 @@ class AttributeIdentifier(
     }
 
     override fun clone(): AttributeIdentifier {
-        return AttributeIdentifier(name = name, attributeName = attributeName).also {
+        return AttributeIdentifier(name = name, attributeName = attributeName).copyExpressionCloneMetadataFrom(this).also {
             it.isLocal = true
         }
     }
@@ -74,14 +98,9 @@ class ConstantNode(
 
     private fun switchValue(newValue: Any): Any {
         return when (constantType) {
-            TYPE.INTERGER -> {
-                newValue.toString().toIntOrNull()
-                    ?: newValue
-            }
+            TYPE.INTERGER -> parseIntegerValue(newValue)
 
-            TYPE.FLOAT -> {
-                newValue.toString().toFloatOrNull() ?: newValue
-            }
+            TYPE.FLOAT -> parseFloatValue(newValue)
 
             TYPE.BOOLEAN -> {
                 newValue.toString()
@@ -106,12 +125,45 @@ class ConstantNode(
         return parseLuaString(rawValue.toString())
     }
 
+    /**
+     * Safe integer view of this constant.
+     *
+     * Never throws [ClassCastException]: values that only fit in [Long] are
+     * coerced into the Int range, unparseable / oversized lexemes fall back to 0
+     * while [rawValue] still holds the original lexeme.
+     */
     fun intOf(): Int {
-        return _value as Int
+        return when (val v = _value) {
+            is Int -> v
+            is Long -> v.coerceIn(Int.MIN_VALUE.toLong(), Int.MAX_VALUE.toLong()).toInt()
+            is Number -> v.toInt()
+            else -> when (val parsed = parseIntegerValue(v)) {
+                is Int -> parsed
+                is Long -> parsed.coerceIn(Int.MIN_VALUE.toLong(), Int.MAX_VALUE.toLong()).toInt()
+                is Number -> parsed.toInt()
+                else -> 0
+            }
+        }
     }
 
+    /**
+     * Safe float view of this constant.
+     *
+     * Never throws [ClassCastException]: unparseable lexemes (kept as raw text in
+     * [_value]) return [Float.NaN] rather than crashing.
+     */
     fun floatOf(): Float {
-        return _value as Float
+        return when (val v = _value) {
+            is Float -> v
+            is Double -> v.toFloat()
+            is Number -> v.toFloat()
+            else -> when (val parsed = parseFloatValue(v)) {
+                is Float -> parsed
+                is Double -> parsed.toFloat()
+                is Number -> parsed.toFloat()
+                else -> Float.NaN
+            }
+        }
     }
 
     fun booleanOf(): Boolean {
@@ -124,7 +176,8 @@ class ConstantNode(
         return "ConstantsNode(type=$constantType, value=$_value)"
     }
 
-    override fun clone(): ConstantNode = ConstantNode(constantType = this.constantType, value = this.rawValue)
+    override fun clone(): ConstantNode =
+        ConstantNode(constantType = this.constantType, value = this.rawValue).copyExpressionCloneMetadataFrom(this)
 
     override fun <T> accept(visitor: ASTVisitor<T>, value: T) {
         visitor.visitConstantNode(this, value)
@@ -151,9 +204,186 @@ class ConstantNode(
 
     companion object {
         val NIL = ConstantNode(value = "nil", constantType = TYPE.NIL)
+
+        /**
+         * Classify a Lua 5.3 NUMBER lexeme as [TYPE.FLOAT] or [TYPE.INTERGER].
+         *
+         * Rules (matching Lua 5.3 lexical / numerical forms):
+         * - Hex (`0x`/`0X`): float when the lexeme has a `.` fraction and/or a
+         *   binary exponent (`p`/`P`); otherwise integer (hex digits may include
+         *   `e`/`E`, which must not be treated as a decimal exponent).
+         * - Decimal: float when the lexeme has a `.` fraction and/or a decimal
+         *   exponent (`e`/`E`); otherwise integer.
+         */
+        fun typeForNumberLexeme(lexeme: CharSequence): TYPE {
+            val text = lexeme.toString()
+            if (text.isEmpty()) return TYPE.INTERGER
+
+            val isHex = text.length >= 2 &&
+                text[0] == '0' &&
+                (text[1] == 'x' || text[1] == 'X')
+
+            return if (isHex) {
+                if (text.indexOf('.') >= 0 ||
+                    text.indexOf('p') >= 0 ||
+                    text.indexOf('P') >= 0
+                ) {
+                    TYPE.FLOAT
+                } else {
+                    TYPE.INTERGER
+                }
+            } else {
+                if (text.indexOf('.') >= 0 ||
+                    text.indexOf('e') >= 0 ||
+                    text.indexOf('E') >= 0
+                ) {
+                    TYPE.FLOAT
+                } else {
+                    TYPE.INTERGER
+                }
+            }
+        }
+
+        /** Build a number [ConstantNode] that keeps the raw lexeme and typed value. */
+        fun fromNumberLexeme(lexeme: CharSequence): ConstantNode {
+            val text = lexeme.toString()
+            return ConstantNode(typeForNumberLexeme(text), text)
+        }
     }
 
 
+}
+
+/**
+ * Parse an integer-typed constant value.
+ *
+ * Accepts [Int]/[Long]/[Number], decimal text, and Lua hex integers (`0xFF`).
+ * Values outside [Int] are kept as [Long] when possible; otherwise the raw text
+ * is retained (no throw).
+ */
+private fun parseIntegerValue(newValue: Any): Any {
+    when (newValue) {
+        is Int -> return newValue
+        is Long -> {
+            return if (newValue in Int.MIN_VALUE.toLong()..Int.MAX_VALUE.toLong()) {
+                newValue.toInt()
+            } else {
+                newValue
+            }
+        }
+        is Number -> {
+            val asLong = newValue.toLong()
+            return if (asLong in Int.MIN_VALUE.toLong()..Int.MAX_VALUE.toLong()) {
+                asLong.toInt()
+            } else {
+                asLong
+            }
+        }
+    }
+
+    val text = newValue.toString().trim()
+    if (text.isEmpty()) return text
+
+    text.toIntOrNull()?.let { return it }
+    text.toLongOrNull()?.let { return it }
+
+    if (text.length >= 3 && text[0] == '0' && (text[1] == 'x' || text[1] == 'X')) {
+        val hexBody = text.substring(2)
+        if (hexBody.isNotEmpty() && hexBody.all { it.isHexDigit() }) {
+            hexBody.toIntOrNull(16)?.let { return it }
+            hexBody.toLongOrNull(16)?.let { return it }
+        }
+        return text
+    }
+
+    return text
+}
+
+/**
+ * Parse a float-typed constant value.
+ *
+ * Accepts numeric values, decimal/scientific text, and Lua 5.3 hex floats
+ * (`0x1.8p1`, `0x1p10`, `0x1.f`). Unparseable input keeps the raw text.
+ */
+private fun parseFloatValue(newValue: Any): Any {
+    when (newValue) {
+        is Float -> return newValue
+        is Double -> return newValue.toFloat()
+        is Number -> return newValue.toFloat()
+    }
+
+    val text = newValue.toString().trim()
+    if (text.isEmpty()) return text
+
+    parseLuaHexFloat(text)?.let { return it }
+    text.toFloatOrNull()?.let { return it }
+    text.toDoubleOrNull()?.let { return it.toFloat() }
+    return text
+}
+
+private fun Char.isHexDigit(): Boolean =
+    this in '0'..'9' || this in 'a'..'f' || this in 'A'..'F'
+
+/**
+ * Parse a Lua 5.3 hex float lexeme into a [Float], or null when the form is not
+ * a hex float / hex-with-binary-exponent.
+ */
+private fun parseLuaHexFloat(text: String): Float? {
+    if (text.length < 3) return null
+    if (!(text[0] == '0' && (text[1] == 'x' || text[1] == 'X'))) return null
+
+    val body = text.substring(2)
+    val pIndex = body.indexOfFirst { it == 'p' || it == 'P' }
+    val mantStr: String
+    val exp: Int
+    if (pIndex >= 0) {
+        mantStr = body.substring(0, pIndex)
+        val expStr = body.substring(pIndex + 1)
+        if (expStr.isEmpty()) return null
+        exp = expStr.toIntOrNull() ?: return null
+    } else {
+        // Fraction-only hex float without binary exponent (e.g. 0x1.f) is still float.
+        if (body.indexOf('.') < 0) return null
+        mantStr = body
+        exp = 0
+    }
+
+    if (mantStr.isEmpty() || mantStr == ".") return null
+
+    val dot = mantStr.indexOf('.')
+    val intPart: String
+    val fracPart: String
+    if (dot >= 0) {
+        intPart = mantStr.substring(0, dot)
+        fracPart = mantStr.substring(dot + 1)
+    } else {
+        intPart = mantStr
+        fracPart = ""
+    }
+
+    if (intPart.any { !it.isHexDigit() } || fracPart.any { !it.isHexDigit() }) {
+        return null
+    }
+
+    var value = 0.0
+    for (c in intPart) {
+        value = value * 16.0 + c.hexValue()
+    }
+    var place = 16.0
+    for (c in fracPart) {
+        value += c.hexValue() / place
+        place *= 16.0
+    }
+
+    value *= 2.0.pow(exp.toDouble())
+    return value.toFloat()
+}
+
+private fun Char.hexValue(): Int = when (this) {
+    in '0'..'9' -> this - '0'
+    in 'a'..'f' -> this - 'a' + 10
+    in 'A'..'F' -> this - 'A' + 10
+    else -> 0
 }
 
 /**
@@ -173,12 +403,7 @@ open class CallExpression : ExpressionNode, ASTNode() {
     }
 
     override fun clone(): CallExpression {
-        return CallExpression().also {
-            it.base = base.clone()
-            for (argument in arguments) {
-                it.arguments.add(argument.clone())
-            }
-        }
+        return CallExpression().copyCallExpressionFrom(this)
     }
 }
 
@@ -191,6 +416,10 @@ class StringCallExpression : CallExpression() {
     override fun <T> accept(visitor: ASTVisitor<T>, value: T) {
         visitor.visitStringCallExpression(this, value)
     }
+
+    override fun clone(): StringCallExpression {
+        return StringCallExpression().copyCallExpressionFrom(this)
+    }
 }
 
 
@@ -202,6 +431,10 @@ class TableCallExpression : CallExpression() {
 
     override fun <T> accept(visitor: ASTVisitor<T>, value: T) {
         visitor.visitTableCallExpression(this, value)
+    }
+
+    override fun clone(): TableCallExpression {
+        return TableCallExpression().copyCallExpressionFrom(this)
     }
 }
 
@@ -219,9 +452,9 @@ class MemberExpression : ExpressionNode, ASTNode() {
     }
 
     override fun clone(): MemberExpression {
-        return MemberExpression().also {
-            it.identifier = identifier.clone()
-            it.base = base.clone()
+        return MemberExpression().copyExpressionCloneMetadataFrom(this).also {
+            it.identifier = identifier.clone().withExpressionCloneParent(it)
+            it.base = base.clone().withExpressionCloneParent(it)
             it.indexer = indexer
         }
     }
@@ -241,9 +474,9 @@ class IndexExpression : ExpressionNode, ASTNode() {
     }
 
     override fun clone(): IndexExpression {
-        return IndexExpression().also {
-            it.base = base.clone()
-            it.index = index.clone()
+        return IndexExpression().copyExpressionCloneMetadataFrom(this).also {
+            it.base = base.clone().withExpressionCloneParent(it)
+            it.index = index.clone().withExpressionCloneParent(it)
         }
     }
 }
@@ -259,7 +492,7 @@ class VarargLiteral : ExpressionNode, ASTNode() {
     }
 
     override fun clone(): VarargLiteral {
-        return VarargLiteral()
+        return VarargLiteral().copyExpressionCloneMetadataFrom(this)
     }
 }
 
@@ -275,9 +508,9 @@ class UnaryExpression : ExpressionNode, ASTNode() {
     }
 
     override fun clone(): UnaryExpression {
-        return UnaryExpression().also {
+        return UnaryExpression().copyExpressionCloneMetadataFrom(this).also {
             it.operator = operator
-            it.arg = arg.clone()
+            it.arg = arg.clone().withExpressionCloneParent(it)
         }
     }
 
@@ -297,10 +530,10 @@ class BinaryExpression : ExpressionNode, ASTNode() {
     }
 
     override fun clone(): BinaryExpression {
-        return BinaryExpression().also {
+        return BinaryExpression().copyExpressionCloneMetadataFrom(this).also {
             it.operator = operator
-            it.left = left?.clone()
-            it.right = right?.clone()
+            it.left = left?.clone()?.withExpressionCloneParent(it)
+            it.right = right?.clone()?.withExpressionCloneParent(it)
         }
     }
 }
@@ -317,9 +550,9 @@ class TableConstructorExpression : ExpressionNode, ASTNode() {
     }
 
     override fun clone(): TableConstructorExpression {
-        return TableConstructorExpression().also {
+        return TableConstructorExpression().copyExpressionCloneMetadataFrom(this).also {
             for (field in fields) {
-                it.fields.add(field.clone())
+                it.fields.add(field.clone().withExpressionCloneParent(it))
             }
         }
     }
@@ -337,9 +570,9 @@ class ArrayConstructorExpression : ExpressionNode, ASTNode() {
     }
 
     override fun clone(): ArrayConstructorExpression {
-        return ArrayConstructorExpression().also {
+        return ArrayConstructorExpression().copyExpressionCloneMetadataFrom(this).also {
             for (value in values) {
-                it.values.add(value.clone())
+                it.values.add(value.clone().withExpressionCloneParent(it))
             }
         }
     }
@@ -370,10 +603,12 @@ class LambdaDeclaration : ExpressionNode, ASTNode() {
     }
 
     override fun clone(): LambdaDeclaration {
-        return LambdaDeclaration().also { declaration ->
-            declaration.params.addAll(params.map { it.clone() })
+        return LambdaDeclaration().copyExpressionCloneMetadataFrom(this).also { declaration ->
+            params.forEach {
+                declaration.params.add(it.clone().withExpressionCloneParent(declaration))
+            }
 
-            declaration.expression = expression.clone()
+            declaration.expression = expression.clone().withExpressionCloneParent(declaration)
         }
     }
 }
@@ -393,10 +628,12 @@ class FunctionDeclaration : ExpressionNode, StatementNode, ASTNode() {
     }
 
     override fun clone(): FunctionDeclaration {
-        return FunctionDeclaration().also { declaration ->
-            declaration.body = body?.clone()
-            declaration.params.addAll(params.map { it.clone() })
-            declaration.identifier = identifier?.clone()
+        return FunctionDeclaration().copyExpressionCloneMetadataFrom(this).also { declaration ->
+            declaration.body = body?.cloneExpressionBlockFor(declaration)
+            params.forEach {
+                declaration.params.add(it.clone().withExpressionCloneParent(declaration))
+            }
+            declaration.identifier = identifier?.clone()?.withExpressionCloneParent(declaration)
             declaration.isLocal = isLocal
         }
     }

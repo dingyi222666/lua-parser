@@ -14,7 +14,7 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 class AndroidLuaImportWorkspaceTddTest {
-    private val androidJar = File("G:/Android/Sdk/platforms/android-35/android.jar")
+    private val androidJar = File(JvmWorkspaceConfiguration.DEFAULT_ANDROID_JAR_PATH)
 
     @Test
     fun require_import_resolves_androlua_import_overlay_module() {
@@ -696,6 +696,72 @@ class AndroidLuaImportWorkspaceTddTest {
             assertEquals(SymbolKind.METHOD, hover?.symbol?.kind)
             assertEquals(listOf(harness.path("__jvm__/classes/android/view/View\$OnClickListener.lua")), definitions.map { it.path })
         }
+    }
+
+    @Test
+    fun android_jar_discovery_without_metadata_mounts_text_view_when_present() {
+        // Goal path (TASK-537): jvm.androidJar metadata unset; host SDK discovery must still mount.
+        if (!androidJar.isFile) {
+            println(
+                "SKIP reason: " +
+                    JvmWorkspaceConfiguration.missingAndroidJarSoftSkipReason(taskId = "TASK-537")
+            )
+            return
+        }
+        // deliberately no metadata androidJar — host SDK discovery only
+        val harness = jvmHarness(
+            "main.lua" to "import \"android.widget.TextView\"\nlocal current = TextView.AUTO_SIZE_TEXT_TYPE_NONE\nreturn current"
+        )
+        assertProviderPath(harness, "android.widget.TextView")
+        assertEquals(
+            harness.path("__jvm__/classes/android/widget/TextView.lua"),
+            harness.queries.gotoDefinition(
+                harness.path("main.lua"),
+                harness.positionOf("main.lua", "TextView")
+            ).single().path
+        )
+    }
+
+    @Test
+    fun android_jar_discovery_without_metadata_mounts_widget_wildcard_when_present() {
+        if (!androidJar.isFile) {
+            println(
+                "SKIP reason: " +
+                    JvmWorkspaceConfiguration.missingAndroidJarSoftSkipReason(taskId = "TASK-537")
+            )
+            return
+        }
+        val harness = jvmHarness(
+            "main.lua" to "import \"android.widget.*\"\nlocal current = TextView.AUTO_SIZE_TEXT_TYPE_NONE\nreturn current"
+        )
+        assertEquals(
+            harness.path("__jvm__/classes/android/widget/TextView.lua"),
+            harness.queries.gotoDefinition(
+                harness.path("main.lua"),
+                harness.positionOf("main.lua", "TextView")
+            ).single().path
+        )
+        assertCompletion(
+            harness.queries.completions(harness.path("main.lua"), harness.positionOf("main.lua", "current")),
+            "TextView",
+            CompletionItemKind.MODULE
+        )
+    }
+
+    @Test
+    fun android_jar_soft_skip_reason_is_explicit_when_absent() {
+        val reason = JvmWorkspaceConfiguration.missingAndroidJarSoftSkipReason(
+            environment = emptyMap(),
+            userHome = File("/nonexistent/lua-parser-user-home"),
+            localAppData = "/nonexistent/lua-parser-localappdata",
+            taskId = "TASK-537"
+        )
+        assertTrue(reason.contains("TASK-537"))
+        assertTrue(reason.contains("android.jar"))
+        assertTrue(
+            reason.contains(JvmWorkspaceConfiguration.ANDROID_HOME_ENV) ||
+                reason.contains(JvmWorkspaceConfiguration.ANDROID_SDK_ROOT_ENV)
+        )
     }
 
     private fun jvmHarness(

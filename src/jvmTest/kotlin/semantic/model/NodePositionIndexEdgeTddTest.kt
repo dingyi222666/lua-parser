@@ -492,10 +492,13 @@ class NodePositionIndexEdgeTddTest {
     private fun collectIdentifiers(root: BaseASTNode): List<Identifier> =
         collectNodes(root)
 
-    private inline fun <reified T : BaseASTNode> collectNodes(root: BaseASTNode): List<T> {
+    private fun <T : BaseASTNode> collectNodes(root: BaseASTNode, predicate: (BaseASTNode) -> Boolean): List<T> {
         val out = mutableListOf<T>()
         fun walk(node: BaseASTNode) {
-            if (node is T) out += node
+            if (predicate(node)) {
+                @Suppress("UNCHECKED_CAST")
+                out += node as T
+            }
             when (node) {
                 is ChunkNode -> walk(node.body)
                 is BlockNode -> {
@@ -556,6 +559,9 @@ class NodePositionIndexEdgeTddTest {
         walk(root)
         return out
     }
+
+    private inline fun <reified T : BaseASTNode> collectNodes(root: BaseASTNode): List<T> =
+        collectNodes(root) { it is T }
 
     private fun findBinaryWithOperands(root: BaseASTNode, leftName: String, rightName: String): BinaryExpression? {
         return collectNodes<BinaryExpression>(root).firstOrNull { binary ->

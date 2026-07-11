@@ -240,6 +240,15 @@ class AndroLuaSyntaxTddTest {
             )
             assertEquals(case.expectedShape, shape, case.name)
         }
+
+        // Optional-then fidelity: CaseCause.hasThen must track source keyword presence
+        // without changing documented shape (TASK-552 / TASK-171).
+        val withThen = parse(LuaVersion.ANDROLUA_5_3, "switch value do case 1 then print(1) end")
+        val withoutThen = parse(LuaVersion.ANDROLUA_5_3, "switch value do case 1, 2 print(value) end")
+        val withThenCase = assertIs<CaseCause>(assertIs<SwitchStatement>(withThen.body.statements.single()).causes.single())
+        val withoutThenCase = assertIs<CaseCause>(assertIs<SwitchStatement>(withoutThen.body.statements.single()).causes.single())
+        assertTrue(withThenCase.hasThen, "case with then must set hasThen=true")
+        assertFalse(withoutThenCase.hasThen, "case without then must set hasThen=false")
     }
 
     @Test

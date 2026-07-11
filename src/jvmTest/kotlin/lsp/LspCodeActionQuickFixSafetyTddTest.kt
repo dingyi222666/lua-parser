@@ -25,11 +25,11 @@ import kotlin.test.assertTrue
 import kotlin.test.fail
 
 /**
- * TASK-268 — LSP code action quickfix safety corpus.
+ * TASK-268 / TASK-542 — LSP code action quickfix safety corpus.
  *
  * Locks the safety contract for textDocument/codeAction (quickfix surface):
  * - CodeAction requests for known diagnostics degrade safely when no fix is
- *   available (empty action list, soft reject, or documented unimplemented gap).
+ *   available (empty action list or soft reject).
  * - Empty selection, inverted/malformed ranges, and out-of-bounds ranges must
  *   not crash the LSP surface.
  * - Empty diagnostic context and quickfix-only filters must not invent hard
@@ -37,17 +37,14 @@ import kotlin.test.fail
  * - When product returns CodeAction/Command entries, each is well-formed
  *   (non-blank title; optional kind/edit/command coherent).
  *
- * Product codeAction remains unimplemented today: [LuaTextDocumentService]
- * inherits the LSP4J default that throws [UnsupportedOperationException], and
- * [LuaLanguageService] does not advertise codeActionProvider. This corpus
- * therefore dual-paths:
- * - Documented gap: unimplemented methods complete exceptionally with
- *   UnsupportedOperationException and are recorded as the known surface.
- * - Ideal path: empty list / soft reject when no fix; well-formed actions when
- *   product lands quickfix support.
+ * Product path (TASK-542): [LuaLanguageService] advertises codeActionProvider
+ * (CodeActionOptions with QuickFix) and [LuaTextDocumentService.codeAction]
+ * returns an empty list (or well-formed actions) without throwing
+ * UnsupportedOperationException.
  *
- * Test-only; no product edits. Verification is review-owned and serial; this
- * worker does not run Gradle.
+ * Test-only dual-path helpers remain for soft-reject / gap resilience; product
+ * ideal path is Succeeded(empty or well-formed). Verification is review-owned
+ * and serial; this worker does not run Gradle.
  */
 class LspCodeActionQuickFixSafetyTddTest {
 
@@ -60,12 +57,12 @@ class LspCodeActionQuickFixSafetyTddTest {
         val service = service()
         val capabilities = service.initialize(InitializeParams()).capabilities
 
-        // Documented gap today: no codeActionProvider. Once product lands it may
-        // be Boolean true, Either, or CodeActionOptions — any non-null is fine.
+        // TASK-542 product path advertises codeActionProvider (Boolean / Either /
+        // CodeActionOptions). Null remains a soft historical gap if a future
+        // regression drops the capability, but non-null is expected once wired.
         assertNotNull(capabilities, "initialize must return ServerCapabilities")
         val provider = capabilities.codeActionProvider
         if (provider == null) {
-            // Documented gap: product has not advertised code actions yet.
             assertTrue(true)
         } else {
             assertNotNull(provider)

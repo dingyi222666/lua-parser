@@ -52,11 +52,14 @@ class BinderPassDeclarationTest {
     }
 
     @Test
-    fun ignoresAssignmentAsDeclarationSource() {
+    fun bareAssignmentIntroducesGlobalDeclaration() {
+        // TASK-558: first bare free-name write invents AST GLOBAL (identifier-only range).
         val chunk = parser.parse("a = 1")
         val result = BinderPass().bind(chunk, CommentAttachPass().attach(chunk))
 
-        assertEquals(0, result.declarationIndex.declarations.count { it.name == "a" })
+        assertEquals(1, result.declarationIndex.declarations.count {
+            it.name == "a" && it.kind == DeclarationKind.GLOBAL && it.origin == DeclarationOrigin.AST
+        })
         assertTrue(result.declarationIndex.declarations.any { it.name == "print" })
     }
 

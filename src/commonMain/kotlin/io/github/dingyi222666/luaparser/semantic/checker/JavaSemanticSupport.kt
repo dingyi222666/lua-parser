@@ -4,6 +4,7 @@ import io.github.dingyi222666.luaparser.semantic.WorkspaceImportedSymbol
 import io.github.dingyi222666.luaparser.semantic.types.model.ArrayType
 import io.github.dingyi222666.luaparser.semantic.types.model.CallableType
 import io.github.dingyi222666.luaparser.semantic.types.model.ClassType
+import io.github.dingyi222666.luaparser.semantic.types.model.CustomType
 import io.github.dingyi222666.luaparser.semantic.types.model.FunctionParameter
 import io.github.dingyi222666.luaparser.semantic.types.model.FunctionType
 import io.github.dingyi222666.luaparser.semantic.types.model.IntersectionType
@@ -123,6 +124,7 @@ internal fun JavaInstanceType.allReadableInstanceJavaBeanProperties(): List<Java
 internal fun Type.hydrateJavaProviderType(resolveImportTarget: JavaImportResolver): Type {
     return when (this) {
         is ClassType -> hydrateJavaClassType(resolveImportTarget)
+        is CustomType -> hydrateCustomJavaProviderType(resolveImportTarget)
         is JavaClassType -> hydrateJavaClassReference(resolveImportTarget)
         is JavaInstanceType -> copy(
             classType = classType.hydrateJavaClassReference(resolveImportTarget),
@@ -312,16 +314,17 @@ private fun javaBeanGetterReturnType(member: JavaMemberType): Type? {
         return null
     }
     val signatures = (member.valueType as? CallableType)?.callSignatures ?: return null
-    // Readable JavaBean getters are the unique zero-argument overload. Methods that also
-    // expose parameterised overloads (e.g. System.getProperties() / getProperties(String))
-    // still contribute a conservative property alias from the zero-arg surface.
-    val zeroArgSignatures = signatures.filter { signature ->
-        signature.parameters.isEmpty()
-    }
-    if (zeroArgSignatures.size != 1) {
+    // Conservative JavaBean getters must be an unambiguous zero-argument method surface.
+    // Multi-parameter overloads under the same name (e.g. getCode() / getCode(int)) must
+    // not synthesize a readable property alias — that excludes overloaded-getter cases.
+    // Distinct method names such as getProperties() vs getProperty(...) remain independent.
+    if (signatures.size != 1) {
         return null
     }
-    val signature = zeroArgSignatures.single()
+    val signature = signatures.single()
+    if (signature.parameters.isNotEmpty()) {
+        return null
+    }
     if (
         signature.returnType == PrimitiveType.NIL ||
         signature.returnType == PrimitiveType.UNKNOWN ||
@@ -422,6 +425,41 @@ private fun ClassType.hydrateJavaClassType(resolveImportTarget: JavaImportResolv
 
     val imported = resolveImportTarget?.invoke(name) ?: return this
     return imported.moduleType.javaInstanceSurface() ?: this
+}
+
+/**
+ * Android-Lua stub aliases such as `AndroidView`, `AndroidMenu`, and bare `Bitmap`
+ * are modeled as CustomType names in overlays. When a workspace import resolver can
+ * map those aliases onto Java providers, prefer the reflected/instance surface so
+ * members such as `performClick` / `getWidth` / `add` resolve.
+ */
+private fun CustomType.hydrateCustomJavaProviderType(resolveImportTarget: JavaImportResolver): Type {
+    val candidates = androidLuaCustomTypeImportCandidates(name)
+    if (candidates.isEmpty()) {
+        return this
+    }
+    for (candidate in candidates) {
+        val imported = resolveImportTarget?.invoke(candidate) ?: continue
+        imported.moduleType.javaInstanceSurface()
+            ?.hydrateJavaProviderType(resolveImportTarget)
+            ?.let { return it }
+    }
+    return this
+}
+
+private fun androidLuaCustomTypeImportCandidates(name: String): List<String> {
+    return when (name) {
+        "AndroidView" -> listOf("android.view.View", "View")
+        "AndroidMenu" -> listOf("android.view.Menu", "Menu")
+        "AndroidMenuItem" -> listOf("android.view.MenuItem", "MenuItem")
+        "Bitmap" -> listOf("android.graphics.Bitmap", "Bitmap")
+        "Drawable" -> listOf(
+            "android.graphics.drawable.Drawable",
+            "android.graphics.Drawable",
+            "Drawable"
+        )
+        else -> if (name.contains('.')) listOf(name) else emptyList()
+    }
 }
 
 private fun JavaClassType.hydrateJavaClassReference(resolveImportTarget: JavaImportResolver): JavaClassType {

@@ -47,6 +47,10 @@ import kotlin.test.fail
  * Product code is intentionally out of scope (test-only). Verification is review-owned
  * and serial; this worker does not run Gradle. Host android.jar is not required for this
  * corpus; never G:/.
+ *
+ * Position needles that land inside call argument regions must use call-site-unique
+ * prefixes (e.g. `current = render(`), never bare `render(` / `outer(` which match the
+ * declaration parameter list first — product returns null outside call args.
  */
 class LspSignatureHelpActiveParameterTddTest {
 
@@ -114,19 +118,22 @@ class LspSignatureHelpActiveParameterTddTest {
             local function render(value, label)
                 return label
             end
-            local current = render(1,  "hi")
+            local current = render( 1,  "hi")
             return current
             """
         )
 
+        // Call-site-unique needle: bare "render(" matches the declaration first and lands
+        // inside the param list (outside call args → null). Product pre-first-arg region is
+        // [base.range.end, firstArgumentStart).
         val beforeFirst = assertNotNull(
             service.signatureHelp(
                 SignatureHelpParams(
                     TextDocumentIdentifier(document.uri),
-                    document.positionBetween("render(", "1")
+                    document.positionBetween("current = render(", "1")
                 )
             ),
-            "cursor between ( and first arg should still yield help"
+            "cursor between call-site ( and first arg should still yield help"
         )
         val onFirst = assertNotNull(service.signatureHelp(signatureParams(document, "1,")))
         val between = assertNotNull(
@@ -293,15 +300,16 @@ class LspSignatureHelpActiveParameterTddTest {
             """
         )
 
-        // Between outer( and inner( — still outer's first parameter.
+        // Between outer( and inner( — still outer's first parameter region.
+        // Bare "outer(" matches the declaration param list; use call-site-unique prefix.
         val beforeInner = assertNotNull(
             service.signatureHelp(
                 SignatureHelpParams(
                     TextDocumentIdentifier(document.uri),
-                    document.positionBetween("outer(", "inner")
+                    document.positionBetween("current = outer(", "inner")
                 )
             ),
-            "gap before nested callee should still be outer's argument region"
+            "gap before nested callee at call site should still be outer's argument region"
         )
         assertEquals(0, beforeInner.activeParameter)
     }

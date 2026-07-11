@@ -23,11 +23,9 @@ import kotlin.test.fail
  *
  * Encodes the contract for textDocument/documentHighlight on local symbols:
  * - Same-file local occurrences are highlighted (definition + reads + writes).
- * - Write sites (local declaration / later assignment) and read sites are
- *   distinguished by [DocumentHighlightKind] when the product supplies kinds;
- *   today's mapping stamps every hit as [DocumentHighlightKind.Read], so the
- *   corpus also accepts a pure-Read surface while still requiring that every
- *   same-symbol occurrence is present.
+ * - Write sites (local declaration / later assignment) use
+ *   [DocumentHighlightKind.Write]; pure uses use [DocumentHighlightKind.Read].
+ *   Same-file multi-occurrence coverage stays non-empty for renamable locals.
  * - Highlights stay inside the requesting file (no cross-file provider ranges
  *   for pure locals). Missing / non-symbol positions return an empty list, not
  *   an error.
@@ -38,9 +36,10 @@ import kotlin.test.fail
  *   already returns them; otherwise it locks a safety floor that ranges stay
  *   ordered and cover/start on the identifier.
  *
- * Product code is intentionally out of scope (test-only). Verification is
- * review-owned and serial; this worker does not run Gradle.
+ * Product Write/Read mapping lives in LuaLanguageService.documentHighlights.
+ * Verification is review-owned and serial; this worker does not run Gradle.
  */
+
 class LspDocumentHighlightTddTest {
 
     // -------------------------------------------------------------------------
@@ -138,23 +137,23 @@ class LspDocumentHighlightTddTest {
         writeSites.forEach { assertWriteOrReadKind(it, site = "write site line ${it.range.start.line}") }
         readSites.forEach { assertReadPreferred(it, site = "read site line ${it.range.start.line}") }
 
-        // When product distinguishes kinds, at least one Write and one Read must appear.
-        // Until then, pure-Read mapping is accepted (see class KDoc).
         val kinds = highlights.map { it.kind }.toSet()
         assertTrue(
             kinds.all { it == DocumentHighlightKind.Read || it == DocumentHighlightKind.Write },
             "Unexpected highlight kinds: $kinds"
         )
-        if (kinds.contains(DocumentHighlightKind.Write)) {
-            assertTrue(
-                writeSites.any { it.kind == DocumentHighlightKind.Write },
-                "Write kind should land on declaration/assignment sites: ${writeSites.map { it.kind }}"
-            )
-            assertTrue(
-                readSites.all { it.kind == DocumentHighlightKind.Read },
-                "Read sites should keep Read kind when Writes are distinguished: ${readSites.map { it.kind }}"
-            )
-        }
+        assertTrue(
+            writeSites.any { it.kind == DocumentHighlightKind.Write },
+            "Write kind should land on declaration/assignment sites: ${writeSites.map { it.kind }}"
+        )
+        assertTrue(
+            writeSites.all { it.kind == DocumentHighlightKind.Write },
+            "Declaration/assignment sites must be Write: ${writeSites.map { it.kind }}"
+        )
+        assertTrue(
+            readSites.all { it.kind == DocumentHighlightKind.Read },
+            "Read sites should keep Read kind: ${readSites.map { it.kind }}"
+        )
     }
 
     @Test
@@ -462,16 +461,18 @@ class LspDocumentHighlightTddTest {
     }
 
     private fun assertWriteOrReadKind(highlight: DocumentHighlight, site: String) {
-        assertTrue(
-            highlight.kind == DocumentHighlightKind.Write || highlight.kind == DocumentHighlightKind.Read,
-            "$site expected Write (preferred) or Read; got ${highlight.kind}"
+        assertEquals(
+            DocumentHighlightKind.Write,
+            highlight.kind,
+            "$site expected DocumentHighlightKind.Write; got ${highlight.kind}"
         )
     }
 
     private fun assertReadPreferred(highlight: DocumentHighlight, site: String) {
-        assertTrue(
-            highlight.kind == DocumentHighlightKind.Read || highlight.kind == DocumentHighlightKind.Write,
-            "$site expected Read (preferred) or Write; got ${highlight.kind}"
+        assertEquals(
+            DocumentHighlightKind.Read,
+            highlight.kind,
+            "$site expected DocumentHighlightKind.Read; got ${highlight.kind}"
         )
     }
 

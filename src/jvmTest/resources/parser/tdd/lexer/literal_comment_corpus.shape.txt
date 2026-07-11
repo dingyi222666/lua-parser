@@ -1,0 +1,2 @@
+Chunk(Block[Comment(line:#!/usr/bin/env lua);Comment(line:-- line comment);Comment(doc:---@class LexerFixture);Local(Id(decimal)=Const(42));Local(Id(hex)=Const(0x2a));Local(Id(short)=Const("line\nfeed"));Local(Id(single)=Const('quote\'s'));Local(Id(long)=Const([=[alpha
+beta]=]));Comment(line:--[=[ block comment ]=]);Return(Id(decimal),Id(hex),Id(short),Id(single),Id(long),Binary(..,Const("a"),Const("b")))])

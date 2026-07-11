@@ -23,6 +23,8 @@ import io.github.dingyi222666.luaparser.semantic.comments.MethodTagSyntax
 import io.github.dingyi222666.luaparser.semantic.checker.MemberAccessKind
 import io.github.dingyi222666.luaparser.semantic.types.model.ClassType
 import io.github.dingyi222666.luaparser.semantic.types.model.FunctionType
+import io.github.dingyi222666.luaparser.semantic.types.model.JavaClassType
+import io.github.dingyi222666.luaparser.semantic.types.model.JavaInstanceType
 import io.github.dingyi222666.luaparser.semantic.types.model.ModuleType
 import io.github.dingyi222666.luaparser.semantic.types.model.OverloadedFunctionType
 import io.github.dingyi222666.luaparser.semantic.types.model.TableType
@@ -47,6 +49,7 @@ internal class ApiAdapters(
         val typeKind = when {
             declaration?.kind == DeclarationKind.MODULE || moduleType != null -> TypeInfoKind.MODULE
             type is ClassType -> TypeInfoKind.CLASS
+            type is JavaClassType || type is JavaInstanceType -> TypeInfoKind.CLASS
             type is FunctionType || type is OverloadedFunctionType -> TypeInfoKind.FUNCTION
             type is TableType -> TypeInfoKind.TABLE
             else -> TypeInfoKind.UNKNOWN

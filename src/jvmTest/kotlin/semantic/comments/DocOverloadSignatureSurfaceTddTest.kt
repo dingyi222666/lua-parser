@@ -319,6 +319,33 @@ class DocOverloadSignatureSurfaceTddTest {
         assertEquals(numberHelp.signatures.size, stringHelp.signatures.size)
         assertTrue(numberHelp.activeSignature in numberHelp.signatures.indices)
         assertTrue(stringHelp.activeSignature in stringHelp.signatures.indices)
+
+        // TASK-561: argument types must rank activeSignature to the matching overload
+        // (not always primary index 0). number arg -> number primary; string arg -> string overload.
+        val numberIndex = numberHelp.signatures.indexOfFirst {
+            it.label.contains("number") && !it.label.contains("string")
+        }.takeIf { it >= 0 }
+            ?: numberHelp.signatures.indexOfFirst { it.label.contains("number") }
+        val stringIndex = stringHelp.signatures.indexOfFirst {
+            it.label.contains("string") && !it.label.contains("number")
+        }.takeIf { it >= 0 }
+            ?: stringHelp.signatures.indexOfFirst { it.label.contains("string") }
+        assertTrue(numberIndex >= 0, "number signature missing: ${numberHelp.signatures.map { it.label }}")
+        assertTrue(stringIndex >= 0, "string signature missing: ${stringHelp.signatures.map { it.label }}")
+        assertEquals(
+            numberIndex,
+            numberHelp.activeSignature,
+            "normalize(1) should activate number signature; labels=${numberHelp.signatures.map { it.label }} active=${numberHelp.activeSignature}"
+        )
+        assertEquals(
+            stringIndex,
+            stringHelp.activeSignature,
+            "normalize(\"x\") should activate string overload; labels=${stringHelp.signatures.map { it.label }} active=${stringHelp.activeSignature}"
+        )
+        assertTrue(
+            numberHelp.activeSignature != stringHelp.activeSignature || numberIndex == stringIndex,
+            "Discriminating args must not always leave activeSignature stuck at the same index"
+        )
     }
 
     @Test
@@ -371,6 +398,81 @@ class DocOverloadSignatureSurfaceTddTest {
         val arities = help.signatures.map { it.parameters.size }.toSet()
         assertTrue(0 in arities || help.signatures.any { it.parameters.isEmpty() }, "0-arg overload missing: $arities / ${help.signatures.map { it.label }}")
         assertTrue(arities.any { it >= 2 }, "2-arg overload missing: $arities / ${help.signatures.map { it.label }}")
+
+        // TASK-561: multi-arity sites hard-assert activeSignature selection by argument shape.
+        val packEmptyStart = positionOf(source, "pack()")
+        // column of 'p' + len("pack(") lands inside the empty argument list.
+        val zeroArgHelp = assertNotNull(
+            model.getSignatureHelpAt(Position(packEmptyStart.line, packEmptyStart.column + "pack(".length))
+        )
+        val twoArgHelp = assertNotNull(model.getSignatureHelpAt(positionOf(source, "\"x\"")))
+
+        val oneArgIndex = help.signatures.indexOfFirst { sig ->
+            sig.parameters.size == 1 && sig.label.contains("number")
+        }.takeIf { it >= 0 } ?: help.signatures.indexOfFirst { it.parameters.size == 1 }
+        val zeroArgIndex = zeroArgHelp.signatures.indexOfFirst { it.parameters.isEmpty() }
+        val twoArgIndex = twoArgHelp.signatures.indexOfFirst { it.parameters.size >= 2 }
+
+        assertTrue(oneArgIndex >= 0, "1-arg primary missing: ${help.signatures.map { it.label }}")
+        assertTrue(zeroArgIndex >= 0, "0-arg overload missing in zeroArgHelp: ${zeroArgHelp.signatures.map { it.label }}")
+        assertTrue(twoArgIndex >= 0, "2-arg overload missing in twoArgHelp: ${twoArgHelp.signatures.map { it.label }}")
+
+        assertEquals(oneArgIndex, help.activeSignature, "pack(1) should select 1-arg number primary")
+        assertEquals(zeroArgIndex, zeroArgHelp.activeSignature, "pack() should select 0-arg overload")
+        assertEquals(twoArgIndex, twoArgHelp.activeSignature, "pack(\"x\", 2) should select 2-arg overload")
+        assertTrue(
+            help.signatures[help.activeSignature].parameters.isEmpty() ||
+                help.activeParameter in help.signatures[help.activeSignature].parameters.indices
+        )
+        assertEquals(0, zeroArgHelp.activeParameter)
+        assertTrue(
+            twoArgHelp.activeParameter in twoArgHelp.signatures[twoArgHelp.activeSignature].parameters.indices
+        )
+    }
+
+    @Test
+    fun signatureHelpActiveSignatureRanksByArgumentTypesAcrossOverloads() {
+        // Focused TASK-561 corpus: discriminating argument shapes must flip activeSignature.
+        val source =
+            """
+            ---@overload fun(value: string): string
+            ---@overload fun(value: boolean): boolean
+            ---@param value number
+            ---@return number
+            local function coerce(value)
+                return value
+            end
+            local n = coerce(1)
+            local s = coerce("x")
+            local b = coerce(true)
+            """.trimIndent()
+
+        val model = pipeline.analyze(luaParser.parse(source)).model
+        val numberHelp = assertNotNull(model.getSignatureHelpAt(positionOf(source, "1)")))
+        val stringHelp = assertNotNull(model.getSignatureHelpAt(positionOf(source, "\"x\"")))
+        val boolHelp = assertNotNull(model.getSignatureHelpAt(positionOf(source, "true)")))
+
+        assertTrue(numberHelp.signatures.size >= 3, numberHelp.signatures.map { it.label }.toString())
+
+        fun indexOfLabel(help: io.github.dingyi222666.luaparser.semantic.api.SignatureHelp, token: String): Int {
+            return help.signatures.indexOfFirst { it.label.contains(token) && !it.label.contains(",") }
+                .takeIf { it >= 0 }
+                ?: help.signatures.indexOfFirst { it.label.contains(token) }
+        }
+
+        val numberIndex = indexOfLabel(numberHelp, "number")
+        val stringIndex = indexOfLabel(stringHelp, "string")
+        val boolIndex = indexOfLabel(boolHelp, "boolean")
+        assertTrue(numberIndex >= 0 && stringIndex >= 0 && boolIndex >= 0)
+
+        assertEquals(numberIndex, numberHelp.activeSignature)
+        assertEquals(stringIndex, stringHelp.activeSignature)
+        assertEquals(boolIndex, boolHelp.activeSignature)
+        assertEquals(
+            setOf(numberIndex, stringIndex, boolIndex).size,
+            3,
+            "Expected three distinct active signatures for number/string/boolean args; got n=$numberIndex s=$stringIndex b=$boolIndex labels=${numberHelp.signatures.map { it.label }}"
+        )
     }
 
     // -------------------------------------------------------------------------

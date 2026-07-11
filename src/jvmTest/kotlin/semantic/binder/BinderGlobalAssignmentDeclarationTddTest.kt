@@ -1,6 +1,7 @@
 package semantic.binder
 
 import io.github.dingyi222666.luaparser.parser.LuaParser
+import io.github.dingyi222666.luaparser.parser.ast.node.AssignmentStatement
 import io.github.dingyi222666.luaparser.parser.ast.node.FunctionDeclaration
 import io.github.dingyi222666.luaparser.parser.ast.node.Identifier
 import io.github.dingyi222666.luaparser.parser.ast.node.Position
@@ -21,17 +22,19 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
- * Binder bare-global assignment declaration corpus (TASK-286).
+ * Binder bare-global assignment declaration corpus (TASK-286 / TASK-558).
  *
- * Product binder contract (aligned with [BinderPassDeclarationTest] /
- * [BinderMultiAssignRangeTddTest]):
- * - Assignment statements are **not** a declaration source. Bare free-name
- *   writes do not create/update GLOBAL AST declarations.
- * - GLOBAL AST declarations come from non-local [FunctionDeclaration] (and
- *   builtins via [DeclarationOrigin.BUILTIN]).
- * - Cross-chunk identity for free global **names** that *are* declared
- *   (functions / builtins) is stable as name + VALUE namespace + GLOBAL kind.
- * - Assignment sites remain non-queryable as declaration anchors.
+ * Product binder contract (declarative free-name first-write, TASK-558):
+ * - First bare free-name write (`config = 1`) invents an AST GLOBAL with
+ *   **identifier-only** range (not the whole AssignmentStatement).
+ * - Multi-LHS bare assignment creates per-name GLOBAL decls with disjoint
+ *   identifier ranges; commas invent no ranges.
+ * - Repeated writes re-use / resolve to the same GLOBAL symbol without forking
+ *   ranges at later assign sites (later sites are write references, not new decls).
+ * - Local introducers still win shadowing; member/index LHS stay non-GLOBAL.
+ * - Non-local [FunctionDeclaration] remains a GLOBAL introducer; when a prior bare
+ *   write already invented the free name, the function-site decl attaches to the
+ *   same VALUE symbol (identity stays unified).
  *
  * Test-only; verification via
  * `jvmTest --tests semantic.binder.BinderGlobalAssignmentDeclarationTddTest`.
@@ -40,51 +43,64 @@ class BinderGlobalAssignmentDeclarationTddTest {
 
     private val parser = LuaParser()
 
-    // --- product: bare assignment is not a declaration source ----------------
+    // --- product: first bare free-name write invents AST GLOBAL -----------------
 
     @Test
-    fun bareSingleAssignment_doesNotCreateGlobalAstDeclaration() {
+    fun bareSingleAssignment_createsGlobalAstDeclarationAtIdentifier() {
         val source = "config = 1"
-        val result = bind(source)
+        val chunk = parser.parse(source)
+        val result = BinderPass().bind(chunk, CommentAttachPass().attach(chunk))
+        val statement = chunk.body.statements.filterIsInstance<AssignmentStatement>().single()
+        val lhs = assertIs<Identifier>(statement.init.single())
 
-        assertNoAstGlobal(result, "config")
-        assertNull(result.positionQueries.getDeclarationAt(positionOf(source, "config")))
-        assertNull(result.positionQueries.getSymbolAt(positionOf(source, "config")))
+        val decl = globalOf(result, "config")
+        assertEquals(DeclarationKind.GLOBAL, decl.kind)
+        assertEquals(DeclarationOrigin.AST, decl.origin)
+        assertEquals(lhs, decl.anchorNode)
+        assertEquals(lhs.range, decl.range)
+        assertNotEquals(statement.range, decl.range)
+        assertEquals(decl, result.positionQueries.getDeclarationAt(positionOf(source, "config")))
+        assertNotNull(result.positionQueries.getSymbolAt(positionOf(source, "config")))
+        assertEquals(1, nonBuiltinValueSymbolsNamed(result, "config").size)
     }
 
     @Test
-    fun bareAssignmentWithNilRhs_doesNotCreateGlobalDeclaration() {
+    fun bareAssignmentWithNilRhs_createsGlobalDeclaration() {
         val source = "flag = nil"
         val result = bind(source)
 
-        assertNoAstGlobal(result, "flag")
-        assertNull(result.positionQueries.getDeclarationAt(positionOf(source, "flag")))
+        val decl = globalOf(result, "flag")
+        assertEquals(DeclarationOrigin.AST, decl.origin)
+        assertEquals(decl, result.positionQueries.getDeclarationAt(positionOf(source, "flag")))
     }
 
     @Test
-    fun multiLhsBareAssignment_doesNotCreateGlobalPerBareIdentifier() {
+    fun multiLhsBareAssignment_createsGlobalPerBareIdentifier() {
         val source = "alpha, beta = 1, 2"
         val result = bind(source)
 
-        assertNoAstGlobal(result, "alpha")
-        assertNoAstGlobal(result, "beta")
-        assertNull(result.positionQueries.getDeclarationAt(positionOf(source, "alpha")))
-        assertNull(result.positionQueries.getDeclarationAt(positionOf(source, "beta")))
+        val alpha = globalOf(result, "alpha")
+        val beta = globalOf(result, "beta")
+        assertEquals(alpha, result.positionQueries.getDeclarationAt(positionOf(source, "alpha")))
+        assertEquals(beta, result.positionQueries.getDeclarationAt(positionOf(source, "beta")))
+        assertNotEquals(alpha.symbolId, beta.symbolId)
+        assertEquals(1, astGlobalsNamed(result, "alpha").size)
+        assertEquals(1, astGlobalsNamed(result, "beta").size)
     }
 
     @Test
-    fun unbalancedMultiLhsBareAssignment_stillDoesNotCreateGlobals() {
+    fun unbalancedMultiLhsBareAssignment_stillCreatesGlobalsPerName() {
         val source = "u, v, w = 1"
         val result = bind(source)
 
         listOf("u", "v", "w").forEach { name ->
-            assertNoAstGlobal(result, name)
-            assertNull(result.positionQueries.getDeclarationAt(positionOf(source, name)))
+            val decl = globalOf(result, name)
+            assertEquals(decl, result.positionQueries.getDeclarationAt(positionOf(source, name)))
         }
     }
 
     @Test
-    fun nestedBlockBareAssignment_doesNotCreateChunkGlobalOrLocal() {
+    fun nestedBlockBareAssignment_createsChunkGlobalNotLocal() {
         val source = """
             do
                 shared = 42
@@ -92,17 +108,18 @@ class BinderGlobalAssignmentDeclarationTddTest {
             """.trimIndent()
         val result = bind(source)
 
-        assertNoAstGlobal(result, "shared")
+        val decl = globalOf(result, "shared")
+        assertEquals(DeclarationKind.GLOBAL, decl.kind)
         assertTrue(
             result.declarationIndex.declarations.none {
                 it.name == "shared" && it.kind == DeclarationKind.LOCAL
             }
         )
-        assertNull(result.positionQueries.getDeclarationAt(positionOf(source, "shared")))
+        assertEquals(decl, result.positionQueries.getDeclarationAt(positionOf(source, "shared")))
     }
 
     @Test
-    fun bareAssignmentInsideFunction_doesNotCreateGlobalWhenNameIsFree() {
+    fun bareAssignmentInsideFunction_createsGlobalWhenNameIsFree() {
         val source = """
             function host()
                 freeGlobal = true
@@ -110,17 +127,19 @@ class BinderGlobalAssignmentDeclarationTddTest {
             """.trimIndent()
         val result = bind(source)
 
-        assertNoAstGlobal(result, "freeGlobal")
+        val free = globalOf(result, "freeGlobal")
+        assertEquals(DeclarationOrigin.AST, free.origin)
         // `host` remains the GLOBAL from FunctionDeclaration.
         val host = globalOf(result, "host")
         assertEquals(DeclarationKind.GLOBAL, host.kind)
         assertEquals(DeclarationOrigin.AST, host.origin)
+        assertNotEquals(host.symbolId, free.symbolId)
     }
 
-    // --- product: repeated bare writes still invent no global symbol ---------
+    // --- product: repeated bare writes re-use same GLOBAL symbol ----------------
 
     @Test
-    fun repeatedBareAssignments_doNotInventGlobalSymbol() {
+    fun repeatedBareAssignments_reuseSingleGlobalSymbol() {
         val source = """
             counter = 1
             counter = 2
@@ -128,35 +147,38 @@ class BinderGlobalAssignmentDeclarationTddTest {
             """.trimIndent()
         val result = bind(source)
 
-        assertTrue(
-            astGlobalsNamed(result, "counter").isEmpty(),
-            "Repeated bare writes must not invent GLOBAL AST decls under product binder"
-        )
-        assertEquals(0, nonBuiltinValueSymbolsNamed(result, "counter").size)
+        val globals = astGlobalsNamed(result, "counter")
+        assertEquals(1, globals.size, "Only first bare write invents GLOBAL AST decl")
+        assertEquals(1, nonBuiltinValueSymbolsNamed(result, "counter").size)
 
-        for (occurrence in 1..3) {
-            assertNull(
-                result.positionQueries.getDeclarationAt(
-                    positionOf(source, "counter", occurrence = occurrence)
-                )
-            )
-        }
+        val first = assertNotNull(
+            result.positionQueries.getDeclarationAt(positionOf(source, "counter", occurrence = 1))
+        )
+        assertEquals(DeclarationKind.GLOBAL, first.kind)
+        // Later sites are write references, not new decls.
+        assertNull(
+            result.positionQueries.getDeclarationAt(positionOf(source, "counter", occurrence = 2))
+        )
+        assertNull(
+            result.positionQueries.getDeclarationAt(positionOf(source, "counter", occurrence = 3))
+        )
     }
 
     @Test
-    fun secondBareAssignment_doesNotDuplicateOrCreateGlobalSymbol() {
+    fun secondBareAssignment_doesNotDuplicateGlobalSymbol() {
         val source = """
             mode = "a"
             mode = "b"
             """.trimIndent()
         val result = bind(source)
 
-        assertNull(result.positionQueries.getDeclarationAt(positionOf(source, "mode", occurrence = 1)))
+        assertNotNull(result.positionQueries.getDeclarationAt(positionOf(source, "mode", occurrence = 1)))
         assertNull(result.positionQueries.getDeclarationAt(positionOf(source, "mode", occurrence = 2)))
-        assertEquals(0, nonBuiltinValueSymbolsNamed(result, "mode").size)
+        assertEquals(1, nonBuiltinValueSymbolsNamed(result, "mode").size)
+        assertEquals(1, astGlobalsNamed(result, "mode").size)
     }
 
-    // --- product: global function is the GLOBAL introducer; assign is not ----
+    // --- product: global function is GLOBAL introducer; assign reuses symbol ----
 
     @Test
     fun globalFunctionThenBareAssignment_keepsOnlyFunctionGlobalNoAssignDecl() {
@@ -176,7 +198,7 @@ class BinderGlobalAssignmentDeclarationTddTest {
         assertEquals(DeclarationKind.GLOBAL, functionDecl.kind)
         assertEquals(functionName.range, functionDecl.range)
 
-        // Bare assignment is not a declaration site; identity stays the function GLOBAL.
+        // Bare assignment after function is not a new declaration site.
         assertNull(result.positionQueries.getDeclarationAt(positionOf(source, "render", occurrence = 2)))
         assertEquals(1, nonBuiltinValueSymbolsNamed(result, "render").size)
         assertEquals(
@@ -188,7 +210,7 @@ class BinderGlobalAssignmentDeclarationTddTest {
     }
 
     @Test
-    fun bareAssignmentThenGlobalFunction_onlyFunctionCreatesGlobalSymbol() {
+    fun bareAssignmentThenGlobalFunction_unifiesUnderSameGlobalSymbol() {
         val source = """
             draw = nil
             function draw()
@@ -196,13 +218,22 @@ class BinderGlobalAssignmentDeclarationTddTest {
             """.trimIndent()
         val result = bind(source)
 
-        assertNull(result.positionQueries.getDeclarationAt(positionOf(source, "draw", occurrence = 1)))
-        val functionSite = result.positionQueries.getDeclarationAt(positionOf(source, "draw", occurrence = 2))
-        assertNotNull(functionSite)
+        val assignSite = assertNotNull(
+            result.positionQueries.getDeclarationAt(positionOf(source, "draw", occurrence = 1))
+        )
+        val functionSite = assertNotNull(
+            result.positionQueries.getDeclarationAt(positionOf(source, "draw", occurrence = 2))
+        )
+        assertEquals(DeclarationKind.GLOBAL, assignSite.kind)
         assertEquals(DeclarationKind.GLOBAL, functionSite.kind)
+        assertEquals(DeclarationOrigin.AST, assignSite.origin)
         assertEquals(DeclarationOrigin.AST, functionSite.origin)
+        // Same VALUE symbol; primary remains the first invent (bare write).
+        assertEquals(assignSite.symbolId, functionSite.symbolId)
         assertEquals(1, nonBuiltinValueSymbolsNamed(result, "draw").size)
-        assertEquals(1, astGlobalsNamed(result, "draw").size)
+        assertEquals(2, astGlobalsNamed(result, "draw").size)
+        val primary = result.declarationIndex.getPrimaryDeclaration(requireNotNull(assignSite.symbolId))
+        assertEquals(assignSite.id, primary?.id)
     }
 
     // --- non-create / non-global edges ---------------------------------------
@@ -324,7 +355,7 @@ class BinderGlobalAssignmentDeclarationTddTest {
     }
 
     @Test
-    fun mixedLocalAndBareGlobal_onlyLocalDeclaresBareWriteDoesNot() {
+    fun mixedLocalAndBareGlobal_localDeclaresAndBareWriteDeclaresSeparately() {
         val source = """
             local onlyLocal = 1
             onlyGlobal = 2
@@ -340,8 +371,9 @@ class BinderGlobalAssignmentDeclarationTddTest {
                 it.name == "onlyLocal" && it.kind == DeclarationKind.GLOBAL
             }
         )
-        assertEquals(0, nonBuiltinValueSymbolsNamed(result, "onlyGlobal").size)
-        assertNoAstGlobal(result, "onlyGlobal")
+        assertEquals(1, nonBuiltinValueSymbolsNamed(result, "onlyGlobal").size)
+        val onlyGlobal = globalOf(result, "onlyGlobal")
+        assertEquals(onlyGlobal, result.positionQueries.getDeclarationAt(positionOf(source, "onlyGlobal")))
     }
 
     // --- cross-chunk identity stability for product globals ------------------
@@ -376,7 +408,7 @@ class BinderGlobalAssignmentDeclarationTddTest {
     }
 
     @Test
-    fun crossChunkBareAssignments_remainNonDeclarativeInEachChunk() {
+    fun crossChunkBareAssignments_eachChunkInventsOwnDeclarativeGlobal() {
         val chunkA = bind(
             """
             g = 1
@@ -391,10 +423,11 @@ class BinderGlobalAssignmentDeclarationTddTest {
             """.trimIndent()
         )
 
-        assertEquals(0, nonBuiltinValueSymbolsNamed(chunkA, "g").size)
-        assertEquals(0, nonBuiltinValueSymbolsNamed(chunkB, "g").size)
-        assertNoAstGlobal(chunkA, "g")
-        assertNoAstGlobal(chunkB, "g")
+        assertEquals(1, nonBuiltinValueSymbolsNamed(chunkA, "g").size)
+        assertEquals(1, nonBuiltinValueSymbolsNamed(chunkB, "g").size)
+        assertEquals(1, astGlobalsNamed(chunkA, "g").size)
+        assertEquals(1, astGlobalsNamed(chunkB, "g").size)
+        assertEquals(identityKey(globalOf(chunkA, "g")), identityKey(globalOf(chunkB, "g")))
     }
 
     @Test
@@ -410,7 +443,7 @@ class BinderGlobalAssignmentDeclarationTddTest {
     }
 
     @Test
-    fun crossChunkGlobalFunctionAndBareAssignment_functionIsDeclarativeAssignIsNot() {
+    fun crossChunkGlobalFunctionAndBareAssignment_bothDeclarativeWithStableIdentityKey() {
         val functionChunk = bind("function service() end")
         val assignChunk = bind("service = nil")
 
@@ -421,9 +454,15 @@ class BinderGlobalAssignmentDeclarationTddTest {
         assertEquals(DeclarationKind.GLOBAL, functionDecl.kind)
         assertEquals(DeclarationNamespace.VALUE, functionDecl.kind.namespace)
 
-        // Bare assignment chunk has no AST GLOBAL for the free name under product binder.
-        assertNoAstGlobal(assignChunk, "service")
-        assertNull(
+        val assignDecl = globalOf(assignChunk, "service")
+        assertEquals(DeclarationKind.GLOBAL, assignDecl.kind)
+        assertEquals(
+            identityKey(functionDecl),
+            identityKey(assignDecl),
+            "Cross-chunk free-global identity key stable across function vs bare invent"
+        )
+        assertEquals(
+            assignDecl,
             assignChunk.positionQueries.getDeclarationAt(positionOf("service = nil", "service"))
         )
     }
@@ -484,13 +523,6 @@ class BinderGlobalAssignmentDeclarationTddTest {
             }
         }
         return matches.first()
-    }
-
-    private fun assertNoAstGlobal(result: BinderPassResult, name: String) {
-        assertTrue(
-            astGlobalsNamed(result, name).isEmpty(),
-            "Expected no non-builtin GLOBAL declaration for '$name' under product binder"
-        )
     }
 
     private fun nonBuiltinValueSymbolsNamed(result: BinderPassResult, name: String): List<SymbolId> {

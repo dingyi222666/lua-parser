@@ -30,7 +30,7 @@ import kotlin.test.assertTrue
  * scope (test-only). When the host `android.jar` is missing, jar-dependent cases
  * skip with an explicit TASK-229 reason rather than failing hard.
  *
- * REVIEW23–27 rejection notes (activity member empty / Type: unknown / loadlayout empty):
+ * REVIEW23–28 rejection notes (activity member empty / Type: unknown / loadlayout empty):
  * - Overlay types `activity` as a named custom type (`AndroidLuaContext` /
  *   `LuaActivity`) without a usable reflected member surface in the LSP path, so
  *   bare `activity.getLuaDir` member completion/hover is empty/unknown.
@@ -44,9 +44,14 @@ import kotlin.test.assertTrue
  * - Full host `android.jar` + `android.widget.*` wildcards can OOM under reflection;
  *   fixtures use repository Android framework models via no-android-runtime.jar
  *   (same approach as [LspAndroidLuaE2eTddTest]) and avoid wildcard expansion.
- * - `loadlayout` return is View-like for hover; member completion is asserted via
- *   an annotated View/TextView surface so the corpus stays bounded and independent
- *   of an empty JavaObject member surface on the raw loadlayout return.
+ * - `loadlayout` returns JavaObject/View-like for hover; product does not expand a
+ *   usable member surface on the raw return. REVIEW28: do **not** re-annotate a
+ *   constructed `TextView` with `---@type android.widget.TextView` when asserting
+ *   inherited View members (`setVisibility`) — that Emmy override can drop the
+ *   constructor-inferred inheritance surface and yield empty completion labels.
+ *   Assert inherited View members on an unannotated `TextView(activity)` local
+ *   (same shape as [view_instance_member_completion_includes_set_visibility_and_get_id]
+ *   / main_activity construction) and keep raw loadlayout hover separately.
  *
  * Verification is review-owned and serial; workers must not run Gradle.
  */
@@ -324,10 +329,12 @@ class LspAndroidLuaE2eActivityStubTddTest {
         // Avoid android.widget.* wildcards + full host android.jar (REVIEW OOM).
         // Explicit imports + framework models keep the fixture bounded.
         // Product loadlayout returns a View-like/JavaObject value with an empty member
-        // surface; the golden therefore:
+        // surface. Corpus therefore:
         // 1) hovers the raw loadlayout return (View-like name), and
-        // 2) asserts View stub member completion on an annotated TextView local
-        //    (same shape as main_activity.lua / LspAndroidLuaE2eTddTest).
+        // 2) asserts inherited View stub members on an unannotated TextView local
+        //    constructed with activity (same surface as view_instance_* / main_activity).
+        // REVIEW28: ---@type android.widget.TextView on that local emptied setVisibility
+        // labels (constructor inheritance surface dropped by the Emmy override).
         val service = androidService(useHostAndroidJar = false)
         val document = service.open(
             "workspace/loadlayout-view-stub.lua",
@@ -336,31 +343,44 @@ class LspAndroidLuaE2eActivityStubTddTest {
             import "android.view.View"
             import "android.widget.LinearLayout"
             import "android.widget.TextView"
+            local ids = {}
             local layout = {
                 LinearLayout,
-                id = "root",
+                id = "rootLayout",
                 {
                     TextView,
                     id = "messageText",
                     text = "stub",
                 },
             }
-            local rawRoot = loadlayout(layout)
-            ---@type android.widget.TextView
-            local root = TextView(activity)
-            root:setVisibility(View.VISIBLE)
-            return rawRoot, root
+            local rawRoot = loadlayout(layout, ids)
+            local title = TextView(activity)
+            title:setVisibility(View.VISIBLE)
+            return rawRoot, title, ids
             """
         )
 
         val completions = service.completionAt(document, "setVisibility", offset = 3)
         assertCompletion(completions.items.map { it.label }, "setVisibility")
+        // Own TextView members should still appear on the same receiver surface.
+        assertCompletion(completions.items.map { it.label }, "setText")
 
         val hover = assertNotNull(
             service.hover(hoverParams(document, "rawRoot", occurrence = 1, offset = 2)),
             "Expected hover for loadlayout return (View-like)."
         )
-        assertHoverMentionsAny(hover, "rawRoot", "root", "View", "android.view.View", "LinearLayout", "AndroidView", "JavaObject", "table", "any")
+        assertHoverMentionsAny(
+            hover,
+            "rawRoot",
+            "root",
+            "View",
+            "android.view.View",
+            "LinearLayout",
+            "AndroidView",
+            "JavaObject",
+            "table",
+            "any"
+        )
     }
 
     // -------------------------------------------------------------------------

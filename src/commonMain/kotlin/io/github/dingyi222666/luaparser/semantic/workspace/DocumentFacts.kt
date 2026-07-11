@@ -65,7 +65,8 @@ data class DocumentFacts(
         BIND_CLASS_CALL,
         NEW_INSTANCE_CALL,
         CREATE_PROXY_CALL,
-        LOAD_LIB_CALL
+        LOAD_LIB_CALL,
+        CREATE_ARRAY_CALL
     }
 
     data class ReturnExportShapeHint(

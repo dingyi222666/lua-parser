@@ -1,0 +1,56 @@
+# Windows self-hosted runner only. Does not run on main.
+# Runner labels: self-hosted, Windows, X64 (DINGYI-PC)
+name: windows-jvmtest
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [windows-verify]
+
+jobs:
+  jvm-test:
+    runs-on: [self-hosted, Windows, X64]
+    timeout-minutes: 240
+    env:
+      JAVA_HOME: C:\Users\dingyi\.jdks\temurin-17.0.11
+      ANDROID_HOME: C:\Users\dingyi\AppData\Local\Android\Sdk
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show environment
+        shell: cmd
+        run: |
+          echo JAVA_HOME=%JAVA_HOME%
+          echo ANDROID_HOME=%ANDROID_HOME%
+          java -version
+          git rev-parse --short HEAD
+
+      - name: Compile test sources
+        shell: cmd
+        run: gradlew.bat compileTestKotlinJvm --no-daemon
+
+      - name: Full jvmTest
+        shell: cmd
+        run: gradlew.bat jvmTest --no-daemon
+
+      - name: Kill Java processes
+        if: always()
+        shell: cmd
+        run: taskkill /F /IM java.exe 2>nul & exit /b 0
+
+      - name: Upload JUnit XML
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-xml
+          path: build/test-results/jvmTest/**
+          if-no-files-found: warn
+
+      - name: Upload HTML report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report-html
+          path: build/reports/tests/jvmTest/**
+          if-no-files-found: warn

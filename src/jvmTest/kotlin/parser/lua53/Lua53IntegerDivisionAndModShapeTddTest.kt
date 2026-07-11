@@ -549,6 +549,138 @@ class Lua53IntegerDivisionAndModShapeTddTest {
         )
     }
 
+    /**
+     * TASK-549: NUMBER ConstantNode typing must follow Lua 5.3 rules, not
+     * merely `contains('.')`. Hex integers keep INTERGER (even when digits look
+     * like decimal exponents); hex binary-exponent / fraction forms and decimal
+     * scientific forms are FLOAT. Raw lexeme is preserved; intOf/floatOf never
+     * throw ClassCastException for oversized values.
+     */
+    @Test
+    fun typesNumberLiteralsByLua53RulesNotJustDotPresence() {
+        fun numberAt(source: String): ConstantNode {
+            val expression = parseExpression(source)
+            return assertIs<ConstantNode>(expression)
+        }
+
+        // Decimal integer
+        numberAt("42").let {
+            assertEquals(ConstantNode.TYPE.INTERGER, it.constantType)
+            assertEquals("42", it.rawValue.toString())
+            assertEquals(42, it.intOf())
+        }
+
+        // Hex integer (no '.', no p) — including hex digit 'e' which is NOT a decimal exponent
+        numberAt("0xFF").let {
+            assertEquals(ConstantNode.TYPE.INTERGER, it.constantType)
+            assertEquals("0xFF", it.rawValue.toString())
+            assertEquals(255, it.intOf())
+        }
+        numberAt("0x1e").let {
+            assertEquals(ConstantNode.TYPE.INTERGER, it.constantType)
+            assertEquals("0x1e", it.rawValue.toString())
+            assertEquals(0x1e, it.intOf())
+        }
+        numberAt("0x10").let {
+            assertEquals(ConstantNode.TYPE.INTERGER, it.constantType)
+            assertEquals(16, it.intOf())
+        }
+
+        // Decimal scientific is float even without '.'
+        numberAt("1e3").let {
+            assertEquals(ConstantNode.TYPE.FLOAT, it.constantType)
+            assertEquals("1e3", it.rawValue.toString())
+            assertEquals(1000f, it.floatOf())
+        }
+        numberAt("2E-1").let {
+            assertEquals(ConstantNode.TYPE.FLOAT, it.constantType)
+            assertEquals("2E-1", it.rawValue.toString())
+        }
+
+        // Decimal with fraction
+        numberAt("3.14").let {
+            assertEquals(ConstantNode.TYPE.FLOAT, it.constantType)
+            assertEquals("3.14", it.rawValue.toString())
+        }
+
+        // Hex float forms (fraction and/or binary exponent) — must NOT stay INTERGER
+        numberAt("0x1.8p1").let {
+            assertEquals(ConstantNode.TYPE.FLOAT, it.constantType)
+            assertEquals("0x1.8p1", it.rawValue.toString())
+            assertEquals(3f, it.floatOf()) // 1.5 * 2^1
+        }
+        numberAt("0x1p10").let {
+            assertEquals(ConstantNode.TYPE.FLOAT, it.constantType)
+            assertEquals("0x1p10", it.rawValue.toString())
+            assertEquals(1024f, it.floatOf())
+        }
+        numberAt("0x1.f").let {
+            assertEquals(ConstantNode.TYPE.FLOAT, it.constantType)
+            assertEquals("0x1.f", it.rawValue.toString())
+        }
+
+        // Out-of-Int integer lexeme: keep raw, intOf must not throw
+        numberAt("9223372036854775807").let {
+            assertEquals(ConstantNode.TYPE.INTERGER, it.constantType)
+            assertEquals("9223372036854775807", it.rawValue.toString())
+            // Long-safe path: coerced into Int range rather than ClassCastException
+            val safe = runCatching { it.intOf() }
+            assertTrue(safe.isSuccess, "intOf must not throw for long integer lexeme: ${safe.exceptionOrNull()}")
+        }
+
+        // Floor-div / mod shapes with hex operands still use raw lexeme text
+        val expression = assertIs<BinaryExpression>(parseExpression("0xFF // 0x10 % 0x0F"))
+        assertEquals(ExpressionOperator.MOD, expression.operator)
+        assertEquals("0x0F", assertIs<ConstantNode>(expression.right).rawValue.toString())
+        assertEquals(ConstantNode.TYPE.INTERGER, assertIs<ConstantNode>(expression.right).constantType)
+        val floorDiv = assertIs<BinaryExpression>(expression.left)
+        assertEquals(ConstantNode.TYPE.INTERGER, assertIs<ConstantNode>(floorDiv.left).constantType)
+        assertEquals(ConstantNode.TYPE.INTERGER, assertIs<ConstantNode>(floorDiv.right).constantType)
+    }
+
+    @Test
+    fun classifiesNumberLexemesWithoutParserRoundTrip() {
+        val cases = listOf(
+            "42" to ConstantNode.TYPE.INTERGER,
+            "0" to ConstantNode.TYPE.INTERGER,
+            "0xFF" to ConstantNode.TYPE.INTERGER,
+            "0X2a" to ConstantNode.TYPE.INTERGER,
+            "0x1e" to ConstantNode.TYPE.INTERGER, // hex digit e, not scientific
+            "1e3" to ConstantNode.TYPE.FLOAT,
+            "1E+10" to ConstantNode.TYPE.FLOAT,
+            "3.14" to ConstantNode.TYPE.FLOAT,
+            ".5" to ConstantNode.TYPE.FLOAT,
+            "0x1.8p1" to ConstantNode.TYPE.FLOAT,
+            "0x1p10" to ConstantNode.TYPE.FLOAT,
+            "0X1.FP+0" to ConstantNode.TYPE.FLOAT,
+            "0x1.f" to ConstantNode.TYPE.FLOAT,
+            "0x.8p-1" to ConstantNode.TYPE.FLOAT
+        )
+
+        val failures = cases.mapNotNull { (lexeme, expected) ->
+            val actual = ConstantNode.typeForNumberLexeme(lexeme)
+            if (actual != expected) {
+                "lexeme=$lexeme expected=$expected actual=$actual"
+            } else {
+                null
+            }
+        }
+        if (failures.isNotEmpty()) {
+            fail(failures.joinToString(separator = "\n"))
+        }
+
+        // fromNumberLexeme keeps raw text and does not throw on large ints
+        val huge = ConstantNode.fromNumberLexeme("999999999999999999999999999")
+        assertEquals(ConstantNode.TYPE.INTERGER, huge.constantType)
+        assertEquals("999999999999999999999999999", huge.rawValue.toString())
+        assertTrue(runCatching { huge.intOf() }.isSuccess)
+
+        val hexFloat = ConstantNode.fromNumberLexeme("0x1.8p1")
+        assertEquals(ConstantNode.TYPE.FLOAT, hexFloat.constantType)
+        assertTrue(runCatching { hexFloat.floatOf() }.isSuccess)
+        assertEquals(3f, hexFloat.floatOf())
+    }
+
     private fun assertExpressionShapes(vararg cases: Pair<String, Pair<String, String>>) {
         val failures = cases.mapNotNull { (name, case) ->
             val (source, expectedShape) = case

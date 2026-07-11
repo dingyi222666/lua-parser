@@ -509,9 +509,7 @@ class TypeSyntaxUnionOptionalTddTest {
 
     @Test
     fun parsePrefixAcceptsCompleteUnionAndOptionalPrefix() {
-        // parsePrefix only keeps a `|` arm when the arm is followed by a type-syntax
-        // boundary (EOF or , | & ) ] } >). Trailing Lua comments (`-- ...`) are not
-        // boundaries, so "string | number -- note" stops before `|` like prose.
+        // Complete union at EOF.
         val union = TypeSyntaxParser.parsePrefix("string | number")
         assertEquals(
             UnionTypeSyntax(listOf(NamedTypeSyntax("string"), NamedTypeSyntax("number"))),
@@ -519,12 +517,42 @@ class TypeSyntaxUnionOptionalTddTest {
         )
         assertEquals("", union.remainder.trimStart())
 
-        val unionWithBoundary = TypeSyntaxParser.parsePrefix("string | number) note")
+        // Boundary chars after a complete second arm must keep the full union (not drop
+        // the arm because the delimiter is non-type prose from the host's perspective).
+        val boundaryCases = listOf(
+            "string | number) note" to ") note",
+            "string | number] note" to "] note",
+            "string | number} note" to "} note",
+            "string | number> note" to "> note",
+            "string | number, note" to ", note",
+            // Trailing operator with no further complete arm: stop with operator remainder.
+            "string | number |" to "|",
+            "string | number &" to "&"
+        )
+        boundaryCases.forEach { (input, expectedRemainder) ->
+            val parsed = TypeSyntaxParser.parsePrefix(input)
+            assertEquals(
+                UnionTypeSyntax(listOf(NamedTypeSyntax("string"), NamedTypeSyntax("number"))),
+                parsed.syntax,
+                "expected complete union for: $input"
+            )
+            assertEquals(expectedRemainder, parsed.remainder.trimStart(), "remainder for: $input")
+        }
+
+        // Trailing Lua line comments must not drop a complete second union arm.
+        val withComment = TypeSyntaxParser.parsePrefix("string | number -- note")
         assertEquals(
             UnionTypeSyntax(listOf(NamedTypeSyntax("string"), NamedTypeSyntax("number"))),
-            unionWithBoundary.syntax
+            withComment.syntax
         )
-        assertEquals(") note", unionWithBoundary.remainder.trimStart())
+        assertEquals("-- note", withComment.remainder.trimStart())
+
+        val withTightComment = TypeSyntaxParser.parsePrefix("string | number--note")
+        assertEquals(
+            UnionTypeSyntax(listOf(NamedTypeSyntax("string"), NamedTypeSyntax("number"))),
+            withTightComment.syntax
+        )
+        assertEquals("--note", withTightComment.remainder.trimStart())
 
         val optional = TypeSyntaxParser.parsePrefix("string?  rest")
         assertEquals(NullableTypeSyntax(NamedTypeSyntax("string")), optional.syntax)

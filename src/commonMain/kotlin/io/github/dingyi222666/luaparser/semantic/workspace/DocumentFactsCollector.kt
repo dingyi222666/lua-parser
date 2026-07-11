@@ -92,7 +92,10 @@ object DocumentFactsCollector {
         )
 
         fun addPathDerivedModuleNameCandidate() {
-            deriveModuleNameFromPath(path)?.let { moduleName ->
+            // Primary: full virtual-path dotted name (`resources/lua/import.lua` → `resources.lua.import`).
+            // Secondary: basename-only aliases used by Android-Lua package.path (`import`, `loadlayout`,
+            // `layout` for `.aly`). Nested dotted basenames (e.g. `socket/url.lua` → `socket.url`) stay.
+            for (moduleName in pathDerivedModuleNameCandidates(path)) {
                 addModuleNameCandidate(
                     moduleName = moduleName,
                     source = DocumentFacts.ModuleNameCandidateSource.VIRTUAL_PATH
@@ -796,12 +799,69 @@ object DocumentFactsCollector {
         }
     }
 
+    /**
+     * Path-derived module names for workspace providers.
+     *
+     * Always includes the full slash→dot path module name when present. For nested
+     * Android-Lua trees (`resources/lua/…`, `assets/…`), also claims leaf / relative
+     * basename module names that runtime `package.path` searchers resolve (`import`,
+     * `loadlayout`, `socket.url`, `layout` for `.aly`).
+     */
+    private fun pathDerivedModuleNameCandidates(path: VirtualPath): List<String> {
+        val primary = deriveModuleNameFromPath(path) ?: return emptyList()
+        val names = linkedSetOf(primary)
+        val normalized = path.value.replace('\\', '/')
+        // Basename / package-relative aliases only for Android-Lua full-tree layouts so
+        // simple harness paths (`pkg/runtime.lua`, `import.lua`) keep a single candidate.
+        val isAndroidLuaTree =
+            normalized.startsWith("resources/") ||
+                normalized.startsWith("assets/") ||
+                normalized.startsWith("lua/")
+        if (!isAndroidLuaTree) {
+            return names.toList()
+        }
+        val withoutExt = when {
+            normalized.endsWith("/init.lua") -> normalized.removeSuffix("/init.lua")
+            normalized == "init.lua" -> ""
+            normalized.endsWith(".lua") -> normalized.removeSuffix(".lua")
+            normalized.endsWith(".aly") -> normalized.removeSuffix(".aly")
+            else -> normalized
+        }
+        if (withoutExt.isEmpty()) {
+            return names.toList()
+        }
+        val segments = withoutExt.split('/').filter { it.isNotEmpty() }
+        if (segments.isEmpty()) {
+            return names.toList()
+        }
+        // Leaf basename (import.lua → import; layout.aly → layout).
+        names += segments.last()
+        // Nested package under any directory (socket/url.lua → socket.url).
+        if (segments.size >= 2) {
+            names += segments.takeLast(2).joinToString(".")
+        }
+        // Package-relative names under common Android-Lua roots so require("import")
+        // maps to resources/lua/import.lua rather than only resources.lua.import.
+        for (rootPrefix in listOf("resources/lua", "resources", "assets", "lua")) {
+            val prefix = "$rootPrefix/"
+            if (withoutExt.startsWith(prefix)) {
+                val relative = withoutExt.removePrefix(prefix)
+                if (relative.isNotEmpty()) {
+                    names += relative.replace('/', '.')
+                }
+            }
+        }
+        return names.filter { it.isNotEmpty() }.toList()
+    }
+
     private fun deriveModuleNameFromPath(path: VirtualPath): String? {
         val normalized = path.value
         return when {
             normalized.endsWith("/init.lua") -> normalized.removeSuffix("/init.lua").replace('/', '.').ifEmpty { null }
             normalized == "init.lua" -> null
             normalized.endsWith(".lua") -> normalized.removeSuffix(".lua").replace('/', '.')
+            // Android-Lua layout modules (.aly) are require()-able without a .lua suffix.
+            normalized.endsWith(".aly") -> normalized.removeSuffix(".aly").replace('/', '.')
             else -> normalized.replace('/', '.')
         }
     }

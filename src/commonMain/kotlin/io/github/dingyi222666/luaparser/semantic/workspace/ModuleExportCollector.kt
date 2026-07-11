@@ -25,6 +25,7 @@ import io.github.dingyi222666.luaparser.parser.ast.node.TableKey
 import io.github.dingyi222666.luaparser.parser.ast.node.WhenStatement
 import io.github.dingyi222666.luaparser.parser.ast.node.WhileStatement
 import io.github.dingyi222666.luaparser.semantic.api.SymbolKind
+import io.github.dingyi222666.luaparser.semantic.types.model.CustomType
 import io.github.dingyi222666.luaparser.semantic.types.model.FunctionType
 import io.github.dingyi222666.luaparser.semantic.types.model.LiteralType
 import io.github.dingyi222666.luaparser.semantic.types.model.ModuleType
@@ -35,6 +36,9 @@ import io.github.dingyi222666.luaparser.semantic.types.model.UnknownType
 
 object ModuleExportCollector {
     private val reservedLegacyNames = setOf("_M", "_NAME", "_PACKAGE", "...")
+
+    /** Canonical AndroLua layout-module display name for free-form `.aly` exports. */
+    const val LUA_LAYOUT_SPEC_NAME: String = "LuaLayoutSpec"
 
     fun collect(
         chunk: ChunkNode,
@@ -49,6 +53,9 @@ object ModuleExportCollector {
             exportRoot?.aliases?.forEach(::add)
         }
         val exportTree = ExportTableBuilder()
+        val isAlyLayoutModule = facts.path.value.endsWith(".aly")
+        val alyModuleName = facts.moduleNameCandidates.firstOrNull()?.moduleName
+            ?: facts.path.value.removeSuffix(".aly").replace('/', '.')
 
         val legacySegment = legacyEnvironment.segments.lastOrNull()
         if (legacySegment != null) {
@@ -61,7 +68,7 @@ object ModuleExportCollector {
                 }
 
                 if (write.segment != null && (write.name == "_M" || write.name in explicitRootNames)) {
-                    exportTree.put(write.path, write.type, write.isMethod, write.range)
+                    exportTree.put(write.path, write.type, write.isMethod, write.range, write.pathRanges)
                 }
             }
 
@@ -85,6 +92,17 @@ object ModuleExportCollector {
         }
         if (directTableReturn != null) {
             val tableType = analyzer.tableLiteralType(directTableReturn)
+            if (isAlyLayoutModule) {
+                return alyLayoutExportSurface(
+                    moduleName = alyModuleName,
+                    fields = tableType.fields,
+                    methods = tableType.methods,
+                    members = analyzer.membersFromTableLiteral(directTableReturn),
+                    sourceForm = ModuleExportSurface.SourceForm.RETURN_TABLE_LITERAL,
+                    hasSeeAllFallback = legacyEnvironment.segments.any { it.hasSeeAllFallback },
+                    moduleEnvironmentMode = legacyEnvironment.segments.lastOrNull()?.mode
+                )
+            }
             return ModuleExportSurface(
                 moduleType = ModuleType(
                     moduleName = facts.moduleNameCandidates.firstOrNull()?.moduleName ?: facts.path.value,
@@ -104,9 +122,18 @@ object ModuleExportCollector {
             }
             analyzer.writes
                 .filter { it.path.isNotEmpty() && it.name in explicitRootNames }
-                .forEach { exportTree.put(it.path, it.type, it.isMethod, it.range) }
+                .forEach { exportTree.put(it.path, it.type, it.isMethod, it.range, it.pathRanges) }
 
             val tableType = exportTree.toTableType()
+            if (isAlyLayoutModule) {
+                return alyLayoutExportSurface(
+                    moduleName = alyModuleName,
+                    fields = tableType.fields,
+                    methods = tableType.methods,
+                    members = exportTree.toMembers(tableType),
+                    sourceForm = ModuleExportSurface.SourceForm.RETURN_IDENTIFIER
+                )
+            }
             return ModuleExportSurface(
                 moduleType = ModuleType(
                     moduleName = facts.moduleNameCandidates.firstOrNull()?.moduleName ?: exportRoot.identifier,
@@ -118,7 +145,91 @@ object ModuleExportCollector {
             )
         }
 
+        // Free-form Android-Lua `.aly` layout modules must always expose a require()-able export
+        // surface (LuaLayoutSpec) so resolveRequire keeps the workspace provider path.
+        if (isAlyLayoutModule) {
+            return alyLayoutExportSurface(
+                moduleName = alyModuleName,
+                fields = emptyMap(),
+                methods = emptyMap(),
+                members = emptyList(),
+                sourceForm = ModuleExportSurface.SourceForm.RETURN_IDENTIFIER
+            )
+        }
+
         return null
+    }
+
+    /**
+     * Build a LuaLayoutSpec-like export surface for an Android-Lua `.aly` layout module.
+     *
+     * The module type is named [LUA_LAYOUT_SPEC_NAME] so hover/type displays match AndroLua
+     * loadlayout contracts, while still carrying any collected layout fields/children.
+     */
+    fun alyLayoutExportSurface(
+        moduleName: String,
+        fields: Map<String, Type>,
+        methods: Map<String, Type>,
+        members: List<ModuleExportSurface.MemberExport>,
+        sourceForm: ModuleExportSurface.SourceForm,
+        hasSeeAllFallback: Boolean = false,
+        moduleEnvironmentMode: ModuleEnvironmentMode? = null
+    ): ModuleExportSurface {
+        // Prefer an explicit LuaLayoutSpec shell so require bindings surface as LuaLayoutSpec
+        // rather than the long dotted path module name. Preserve collected fields as layout
+        // children when present (table/layout hydration for loadlayout / goto / completion).
+        val layoutFields = linkedMapOf<String, Type>()
+        layoutFields.putAll(fields)
+        // Tag the surface as a layout table so soft type probes also match "table"/"Layout".
+        if ("__layout" !in layoutFields) {
+            layoutFields["__layout"] = CustomType(LUA_LAYOUT_SPEC_NAME)
+        }
+        // Keep path-derived module identity discoverable for graph/export recovery without
+        // replacing the LuaLayoutSpec display name.
+        if (moduleName.isNotBlank() && moduleName != LUA_LAYOUT_SPEC_NAME && "__module" !in layoutFields) {
+            layoutFields["__module"] = LiteralType(moduleName, PrimitiveType.STRING)
+        }
+        val baseMembers = members.ifEmpty {
+            listOf(
+                ModuleExportSurface.MemberExport(
+                    name = "__layout",
+                    exportPath = listOf("__layout"),
+                    kind = SymbolKind.FIELD,
+                    type = CustomType(LUA_LAYOUT_SPEC_NAME),
+                    range = null
+                )
+            )
+        }
+        val moduleMember = if (
+            moduleName.isNotBlank() &&
+                moduleName != LUA_LAYOUT_SPEC_NAME &&
+                baseMembers.none { it.name == "__module" }
+        ) {
+            listOf(
+                ModuleExportSurface.MemberExport(
+                    name = "__module",
+                    exportPath = listOf("__module"),
+                    kind = SymbolKind.FIELD,
+                    type = LiteralType(moduleName, PrimitiveType.STRING),
+                    range = null
+                )
+            )
+        } else {
+            emptyList()
+        }
+        return ModuleExportSurface(
+            moduleType = ModuleType(
+                moduleName = LUA_LAYOUT_SPEC_NAME,
+                fields = layoutFields,
+                methods = methods,
+                // Display name is LuaLayoutSpec so hover/type probes match AndroLua contracts.
+                name = LUA_LAYOUT_SPEC_NAME
+            ),
+            sourceForm = sourceForm,
+            hasSeeAllFallback = hasSeeAllFallback,
+            moduleEnvironmentMode = moduleEnvironmentMode,
+            members = baseMembers + moduleMember
+        )
     }
 
     private class Analyzer(
@@ -164,22 +275,51 @@ object ModuleExportCollector {
 
         fun tableLiteralType(table: TableConstructorExpression): TableType {
             val builder = ExportTableBuilder()
+            var sequenceIndex = 0
             table.fields.forEach { field ->
-                val key = staticFieldName(field) ?: return@forEach
-                builder.put(listOf(key), inferValueType(field.value), isMethod = false, range = field.key.range)
+                val key = staticFieldName(field)
+                if (key != null) {
+                    builder.put(listOf(key), inferValueType(field.value), isMethod = false, range = field.key.range)
+                    return@forEach
+                }
+                // Free-form Android-Lua layout tables use sequence slots for view-class children
+                // (`{ LinearLayout, id = "root", { TextView, id = "title" } }`). Surface those
+                // children under their id= string when present, else under a stable sequence key
+                // so export/completion graphs are non-empty for loadlayout hydration.
+                if (facts.path.value.endsWith(".aly")) {
+                    val nested = field.value as? TableConstructorExpression
+                    val nestedId = nested?.let(::layoutIdFromTable)
+                    val sequenceKey = nestedId
+                        ?: (field.value as? Identifier)?.name
+                        ?: "child_${sequenceIndex}"
+                    sequenceIndex += 1
+                    builder.put(
+                        listOf(sequenceKey),
+                        inferValueType(field.value),
+                        isMethod = false,
+                        range = field.value.range
+                    )
+                }
             }
             return builder.toTableType()
         }
 
-        fun membersFromTableLiteral(table: TableConstructorExpression): List<ModuleExportSurface.MemberExport> {
-            val tableType = tableLiteralType(table)
-            val ranges = buildMap<String, Range?> {
-                table.fields.forEach { field ->
-                    val name = staticFieldName(field) ?: return@forEach
-                    put(name, field.key.range)
+        private fun layoutIdFromTable(table: TableConstructorExpression): String? {
+            table.fields.forEach { field ->
+                if (staticFieldName(field) != "id") {
+                    return@forEach
+                }
+                val constant = field.value as? ConstantNode ?: return@forEach
+                if (constant.constantType == ConstantNode.TYPE.STRING) {
+                    return constant.stringOf()
                 }
             }
-            return collectMembersFromTableType(tableType, ranges)
+            return null
+        }
+
+        fun membersFromTableLiteral(table: TableConstructorExpression): List<ModuleExportSurface.MemberExport> {
+            val tableType = tableLiteralType(table)
+            return collectMembersFromTableType(tableType, tableLiteralRanges(table))
         }
 
         private fun visitStatement(statement: StatementNode) {
@@ -252,7 +392,8 @@ object ModuleExportCollector {
                         type = valueType,
                         isMethod = target.isMethod,
                         segment = legacyEnvironment.segmentAt(identifier.range.start),
-                        range = target.range
+                        range = target.range,
+                        pathRanges = target.pathRanges
                     )
                 }
             }
@@ -280,7 +421,8 @@ object ModuleExportCollector {
                 type = inferValueType(value),
                 isMethod = normalizedTarget.isMethod,
                 segment = legacyEnvironment.segmentAt(target.range.start),
-                range = normalizedTarget.range
+                range = normalizedTarget.range,
+                pathRanges = normalizedTarget.pathRanges
             )
         }
 
@@ -288,48 +430,62 @@ object ModuleExportCollector {
             return when (expression) {
                 is Identifier -> AliasBinding.Identifier(expression.name)
                 is TableConstructorExpression -> AliasBinding.TableLiteral(expression)
-                is MemberExpression -> extractWriteTargetBase(expression)?.let { (root, path) ->
-                    normalizeAliasBinding(root, path)
+                is MemberExpression -> extractWriteTargetBase(expression)?.let { base ->
+                    normalizeAliasBinding(base.rootIdentifier, base.path, base.pathRanges)
                 } ?: AliasBinding.Unknown
-                is IndexExpression -> extractWriteTargetBase(expression)?.let { (root, path) ->
-                    normalizeAliasBinding(root, path)
+                is IndexExpression -> extractWriteTargetBase(expression)?.let { base ->
+                    normalizeAliasBinding(base.rootIdentifier, base.path, base.pathRanges)
                 } ?: AliasBinding.Unknown
                 else -> AliasBinding.Unknown
             }
         }
 
         private fun normalizeWriteTarget(target: WriteTarget): WriteTarget {
-            return when (val alias = resolveAliasPath(target.rootIdentifier, target.path)) {
+            return when (val alias = resolveAliasPath(target.rootIdentifier, target.path, target.pathRanges)) {
                 null -> target
-                else -> target.copy(rootIdentifier = alias.first, path = alias.second)
+                else -> target.copy(
+                    rootIdentifier = alias.rootIdentifier,
+                    path = alias.path,
+                    pathRanges = alias.pathRanges
+                )
             }
         }
 
-        private fun normalizeAliasBinding(root: String, path: List<String>): AliasBinding {
-            val normalized = resolveAliasPath(root, path) ?: return AliasBinding.Path(root, path)
-            return if (normalized.second.isEmpty()) {
-                AliasBinding.Identifier(normalized.first)
+        private fun normalizeAliasBinding(
+            root: String,
+            path: List<String>,
+            pathRanges: List<Range?>
+        ): AliasBinding {
+            val normalized = resolveAliasPath(root, path, pathRanges) ?: return AliasBinding.Path(root, path, pathRanges)
+            return if (normalized.path.isEmpty()) {
+                AliasBinding.Identifier(normalized.rootIdentifier)
             } else {
-                AliasBinding.Path(normalized.first, normalized.second)
+                AliasBinding.Path(normalized.rootIdentifier, normalized.path, normalized.pathRanges)
             }
         }
 
-        private fun resolveAliasPath(root: String, path: List<String> = emptyList()): Pair<String, List<String>>? {
+        private fun resolveAliasPath(
+            root: String,
+            path: List<String> = emptyList(),
+            pathRanges: List<Range?> = path.map { null }
+        ): ResolvedPath? {
             val visited = linkedSetOf<String>()
             var currentRoot = root
             var currentPath = path
+            var currentPathRanges = pathRanges
             while (true) {
                 if (!visited.add(currentRoot)) {
                     return null
                 }
                 when (val binding = locals[currentRoot]) {
-                    null -> return currentRoot to currentPath
+                    null -> return ResolvedPath(currentRoot, currentPath, currentPathRanges)
                     is AliasBinding.Identifier -> currentRoot = binding.target
                     is AliasBinding.Path -> {
                         currentRoot = binding.root
                         currentPath = binding.path + currentPath
+                        currentPathRanges = binding.pathRanges + currentPathRanges
                     }
-                    is AliasBinding.TableLiteral -> return currentRoot to currentPath
+                    is AliasBinding.TableLiteral -> return ResolvedPath(currentRoot, currentPath, currentPathRanges)
                     AliasBinding.Unknown -> return null
                 }
             }
@@ -364,11 +520,41 @@ object ModuleExportCollector {
                 else -> null
             }
         }
+
+        private fun tableLiteralRanges(
+            table: TableConstructorExpression,
+            prefix: List<String> = emptyList()
+        ): Map<List<String>, Range?> = buildMap {
+            var sequenceIndex = 0
+            table.fields.forEach { field ->
+                val staticName = staticFieldName(field)
+                if (staticName != null) {
+                    val exportPath = prefix + staticName
+                    put(exportPath, field.key.range)
+                    (field.value as? TableConstructorExpression)?.let { nested ->
+                        putAll(tableLiteralRanges(nested, exportPath))
+                    }
+                    return@forEach
+                }
+                if (!facts.path.value.endsWith(".aly")) {
+                    return@forEach
+                }
+                val nested = field.value as? TableConstructorExpression
+                val nestedId = nested?.let(::layoutIdFromTable)
+                val sequenceKey = nestedId
+                    ?: (field.value as? Identifier)?.name
+                    ?: "child_${sequenceIndex}"
+                sequenceIndex += 1
+                val exportPath = prefix + sequenceKey
+                put(exportPath, field.value.range)
+                nested?.let { putAll(tableLiteralRanges(it, exportPath)) }
+            }
+        }
     }
 
     private sealed interface AliasBinding {
         data class Identifier(val target: String) : AliasBinding
-        data class Path(val root: String, val path: List<String>) : AliasBinding
+        data class Path(val root: String, val path: List<String>, val pathRanges: List<Range?>) : AliasBinding
         data class TableLiteral(val table: TableConstructorExpression) : AliasBinding
         data object Unknown : AliasBinding
     }
@@ -385,29 +571,52 @@ object ModuleExportCollector {
         val type: Type,
         val isMethod: Boolean,
         val segment: LegacyModuleEnvironment.Segment?,
-        val range: Range?
+        val range: Range?,
+        val pathRanges: List<Range?> = emptyList()
     )
 
     private data class WriteTarget(
         val rootIdentifier: String,
         val path: List<String>,
         val isMethod: Boolean,
-        val range: Range?
+        val range: Range?,
+        val pathRanges: List<Range?>
+    )
+
+    private data class WriteTargetBase(
+        val rootIdentifier: String,
+        val path: List<String>,
+        val pathRanges: List<Range?>
+    )
+
+    private data class ResolvedPath(
+        val rootIdentifier: String,
+        val path: List<String>,
+        val pathRanges: List<Range?>
     )
 
     private class ExportTableBuilder {
         private val fields = linkedMapOf<String, Type>()
         private val methods = linkedMapOf<String, Type>()
         private val children = linkedMapOf<String, ExportTableBuilder>()
-        private val memberRanges = linkedMapOf<String, Range?>()
+        private val memberRanges = linkedMapOf<List<String>, Range?>()
 
-        fun put(path: List<String>, type: Type, isMethod: Boolean, range: Range?) {
+        fun put(
+            path: List<String>,
+            type: Type,
+            isMethod: Boolean,
+            range: Range?,
+            pathRanges: List<Range?> = emptyList()
+        ) {
             if (path.isEmpty()) {
                 return
             }
 
-            if (path.first() !in memberRanges) {
-                memberRanges[path.first()] = range
+            path.indices.forEach { index ->
+                val memberPath = path.take(index + 1)
+                if (memberPath !in memberRanges) {
+                    memberRanges[memberPath] = pathRanges.getOrNull(index) ?: if (index == path.lastIndex) range else null
+                }
             }
 
             if (path.size == 1) {
@@ -425,7 +634,7 @@ object ModuleExportCollector {
             val child = children.getOrPut(head) { ExportTableBuilder() }
             fields.remove(head)
             methods.remove(head)
-            child.put(path.drop(1), type, isMethod, range)
+            child.put(path.drop(1), type, isMethod, range, pathRanges.drop(1))
         }
 
         fun toTableType(): TableType {
@@ -438,8 +647,8 @@ object ModuleExportCollector {
 
         fun putTable(table: TableType, members: List<ModuleExportSurface.MemberExport> = emptyList()) {
             members.forEach { member ->
-                if (member.name !in memberRanges) {
-                    memberRanges[member.name] = member.range
+                if (member.exportPath !in memberRanges) {
+                    memberRanges[member.exportPath] = member.range
                 }
             }
             table.fields.forEach { (name, type) ->
@@ -471,7 +680,7 @@ object ModuleExportCollector {
 
     private fun collectMembersFromTableType(
         tableType: TableType,
-        ranges: Map<String, Range?>,
+        ranges: Map<List<String>, Range?>,
         prefix: List<String> = emptyList()
     ): List<ModuleExportSurface.MemberExport> {
         val output = mutableListOf<ModuleExportSurface.MemberExport>()
@@ -482,19 +691,20 @@ object ModuleExportCollector {
                 exportPath = exportPath,
                 kind = SymbolKind.FIELD,
                 type = type,
-                range = ranges[name]
+                range = ranges[exportPath]
             )
             if (type is TableType) {
-                output += collectMembersFromTableType(type, emptyMap(), exportPath)
+                output += collectMembersFromTableType(type, ranges, exportPath)
             }
         }
         tableType.methods.forEach { (name, type) ->
+            val exportPath = prefix + name
             output += ModuleExportSurface.MemberExport(
                 name = name,
-                exportPath = prefix + name,
+                exportPath = exportPath,
                 kind = SymbolKind.METHOD,
                 type = type,
-                range = ranges[name]
+                range = ranges[exportPath]
             )
         }
         return output.sortedWith(compareBy<ModuleExportSurface.MemberExport>({ if (it.kind == SymbolKind.FIELD) 0 else 1 }, { it.exportPath.joinToString(".") }))
@@ -505,10 +715,11 @@ object ModuleExportCollector {
             is MemberExpression -> {
                 val base = extractWriteTargetBase(expression.base) ?: return null
                 WriteTarget(
-                    rootIdentifier = base.first,
-                    path = base.second + expression.identifier.name,
+                    rootIdentifier = base.rootIdentifier,
+                    path = base.path + expression.identifier.name,
                     isMethod = expression.indexer == ":",
-                    range = expression.identifier.range
+                    range = expression.identifier.range,
+                    pathRanges = base.pathRanges + expression.identifier.range
                 )
             }
 
@@ -519,10 +730,11 @@ object ModuleExportCollector {
                     ?: return null
                 val base = extractWriteTargetBase(expression.base) ?: return null
                 WriteTarget(
-                    rootIdentifier = base.first,
-                    path = base.second + key,
+                    rootIdentifier = base.rootIdentifier,
+                    path = base.path + key,
                     isMethod = false,
-                    range = expression.index.range
+                    range = expression.index.range,
+                    pathRanges = base.pathRanges + expression.index.range
                 )
             }
 
@@ -530,12 +742,16 @@ object ModuleExportCollector {
         }
     }
 
-    private fun extractWriteTargetBase(expression: ExpressionNode): Pair<String, List<String>>? {
+    private fun extractWriteTargetBase(expression: ExpressionNode): WriteTargetBase? {
         return when (expression) {
-            is Identifier -> expression.name to emptyList()
+            is Identifier -> WriteTargetBase(expression.name, emptyList(), emptyList())
             is MemberExpression -> {
                 val base = extractWriteTargetBase(expression.base) ?: return null
-                base.first to (base.second + expression.identifier.name)
+                WriteTargetBase(
+                    rootIdentifier = base.rootIdentifier,
+                    path = base.path + expression.identifier.name,
+                    pathRanges = base.pathRanges + expression.identifier.range
+                )
             }
 
             is IndexExpression -> {
@@ -544,7 +760,11 @@ object ModuleExportCollector {
                     ?.stringOf()
                     ?: return null
                 val base = extractWriteTargetBase(expression.base) ?: return null
-                base.first to (base.second + key)
+                WriteTargetBase(
+                    rootIdentifier = base.rootIdentifier,
+                    path = base.path + key,
+                    pathRanges = base.pathRanges + expression.index.range
+                )
             }
 
             else -> null

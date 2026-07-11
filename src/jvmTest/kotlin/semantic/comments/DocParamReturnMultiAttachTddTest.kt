@@ -355,8 +355,11 @@ class DocParamReturnMultiAttachTddTest {
             listOf("outerA", "outerB"),
             outerDoc.tags.filterIsInstance<ParamTagSyntax>().map { it.name }
         )
+        // parseReturnTag splits top-level commas; commas inside fun(...) stay intact,
+        // so multi-return after the fun type becomes two typeTexts (same rule as
+        // `---@return integer, integer`).
         assertEquals(
-            listOf("fun(innerA: boolean, innerB: string): number, string"),
+            listOf("fun(innerA: boolean, innerB: string): number", "string"),
             assertIs<ReturnTagSyntax>(outerDoc.tags[2]).typeTexts
         )
 

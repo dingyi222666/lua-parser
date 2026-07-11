@@ -138,7 +138,7 @@ class LuaWorkspaceQueryFacadeTest {
 
     @Test
     fun document_highlights_include_provider_definition_for_imported_members() {
-        val harness = WorkspaceSemanticHarness.build(
+        val harness = WorkspaceSemanticHarness.Companion.build(
             "main.lua" to "local Arrays = require(\"Arrays\")\nlocal current = Arrays.asList\nreturn Arrays.asList",
             metadata = mapOf(JvmClassModuleProvider.CLASSES_METADATA_KEY to "java.util.Arrays"),
             engine = JvmWorkspaceEngine()
@@ -339,7 +339,7 @@ class LuaWorkspaceQueryFacadeTest {
 
     @Test
     fun goto_definition_keeps_nested_jvm_require_aliases_pointing_at_provider_modules() {
-        val harness = WorkspaceSemanticHarness.build(
+        val harness = WorkspaceSemanticHarness.Companion.build(
             "main.lua" to "local OnClickListener = require(\"OnClickListener\")\nreturn OnClickListener",
             metadata = mapOf(
                 JvmClassModuleProvider.IMPORTS_METADATA_KEY to "OnClickListener",

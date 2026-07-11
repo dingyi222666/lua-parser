@@ -12,6 +12,16 @@ import io.github.dingyi222666.luaparser.semantic.types.model.CustomType
 import io.github.dingyi222666.luaparser.semantic.types.model.FunctionParameter
 import io.github.dingyi222666.luaparser.semantic.types.model.FunctionType
 import io.github.dingyi222666.luaparser.semantic.types.model.IntersectionType
+import io.github.dingyi222666.luaparser.semantic.types.model.JavaArrayType
+import io.github.dingyi222666.luaparser.semantic.types.model.JavaClassType
+import io.github.dingyi222666.luaparser.semantic.types.model.JavaConstructorType
+import io.github.dingyi222666.luaparser.semantic.types.model.JavaInstanceMemberType
+import io.github.dingyi222666.luaparser.semantic.types.model.JavaInstanceType
+import io.github.dingyi222666.luaparser.semantic.types.model.JavaOverloadSet
+import io.github.dingyi222666.luaparser.semantic.types.model.JavaOverloadType
+import io.github.dingyi222666.luaparser.semantic.types.model.JavaPrimitiveType
+import io.github.dingyi222666.luaparser.semantic.types.model.JavaSignatureMetadata
+import io.github.dingyi222666.luaparser.semantic.types.model.JavaStaticMemberType
 import io.github.dingyi222666.luaparser.semantic.types.model.MultiReturnType
 import io.github.dingyi222666.luaparser.semantic.types.model.ModuleType
 import io.github.dingyi222666.luaparser.semantic.types.model.OverloadedFunctionType
@@ -125,6 +135,91 @@ class TypeSubstitutor {
                 )
             }
 
+            is JavaClassType -> {
+                val scopedMapping = mapping.maskedBy(type.typeParameters, maskOwnTypeParameters)
+                JavaClassType(
+                    javaName = type.javaName,
+                    constructors = JavaOverloadSet(
+                        type.constructors.overloads.map {
+                            substituteRecursive(it, scopedMapping, maskOwnTypeParameters = true) as JavaConstructorType
+                        }
+                    ),
+                    staticMembers = type.staticMembers.mapValues { (_, member) ->
+                        substituteRecursive(member, scopedMapping, maskOwnTypeParameters = true) as JavaStaticMemberType
+                    },
+                    instanceMembers = type.instanceMembers.mapValues { (_, member) ->
+                        substituteRecursive(member, scopedMapping, maskOwnTypeParameters = true) as JavaInstanceMemberType
+                    },
+                    innerClasses = type.innerClasses.mapValues { (_, innerClass) ->
+                        substituteRecursive(innerClass, scopedMapping, maskOwnTypeParameters = false) as JavaClassType
+                    },
+                    superClass = type.superClass?.let {
+                        substituteRecursive(it, scopedMapping, maskOwnTypeParameters = false) as JavaClassType
+                    },
+                    interfaces = type.interfaces.map {
+                        substituteRecursive(it, scopedMapping, maskOwnTypeParameters = false) as JavaClassType
+                    },
+                    typeParameters = type.typeParameters.map { parameter ->
+                        TypeParameterType(
+                            name = parameter.name,
+                            constraint = parameter.constraint?.let {
+                                substituteRecursive(it, scopedMapping, maskOwnTypeParameters = true)
+                            },
+                            defaultType = parameter.defaultType?.let {
+                                substituteRecursive(it, scopedMapping, maskOwnTypeParameters = true)
+                            }
+                        )
+                    }
+                )
+            }
+
+            is JavaInstanceType -> JavaInstanceType(
+                classType = substituteRecursive(type.classType, mapping, maskOwnTypeParameters = false) as JavaClassType,
+                typeArguments = type.typeArguments.map { substituteRecursive(it, mapping, maskOwnTypeParameters = true) },
+                javaName = type.javaName
+            )
+
+            is JavaConstructorType -> JavaConstructorType(
+                owner = type.owner,
+                signature = substituteRecursive(type.signature, mapping, maskOwnTypeParameters = true) as FunctionType,
+                signatureMetadata = substituteSignatureMetadata(type.signatureMetadata, mapping),
+                visibility = type.visibility
+            )
+
+            is JavaStaticMemberType -> JavaStaticMemberType(
+                owner = type.owner,
+                memberName = type.memberName,
+                valueType = substituteRecursive(type.valueType, mapping, maskOwnTypeParameters = true),
+                memberKind = type.memberKind,
+                visibility = type.visibility,
+                signatureMetadata = type.signatureMetadata.map { substituteSignatureMetadata(it, mapping) }
+            )
+
+            is JavaInstanceMemberType -> JavaInstanceMemberType(
+                owner = type.owner,
+                memberName = type.memberName,
+                valueType = substituteRecursive(type.valueType, mapping, maskOwnTypeParameters = true),
+                memberKind = type.memberKind,
+                visibility = type.visibility,
+                signatureMetadata = type.signatureMetadata.map { substituteSignatureMetadata(it, mapping) }
+            )
+
+            is JavaOverloadType -> JavaOverloadType(
+                javaName = type.javaName,
+                overloadName = type.overloadName,
+                callSignatures = type.callSignatures.map {
+                    substituteRecursive(it, mapping, maskOwnTypeParameters = true) as FunctionType
+                },
+                signatureMetadata = type.signatureMetadata.map { substituteSignatureMetadata(it, mapping) }
+            )
+
+            is JavaArrayType -> JavaArrayType(
+                elementType = substituteRecursive(type.elementType, mapping, maskOwnTypeParameters = true),
+                dimensions = type.dimensions
+            )
+
+            is JavaPrimitiveType -> type
+
             is UnionType -> UnionType(type.types.mapTo(linkedSetOf()) { substituteRecursive(it, mapping, maskOwnTypeParameters = true) })
             is IntersectionType -> IntersectionType(type.types.mapTo(linkedSetOf()) { substituteRecursive(it, mapping, maskOwnTypeParameters = true) })
             is ArrayType -> ArrayType(substituteRecursive(type.elementType, mapping, maskOwnTypeParameters = true))
@@ -195,6 +290,43 @@ class TypeSubstitutor {
             .split(',')
             .map { it.trim() }
             .filter { it.isNotEmpty() }
+    }
+
+    private fun substituteSignatureMetadata(
+        metadata: JavaSignatureMetadata,
+        mapping: Map<String, Type>
+    ): JavaSignatureMetadata {
+        if (mapping.isEmpty()) {
+            return metadata
+        }
+        val scopedMapping = mapping.maskedBy(metadata.typeParameters, maskOwnTypeParameters = true)
+        if (scopedMapping.isEmpty()) {
+            return metadata
+        }
+        return metadata.copy(
+            typeParameters = metadata.typeParameters.map { parameter ->
+                TypeParameterType(
+                    name = parameter.name,
+                    constraint = parameter.constraint?.let {
+                        substituteRecursive(it, scopedMapping, maskOwnTypeParameters = true)
+                    },
+                    defaultType = parameter.defaultType?.let {
+                        substituteRecursive(it, scopedMapping, maskOwnTypeParameters = true)
+                    }
+                )
+            },
+            genericReturnTypeName = metadata.genericReturnTypeName
+                ?.takeUnless { returnName ->
+                    scopedMapping.keys.any { typeParameterName ->
+                        returnName.referencesTypeParameterName(typeParameterName)
+                    }
+                }
+        )
+    }
+
+    private fun String.referencesTypeParameterName(name: String): Boolean {
+        val escaped = Regex.escape(name)
+        return Regex("(?<![A-Za-z0-9_${'$'}])$escaped(?![A-Za-z0-9_${'$'}])").containsMatchIn(this)
     }
 
     private fun Map<String, Type>.maskedBy(

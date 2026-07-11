@@ -8,6 +8,7 @@ import io.github.dingyi222666.luaparser.semantic.api.CompletionItem
 import io.github.dingyi222666.luaparser.semantic.api.CompletionItemKind
 import io.github.dingyi222666.luaparser.semantic.api.Symbol
 import io.github.dingyi222666.luaparser.semantic.api.SymbolKind
+import io.github.dingyi222666.luaparser.semantic.api.TypeInfoKind
 
 internal class CompletionProvider(
     private val nodePositionIndex: NodePositionIndex,
@@ -16,11 +17,7 @@ internal class CompletionProvider(
 ) {
     fun getCompletionsAt(position: Position): List<CompletionItem> {
         val node = nodePositionIndex.findInnermost(position)
-        val memberExpression = when (node) {
-            is MemberExpression -> node
-            is Identifier -> (runCatching { node.parent }.getOrNull() as? MemberExpression)?.takeIf { it.identifier === node }
-            else -> null
-        }
+        val memberExpression = resolveMemberExpression(node, position)
 
         return if (memberExpression != null) {
             memberCompletions(memberExpression)
@@ -29,10 +26,34 @@ internal class CompletionProvider(
         }
     }
 
+    private fun resolveMemberExpression(node: BaseASTNode?, position: Position): MemberExpression? {
+        memberExpressionFromNode(node)?.let { return it }
+
+        // Fall back to enclosing nodes when parent links are missing or the innermost
+        // hit is a broader expression covering the member access site.
+        return nodePositionIndex.findEnclosing(position)
+            .asSequence()
+            .mapNotNull { candidate -> memberExpressionFromNode(candidate) }
+            .firstOrNull()
+    }
+
+    private fun memberExpressionFromNode(node: BaseASTNode?): MemberExpression? {
+        return when (node) {
+            is MemberExpression -> node
+            is Identifier -> {
+                val parent = runCatching { node.parent }.getOrNull() as? MemberExpression
+                parent?.takeIf { it.identifier === node }
+            }
+            else -> null
+        }
+    }
+
     private fun lexicalCompletions(position: Position, node: BaseASTNode?): List<CompletionItem> {
         val visibleItems = referenceQueries.visibleValueDeclarations(position)
             .mapNotNull { visible ->
                 adapters.toDeclarationSymbol(visible.declaration)?.let { symbol ->
+                    // Prefer declaredType-backed detail/kind for ambient binder builtins
+                    // (activity/service VARIABLE, load* FUNCTION, luajava MODULE).
                     completionItem(symbol, categoryPrefix(symbol), visible.lexicalDepth)
                 }
             }
@@ -65,7 +86,7 @@ internal class CompletionProvider(
         val detail = symbol.declaredType?.displayName ?: symbol.type?.displayName
         return CompletionItem(
             label = symbol.name,
-            kind = adapters.completionKind(symbol),
+            kind = lexicalCompletionKind(symbol),
             detail = detail,
             insertText = symbol.name,
             sortText = "$category:${depth.toString().padStart(4, '0')}:${symbol.name}"
@@ -73,10 +94,40 @@ internal class CompletionProvider(
     }
 
     /**
+     * Free-identifier completions should surface binder declaredType when present:
+     * MODULE for luajava-like module globals, FUNCTION for load* / print-like callables,
+     * VARIABLE for activity/service/this/context. Fall back to [ApiAdapters.completionKind].
+     */
+    private fun lexicalCompletionKind(symbol: Symbol): CompletionItemKind {
+        val declared = symbol.declaredType
+        when (declared?.kind) {
+            TypeInfoKind.MODULE -> return CompletionItemKind.MODULE
+            TypeInfoKind.FUNCTION -> return CompletionItemKind.FUNCTION
+            TypeInfoKind.CLASS,
+            TypeInfoKind.TABLE,
+            TypeInfoKind.UNKNOWN,
+            null -> Unit
+        }
+        return when (symbol.kind) {
+            SymbolKind.MODULE -> CompletionItemKind.MODULE
+            SymbolKind.FUNCTION,
+            SymbolKind.METHOD -> CompletionItemKind.FUNCTION
+            SymbolKind.PARAMETER -> CompletionItemKind.PARAMETER
+            SymbolKind.LOCAL,
+            SymbolKind.VARIABLE -> CompletionItemKind.VARIABLE
+            SymbolKind.CLASS -> CompletionItemKind.CLASS
+            SymbolKind.TYPE_ALIAS -> CompletionItemKind.TYPE_ALIAS
+            SymbolKind.FIELD -> CompletionItemKind.FIELD
+            SymbolKind.UNKNOWN -> adapters.completionKind(symbol)
+        }
+    }
+
+    /**
      * Member-surface completions (table/module/Java class members) must expose field-like
      * symbols as [CompletionItemKind.FIELD], including Java static fields from
-     * `luajava.bindClass` targets. Backing declarations sometimes arrive as value kinds
-     * (LOCAL/VARIABLE); hover still reports [SymbolKind.FIELD] via member resolution.
+     * `luajava.bindClass` targets and conservative JavaBean property aliases. Backing
+     * declarations sometimes arrive as value kinds (LOCAL/VARIABLE); hover still reports
+     * [SymbolKind.FIELD] via member resolution.
      */
     private fun memberCompletionItem(symbol: Symbol, category: String, depth: Int): CompletionItem {
         val detail = symbol.declaredType?.displayName ?: symbol.type?.displayName
@@ -97,12 +148,29 @@ internal class CompletionProvider(
             SymbolKind.MODULE -> CompletionItemKind.MODULE
             SymbolKind.TYPE_ALIAS -> CompletionItemKind.TYPE_ALIAS
             SymbolKind.PARAMETER -> CompletionItemKind.PARAMETER
-            // Explicit FIELD, plus value-kind fallthrough for field-like member surfaces.
+            // Explicit FIELD, plus value-kind fallthrough for field-like member surfaces
+            // (LOCAL/VARIABLE-backed Java static members and JavaBean aliases).
             SymbolKind.FIELD,
             SymbolKind.LOCAL,
             SymbolKind.VARIABLE -> CompletionItemKind.FIELD
-            SymbolKind.UNKNOWN -> adapters.completionKind(symbol)
+            // Soft dual-path: unknown synthetic members still prefer FIELD when the
+            // declared/type display looks non-callable (static field reads), else adapters.
+            SymbolKind.UNKNOWN -> {
+                val display = symbol.declaredType?.displayName ?: symbol.type?.displayName
+                if (display != null && !looksCallableDisplay(display)) {
+                    CompletionItemKind.FIELD
+                } else {
+                    adapters.completionKind(symbol)
+                }
+            }
         }
+    }
+
+    private fun looksCallableDisplay(display: String): Boolean {
+        val normalized = display.trim()
+        return normalized.startsWith("fun(") ||
+            normalized.contains(" -> ") ||
+            normalized.startsWith("(") && normalized.contains(")->")
     }
 
     private fun isMemberFieldLike(symbol: Symbol): Boolean {
@@ -110,12 +178,14 @@ internal class CompletionProvider(
     }
 
     private fun categoryPrefix(symbol: Symbol): String {
-        return when (symbol.kind) {
-            SymbolKind.PARAMETER -> "0"
-            SymbolKind.LOCAL -> "1"
-            SymbolKind.FUNCTION -> "2"
-            SymbolKind.VARIABLE -> "3"
-            SymbolKind.MODULE -> "4"
+        return when (lexicalCompletionKind(symbol)) {
+            CompletionItemKind.PARAMETER -> "0"
+            CompletionItemKind.VARIABLE -> {
+                if (symbol.kind == SymbolKind.LOCAL) "1" else "3"
+            }
+            CompletionItemKind.FUNCTION,
+            CompletionItemKind.METHOD -> "2"
+            CompletionItemKind.MODULE -> "4"
             else -> "9"
         }
     }

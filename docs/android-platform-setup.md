@@ -1,19 +1,55 @@
 # Android Platform Classpath Setup
 
-This document records the expected local Android SDK platform jar path, JVM interop/LSP metadata keys, and skip behavior when `android.jar` is absent. It is documentation-only: no production code, tests, Gradle build files, or host environment variables are changed by following it.
+Docs refresh: **TASK-508** (WORKER-WAVE36F-20260712), 2026-07-11/12 — post-**TASK-184** / pre-**TASK-043** documentation accuracy on this macOS host. Docs-only; no product code; **no Gradle/tests/compile**.
 
-## Verified SDK Artifact
+**Honesty bound (post-TASK-184, pre-TASK-043):** this page records expected local Android SDK platform jar paths, dual-path host policy (SDK + optional Downloads), JVM interop/LSP metadata keys, Corretto 17 toolchain notes, and skip behavior when `android.jar` is absent. TASK-184 library-stub / overlay surfaces are accepted in task metadata. This document does **not** claim final green acceptance, does **not** unlock **TASK-043** (serialized verification, still `blocked`), and does **not** unlock **TASK-037** (final acceptance, still `blocked`). Host path status and operator notes here are analysis-setup inventory only — **inventory is not final until TASK-043**.
 
-Expected Android 35 platform jar path on this macOS host:
+This document is documentation-only: no production code, tests, Gradle build files, or host environment variables are changed by following it. Workers must not run Gradle/tests/compile for this task.
+
+## Host toolchain (macOS)
+
+Force Amazon Corretto 17 for product/test alignment on this host (do not rely on the shell default `java`, which may be a newer OpenJDK such as 26):
+
+```text
+Amazon Corretto 17
+JAVA_HOME=/Users/dingyi/Library/Java/JavaVirtualMachines/corretto-17.0.19/Contents/Home
+```
+
+Historical Windows notes that used Temurin 17 `jar.exe` or `G:/Android/Sdk/...` are **not** host defaults here. **Never hard-code `G:/` (or any non-host Windows path)** in new docs, tests, or product path assumptions for this macOS host.
+
+## Host `android.jar` dual-path policy (never `G:/`)
+
+Docs, tests, and operator notes on this macOS host may reference **only** these host jar locations:
+
+| Priority | Path | Role | Host status (2026-07-11 TASK-508 re-check) |
+| --- | --- | --- | --- |
+| 1 (preferred for reproducible analysis) | Explicit metadata `jvm.androidJar` | Caller-supplied single platform jar | Set to the SDK path below when configuring analysis/tests |
+| 2 | `/Users/dingyi/Library/Android/sdk/platforms/android-35/android.jar` | Android SDK Platform 35 jar (`ANDROID_HOME` / `ANDROID_SDK_ROOT` typically `/Users/dingyi/Library/Android/sdk`) | **Present** (~27,092,450 bytes) |
+| 3 (optional copy) | `/Users/dingyi/Downloads/android.jar` | Operator drop-in copy of a platform jar | **Absent** on this host; allowed when present as an **explicit** metadata override only |
+
+Preferred SDK path block:
 
 ```text
 Path: /Users/dingyi/Library/Android/sdk/platforms/android-35/android.jar
 ANDROID_HOME / ANDROID_SDK_ROOT (when set): /Users/dingyi/Library/Android/sdk
 ```
 
-**Host status (2026-07-11 re-check):** `android.jar` is **present** at the path above (~27,092,450 bytes; Android SDK Platform 35 under `/Users/dingyi/Library/Android/sdk`). Earlier notes that said "not installed yet" are obsolete for this host.
+Optional Downloads path block (use only when the file exists; do not invent classpath entries for a missing file; product discovery does **not** auto-select Downloads):
 
-Historical inspection also verified the same path/size on a Windows host (2026-06-06). Representative class entries present when inspected with JDK 17 `jar` (macOS host: Corretto 17 `jar`; historical Windows host: Temurin 17 `jar.exe`):
+```text
+/Users/dingyi/Downloads/android.jar
+```
+
+Rules:
+
+1. Prefer SDK `platforms/android-35/android.jar` when the file exists (current host: present).
+2. Use `/Users/dingyi/Downloads/android.jar` only when that file exists **and** is supplied via explicit `jvm.androidJar` (or equivalent operator config).
+3. If neither host jar is available, **skip** reflective Android framework mounting; do not fail Gradle/LSP startup solely because `android.jar` is missing. Curated Android-Lua static framework overlays may still provide a subset of symbols.
+4. Never hard-code `G:/Android/Sdk/...` or other Windows-only paths for this host.
+
+**Host status (2026-07-11 TASK-508 re-check):** SDK `android.jar` is **present** at the path above (~27,092,450 bytes; Android SDK Platform 35 under `/Users/dingyi/Library/Android/sdk`). Downloads `android.jar` is **absent**. Earlier notes that said the SDK jar was "not installed yet" are obsolete for this host; earlier notes that omitted the Downloads dual-path should be treated as incomplete for operator drop-ins.
+
+Historical inspection also verified the same SDK path/size on a Windows host (2026-06-06). Representative class entries present when inspected with JDK 17 `jar` (macOS host: Corretto 17 `jar`; historical Windows host: Temurin 17 `jar.exe`):
 
 ```text
 android/widget/TextView.class
@@ -31,6 +67,7 @@ Use `java.lang.*` classes from the running JDK runtime for normal JVM reflection
 1. Prefer `ANDROID_HOME`, then `ANDROID_SDK_ROOT`, selecting the highest `platforms/android-*/android.jar`.
 2. Else scan well-known SDK roots (macOS `~/Library/Android/sdk`, Linux `~/Android/Sdk`, Windows `%LOCALAPPDATA%/Android/Sdk`, etc.).
 3. If no real jar is found, return a preferred candidate path for messaging only — callers must check `File.isFile` and **skip when absent**. Never invent a reflective classpath entry for a missing jar.
+4. Downloads (`/Users/dingyi/Downloads/android.jar`) is **not** part of automatic discovery; it is explicit-metadata only when present.
 
 Prefer explicit `jvm.androidJar` metadata for reproducible analysis. Do not hard-code Windows-only paths in new product code (see TASK-245).
 
@@ -81,7 +118,7 @@ Use `android.jar` reflection when the analysis needs authoritative SDK coverage:
 - wildcard package enumeration from the installed SDK jar
 - parity with a specific Android platform selected by `jvm.androidJar`, `ANDROID_HOME`, or `ANDROID_SDK_ROOT`
 
-The static resources are model inputs, not a runtime or SDK substitute. They do not perform Android resource lookup, do not prove that an API exists on every Android level, and do not replace external jars or class directories required for application/plugin classes.
+The static resources are model inputs, not a runtime or SDK substitute. They do not perform Android resource lookup, do not prove that an API exists on every Android level, and do not replace external jars or class directories required for application/plugin classes. Post-TASK-184 library-stub / overlay acceptance does **not** by itself mean reflective SDK coverage or full suite green — that remains pre-TASK-043.
 
 ## Android SDK Environment Discovery
 
@@ -96,7 +133,7 @@ Within the selected SDK root, discovery scans `platforms/android-*/android.jar` 
 
 If both `ANDROID_HOME` and `ANDROID_SDK_ROOT` contain platform jars, `ANDROID_HOME` wins by precedence. `JvmWorkspaceConfiguration.androidJarConfigurationNote()` reports that multiple SDK variables were usable and recommends setting `jvm.androidJar` explicitly to avoid ambiguity.
 
-If neither environment variable is set, or neither SDK root contains `platforms/android-*/android.jar`, no machine-local hardcoded fallback is forced onto the reflective classpath. Reflective Android framework providers remain unavailable, and `androidJarConfigurationNote()` reports the missing SDK state with the exact variables or roots inspected. Android-Lua static framework resources may still provide their curated symbols when the Android-Lua overlay is active. Convenience helpers may still surface a preferred candidate path for skip guards (see Default path resolution above).
+If neither environment variable is set, or neither SDK root contains `platforms/android-*/android.jar`, no machine-local hardcoded fallback is forced onto the reflective classpath. Reflective Android framework providers remain unavailable, and `androidJarConfigurationNote()` reports the missing SDK state with the exact variables or roots inspected. Android-Lua static framework resources may still provide their curated symbols when the Android-Lua overlay is active. Convenience helpers may still surface a preferred candidate path for skip guards (see Default path resolution above). Downloads is never auto-discovered.
 
 ## Skip When Absent
 
@@ -112,7 +149,7 @@ When the configured or discovered jar path is not a regular file:
 
 ## JVM Test Setup
 
-Use the repository Java prerequisite when running JVM tests on macOS (force Corretto 17):
+Use the repository Java prerequisite when running JVM tests on macOS (force Corretto 17). **Operators/review only:** workers for docs tasks must not run Gradle/tests/compile; verification is review-owned and deferred to **TASK-043**.
 
 ```bash
 export JAVA_HOME=/Users/dingyi/Library/Java/JavaVirtualMachines/corretto-17.0.19/Contents/Home
@@ -138,6 +175,14 @@ val metadata = mapOf(
 )
 ```
 
+When an operator has placed a platform jar under Downloads (currently **absent** on this host), that path may be used only as explicit metadata:
+
+```kotlin
+val metadata = mapOf(
+    "jvm.androidJar" to "/Users/dingyi/Downloads/android.jar"
+)
+```
+
 External test jars should be added through `jvm.classpath`, with one entry per line:
 
 ```kotlin
@@ -151,7 +196,7 @@ No `build.gradle.kts` change is needed for these paths. If the path is missing o
 
 ## LSP Setup
 
-Launch the JVM language server with Gradle:
+Launch the JVM language server with Gradle (**operators/review only**; docs workers do not run this):
 
 ```bash
 export JAVA_HOME=/Users/dingyi/Library/Java/JavaVirtualMachines/corretto-17.0.19/Contents/Home
@@ -194,7 +239,7 @@ String values for list settings are interpreted as newline-separated lists. Arra
 
 Expected behavior:
 
-- JDK classes such as `java.lang.String`, `java.util.Locale`, `java.io.File`, and JDK wildcard packages come from the running Java 17 runtime image.
+- JDK classes such as `java.lang.String`, `java.util.Locale`, `java.io.File`, and JDK wildcard packages come from the running Java 17 runtime image (prefer Corretto 17 on this host).
 - Reflective Android framework providers for classes such as `android.content.Context`, `android.view.View`, `android.view.View$OnClickListener`, and `android.widget.TextView` require either explicit `jvm.androidJar` or a discovered platform jar from `ANDROID_HOME` or `ANDROID_SDK_ROOT`. The Android-Lua static overlay may still provide a curated subset of those symbols when reflection is unavailable.
 - External application or plugin classes require their jar or class-directory root in `jvm.classpath`.
 - Directories in `jvm.classpath` must be package roots containing `.class` files under paths such as `com/example/Foo.class`.
@@ -210,9 +255,19 @@ If explicit `/Users/dingyi/Library/Android/sdk/platforms/android-35/android.jar`
 1. Do not edit `build.gradle.kts` for this path.
 2. Do not mutate environment variables from worker/docs tasks. Operators may install Android SDK Platform 35 with Android Studio SDK Manager or `sdkmanager "platforms;android-35"` if full reflective coverage is required.
 3. If another platform is already installed, point `jvm.androidJar` to that platform jar in metadata or LSP settings, for example `/Users/dingyi/Library/Android/sdk/platforms/android-34/android.jar`.
-4. If `jvm.androidJar` is omitted, set `ANDROID_HOME` or `ANDROID_SDK_ROOT` (operator choice) to an Android SDK root that contains at least one `platforms/android-*/android.jar`, or rely on well-known root discovery from TASK-245.
-5. If no Android platform jar is available, omit `jvm.androidJar`. JDK classes and external jars in `jvm.classpath` can still resolve. Curated Android-Lua static framework resources may satisfy documented framework symbols, but reflective Android SDK coverage should be treated as unavailable for that run — **skip**, do not fail host setup.
-6. Keep Android-specific tests or LSP scenarios scoped to environments where the configured or discovered `android.jar` exists; otherwise skip with a clear reason.
+4. If a copy exists at `/Users/dingyi/Downloads/android.jar`, set `jvm.androidJar` to that path explicitly (never auto-discovered).
+5. If `jvm.androidJar` is omitted, set `ANDROID_HOME` or `ANDROID_SDK_ROOT` (operator choice) to an Android SDK root that contains at least one `platforms/android-*/android.jar`, or rely on well-known root discovery from TASK-245.
+6. If no Android platform jar is available, omit `jvm.androidJar`. JDK classes and external jars in `jvm.classpath` can still resolve. Curated Android-Lua static framework resources may satisfy documented framework symbols, but reflective Android SDK coverage should be treated as unavailable for that run — **skip**, do not fail host setup.
+7. Keep Android-specific tests or LSP scenarios scoped to environments where the configured or discovered `android.jar` exists; otherwise skip with a clear reason.
+
+## Pre-TASK-043 / inventory note
+
+- **TASK-184** product library-stub work is accepted in task metadata; this page does not re-verify those tests.
+- **TASK-043** serialized Gradle verification remains the only place for suite-level pass/fail claims; it is still `blocked` / open from the worker perspective.
+- Host path re-checks and documentation inventory on this page are **not final acceptance inventory**. Suite inventory remains frozen/review-owned (see TASK-125 / `docs/test-strategy.md` / `docs/test-inventory-recount-procedure.md`). **Inventory is not final until TASK-043.**
+- Do **not** claim final green acceptance from this docs task.
+
+Companion docs: `docs/jvm-reflection-classloader-design.md`, `docs/android-lua-architecture.md`, `docs/android-lua-verification.md`, `docs/java-interop-model.md`, `docs/serialized-verification.md`, `docs/final-verification.md`.
 
 ## Read-only Inspection Commands
 
@@ -220,6 +275,7 @@ Commands for current-host verification (macOS/zsh). These are optional operator 
 
 ```bash
 ls -la /Users/dingyi/Library/Android/sdk/platforms/android-35/android.jar
+ls -la /Users/dingyi/Downloads/android.jar  # expected absent unless operator drop-in exists
 
 export JAVA_HOME=/Users/dingyi/Library/Java/JavaVirtualMachines/corretto-17.0.19/Contents/Home
 export PATH="$JAVA_HOME/bin:$PATH"
@@ -228,3 +284,9 @@ jar tf /Users/dingyi/Library/Android/sdk/platforms/android-35/android.jar | rg '
 
 rg -n "jvm\.androidJar|jvm\.classpath|androlua\.imports|URLClassLoader|runLuaLanguageServer" -S src build.gradle.kts README.md
 ```
+
+## Verification (TASK-508)
+
+No Gradle, compile, or test commands should be run for **TASK-508**. This task is docs-only: review reads the markdown artifact.
+
+Verification of reflected JVM provider behavior, classpath discovery, and documentation consistency is deferred to **TASK-043** serialized verification. Do **not** claim final green, do not unlock TASK-043, and do not run `jvmTest` filters from this worker.

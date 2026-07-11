@@ -15,12 +15,17 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 /**
- * TASK-211 — Android.jar package enumeration depth corpus.
+ * TASK-211 / TASK-584 — Android.jar package enumeration depth corpus + product lock.
  *
  * Covers nested packages used by Android-Lua / LuaJava samples
  * (`android.os`, `android.net`, `android.util`, `android.graphics`,
  * `android.graphics.drawable`, `android.graphics.drawable.shapes`,
  * `android.content.pm`, `android.content.res`, `android.app.job`, …).
+ *
+ * Product lock (TASK-584): when host android-35 jar is present,
+ * `android.app.*` / `android.content.*` / `android.view.*` / `android.widget.*`
+ * must enumerate Activity / Context / View / TextView as top-level fields and
+ * must never invent those members when the jar is absent. Inner classes are skipped.
  *
  * When the host android.jar is missing, jar-dependent tests skip with an
  * explicit TASK-211 reason rather than failing hard or returning silently.
@@ -190,19 +195,74 @@ class AndroidJarPackageEnumerationTddTest {
         val widget = packageModuleFor("android.widget.*")
         assertTrue("TextView" in widget.fields, fieldsHint("android.widget", widget))
         assertTrue("Button" in widget.fields, fieldsHint("android.widget", widget))
+        // Inner TextView.BufferType must never appear as a top-level package field.
+        assertFalse("BufferType" in widget.fields, "Inner BufferType must not appear under android.widget.*")
 
         val view = packageModuleFor("android.view.*")
         assertTrue("View" in view.fields, fieldsHint("android.view", view))
         assertTrue("ViewGroup" in view.fields, fieldsHint("android.view", view))
+        assertFalse("OnClickListener" in view.fields, "Inner View.OnClickListener must not appear under android.view.*")
+        assertFalse("MeasureSpec" in view.fields, "Inner View.MeasureSpec must not appear under android.view.*")
 
         val app = packageModuleFor("android.app.*")
         assertTrue("Activity" in app.fields, fieldsHint("android.app", app))
+        assertFalse("ScreenCaptureCallback" in app.fields, "Inner Activity nested type must not appear under android.app.*")
 
         val content = packageModuleFor("android.content.*")
         assertTrue("Context" in content.fields, fieldsHint("android.content", content))
         // Nested pm/res classes are not direct members of android.content.
         assertFalse("PackageManager" in content.fields)
         assertFalse("Resources" in content.fields)
+        assertFalse("BindServiceFlags" in content.fields, "Inner Context.BindServiceFlags must not appear under android.content.*")
+    }
+
+    @Test
+    fun host_android_jar_app_content_view_widget_wildcards_are_non_empty_product_lock() {
+        requireAndroidJarOrSkip()
+        // Product lock for MODULE-VERIFY: wildcards must enumerate the four Android-Lua
+        // fixture packages when the host android-35 jar is present (never invent when absent).
+        val expected = mapOf(
+            "android.app.*" to "Activity",
+            "android.content.*" to "Context",
+            "android.view.*" to "View",
+            "android.widget.*" to "TextView"
+        )
+        expected.forEach { (importTarget, classSimpleName) ->
+            val module = packageModuleFor(importTarget)
+            assertTrue(
+                classSimpleName in module.fields,
+                "Host jar ${androidJar.path} must enumerate $classSimpleName for $importTarget; " +
+                    "fields=${module.fields.keys.sorted()}"
+            )
+            assertTrue(
+                module.fields.isNotEmpty(),
+                "Host jar present ⇒ package module for $importTarget must be non-empty"
+            )
+        }
+    }
+
+    @Test
+    fun missing_android_jar_path_does_not_invent_framework_package_members() {
+        // Honest empty surface: explicit missing non-G path must not soft-mount host SDK.
+        val configuration = JvmWorkspaceConfiguration(
+            classpathEntries = emptyList(),
+            androidJar = "/nonexistent/android-sdk/platforms/android-35/android.jar",
+            classes = emptySet()
+        )
+        val providers = provider.packageProvidersFor(
+            importTargets = listOf(
+                "android.app.*",
+                "android.content.*",
+                "android.view.*",
+                "android.widget.*"
+            ),
+            configuration = configuration
+        )
+        assertTrue(
+            providers.isEmpty(),
+            "Missing android.jar must not invent package providers for app/content/view/widget; " +
+                "got paths=${providers.keys.map { it.value }}"
+        )
     }
 
     @Test

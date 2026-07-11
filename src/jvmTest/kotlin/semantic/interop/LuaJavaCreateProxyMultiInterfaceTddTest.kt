@@ -15,14 +15,16 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 /**
- * TASK-212 corpus: LuaJava `createProxy` multi-interface success and missing-method diagnostics.
+ * TASK-212 / TASK-573 corpus: LuaJava `createProxy` multi-interface success and missing-method diagnostics.
  *
  * Acceptance (test-only; review-owned verification):
  * - Multi-interface fixtures for success (varargs + comma-separated interface lists).
  * - Missing-method diagnostics on multi-interface proxies.
  * - Colon-call / local shadowing guards remain intact for `createProxy`.
+ * - Local shadows must not invent multi-interface proxy surfaces (TASK-573).
  *
- * Product sources are out of scope; no Gradle from workers.
+ * Product sources are out of scope for this worker when ExpressionTypeEvaluator is locked;
+ * no Gradle from workers.
  */
 class LuaJavaCreateProxyMultiInterfaceTddTest {
 
@@ -411,13 +413,13 @@ class LuaJavaCreateProxyMultiInterfaceTddTest {
             """.trimIndent()
         )
 
-        // REVIEW22B / product (TASK-138 bare-function return inference + TypeResolver):
-        // local function createProxy(...) return { value = target } end infers table-shape
-        // hover `{ value: unknown }` (same as LuaJavaHelperShadowingTddTest). Guard still holds:
-        // run/compare stay unknown; no multi-iface proxy surface.
-        assertHoverDisplay(harness, "proxy", "{ value: unknown }", occurrence = 2)
+        // TASK-573: product hover collapses structural table literals via preferredHoverType
+        // (LuaWorkspaceQueryFacade) to coarse `table`, matching LuaJavaHelperShadowingTddTest.
+        // Guard still holds: run/compare stay unknown; no multi-iface proxy surface / no fun( methods.
+        assertLocalTableShadowHover(harness, "proxy", occurrence = 2)
         assertHoverDisplay(harness, "run", "unknown", occurrence = 2)
         assertHoverDisplay(harness, "compare", "unknown", occurrence = 2)
+        assertNotMultiInterfaceProxySurface(harness, "proxy", occurrence = 2)
     }
 
     @Test
@@ -437,12 +439,12 @@ class LuaJavaCreateProxyMultiInterfaceTddTest {
             """.trimIndent()
         )
 
-        // REVIEW24: local table-member shadow returns table-shape hover `{ value: unknown }`
-        // (product models the anonymous local createProxy return table). Guard still holds:
-        // no multi-interface proxy surface on run/compare.
-        assertHoverDisplay(harness, "proxy", "{ value: unknown }", occurrence = 2)
+        // TASK-573: local table-member shadow is ordinary Lua; hover is table-shaped / collapsed
+        // `table`. Guard still holds: no multi-interface proxy surface on run/compare.
+        assertLocalTableShadowHover(harness, "proxy", occurrence = 2)
         assertHoverDisplay(harness, "run", "unknown", occurrence = 2)
         assertHoverDisplay(harness, "compare", "unknown", occurrence = 2)
+        assertNotMultiInterfaceProxySurface(harness, "proxy", occurrence = 2)
     }
 
     @Test
@@ -516,6 +518,52 @@ class LuaJavaCreateProxyMultiInterfaceTddTest {
     ) {
         val hover = harness.queries.hover(harness.path("main.lua"), harness.positionOf("main.lua", needle, occurrence))
         assertEquals(expected, hover?.typeInfo?.displayName)
+    }
+
+
+    /**
+     * Local createProxy shadows return ordinary tables. Product hover collapses structural
+     * `{ field: ... }` displays to coarse `table` via preferredHoverType (TASK-573 / HelperShadowing).
+     */
+    private fun assertLocalTableShadowHover(
+        harness: WorkspaceSemanticHarness,
+        needle: String,
+        occurrence: Int = 1
+    ) {
+        val display = harness.queries.hover(
+            harness.path("main.lua"),
+            harness.positionOf("main.lua", needle, occurrence)
+        )?.typeInfo?.displayName.orEmpty()
+        assertTrue(
+            display == "table" || display.startsWith("{"),
+            "Expected local table shadow hover for $needle (table or structural), got '$display'."
+        )
+        assertNotMultiInterfaceProxyDisplay(display, needle)
+    }
+
+    private fun assertNotMultiInterfaceProxySurface(
+        harness: WorkspaceSemanticHarness,
+        needle: String,
+        occurrence: Int = 1
+    ) {
+        val display = harness.queries.hover(
+            harness.path("main.lua"),
+            harness.positionOf("main.lua", needle, occurrence)
+        )?.typeInfo?.displayName.orEmpty()
+        assertNotMultiInterfaceProxyDisplay(display, needle)
+    }
+
+    private fun assertNotMultiInterfaceProxyDisplay(display: String, needle: String) {
+        assertFalse(
+            display.contains("Runnable", ignoreCase = false) ||
+                display.contains("Comparator", ignoreCase = false) ||
+                display.contains("JavaProxy", ignoreCase = false) ||
+                display.contains("fun(") ||
+                display.contains("&") ||
+                display.contains("java.lang") ||
+                display.contains("java.util"),
+            "Local createProxy shadow $needle must not invent multi-interface proxy surface; got '$display'."
+        )
     }
 
     private fun assertCallable(displayName: String?) {

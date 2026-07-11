@@ -346,17 +346,17 @@ class Lua53GotoLabelCorpusTddTest {
      * order). Nested control-flow bodies are visited immediately so gotos inside
      * for/if appear before sibling gotos in outer blocks.
      */
-    private inline fun <reified T : StatementNode> collectStatements(chunk: ChunkNode): List<T> {
+    private fun <T : StatementNode> collectStatements(chunk: ChunkNode, predicate: (StatementNode) -> Boolean): List<T> {
         val out = mutableListOf<T>()
-
         fun walkBlock(block: BlockNode) {
             val statements = buildList {
                 addAll(block.statements)
                 block.returnStatement?.let { add(it) }
             }
             for (statement in statements) {
-                if (statement is T) {
-                    out += statement
+                if (predicate(statement)) {
+                    @Suppress("UNCHECKED_CAST")
+                    out += statement as T
                 }
                 when (statement) {
                     is DoStatement -> walkBlock(statement.body)
@@ -370,8 +370,10 @@ class Lua53GotoLabelCorpusTddTest {
                 }
             }
         }
-
         walkBlock(chunk.body)
         return out
     }
+
+    private inline fun <reified T : StatementNode> collectStatements(chunk: ChunkNode): List<T> =
+        collectStatements(chunk) { it is T }
 }

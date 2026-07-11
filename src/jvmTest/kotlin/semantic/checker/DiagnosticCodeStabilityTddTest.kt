@@ -395,6 +395,7 @@ class DiagnosticCodeStabilityTddTest {
             "checker.function.signature.unknownParam",
             "checker.function.signature.varargNotLast",
             "checker.luajava.target.unresolved",
+            "checker.local.unused",
             "checker.member.missing"
         ).sorted()
 
@@ -405,7 +406,7 @@ class DiagnosticCodeStabilityTddTest {
         )
         // Reserved future codes are intentionally **not** in the inventory until product emits them.
         assertFalse(UNDEFINED_GLOBAL_CODE in KNOWN_PIPELINE_CODES)
-        assertFalse(UNUSED_LOCAL_CODE in KNOWN_PIPELINE_CODES)
+        assertTrue(UNUSED_LOCAL_CODE in KNOWN_PIPELINE_CODES)
     }
 
     @Test
@@ -496,7 +497,7 @@ class DiagnosticCodeStabilityTddTest {
         /** Reserved future code for undefined globals — not emitted by product today. */
         const val UNDEFINED_GLOBAL_CODE = "checker.global.undefined"
 
-        /** Reserved future unused-local code (see ExpressionUsageUnusedLocalTddTest). */
+        /** Stable unused-local code emitted by ExpressionUsageChecker (TASK-556). */
         const val UNUSED_LOCAL_CODE = "checker.local.unused"
 
         const val PARAMETER_CONTRACT_MISMATCH = "checker.function.signature.parameterContractMismatch"
@@ -539,6 +540,7 @@ class DiagnosticCodeStabilityTddTest {
             "checker.function.signature.unknownParam",
             "checker.function.signature.varargNotLast",
             "checker.luajava.target.unresolved",
+            "checker.local.unused",
             "checker.member.missing"
         )
     }

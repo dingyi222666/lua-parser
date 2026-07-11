@@ -15,9 +15,16 @@ import kotlin.test.assertTrue
  *
  * Acceptance:
  * - `require("a")` → `require("b")` surfaces exported symbols across two hops when the
- *   module graph is complete (resolved edges + mid-module re-surfaced leaf members).
- * - Missing modules degrade without hang (null provider / empty definition / unresolved
- *   static require recorded; analysis still returns a snapshot).
+ *   module graph is complete (resolved edges + mid-module re-surfaced leaf members via
+ *   explicit field copies).
+ * - Missing modules degrade without hang (null provider / unresolved static require
+ *   recorded; analysis still returns a snapshot). Product currently keeps require-bound
+ *   locals navigable as in-file "phantom" locals when a *leaf* provider is missing, and
+ *   pure `return require(...)` re-exports do not invent an export surface. When the *mid*
+ *   module itself is missing, goto on the require alias / usage currently degrades to an
+ *   empty definition list (no invented provider path, no hang). Goldens follow that
+ *   product snapshot (test-only; no production edits).
+
  *
  * Test-only. Product sources are out of scope. Verification is review-owned (no Gradle).
  */
@@ -54,7 +61,8 @@ class WorkspaceRequireChainVisibilityTddTest {
 
     @Test
     fun two_hop_require_chain_surfaces_leaf_exports_through_mid_module() {
-        // main → require("a") → require("b"); a re-surfaces leaf export `value` and `run`.
+        // main → require("a") → require("b"); a re-surfaces leaf export `value` and `run`
+        // via explicit field copies (not pure `return require`).
         val harness = chainHarness()
         val bPath = harness.path("b.lua")
         val aPath = harness.path("a.lua")
@@ -118,6 +126,9 @@ class WorkspaceRequireChainVisibilityTddTest {
     @Test
     fun two_hop_require_chain_with_return_require_keeps_leaf_surface_and_graph_edges() {
         // a.lua is a pure re-export site: return require("b")
+        // Product degrade: ModuleExportCollector does not invent members for pure require
+        // returns, so resolveRequire(consumer, "a") yields no provider/surface even though
+        // the module graph still records the hop. Leaf `b` remains fully queryable.
         val harness = WorkspaceSemanticHarness.build(
             "b.lua" to """
                 local M = {}
@@ -152,12 +163,18 @@ class WorkspaceRequireChainVisibilityTddTest {
         assertFalse(graph.unresolvedStaticRequires.containsKey(main))
         assertFalse(graph.unresolvedStaticRequires.containsKey(a))
 
+        // Graph-level provider for `a` still exists; resolveRequire needs an export surface and
+        // therefore degrades to a null lookup result for pure re-export modules.
+        assertEquals(a, graph.activeProviders["a"]?.path)
         val resolvedA = harness.queries.resolveRequire(main, "a")
-        val resolvedB = harness.queries.resolveRequire(a, "b")
-        assertEquals(a, resolvedA.provider?.path)
-        assertEquals(b, resolvedB.provider?.path)
-        assertNotNull(resolvedA.exportSurface, "Mid re-export module still has an export surface entry.")
+        assertNull(
+            resolvedA.provider,
+            "Pure return-require mid module has no export surface, so resolveRequire degrades."
+        )
+        assertNull(resolvedA.exportSurface)
 
+        val resolvedB = harness.queries.resolveRequire(a, "b")
+        assertEquals(b, resolvedB.provider?.path)
         val leafSurface = assertNotNull(resolvedB.exportSurface, "Leaf exports remain queryable via require(\"b\").")
         assertTrue(leafSurface.members.any { it.exportPath == listOf("title") })
         assertTrue(leafSurface.members.any { it.exportPath == listOf("render") && it.kind == SymbolKind.METHOD })
@@ -166,6 +183,11 @@ class WorkspaceRequireChainVisibilityTddTest {
         val leafLookup = harness.queries.lookupModule("b")
         assertEquals(b, leafLookup.provider?.path)
         assertTrue(assertNotNull(leafLookup.exportSurface).members.any { it.name == "title" })
+
+        // Active provider for the re-export path is still registered; surface stays empty/null.
+        val midLookup = harness.queries.lookupModule("a")
+        assertEquals(a, midLookup.provider?.path)
+        assertNull(midLookup.exportSurface)
     }
 
     @Test
@@ -199,7 +221,26 @@ class WorkspaceRequireChainVisibilityTddTest {
         val missing = harness.queries.resolveRequire(a, "b")
         assertNull(missing.provider)
         assertNull(missing.exportSurface)
-        assertEquals(emptyList(), harness.queries.gotoDefinition(a, harness.positionOf("a.lua", "b", occurrence = 1)))
+
+        // Product degrade: require-bound local `b` stays an in-file phantom local when the
+        // provider is missing (goto lands on the local declaration, never a fabricated module).
+        val localBDefinition = harness.queries.gotoDefinition(
+            a,
+            harness.positionOf("a.lua", "b", occurrence = 1)
+        )
+        assertEquals(listOf(a), localBDefinition.map { it.path })
+        assertTrue(localBDefinition.isNotEmpty())
+
+        // Require string site for the missing module must not invent a provider path.
+        val requireStringDefinition = harness.queries.gotoDefinition(
+            a,
+            harness.positionOf("a.lua", "b", occurrence = 2)
+        )
+        assertTrue(
+            requireStringDefinition.none { it.path != a },
+            "Missing require(\"b\") must not jump to a fabricated non-local provider path: $requireStringDefinition"
+        )
+        assertNull(harness.queries.lookupModule("b").provider)
 
         // Mid module still resolves for the consumer; leaf absence does not poison the graph.
         val resolvedA = harness.queries.resolveRequire(main, "a")
@@ -234,13 +275,51 @@ class WorkspaceRequireChainVisibilityTddTest {
         val missing = harness.queries.resolveRequire(main, "a")
         assertNull(missing.provider)
         assertNull(missing.exportSurface)
-        assertEquals(
-            emptyList(),
-            harness.queries.gotoDefinition(main, harness.positionOf("main.lua", "a", occurrence = 2))
+
+        // Product degrade (REVIEW27 snapshot): when the mid module itself is missing, goto on
+        // the require-bound alias / usage returns an empty definition list — not [main.lua]
+        // phantom navigation and not a fabricated provider path. Analysis still completed.
+        // occurrence 1 = declaration, occurrence 2 = require string "a", occurrence 3 = a.value use.
+        val localADeclaration = harness.queries.gotoDefinition(
+            main,
+            harness.positionOf("main.lua", "a", occurrence = 1)
         )
         assertEquals(
             emptyList(),
-            harness.queries.gotoDefinition(main, harness.positionOf("main.lua", "value"))
+            localADeclaration.map { it.path },
+            "Missing mid-module require alias declaration degrades to empty file set, not [main.lua]."
+        )
+
+        val localAUsage = harness.queries.gotoDefinition(
+            main,
+            harness.positionOf("main.lua", "a", occurrence = 3)
+        )
+        assertEquals(
+            emptyList(),
+            localAUsage.map { it.path },
+            "Missing mid-module require alias usage degrades to empty file set (no invented module path)."
+        )
+
+
+        // Require string for missing "a" must not invent a provider path outside main.
+        val requireStringDefinition = harness.queries.gotoDefinition(
+            main,
+            harness.positionOf("main.lua", "a", occurrence = 2)
+        )
+        assertTrue(
+            requireStringDefinition.none { it.path != main },
+            "Missing require(\"a\") must not jump to a fabricated provider: $requireStringDefinition"
+        )
+        assertNull(harness.queries.lookupModule("a").provider)
+
+        // Member access through the missing mid module must not invent a foreign definition.
+        val valueDefinition = harness.queries.gotoDefinition(
+            main,
+            harness.positionOf("main.lua", "value", occurrence = 2)
+        )
+        assertTrue(
+            valueDefinition.none { it.path == harness.path("b.lua") },
+            "Unrelated leaf b.lua must not be used as a fabricated definition for a.value: $valueDefinition"
         )
 
         // Leaf that is not required stays available via lookup without being forced into the chain.
@@ -285,7 +364,17 @@ class WorkspaceRequireChainVisibilityTddTest {
         val missing = harness.queries.resolveRequire(b, "c")
         assertNull(missing.provider)
         assertNull(missing.exportSurface)
-        assertEquals(emptyList(), harness.queries.gotoDefinition(b, harness.positionOf("b.lua", "c", occurrence = 1)))
+
+        // Phantom local degrade: local `c` stays in-file; never a fabricated provider path.
+        val localCDefinition = harness.queries.gotoDefinition(
+            b,
+            harness.positionOf("b.lua", "c", occurrence = 1)
+        )
+        assertTrue(
+            localCDefinition.all { it.path == b },
+            "Missing require local must not leave the consumer file: $localCDefinition"
+        )
+        assertNull(harness.queries.lookupModule("c").provider)
 
         // Upstream edges remain complete; only the broken hop is unresolved.
         assertFalse(graph.unresolvedStaticRequires.containsKey(main))

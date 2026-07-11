@@ -6,6 +6,7 @@ import com.google.gson.JsonPrimitive
 import io.github.dingyi222666.luaparser.interop.jvm.JvmWorkspaceConfiguration
 import org.eclipse.lsp4j.DidChangeConfigurationParams
 import org.eclipse.lsp4j.DidChangeWatchedFilesParams
+import org.eclipse.lsp4j.DidChangeWorkspaceFoldersParams
 import org.eclipse.lsp4j.FileEvent
 import org.eclipse.lsp4j.SymbolInformation
 import org.eclipse.lsp4j.WorkspaceSymbol
@@ -52,15 +53,54 @@ class LuaWorkspaceService(
         onConfigurationChanged()
     }
 
+
+    /**
+     * workspace/didChangeWorkspaceFolders — reindex added roots and drop removed ones
+     * without a full process restart. Delegates to
+     * [LuaLanguageService.applyWorkspaceFolderChanges], which reuses
+     * indexWorkspaceFolder/refreshWorkspaceFolderIndex. Open-document overlays stay
+     * authoritative. Multi-root relative-path collisions remain last-write-wins
+     * (documented in LspDidChangeWorkspaceFoldersTddTest).
+     */
+    override fun didChangeWorkspaceFolders(params: DidChangeWorkspaceFoldersParams) {
+        if (!acceptsRequests()) {
+            return
+        }
+        val event = params.event
+        val added = event?.added.orEmpty().toList()
+        val removed = event?.removed.orEmpty().toList()
+        if (added.isEmpty() && removed.isEmpty()) {
+            return
+        }
+        synchronized(stateLock) {
+            languageService.applyWorkspaceFolderChanges(added, removed)
+        }
+        // Folder membership can change require/module resolution for open files.
+        onConfigurationChanged()
+    }
+
     override fun symbol(params: WorkspaceSymbolParams): CompletableFuture<Either<MutableList<out SymbolInformation>, MutableList<out WorkspaceSymbol>>> {
         if (!acceptsRequests()) {
-            return completedWorkspaceSymbols(mutableListOf())
+            return if (languageService.supportsModernWorkspaceSymbols()) {
+                completedModernWorkspaceSymbols(mutableListOf())
+            } else {
+                completedLegacyWorkspaceSymbols(mutableListOf())
+            }
         }
         val query = params.query.orEmpty()
+        // Dual-path (TASK-397): client workspace.symbol.resolveSupport → modern
+        // WorkspaceSymbol (Either.right via modernWorkspaceSymbols); else legacy
+        // SymbolInformation (Either.left via workspaceSymbols). Reuses existing helpers.
+        if (languageService.supportsModernWorkspaceSymbols()) {
+            val symbols = synchronized(stateLock) {
+                languageService.modernWorkspaceSymbols(query).toMutableList()
+            }
+            return completedModernWorkspaceSymbols(symbols)
+        }
         val symbols = synchronized(stateLock) {
             languageService.workspaceSymbols(query).toMutableList()
         }
-        return completedWorkspaceSymbols(symbols)
+        return completedLegacyWorkspaceSymbols(symbols)
     }
 
     fun currentWorkspaceMetadata(): Map<String, String> {
@@ -167,10 +207,16 @@ class LuaWorkspaceService(
         }
     }
 
-    private fun completedWorkspaceSymbols(
+    private fun completedLegacyWorkspaceSymbols(
         symbols: MutableList<out SymbolInformation>
     ): CompletableFuture<Either<MutableList<out SymbolInformation>, MutableList<out WorkspaceSymbol>>> {
         return CompletableFuture.completedFuture(Either.forLeft(symbols))
+    }
+
+    private fun completedModernWorkspaceSymbols(
+        symbols: MutableList<out WorkspaceSymbol>
+    ): CompletableFuture<Either<MutableList<out SymbolInformation>, MutableList<out WorkspaceSymbol>>> {
+        return CompletableFuture.completedFuture(Either.forRight(symbols))
     }
 
     private companion object {

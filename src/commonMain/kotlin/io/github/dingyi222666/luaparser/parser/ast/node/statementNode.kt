@@ -3,6 +3,35 @@ package io.github.dingyi222666.luaparser.parser.ast.node
 import io.github.dingyi222666.luaparser.parser.ast.visitor.ASTVisitor
 import kotlin.properties.Delegates
 
+private fun <T : BaseASTNode> T.copyStatementCloneMetadataFrom(source: BaseASTNode): T = also {
+    range = source.range.copy()
+    bad = source.bad
+}
+
+private fun <T : BaseASTNode> T.withStatementCloneParent(parentNode: BaseASTNode): T = also {
+    parent = parentNode
+}
+
+private fun BlockNode.cloneStatementBlockFor(parentNode: BaseASTNode): BlockNode =
+    clone().copyStatementCloneMetadataFrom(this).withStatementCloneParent(parentNode).also { block ->
+        block.statements.forEach { it.parent = block }
+        block.returnStatement?.parent = block
+    }
+
+private fun <T : IfClause> T.copyIfClauseFrom(source: IfClause, includeCondition: Boolean = true): T =
+    copyStatementCloneMetadataFrom(source).also { clause ->
+        if (includeCondition) {
+            clause.condition = source.condition.clone().withStatementCloneParent(clause)
+        }
+        clause.body = source.body.cloneStatementBlockFor(clause)
+    }
+
+private fun <T : TableKey> T.copyTableKeyFrom(source: TableKey): T =
+    copyStatementCloneMetadataFrom(source).also { key ->
+        key.key = source.key.clone().withStatementCloneParent(key)
+        key.value = source.value.clone().withStatementCloneParent(key)
+    }
+
 /**
  * @author: dingyi
  * @date: 2021/10/7 10:23
@@ -21,12 +50,12 @@ class LocalStatement : StatementNode, ASTNode() {
     }
 
     override fun clone(): LocalStatement {
-        return LocalStatement().also { stat ->
+        return LocalStatement().copyStatementCloneMetadataFrom(this).also { stat ->
             variables.forEach {
-                stat.variables.add(it.clone())
+                stat.variables.add(it.clone().withStatementCloneParent(stat))
             }
             init.forEach {
-                stat.init.add(it.clone())
+                stat.init.add(it.clone().withStatementCloneParent(stat))
             }
         }
     }
@@ -46,12 +75,12 @@ class AssignmentStatement : StatementNode, ASTNode() {
     }
 
     override fun clone(): AssignmentStatement {
-        return AssignmentStatement().also { stat ->
+        return AssignmentStatement().copyStatementCloneMetadataFrom(this).also { stat ->
             variables.forEach {
-                stat.variables.add(it.clone())
+                stat.variables.add(it.clone().withStatementCloneParent(stat))
             }
             init.forEach {
-                stat.init.add(it.clone())
+                stat.init.add(it.clone().withStatementCloneParent(stat))
             }
         }
     }
@@ -72,14 +101,14 @@ class ForGenericStatement : StatementNode, ASTNode() {
     }
 
     override fun clone(): ForGenericStatement {
-        return ForGenericStatement().also { stat ->
+        return ForGenericStatement().copyStatementCloneMetadataFrom(this).also { stat ->
             variables.forEach {
-                stat.variables.add(it.clone())
+                stat.variables.add(it.clone().withStatementCloneParent(stat))
             }
             iterators.forEach {
-                stat.iterators.add(it.clone())
+                stat.iterators.add(it.clone().withStatementCloneParent(stat))
             }
-            stat.body = body.clone()
+            stat.body = body.cloneStatementBlockFor(stat)
         }
     }
 }
@@ -100,12 +129,12 @@ class ForNumericStatement : StatementNode, ASTNode() {
     }
 
     override fun clone(): ForNumericStatement {
-        return ForNumericStatement().also { stat ->
-            stat.variable = variable.clone()
-            stat.start = start.clone()
-            stat.end = end.clone()
-            stat.step = step?.clone()
-            stat.body = body.clone()
+        return ForNumericStatement().copyStatementCloneMetadataFrom(this).also { stat ->
+            stat.variable = variable.clone().withStatementCloneParent(stat)
+            stat.start = start.clone().withStatementCloneParent(stat)
+            stat.end = end.clone().withStatementCloneParent(stat)
+            stat.step = step?.clone()?.withStatementCloneParent(stat)
+            stat.body = body.cloneStatementBlockFor(stat)
         }
     }
 }
@@ -127,8 +156,8 @@ class CallStatement : StatementNode, ASTNode() {
     }
 
     override fun clone(): CallStatement {
-        return CallStatement().also { stat ->
-            stat.expression = expression.clone()
+        return CallStatement().copyStatementCloneMetadataFrom(this).also { stat ->
+            stat.expression = expression.clone().withStatementCloneParent(stat)
         }
     }
 }
@@ -151,9 +180,9 @@ class WhileStatement : StatementNode, ASTNode() {
     }
 
     override fun clone(): WhileStatement {
-        return WhileStatement().also { stat ->
-            stat.condition = condition.clone()
-            stat.body = body.clone()
+        return WhileStatement().copyStatementCloneMetadataFrom(this).also { stat ->
+            stat.condition = condition.clone().withStatementCloneParent(stat)
+            stat.body = body.cloneStatementBlockFor(stat)
         }
     }
 }
@@ -170,9 +199,9 @@ class RepeatStatement : StatementNode, ASTNode() {
     }
 
     override fun clone(): RepeatStatement {
-        return RepeatStatement().also { stat ->
-            stat.condition = condition.clone()
-            stat.body = body.clone()
+        return RepeatStatement().copyStatementCloneMetadataFrom(this).also { stat ->
+            stat.condition = condition.clone().withStatementCloneParent(stat)
+            stat.body = body.cloneStatementBlockFor(stat)
         }
     }
 }
@@ -188,7 +217,7 @@ class BreakStatement : StatementNode, ASTNode() {
     }
 
     override fun clone(): BreakStatement {
-        return BreakStatement()
+        return BreakStatement().copyStatementCloneMetadataFrom(this)
     }
 }
 
@@ -203,8 +232,8 @@ class LabelStatement : StatementNode, ASTNode() {
     }
 
     override fun clone(): LabelStatement {
-        return LabelStatement().also { stat ->
-            stat.identifier = identifier.clone()
+        return LabelStatement().copyStatementCloneMetadataFrom(this).also { stat ->
+            stat.identifier = identifier.clone().withStatementCloneParent(stat)
         }
     }
 }
@@ -220,8 +249,8 @@ class GotoStatement : StatementNode, ASTNode() {
     }
 
     override fun clone(): GotoStatement {
-        return GotoStatement().also { stat ->
-            stat.identifier = identifier.clone()
+        return GotoStatement().copyStatementCloneMetadataFrom(this).also { stat ->
+            stat.identifier = identifier.clone().withStatementCloneParent(stat)
         }
     }
 }
@@ -237,7 +266,7 @@ class ContinueStatement : StatementNode, ASTNode() {
     }
 
     override fun clone(): ContinueStatement {
-        return ContinueStatement()
+        return ContinueStatement().copyStatementCloneMetadataFrom(this)
     }
 }
 
@@ -253,9 +282,9 @@ class ReturnStatement : StatementNode, ASTNode() {
     }
 
     override fun clone(): ReturnStatement {
-        return ReturnStatement().also { stat ->
+        return ReturnStatement().copyStatementCloneMetadataFrom(this).also { stat ->
             arguments.forEach {
-                stat.arguments.add(it.clone())
+                stat.arguments.add(it.clone().withStatementCloneParent(stat))
             }
         }
     }
@@ -275,10 +304,10 @@ class WhenStatement : StatementNode, ASTNode() {
     }
 
     override fun clone(): WhenStatement {
-        return WhenStatement().also { stat ->
-            stat.condition = condition.clone()
-            stat.ifCause = ifCause.clone()
-            stat.elseCause = elseCause?.clone()
+        return WhenStatement().copyStatementCloneMetadataFrom(this).also { stat ->
+            stat.condition = condition.clone().withStatementCloneParent(stat)
+            stat.ifCause = ifCause.clone().withStatementCloneParent(stat)
+            stat.elseCause = elseCause?.clone()?.withStatementCloneParent(stat)
         }
     }
 }
@@ -297,10 +326,10 @@ class SwitchStatement : StatementNode, ASTNode() {
 
 
     override fun clone(): SwitchStatement {
-        return SwitchStatement().also { stat ->
-            stat.condition = condition.clone()
-            stat.causes.forEach {
-                stat.causes.add(it.clone())
+        return SwitchStatement().copyStatementCloneMetadataFrom(this).also { stat ->
+            stat.condition = condition.clone().withStatementCloneParent(stat)
+            causes.forEach {
+                stat.causes.add(it.clone().withStatementCloneParent(stat))
             }
         }
     }
@@ -314,8 +343,15 @@ class CaseCause : AbsSwitchCause() {
     val conditions = mutableListOf<ExpressionNode>()
     lateinit var body: BlockNode
 
+    /**
+     * AndroLua `case` allows an optional `then` after the condition list.
+     * When true, the source included `then`; when false, the keyword was omitted.
+     * Defaults to true so hand-built AST nodes keep the historical printer form.
+     */
+    var hasThen: Boolean = true
+
     override fun toString(): String {
-        return "CaseCause(conditions=$conditions, body=$body)"
+        return "CaseCause(conditions=$conditions, body=$body, hasThen=$hasThen)"
     }
 
     override fun <T> accept(visitor: ASTVisitor<T>, value: T) {
@@ -323,11 +359,12 @@ class CaseCause : AbsSwitchCause() {
     }
 
     override fun clone(): CaseCause {
-        return CaseCause().also { stat ->
+        return CaseCause().copyStatementCloneMetadataFrom(this).also { stat ->
             conditions.forEach {
-                stat.conditions.add(it.clone())
+                stat.conditions.add(it.clone().withStatementCloneParent(stat))
             }
-            stat.body = body.clone()
+            stat.body = body.cloneStatementBlockFor(stat)
+            stat.hasThen = hasThen
         }
     }
 }
@@ -344,8 +381,8 @@ class DefaultCause : AbsSwitchCause() {
     }
 
     override fun clone(): DefaultCause {
-        return DefaultCause().also { stat ->
-            stat.body = body.clone()
+        return DefaultCause().copyStatementCloneMetadataFrom(this).also { stat ->
+            stat.body = body.cloneStatementBlockFor(stat)
         }
     }
 }
@@ -353,6 +390,8 @@ class DefaultCause : AbsSwitchCause() {
 open class IfClause : StatementNode, ASTNode() {
     lateinit var condition: ExpressionNode
     lateinit var body: BlockNode
+
+    protected fun hasInitializedCondition(): Boolean = this::condition.isInitialized
 
     override fun toString(): String {
         return "IfClause(condition=$condition, body=$body)"
@@ -363,10 +402,7 @@ open class IfClause : StatementNode, ASTNode() {
     }
 
     override fun clone(): IfClause {
-        return IfClause().also { stat ->
-            stat.condition = condition.clone()
-            stat.body = body.clone()
-        }
+        return IfClause().copyIfClauseFrom(this)
     }
 }
 
@@ -379,6 +415,10 @@ class ElseIfClause : IfClause() {
     override fun <T> accept(visitor: ASTVisitor<T>, value: T) {
         visitor.visitElseIfClause(this, value)
     }
+
+    override fun clone(): ElseIfClause {
+        return ElseIfClause().copyIfClauseFrom(this)
+    }
 }
 
 class ElseClause : IfClause() {
@@ -388,6 +428,10 @@ class ElseClause : IfClause() {
 
     override fun <T> accept(visitor: ASTVisitor<T>, value: T) {
         visitor.visitElseClause(this, value)
+    }
+
+    override fun clone(): ElseClause {
+        return ElseClause().copyIfClauseFrom(this, includeCondition = hasInitializedCondition())
     }
 }
 
@@ -406,10 +450,7 @@ open class TableKey : ExpressionNode, ASTNode() {
     }
 
     override fun clone(): TableKey {
-        return TableKey().also {
-            it.key = key.clone()
-            it.value = value.clone()
-        }
+        return TableKey().copyTableKeyFrom(this)
     }
 }
 
@@ -420,6 +461,10 @@ open class TableKeyString : TableKey() {
 
     override fun <T> accept(visitor: ASTVisitor<T>, value: T) {
         visitor.visitTableKeyString(this, value)
+    }
+
+    override fun clone(): TableKeyString {
+        return TableKeyString().copyTableKeyFrom(this)
     }
 }
 
@@ -436,9 +481,9 @@ class IfStatement : StatementNode, ASTNode() {
     }
 
     override fun clone(): IfStatement {
-        return IfStatement().also { stat ->
-            stat.causes.forEach {
-                stat.causes.add(it.clone())
+        return IfStatement().copyStatementCloneMetadataFrom(this).also { stat ->
+            causes.forEach {
+                stat.causes.add(it.clone().withStatementCloneParent(stat))
             }
         }
     }
@@ -460,8 +505,8 @@ class DoStatement : StatementNode, ASTNode() {
     }
 
     override fun clone(): DoStatement {
-        return DoStatement().also { stat ->
-            stat.body = body.clone()
+        return DoStatement().copyStatementCloneMetadataFrom(this).also { stat ->
+            stat.body = body.cloneStatementBlockFor(stat)
         }
     }
 }
@@ -480,8 +525,9 @@ class CommentStatement : StatementNode, ASTNode() {
     }
 
     override fun clone(): CommentStatement {
-        return CommentStatement().also { stat ->
+        return CommentStatement().copyStatementCloneMetadataFrom(this).also { stat ->
             stat.comment = comment
+            stat.isDocComment = isDocComment
         }
     }
 }

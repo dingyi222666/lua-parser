@@ -34,11 +34,11 @@ import kotlin.test.fail
  *   null/empty results or well-formed [CallHierarchyItem] / call edges.
  * - Non-function positions, empty buffers, and malformed sources must not hard-crash.
  *
- * Product call hierarchy is intentionally out of scope (test-only). Current
- * [LuaTextDocumentService] inherits the LSP4J defaults that throw
- * [UnsupportedOperationException], and [LuaLanguageService] does not advertise
- * callHierarchyProvider. Dual-path assertions keep the corpus green until
- * product ships, then harden to empty-without-throw / well-formed item contracts.
+ * TASK-520 product surface: [LuaLanguageService] advertises callHierarchyProvider
+ * and [LuaTextDocumentService] implements prepare/incoming/outgoing for same-file
+ * local functions (definition + references-based call graph subset). Dual-path
+ * assertions remain so pre-product gap (UnsupportedOperationException) and the
+ * live path (empty-without-throw / well-formed items) both stay green.
  *
  * Verification is review-owned and serial; this worker does not run Gradle.
  */

@@ -8,6 +8,7 @@ import semantic.support.WorkspaceSemanticHarness
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
+import java.io.File
 import kotlin.test.assertTrue
 
 class JvmWorkspaceEngineTest {
@@ -51,11 +52,19 @@ class JvmWorkspaceEngineTest {
 
     @Test
     fun androlua_import_metadata_resolves_nested_androlua_classes_via_underscore_aliases() {
+        // Nested View$OnClickListener alias via import prefix android.view.View + short name.
+        // Host android.jar only (never hard-require G:/); product provider also soft-falls back
+        // when explicit metadata jar path is missing but host SDK jar is present.
+        val androidJar = resolveHostAndroidJar()
+        assertTrue(
+            androidJar.isFile,
+            "Host android.jar required for nested AndroLua alias resolution at ${androidJar.path}"
+        )
         val harness = WorkspaceSemanticHarness.build(
             "main.lua" to "local OnClickListener = require(\"OnClickListener\")\nreturn OnClickListener",
             metadata = mapOf(
                 JvmClassModuleProvider.IMPORTS_METADATA_KEY to "OnClickListener",
-                JvmWorkspaceConfiguration.ANDROID_JAR_METADATA_KEY to "G:/Android/Sdk/platforms/android-35/android.jar",
+                JvmWorkspaceConfiguration.ANDROID_JAR_METADATA_KEY to androidJar.path,
                 JvmWorkspaceConfiguration.IMPORT_PREFIXES_METADATA_KEY to "android.view.View"
             ),
             engine = JvmWorkspaceEngine()
@@ -66,6 +75,20 @@ class JvmWorkspaceEngineTest {
 
         assertEquals(harness.path("__jvm__/classes/android/view/View\$OnClickListener.lua"), resolved.provider?.path)
         assertEquals(harness.path("__jvm__/classes/android/view/View\$OnClickListener.lua"), definitions.single().path)
+
+        // Binary / dotted / underscore nested names remain resolvable when jar present.
+        val nestedRequested = JvmClassModuleProvider().requestedClasses(
+            JvmWorkspaceConfiguration(
+                androidJar = androidJar.path,
+                classes = linkedSetOf(
+                    "android.view.View\$OnClickListener",
+                    "android.view.View.OnClickListener",
+                    "android.view.View_OnClickListener"
+                )
+            )
+        )
+        assertTrue("android.view.View\$OnClickListener" in nestedRequested)
+        assertEquals(1, nestedRequested.size)
     }
 
     @Test
@@ -621,5 +644,32 @@ class JvmWorkspaceEngineTest {
         )
 
         assertEquals(linkedSetOf("java.math.BigDecimal"), requested)
+    }
+
+    /**
+     * Host-local android.jar for nested AndroLua alias hard-locks.
+     * Prefer DEFAULT discovery, then macOS ~/Library/Android/sdk, then documented host path.
+     * Never hardcodes G:/Android/Sdk.
+     */
+    private fun resolveHostAndroidJar(): File {
+        val home = System.getProperty("user.home").orEmpty()
+        val candidates = buildList {
+            add(File(JvmWorkspaceConfiguration.DEFAULT_ANDROID_JAR_PATH))
+            if (home.isNotBlank()) {
+                add(File(home, "Library/Android/sdk/platforms/android-35/android.jar"))
+                add(File(home, "Android/Sdk/platforms/android-35/android.jar"))
+            }
+            add(File("/Users/dingyi/Library/Android/sdk/platforms/android-35/android.jar"))
+            System.getenv("ANDROID_HOME")?.takeIf { it.isNotBlank() }?.let {
+                add(File(it, "platforms/android-35/android.jar"))
+            }
+            System.getenv("ANDROID_SDK_ROOT")?.takeIf { it.isNotBlank() }?.let {
+                add(File(it, "platforms/android-35/android.jar"))
+            }
+        }
+        return candidates.firstOrNull { candidate ->
+            candidate.isFile &&
+                !candidate.path.replace('\\', '/').startsWith("G:/Android/Sdk", ignoreCase = true)
+        } ?: candidates.first()
     }
 }

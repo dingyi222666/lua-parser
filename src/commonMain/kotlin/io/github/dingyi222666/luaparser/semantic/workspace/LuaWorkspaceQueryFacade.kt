@@ -88,6 +88,14 @@ class LuaWorkspaceQueryFacade(
         val memberType = if (memberExport == null) memberReceiverType(model, node, symbol) else null
         val exportType = memberExport?.let(::exportTypeInfo)
         val nodeType = node?.let(model::getTypeAt)
+        // Prefer declared/inferred FunctionType/ClassType from the semantic model when the
+        // binder symbol surface is still bare unknown/any (TASK-601 product lock).
+        val declaredOrInferred = symbol?.let { resolved ->
+            preferredHoverType(
+                model.getDeclaredType(resolved),
+                model.getInferredType(resolved)
+            )
+        }
         val preferred = if (symbol?.symbolId?.startsWith("builtin-import:") == true) {
             symbol.type
         } else {
@@ -95,8 +103,16 @@ class LuaWorkspaceQueryFacade(
             // Always run preferredHoverType so structural table literals collapse to "table"
             // even when the symbol surface has a null type and only nodeType is available.
             preferredHoverType(
-                importCallLocal?.type ?: symbol?.type ?: exportType ?: memberType ?: nodeType,
-                exportType ?: memberType ?: nodeType ?: symbol?.type
+                preferredHoverType(
+                    importCallLocal?.type
+                        ?: declaredOrInferred
+                        ?: symbol?.type
+                        ?: exportType
+                        ?: memberType
+                        ?: nodeType,
+                    exportType ?: memberType ?: nodeType ?: symbol?.type ?: declaredOrInferred
+                ),
+                declaredOrInferred
             )
         }
         return WorkspaceHoverResult(
@@ -114,8 +130,17 @@ class LuaWorkspaceQueryFacade(
         if (importTargetDefinition != null) {
             return listOf(importTargetDefinition)
         }
-        val symbol = semanticFile?.model?.getSymbolAt(position)
-            ?: semanticFile?.let { importedSymbolAt(path, position, node, it)?.let(::importedSymbol) }
+        val modelSymbol = semanticFile?.model?.getSymbolAt(position)
+        val importedAt = semanticFile?.let { importedSymbolAt(path, position, node, it) }
+        // Prefer path-scoped imported MODULE aliases over weak free-global VARIABLE symbols so
+        // table/dynamic import mounts (File/Locale) still resolve to JVM providers.
+        val symbol = when {
+            modelSymbol != null &&
+                modelSymbol.kind != SymbolKind.VARIABLE &&
+                modelSymbol.kind != SymbolKind.UNKNOWN -> modelSymbol
+            importedAt != null -> importedSymbol(importedAt)
+            else -> modelSymbol ?: importedAt?.let(::importedSymbol)
+        }
         // Local AST declarations win for true locals (including shadowing of imported modules).
         // Imported MODULE aliases continue through the import-definition path below.
         if (symbol != null && symbol.kind != SymbolKind.MODULE && symbol.kind != SymbolKind.FUNCTION) {
@@ -126,6 +151,9 @@ class LuaWorkspaceQueryFacade(
         }
         val memberExport = semanticFile?.let { navigationExportedMemberAt(it, path, position, node) }
         val importDefinition = symbol?.symbolId?.let(::importedSymbolLocation)
+            ?: importedAt?.let {
+                WorkspaceLocation(it.providerPath, syntheticModuleRange(it.alias))
+            }
             ?: semanticFile?.let { importedSymbolAt(path, position, node, it) }?.let {
                 WorkspaceLocation(it.providerPath, syntheticModuleRange(it.alias))
             }
@@ -667,7 +695,16 @@ class LuaWorkspaceQueryFacade(
             // produced by generic ArrayType.displayName ("T[]").
             primary.displayName.endsWith("[]") &&
                 fallback?.displayName?.startsWith("Array<") == true -> fallback
-            primary.displayName == "unknown" && fallback != null -> fallback
+            // Bare unknown/any must lose to any richer fallback (FunctionType/ClassType/MODULE/fun).
+            isBareWeakHoverType(primary) &&
+                fallback != null &&
+                !isBareWeakHoverType(fallback) -> fallback
+            isBareWeakHoverType(primary) &&
+                fallback != null &&
+                (isPreferredHoverStructuredKind(fallback.kind) ||
+                    fallback.displayName.contains("fun(") ||
+                    fallback.displayName.contains("fun<") ||
+                    !fallback.moduleName.isNullOrBlank()) -> fallback
             // Dynamic import() locals often evaluate as unknown/any at the node while the
             // symbol surface already carries the resolved MODULE type (moduleName / fun(...)).
             primary.moduleName.isNullOrBlank() && !fallback?.moduleName.isNullOrBlank() -> {
@@ -680,10 +717,42 @@ class LuaWorkspaceQueryFacade(
                     } ?: fallback.detail
                 )
             }
+            !isPreferredHoverStructuredKind(primary.kind) &&
+                fallback != null &&
+                isPreferredHoverStructuredKind(fallback.kind) &&
+                isBareWeakHoverType(primary) -> fallback
             !primary.displayName.contains("fun(") &&
                 fallback?.displayName?.contains("fun(") == true -> fallback
+            !primary.displayName.contains("fun(") &&
+                fallback?.displayName?.contains("fun<") == true -> fallback
+            isBareWeakHoverType(primary) &&
+                fallback != null &&
+                (fallback.kind == TypeInfoKind.CLASS ||
+                    fallback.kind == TypeInfoKind.FUNCTION ||
+                    fallback.kind == TypeInfoKind.MODULE) -> fallback
+            // Prefer declared/inferred CLASS/FUNCTION kinds when primary is only UNKNOWN.
+            primary.kind == TypeInfoKind.UNKNOWN &&
+                fallback != null &&
+                isPreferredHoverStructuredKind(fallback.kind) -> fallback
             else -> primary
         }
+    }
+
+    private fun isBareWeakHoverType(type: TypeInfo): Boolean {
+        val display = type.displayName
+        return display.isBlank() ||
+            display == "unknown" ||
+            display == "any" ||
+            (type.kind == TypeInfoKind.UNKNOWN &&
+                !display.contains("fun(") &&
+                !display.startsWith("Array<") &&
+                type.moduleName.isNullOrBlank())
+    }
+
+    private fun isPreferredHoverStructuredKind(kind: TypeInfoKind): Boolean {
+        return kind == TypeInfoKind.FUNCTION ||
+            kind == TypeInfoKind.CLASS ||
+            kind == TypeInfoKind.MODULE
     }
 
     private fun memberReceiverType(

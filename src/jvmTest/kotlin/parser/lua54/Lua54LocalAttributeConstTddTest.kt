@@ -208,7 +208,10 @@ class Lua54LocalAttributeConstTddTest {
         val function = functionChunk.firstStatement<FunctionDeclaration>()
         val functionLocal = assertIs<LocalStatement>(requireNotNull(function.body).statements.single())
         assertEquals("close", assertIs<AttributeIdentifier>(functionLocal.init.single()).attributeName)
-        assertEquals(function.body, functionLocal.parent)
+        assertEquals<io.github.dingyi222666.luaparser.parser.ast.node.BaseASTNode>(
+            requireNotNull(function.body),
+            functionLocal.parent
+        )
     }
 
     @Test

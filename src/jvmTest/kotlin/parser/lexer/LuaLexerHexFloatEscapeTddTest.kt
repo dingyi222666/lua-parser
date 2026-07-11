@@ -2,8 +2,15 @@ package parser.lexer
 
 import io.github.dingyi222666.luaparser.lexer.LuaLexer
 import io.github.dingyi222666.luaparser.lexer.LuaTokenTypes
+import io.github.dingyi222666.luaparser.parser.LuaParser
+import io.github.dingyi222666.luaparser.parser.LuaVersion
+import io.github.dingyi222666.luaparser.parser.ast.node.ConstantNode
+import io.github.dingyi222666.luaparser.parser.ast.node.LocalStatement
+import io.github.dingyi222666.luaparser.parser.ast.node.ReturnStatement
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
+import kotlin.test.assertEquals
+import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import kotlin.test.fail
 
@@ -12,8 +19,8 @@ import kotlin.test.fail
  * escapes (`\xHH`, `\u{...}`, decimal `\ddd`).
  *
  * Asserts token kinds + raw lexeme text, including recoverable BAD_CHARACTER
- * boundaries for invalid escapes. Test-only; production lexer is not modified
- * by this task. Red is acceptable until review-owned verification.
+ * boundaries for invalid escapes. Also pins parser ConstantNode typing for
+ * hex-float NUMBER tokens (TASK-549).
  */
 class LuaLexerHexFloatEscapeTddTest {
 
@@ -421,6 +428,60 @@ class LuaLexerHexFloatEscapeTddTest {
         // Reaching here means nextToken eventually produced EOF (significantTokens stops on EOF).
         val again = significantTokens(dense)
         assertContentEquals(tokens, again, "token stream must be deterministic and finite")
+    }
+
+    /**
+     * TASK-549 bridge: lexer NUMBER tokens for hex floats must become FLOAT
+     * ConstantNodes with the original lexeme preserved (not INTERGER merely
+     * because there is no '.' or because of crude contains('.') checks).
+     */
+    @Test
+    fun parserTypesHexFloatNumberTokensAsFloatConstants() {
+        val cases = listOf(
+            "0x1.fp3",
+            "0x1.fp+3",
+            "0x1.8p-2",
+            "0x.fp1",
+            "0x1p10",
+            "0X1.FP+0",
+            "0x1.f",
+            "0x0.0p0",
+            "0x.8p-1"
+        )
+
+        val failures = cases.mapNotNull { lexeme ->
+            runCatching {
+                val chunk = LuaParser(luaVersion = LuaVersion.LUA_5_3).parse("return $lexeme")
+                val ret = assertIs<ReturnStatement>(chunk.body.returnStatement)
+                val constant = assertIs<ConstantNode>(ret.arguments.single())
+                assertEquals(ConstantNode.TYPE.FLOAT, constant.constantType, lexeme)
+                assertEquals(lexeme, constant.rawValue.toString(), lexeme)
+                assertTrue(
+                    runCatching { constant.floatOf() }.isSuccess,
+                    "floatOf must not throw for $lexeme"
+                )
+            }.exceptionOrNull()?.let { failure ->
+                "$lexeme\n${failure.message}"
+            }
+        }
+        if (failures.isNotEmpty()) {
+            fail(failures.joinToString(separator = "\n\n"))
+        }
+
+        // Hex integer without fraction/exponent remains INTERGER (contrast with floats above).
+        val hexIntChunk = LuaParser(luaVersion = LuaVersion.LUA_5_3).parse("local n=0xFF")
+        val local = assertIs<LocalStatement>(hexIntChunk.body.statements.single())
+        val hexInt = assertIs<ConstantNode>(local.variables.single())
+        assertEquals(ConstantNode.TYPE.INTERGER, hexInt.constantType)
+        assertEquals("0xFF", hexInt.rawValue.toString())
+        assertEquals(255, hexInt.intOf())
+
+        // Scientific decimal without '.' is FLOAT (would be misclassified as INTERGER
+        // if the parser only checked for '.').
+        val sciChunk = LuaParser(luaVersion = LuaVersion.LUA_5_3).parse("return 1e3")
+        val sci = assertIs<ConstantNode>(assertIs<ReturnStatement>(sciChunk.body.returnStatement).arguments.single())
+        assertEquals(ConstantNode.TYPE.FLOAT, sci.constantType)
+        assertEquals("1e3", sci.rawValue.toString())
     }
 
     private fun assertTokenCases(vararg cases: LexerCase) {

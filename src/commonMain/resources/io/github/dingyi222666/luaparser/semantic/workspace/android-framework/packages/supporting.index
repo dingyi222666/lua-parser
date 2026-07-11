@@ -1,0 +1,30 @@
+# Supplemental Android framework classes that frequently appear next to the
+# high-value packages in Android-Lua code.
+
+android.R
+android.R$anim
+android.R$attr
+android.R$color
+android.R$drawable
+android.R$id
+android.R$layout
+android.R$string
+android.R$style
+android.net.Uri
+android.os.Build
+android.os.Build$VERSION
+android.os.Build$VERSION_CODES
+android.os.Bundle
+android.os.Environment
+android.os.Handler
+android.os.Looper
+android.os.Parcelable
+android.provider.Settings
+android.provider.Settings$Secure
+android.provider.Settings$System
+android.text.Html
+android.text.TextUtils
+android.text.TextUtils$TruncateAt
+android.util.DisplayMetrics
+android.util.Log
+android.util.TypedValue

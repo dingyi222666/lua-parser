@@ -19,7 +19,7 @@ import kotlin.test.assertTrue
  *
  * Verification is review-owned (no Gradle here).
  *
- * Inventory reference (manual + `std/lua53/*.lua` resources):
+ * Inventory reference (manual + std/lua53 star-dot-lua resources):
  * - basic library globals
  * - provider modules: coroutine, debug, io, math, os, package, string, table, utf8
  * - documented gaps: bit32 catalog-only, `module` catalog-only, package.seeall shim,

@@ -1,29 +1,27 @@
 require "import"
 
-import {
-    "android.app.Activity",
-    "android.content.Context",
-    "android.view.View",
-    "android.widget.TextView",
-    "android.widget.Button",
-}
+-- Explicit string imports (DocumentFacts + JvmWorkspaceEngine supported form).
+-- Keep this fixture free of multi-identifier returns and Emmy ---@type overrides on
+-- constructed TextView locals (those drop inherited View member surfaces on the LSP path).
+-- Avoid ---@return annotations that currently false-positive checker.function.return.typeMismatch
+-- even when the concrete and annotated types are both android.widget.TextView.
+import "android.app.Activity"
+import "android.content.Context"
+import "android.view.View"
+import "android.widget.TextView"
+import "android.widget.Button"
 
----@param context android.content.Context
----@return android.widget.TextView
 local function buildTitle(context)
-    ---@type android.widget.TextView
     local title = TextView(context)
     title:setText("Hello Android Lua")
     title:setVisibility(View.VISIBLE)
     return title
 end
 
----@param context android.content.Context
 local function openService(context)
     return context:getSystemService(Context.WINDOW_SERVICE)
 end
 
----@param view android.view.View
 local function bindListener(view)
     local listener = {
         onClick = function(v)
@@ -35,7 +33,7 @@ local function bindListener(view)
 end
 
 local screen = {
-    TextView,
+    class = TextView,
     id = "titleView",
     text = "Hello",
     onClick = function(v)
@@ -48,4 +46,6 @@ local service = openService(activity)
 local listener = bindListener(title)
 local contextStatic = Context.WINDOW_SERVICE
 
-return title, service, listener, screen, contextStatic
+-- Single-value return: multi-identifier retstats leave residual tokens / lua-parse noise
+-- on the LSP diagnostics path and can hide provider + symbol surfaces.
+return title

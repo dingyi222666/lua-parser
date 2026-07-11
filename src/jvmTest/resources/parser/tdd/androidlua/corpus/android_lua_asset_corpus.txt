@@ -1,0 +1,1462 @@
+### andlua-imports-and-toast
+asset: AndLua.lua
+kind: lua
+lines: 5-28
+behavior: strict
+minNodes: 18
+expected: CallStatement,LocalStatement,FunctionDeclaration,TableConstructorExpression,CallExpression
+---
+import "android.graphics.PorterDuffColorFilter"
+import "android.graphics.PorterDuff"
+local open=io.open
+function toastCard(str,color,color2,ele,rad)
+  toasts={
+    CardView;
+    id="toastb",
+    CardElevation=ele;
+    radius=rad;
+    backgroundColor=color;
+    {
+      TextView;
+      layout_margin="7dp";
+      textSize="13sp";
+      TextColor=color2,
+      text=str;
+      layout_gravity="center";
+      id="mess",
+    };
+  };
+  local toast=Toast.makeText(activity,nil,Toast.LENGTH_SHORT);
+  toast.setView(loadlayout(toasts))
+  toast.show()
+end
+
+### android-api-long-string
+asset: android.lua
+kind: lua
+lines: 1-8
+behavior: strict
+minNodes: 3
+expected: AssignmentStatement,ConstantNode
+---
+apinr=[[com.androlua.Http
+com.androlua.LuaRunnable
+android.widget.CardView]]
+
+### bin-packaging-functions
+asset: bin.lua
+kind: lua
+lines: 1-35
+behavior: strict
+minNodes: 20
+expected: CallStatement,LocalStatement,FunctionDeclaration,IfStatement,AssignmentStatement
+---
+require "import"
+import "java.util.zip.ZipOutputStream"
+import "android.net.Uri"
+import "java.io.File"
+local bin_dlg, error_dlg
+local function update(s)
+    bin_dlg.setMessage(s)
+end
+local function callback(s)
+    LuaUtil.rmDir(File(activity.getLuaExtDir("bin/.temp")))
+    bin_dlg.hide()
+    bin_dlg.Message = ""
+    if not s:find("ok") then
+        error_dlg.Message = s
+        error_dlg.show()
+    end
+end
+
+### bmob-query-format
+asset: bmob.lua
+kind: lua
+lines: 1-38
+behavior: strict
+minNodes: 28
+expected: LocalStatement,CallStatement,FunctionDeclaration,ForGenericStatement,IfStatement,ReturnStatement
+---
+local Http=luajava.bindClass "com.androlua.Http"
+local cjson=require "cjson"
+local table=require "table"
+module "bmob"
+local function decode(s)
+  s=tostring(s)
+  return (s:gsub("%W",function(c)
+    return string.format("%%%02X",string.byte(c))
+  end))
+end
+local function format(t)
+  local ret={}
+  for k,v in pairs(t) do
+    if type(v)=="table" then
+      table.insert(ret,k.."="..decode(cjson.encode(v)))
+    else
+      table.insert(ret,k.."="..decode(v))
+    end
+  end
+  return table.concat(ret,"&")
+end
+
+### color-theme-branch
+asset: color.lua
+kind: lua
+lines: 1-18
+behavior: strict
+minNodes: 24
+expected: LocalStatement,IfStatement,AssignmentStatement,CallStatement
+---
+local a=io.open(activity.getLuaDir().."/Verify/set4.XY"):read("*a")
+local ip=a:match("2(.-)"..'"')
+if ip=="open" then
+  color1=0xff303030
+  color2=0xff212121
+  activity.setTheme(android.R.style.Theme_DeviceDefault_NoActionBar)
+else
+  color1=0xffffffff
+  color2=0xFFF2F1F6
+  activity.setTheme(android.R.style.Theme_DeviceDefault_Light_NoActionBar)
+end
+
+### color1-circlebutton-layout
+asset: color1.lua
+kind: lua
+lines: 1-43
+behavior: strict
+minNodes: 30
+expected: CallStatement,LocalStatement,FunctionDeclaration,TableConstructorExpression,IfStatement
+---
+import "android.app.AlertDialog"
+import "android.graphics.drawable.GradientDrawable"
+import "ThomeLua"
+local a=io.open(activity.getLuaDir().."/Verify/set4.XY"):read("*a")
+local ip=a:match("2(.-)"..'"')
+if ip=="open" then
+  color1=0xff303030
+else
+  color1=0xFFFFFFFF
+end
+function palette(view,color)
+  import("android.graphics.PorterDuff")
+  function CircleButton(target, fill)
+    import("android.graphics.drawable.GradientDrawable")
+    drawable = GradientDrawable()
+    drawable.setShape(GradientDrawable.RECTANGLE)
+    drawable.setColor(fill)
+    drawable.setCornerRadii({360,360,360,360,360,360,360,360})
+    target.setBackgroundDrawable(drawable)
+  end
+end
+
+### community-layout-table
+asset: Community.aly
+kind: aly
+lines: 1-18
+behavior: strict
+minNodes: 18
+expected: ReturnStatement,TableConstructorExpression,TableKey
+---
+return {
+  RelativeLayout;
+  layout_width="fill";
+  layout_height="fill";
+  {
+    PageView;
+    layout_height="100%h";
+    layout_width="fill";
+    id="page";
+    touchEnabled=false;
+    overScrollMode=2;
+    pages={
+      layout2,
+      layout4,
+    };
+  };
+};
+
+### dialog-builder-methods
+asset: Dialog.lua
+kind: lua
+lines: 1-32
+behavior: strict
+minNodes: 25
+expected: CallStatement,AssignmentStatement,FunctionDeclaration,TableConstructorExpression
+---
+import"android.view.animation.*"
+import"android.graphics.drawable.GradientDrawable"
+import "android.widget.LinearLayout"
+MyDialog={}
+MyDialog.setLayout=function(v) MyDialog.layout=v or MyDialog.layout return MyDialog end
+MyDialog.dialogHeight="fill"
+MyDialog.dialogRadius="5dp"
+MyDialog.setDialogRadius=function(v) MyDialog.dialogRadius=v or MyDialog.dialogRadius return MyDialog end
+MyDialog.getSize = function(view)
+  view.measure(View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED), View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED))
+  MyDialog.dialogMeasuredHeight= view.getMeasuredHeight()
+  MyDialog.dialogMeasuredWidth= view.getMeasuredWidth()
+  return MyDialog.dialogMeasuredHeight, MyDialog.dialogMeasuredWidth
+end
+
+### dj-menu-clicks
+asset: dj.lua
+kind: lua
+lines: 1-19
+behavior: strict
+minNodes: 20
+expected: FunctionDeclaration,AssignmentStatement,CallStatement,IfStatement
+---
+function other.onClick()
+  pop=PopupMenu(activity,other)
+  menu=pop.Menu
+  menu.add("create project").onMenuItemClick=function(a)
+    createProject()
+  end
+  menu.add("import project").onMenuItemClick=function(a)
+    activity.newActivity("file",android.R.anim.fade_in,android.R.anim.fade_out,{"choose",Environment.getExternalStorageDirectory().toString(),{".alp"}})
+    function onResult(name,arg)
+      if name=="file" then
+        refresh.setRefreshing(true);
+      else
+      end
+    end
+  end
+  pop.show()
+end
+
+### file-browser-layout
+asset: file.lua
+kind: lua
+lines: 1-44
+behavior: strict
+minNodes: 28
+expected: CallStatement,AssignmentStatement,LocalStatement,IfStatement,TableConstructorExpression
+---
+require "import"
+import "android.os.*"
+import "android.widget.*"
+title,StartPath,filterTypes=...
+local a=io.open(activity.getLuaDir().."/Verify/set4.XY"):read("*a")
+local ip=a:match("2(.-)"..'"')
+if ip=="open" then
+  color1=0xff303030
+else
+  color1=0x5FFFFFFF
+end
+item={
+  LinearLayout;
+  layout_height="fill";
+  layout_width="fill";
+  {
+    TextView;
+    id="file";
+    textColor=color1;
+  };
+}
+
+### init-metadata-permissions
+asset: init.lua
+kind: lua
+lines: 1-34
+behavior: strict
+minNodes: 20
+expected: AssignmentStatement,TableConstructorExpression,ConstantNode
+---
+appname="ThomeLua"
+appver="5.0-beta1"
+appcode="5"
+appsdk="15"
+packagename="com.ThomeLua.IDE"
+debugmode=true
+user_permission={
+  "ACCESS_COARSE_LOCATION",
+  "INTERNET",
+  "WRITE_EXTERNAL_STORAGE"
+}
+
+### javaapi-android-return-table
+asset: javaapi/android.lua
+kind: lua
+lines: 1-12
+behavior: strict
+minNodes: 12
+expected: ReturnStatement,TableConstructorExpression,ConstantNode
+---
+return {
+"android.app.FloatWindow$ContentView",
+"android.widget.ArrayListAdapter",
+"android.widget.CardView",
+"com.androlua.Http$HttpTask",
+"org.json.JSONObject",
+}
+
+### javaapi-clayout-layout
+asset: javaapi/clayout.aly
+kind: aly
+lines: 1-18
+behavior: strict
+minNodes: 18
+expected: ReturnStatement,TableConstructorExpression,TableKey
+---
+return {
+  LinearLayout;
+  {
+    LinearLayout;
+    {
+      EditText;
+      id="edit";
+      singleLine=true;
+      layout_weight="1";
+      layout_width="fill";
+    };
+    layout_width="fill";
+  };
+  {
+    ListView;
+    id="clist";
+    FastScrollEnabled=true;
+    layout_width="fill";
+    items=classes;
+  };
+  orientation="vertical";
+};
+
+### javaapi-fiximport-scanner
+asset: javaapi/fiximport.lua
+kind: lua
+lines: 1-42
+behavior: strict
+minNodes: 28
+expected: CallStatement,AssignmentStatement,FunctionDeclaration,IfStatement,WhileStatement
+---
+require "import"
+import "android.app.*"
+import "layout"
+classes=require "android"
+activity.setTitle('imports')
+dir,path=...
+function getFilesDir()
+  return "/data/user/0/"..activity.getPackageName().."/files/"
+end
+function fiximport(path)
+  local cache={}
+  function checkclass(path,ret)
+    if cache[path] then
+      return
+    end
+    cache[path]=true
+    local f=io.open(path)
+    local str=f:read("a")
+    f:close()
+    while true do
+      local t=lex.advance()
+      if not t then
+        break
+      end
+    end
+  end
+end
+
+### javaapi-init-metadata
+asset: javaapi/init.lua
+kind: lua
+lines: 1-6
+behavior: strict
+minNodes: 10
+expected: AssignmentStatement,TableConstructorExpression
+---
+appname="Java API browser"
+appver="1.0"
+packagename="com.androlua.JavaAPI"
+user_permission={
+  "INTERNET",
+  "WRITE_EXTERNAL_STORAGE",
+}
+
+### javaapi-layout-progress
+asset: javaapi/layout.aly
+kind: aly
+lines: 1-11
+behavior: strict
+minNodes: 14
+expected: ReturnStatement,TableConstructorExpression,TableKey
+---
+return {
+  LinearLayout;
+  orientation="horizontal";
+  {
+    ProgressBar;
+  };
+  {
+    TextView;
+    textSize="24sp";
+    text="analyzing";
+  };
+};
+
+### javaapi-main-listener
+asset: javaapi/main.lua
+kind: lua
+lines: 1-34
+behavior: strict
+minNodes: 25
+expected: CallStatement,AssignmentStatement,FunctionDeclaration,ForGenericStatement
+---
+require "import"
+import "android.widget.*"
+local classes=require "android"
+import "clayout"
+activity.Title="Java API browser"
+function adapter(t)
+  local ls=ArrayList()
+  for k,v in ipairs(t) do
+    ls.add(v)
+  end
+  return ArrayAdapter(activity,android.R.layout.simple_list_item_1, ls)
+end
+cm=activity.getSystemService(activity.CLIPBOARD_SERVICE)
+function copy(str)
+  local cd = ClipData.newPlainText("label",str)
+  cm.setPrimaryClip(cd)
+  Toast.makeText(activity,"copied",1000).show()
+end
+
+### javaapi-mlayout-layout
+asset: javaapi/mlayout.aly
+kind: aly
+lines: 1-16
+behavior: strict
+minNodes: 18
+expected: ReturnStatement,TableConstructorExpression,TableKey
+---
+return {
+  LinearLayout;
+  {
+    LinearLayout;
+    {
+      EditText;
+      id="medit";
+      singleLine=true;
+      layout_weight="1";
+      layout_width="fill";
+    };
+    layout_width="fill";
+  };
+  {
+    ListView;
+    id="mlist";
+    FastScrollEnabled=true;
+    layout_width="fill";
+  };
+  orientation="vertical";
+};
+
+### root-layout-actionbar
+asset: layout.aly
+kind: aly
+lines: 1-37
+behavior: strict
+minNodes: 30
+expected: ReturnStatement,TableConstructorExpression,TableKey
+---
+return {
+  LinearLayout;
+  orientation="vertical";
+  backgroundColor=color5;
+  layout_width="fill";
+  layout_height="fill";
+  {
+    LinearLayout;
+    orientation="vertical";
+    backgroundColor=color5;
+    layout_width="fill";
+    paddingTop="8dp";
+    id="actionbar";
+    visibility=0;
+    layout_height="8.2%h";
+    {
+      TextView;
+      textColor=color3;
+      textSize="12dp";
+      gravity="center|left";
+      text="search";
+      layout_width="fill";
+      layout_height="fill";
+    };
+  };
+};
+
+### layouthelper-init-metadata
+asset: layouthelper/init.lua
+kind: lua
+lines: 1-12
+behavior: strict
+minNodes: 16
+expected: AssignmentStatement,TableConstructorExpression
+---
+appname="layout helper"
+appver="1.1"
+appcode="1"
+packagename="com.androlua.layouthelper"
+developer="nirenr"
+debugmode=true
+user_permission={
+  "INTERNET",
+  "WRITE_EXTERNAL_STORAGE"
+}
+
+### layouthelper-layout-map
+asset: layouthelper/layout.lua
+kind: lua
+lines: 1-31
+behavior: strict
+minNodes: 28
+expected: AssignmentStatement,TableConstructorExpression,TableKey
+---
+layout={
+  main={
+    LinearLayout,
+    orientation="vertical",
+  },
+  dlg={
+    LinearLayout,
+    orientation="vertical",
+    {TextView,
+      id="label",
+    },
+    {EditText,
+      id="fld",
+      layout_width="fill",
+    },
+    {Button,
+      text="ok",
+      onClick="ok",
+    },
+  },
+}
+
+### layouthelper-loadlayout2-bindings
+asset: layouthelper/loadlayout2.lua
+kind: lua
+lines: 1-35
+behavior: strict
+minNodes: 30
+expected: LocalStatement,CallStatement,TableConstructorExpression,MemberExpression
+---
+local require = require
+local table = require "table"
+local insert = table.insert
+local new = luajava.new
+local bindClass = luajava.bindClass
+local ids = {}
+local context = activity or service
+local ViewGroup = bindClass("android.view.ViewGroup")
+local String = bindClass("java.lang.String")
+local Gravity = bindClass("android.view.Gravity")
+local wm = context.getSystemService(Context.WINDOW_SERVICE);
+local outMetrics = DisplayMetrics();
+wm.getDefaultDisplay().getMetrics(outMetrics);
+local W = outMetrics.widthPixels;
+local H = outMetrics.heightPixels;
+local toint = {
+  auto = 0,
+  low = 1,
+  high = 2,
+  visible = 0,
+  invisible = 1,
+  gone = 2,
+}
+
+### layouthelper-loadlayout3-bindings
+asset: layouthelper/loadlayout3.lua
+kind: lua
+lines: 1-34
+behavior: strict
+minNodes: 30
+expected: LocalStatement,CallStatement,TableConstructorExpression,MemberExpression
+---
+local require=require
+local table=require "table"
+local insert = table.insert
+local new = luajava.new
+local bindClass = luajava.bindClass
+local ids={}
+local context=activity or service
+local ViewGroup=bindClass("android.view.ViewGroup")
+local String=bindClass("java.lang.String")
+local Gravity=bindClass("android.view.Gravity")
+local wm =context.getSystemService(Context.WINDOW_SERVICE);
+local outMetrics = DisplayMetrics();
+wm.getDefaultDisplay().getMetrics(outMetrics);
+local W = outMetrics.widthPixels;
+local H = outMetrics.heightPixels;
+local toint={
+  auto=0,
+  low=1,
+  high=2,
+  visible=0,
+  invisible=1,
+  gone=2,
+}
+
+### layouthelper-main-aly-loader
+asset: layouthelper/main.lua
+kind: lua
+lines: 1-41
+behavior: strict
+minNodes: 35
+expected: CallStatement,AssignmentStatement,IfStatement,TableConstructorExpression
+---
+require "import"
+import "android.text.Html"
+import "android.app.*"
+layout={
+  main={
+    RelativeLayout,
+    layout_width = "fill";
+    layout_height = "fill";
+  },
+}
+luadir,luapath,content=...
+luadir=luadir or luapath:gsub("/[^/]+$","")
+package.path=package.path..";"..luadir.."/?.lua;"
+if luapath:find("%.aly$") then
+  local f=io.open(luapath)
+  local s=f:read("*a")
+  f:close()
+  xpcall(function()
+    layout.main=assert(loadstring("return "..s))()
+  end,
+  function()
+    activity.finish()
+  end)
+end
+
+### layouthelper-xml2table-ui
+asset: layouthelper/xml2table.lua
+kind: lua
+lines: 1-55
+behavior: strict
+minNodes: 38
+expected: CallStatement,FunctionDeclaration,IfStatement,TableConstructorExpression,AssignmentStatement
+---
+require "import"
+import "console"
+import "android.app.*"
+function autotheme()
+  local a=io.open(getFilesDir().."/Verify/set4.XY"):read("*a")
+  local ip=a:match("2(.-)"..'"')
+  if ip=="open" then
+    return (android.R.style.Theme_DeviceDefault)
+  else
+    return (android.R.style.Theme_DeviceDefault_Light)
+  end
+end
+t={
+  LinearLayout,
+  id="l",
+  orientation="vertical",
+  {
+    LuaEditor,
+    id="edit",
+    layout_width="fill",
+    layout_height="fill",
+  },
+}
+
+### root-loadlayout2-copy
+asset: loadlayout2.lua
+kind: lua
+lines: 1-35
+behavior: strict
+minNodes: 30
+expected: LocalStatement,CallStatement,TableConstructorExpression,MemberExpression
+---
+local require = require
+local table = require "table"
+local insert = table.insert
+local new = luajava.new
+local bindClass = luajava.bindClass
+local ids = {}
+local context = activity or service
+local ViewGroup = bindClass("android.view.ViewGroup")
+local TypedValue = luajava.bindClass("android.util.TypedValue")
+local android_R = bindClass("android.R")
+local wm = context.getSystemService(Context.WINDOW_SERVICE);
+local outMetrics = DisplayMetrics();
+wm.getDefaultDisplay().getMetrics(outMetrics);
+local W = outMetrics.widthPixels;
+local H = outMetrics.heightPixels;
+local dm = context.getResources().getDisplayMetrics()
+local toint = {
+  auto = 0,
+  low = 1,
+  high = 2,
+  wrap_content = -2,
+  fill_parent = -1,
+}
+
+### root-loadlayout3-copy
+asset: loadlayout3.lua
+kind: lua
+lines: 1-35
+behavior: strict
+minNodes: 30
+expected: LocalStatement,CallStatement,TableConstructorExpression,MemberExpression
+---
+local require=require
+local table=require "table"
+local insert = table.insert
+local new = luajava.new
+local bindClass = luajava.bindClass
+local ids={}
+local context=activity or service
+local ViewGroup=bindClass("android.view.ViewGroup")
+local TypedValue=luajava.bindClass("android.util.TypedValue")
+local android_R=bindClass("android.R")
+local wm =context.getSystemService(Context.WINDOW_SERVICE);
+local outMetrics = DisplayMetrics();
+wm.getDefaultDisplay().getMetrics(outMetrics);
+local W = outMetrics.widthPixels;
+local H = outMetrics.heightPixels;
+local dm=context.getResources().getDisplayMetrics()
+local toint={
+  auto=0,
+  low=1,
+  high=2,
+  wrap_content=-2,
+  fill_parent=-1,
+}
+
+### main-project-list
+asset: main.lua
+kind: lua
+lines: 1-31
+behavior: strict
+minNodes: 28
+expected: CallStatement,LocalStatement,IfStatement,AssignmentStatement
+---
+require "import"
+import "android.app.*"
+import "android.os.*"
+import "android.widget.*"
+local a=io.open(activity.getLuaDir().."/Verify/set4.XY"):read("*a")
+local ip=a:match("2(.-)"..'"')
+if ip=="open" then
+  color1=0xff303030
+  color2=0xff212121
+  activity.setTheme(android.R.style.Theme_DeviceDefault_NoActionBar)
+else
+  color1=0xffffffff
+  color2=0xFFF2F1F6
+  activity.setTheme(android.R.style.Theme_DeviceDefault_Light_NoActionBar)
+end
+
+### main10-api-layout
+asset: main10.lua
+kind: lua
+lines: 1-36
+behavior: strict
+minNodes: 30
+expected: CallStatement,LocalStatement,IfStatement,AssignmentStatement,TableConstructorExpression
+---
+require "import"
+import "android.app.*"
+import "AndLua"
+local a=io.open(activity.getLuaDir().."/Verify/set4.XY"):read("*a")
+local ip=a:match("2(.-)"..'"')
+if ip=="open" then
+  color1=0xff303030
+else
+  color1=0xffffffff
+end
+layout10={
+  LinearLayout;
+  layout_width="fill";
+  layout_height="fill";
+  backgroundColor=color1,
+  orientation="vertical";
+  {
+    TextView;
+    textSize="18sp";
+    textColor="0xFF03A9F4";
+    text="Java Api";
+  };
+}
+
+### main11-backup-layout
+asset: main11.lua
+kind: lua
+lines: 1-36
+behavior: strict
+minNodes: 30
+expected: CallStatement,LocalStatement,IfStatement,AssignmentStatement,TableConstructorExpression
+---
+require "import"
+import "android.app.*"
+import "AndLua"
+local a=io.open(activity.getLuaDir().."/Verify/set4.XY"):read("*a")
+local ip=a:match("2(.-)"..'"')
+if ip=="open" then
+  color1=0xff303030
+else
+  color1=0xffffffff
+end
+layout11={
+  LinearLayout;
+  layout_height="fill";
+  backgroundColor=color1,
+  layout_width="fill";
+  orientation="vertical";
+  {
+    SwipeRefreshLayout;
+    id="sxbf";
+    {
+      RelativeLayout;
+      layout_height="fill";
+      layout_width="fill";
+    };
+  };
+}
+
+### main12-package-layout
+asset: main12.lua
+kind: lua
+lines: 1-36
+behavior: strict
+minNodes: 30
+expected: CallStatement,LocalStatement,IfStatement,AssignmentStatement,TableConstructorExpression
+---
+require "import"
+import "android.app.*"
+import "AndLua"
+local a=io.open(activity.getLuaDir().."/Verify/set4.XY"):read("*a")
+local ip=a:match("2(.-)"..'"')
+if ip=="open" then
+  color1=0xff303030
+else
+  color1=0xffffffff
+end
+layout12={
+  LinearLayout;
+  layout_height="fill";
+  layout_width="fill";
+  backgroundColor=color1,
+  orientation="vertical";
+  {
+    SwipeRefreshLayout;
+    id="sxdb";
+    {
+      RelativeLayout;
+      layout_height="fill";
+      layout_width="fill";
+    };
+  };
+}
+
+### main13-theme-switch-recovery
+asset: main13.lua
+kind: lua
+lines: 51-64
+behavior: recovery
+minNodes: 10
+expected: SwitchStatement,CaseCause,AssignmentStatement
+---
+switch abc
+ case "color1"
+  abc=color1
+end
+switch abcdef
+ case "color3"
+  abcdef=color3
+end
+
+### main14-chat-layout
+asset: main14.lua
+kind: lua
+lines: 1-36
+behavior: strict
+minNodes: 30
+expected: CallStatement,LocalStatement,IfStatement,AssignmentStatement,TableConstructorExpression
+---
+require "import"
+import "android.app.*"
+import "toast"
+import "bmob"
+activity.setTheme(R.AndLua5)
+local a=io.open(activity.getLuaDir().."/Verify/set4.XY"):read("*a")
+local ip=a:match("2(.-)"..'"')
+if ip=="open" then
+  color1=0xff303030
+else
+  color1=0xffffffff
+end
+layout14={
+  LinearLayout;
+  orientation="vertical";
+  backgroundColor=color1;
+  layout_height="fill";
+  layout_width="fill";
+  {
+    TextView;
+    text="chat hall";
+    textSize="18sp";
+  };
+}
+
+### main2-editor-layout
+asset: main2.lua
+kind: lua
+lines: 1-47
+behavior: strict
+minNodes: 30
+expected: CallStatement,LocalStatement,IfStatement,AssignmentStatement,TableConstructorExpression
+---
+require "import"
+import "android.app.*"
+import "ThomeLua"
+local open=io.open
+local a=open(activity.getLuaDir().."/Verify/set4.XY"):read("*a")
+local ip=a:match("2(.-)"..'"')
+if ip=="open" then
+  color1=0xff303030
+else
+  color1=0xffffffff
+end
+layout2={
+  LinearLayout;
+  orientation="vertical";
+  id="c";
+  backgroundColor=color1;
+  layout_width="fill";
+  layout_height="fill";
+  {
+    RelativeLayout;
+    layout_height="match_parent";
+    layout_width="match_parent";
+    id="cc";
+  };
+}
+
+### main3-manual-layout
+asset: main3.lua
+kind: lua
+lines: 1-35
+behavior: strict
+minNodes: 28
+expected: CallStatement,LocalStatement,IfStatement,AssignmentStatement,TableConstructorExpression
+---
+require "import"
+import "android.app.*"
+import "ThomeLua"
+local a=io.open(activity.getLuaDir().."/Verify/set4.XY"):read("*a")
+local ip=a:match("2(.-)"..'"')
+if ip=="open" then
+  color1=0xff303030
+else
+  color1=0xffffffff
+end
+layout3={
+  LinearLayout;
+  layout_height="fill";
+  layout_width="fill";
+  backgroundColor=color1,
+  orientation="vertical";
+  {
+    TextView;
+    text="manual";
+    textSize="18sp";
+  };
+}
+
+### main4-manual-detail-layout
+asset: main4.lua
+kind: lua
+lines: 1-39
+behavior: strict
+minNodes: 28
+expected: CallStatement,LocalStatement,IfStatement,AssignmentStatement,TableConstructorExpression
+---
+require "import"
+import "android.app.*"
+import "AndLua"
+local a=io.open(activity.getLuaDir().."/Verify/set4.XY"):read("*a")
+local ip=a:match("2(.-)"..'"')
+if ip=="open" then
+  color1=0xff303030
+else
+  color1=0xffffffff
+end
+layout4={
+  LinearLayout;
+  orientation="vertical";
+  layout_width="fill";
+  layout_height="fill";
+  {
+    ImageView;
+    layout_width="25dp";
+    onClick=function()
+      activity.finish()
+    end;
+  };
+}
+
+### main5-project-properties
+asset: main5.lua
+kind: lua
+lines: 1-35
+behavior: strict
+minNodes: 28
+expected: CallStatement,LocalStatement,IfStatement,AssignmentStatement,TableConstructorExpression
+---
+require "import"
+import "android.app.*"
+import "ThomeLua"
+local a=io.open(activity.getLuaDir().."/Verify/set4.XY"):read("*a")
+local ip=a:match("2(.-)"..'"')
+if ip=="open" then
+  color1=0xff303030
+else
+  color1=0xffffffff
+end
+layout5={
+  LinearLayout;
+  layout_height="fill";
+  backgroundColor=color1;
+  orientation="vertical";
+  layout_width="fill";
+  {
+    TextView;
+    text="project properties";
+  };
+}
+
+### main6-button-style
+asset: main6.lua
+kind: lua
+lines: 1-38
+behavior: strict
+minNodes: 32
+expected: CallStatement,LocalStatement,FunctionDeclaration,TableConstructorExpression,AssignmentStatement
+---
+import "AndLua"
+import "android.graphics.drawable.ColorDrawable"
+local Text_Type=Typeface.defaultFromStyle(Typeface.BOLD)
+local sd = StateListDrawable()
+local a=io.open(activity.getLuaDir().."/Verify/set4.XY"):read("*a")
+local ip=a:match("2(.-)"..'"')
+if ip=="open" then
+  color1=0xff303030
+else
+  color1=0x5FFFFFFF
+end
+appt={C_Bacgg=function(mBinding,radiu,InsideColor,S,S2,T1)
+    local drawable = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,{});
+    drawable.setCornerRadius(radiu);
+    drawable.setColor(color1)
+    drawable.setStroke(3, 0xCFB0B0B0)
+    mBinding.setTextColor(T1)
+    return drawable
+  end}
+beautify=function(mBinding,radiu,InsideColor,T1)
+  stateList = {
+    {android.R.attr.state_pressed},
+    {android.R.attr.state_focused},
+  };
+end
+
+### main7-post-layout
+asset: main7.lua
+kind: lua
+lines: 1-36
+behavior: strict
+minNodes: 28
+expected: CallStatement,LocalStatement,IfStatement,AssignmentStatement,TableConstructorExpression
+---
+require "import"
+import "android.app.*"
+import "AndLua"
+local a=io.open(activity.getLuaDir().."/Verify/set4.XY"):read("*a")
+local ip=a:match("2(.-)"..'"')
+if ip=="open" then
+  color1=0xff303030
+else
+  color1=0xffffffff
+end
+layout7={
+  LinearLayout;
+  layout_width="fill";
+  layout_height="fill";
+  orientation="vertical";
+  backgroundColor=color1;
+  {
+    CardView;
+    layout_width="-1";
+    radius=25;
+  };
+}
+
+### main9-layout-editor-loader
+asset: main9.lua
+kind: lua
+lines: 1-42
+behavior: strict
+minNodes: 35
+expected: CallStatement,AssignmentStatement,IfStatement,TableConstructorExpression,FunctionDeclaration
+---
+require "import"
+import "android.text.Html"
+import "android.app.*"
+layout={
+  main={
+    RelativeLayout,
+    layout_width = "fill";
+    layout_height = "fill";
+  },
+}
+luapath,luadir=...
+luadir=luadir or luapath:gsub("/[^/]+$","")
+package.path=package.path..";"..luadir.."/?.lua;"
+if luapath:find("%.aly$") then
+  local f=io.open(luapath)
+  local s=f:read("*a")
+  f:close()
+  xpcall(function()
+    layout.main=assert(loadstring("return "..s))()
+  end,
+  function()
+    activity.finish()
+  end)
+end
+
+### my-layout-profile
+asset: My.aly
+kind: aly
+lines: 1-30
+behavior: strict
+minNodes: 30
+expected: ReturnStatement,TableConstructorExpression,TableKey
+---
+return {
+  LinearLayout;
+  orientation="vertical";
+  layout_height="fill";
+  layout_width="fill";
+  backgroundColor=color2;
+  {
+    LinearLayout;
+    gravity="center";
+    layout_height="25%h";
+    layout_width="match_parent";
+    {
+      CardView;
+      radius="7dp";
+      CardElevation="0dp";
+      layout_height="20%h";
+      layout_width="90%w";
+      backgroundColor=color1;
+      {
+        TextView;
+        text="loading";
+        id="m4_mc";
+      };
+    };
+  };
+};
+
+### other-directories
+asset: other.lua
+kind: lua
+lines: 1-28
+behavior: strict
+minNodes: 24
+expected: CallStatement,AssignmentStatement,IfStatement
+---
+import "java.io.File"
+import "AndLua"
+rootDir="/sdcard/ThomeLua"
+projectDir=rootDir.."/project"
+backupDir=rootDir.."/backup"
+a=File(rootDir).isDirectory()
+if a==false then
+  createDir(rootDir)
+end
+a=File(projectDir).isDirectory()
+if a==false then
+  createDir(projectDir)
+end
+
+### plugin-init-metadata
+asset: plugin/init.lua
+kind: lua
+lines: 1-9
+behavior: strict
+minNodes: 14
+expected: AssignmentStatement,TableConstructorExpression
+---
+appname="plugin"
+appver="1.1"
+packagename="com.androlua.plugin"
+developer="nirenr"
+description="plugin manager"
+debugmode=true
+user_permission={
+  "INTERNET",
+  "WRITE_EXTERNAL_STORAGE"
+}
+
+### plugin-item-layout
+asset: plugin/item.aly
+kind: aly
+lines: 1-22
+behavior: strict
+minNodes: 24
+expected: ReturnStatement,TableConstructorExpression,TableKey
+---
+return {
+  LinearLayout;
+  layout_width="fill";
+  {
+    ImageView;
+    id="icon";
+    padding="2dp";
+    layout_width="64dp";
+    layout_height="64dp";
+  };
+  {
+    FrameLayout;
+    padding="2dp";
+    layout_width="fill";
+    layout_height="64dp";
+    {
+      TextView;
+      id="title";
+      layout_width="fill";
+      singleLine="true";
+      textSize="20sp";
+    };
+  };
+};
+
+### plugin-layout-list
+asset: plugin/layout.aly
+kind: aly
+lines: 1-9
+behavior: strict
+minNodes: 12
+expected: ReturnStatement,TableConstructorExpression,TableKey
+---
+return {
+  LinearLayout,
+  layout_width="fill",
+  orientation="vertical",
+  {
+    ListView,
+    id="plist",
+    layout_width="fill"
+  },
+}
+
+### plugin-main-list
+asset: plugin/main.lua
+kind: lua
+lines: 1-45
+behavior: strict
+minNodes: 35
+expected: CallStatement,LocalStatement,FunctionDeclaration,ForNumericStatement,IfStatement,TableConstructorExpression
+---
+require "import"
+import "android.app.*"
+import "java.io.File"
+activity.setTitle('plugin')
+function getFilesDir()
+  return "/data/user/0/"..activity.getPackageName().."/files/"
+end
+local plugindir=activity.getLuaExtDir("plugin")
+local function getinfo(dir)
+  local app={}
+  loadfile(plugindir.."/"..dir.."/init.lua","bt",app)()
+  return app
+end
+local pds=File(plugindir).list()
+local pls={}
+for n=0,#pds-1 do
+  local s,i=pcall(getinfo,pds[n])
+  if s then
+    table.insert(pls,i)
+  end
+end
+
+### project-layout-drawer
+asset: project.aly
+kind: aly
+lines: 1-34
+behavior: strict
+minNodes: 30
+expected: ReturnStatement,TableConstructorExpression,TableKey
+---
+return {
+  RelativeLayout;
+  layout_width="fill";
+  layout_height="fill";
+  background="#000000";
+  {
+    LinearLayout;
+    layout_height="-1";
+    layout_width="-1";
+  };
+  {
+    Button;
+    layout_height="56dp";
+    layout_marginRight="32dp";
+    background="#ff50f8f8";
+    id="bt";
+    layout_alignParentRight="true";
+    layout_width="56dp";
+    layout_alignParentBottom="true";
+    text="+";
+    textSize="25sp",
+    textColor="#ffffffff",
+  };
+};
+
+### projectitem-layout-card
+asset: projectitem.aly
+kind: aly
+lines: 1-30
+behavior: strict
+minNodes: 30
+expected: ReturnStatement,TableConstructorExpression,TableKey
+---
+return {
+  LinearLayout;
+  layout_height="fill";
+  layout_width="fill";
+  gravity="center";
+  {
+    LinearLayout;
+    layout_height="10.2%h";
+    layout_width="fill";
+    gravity="center";
+    {
+      CardView;
+      layout_height="8.8%h";
+      backgroundColor=color1;
+      layout_width="97.2%w";
+      CardElevation=0;
+      radius=20;
+      {
+        TextView;
+        id="name";
+        text="app name";
+      };
+    };
+  };
+};
+
+### thomelua-switch-recovery
+asset: ThomeLua.lua
+kind: lua
+lines: 112-116
+behavior: recovery
+minNodes: 8
+expected: FunctionDeclaration,SwitchStatement,CaseCause,CallStatement
+---
+function setStatusBarColor(color)
+  switch (true)
+  case (Build.VERSION.SDK_INT >= 21)
+    activity.getWindow().addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS).setStatusBarColor(color);
+  end
+end
+
+### toast-print-layout
+asset: toast.lua
+kind: lua
+lines: 1-26
+behavior: strict
+minNodes: 24
+expected: FunctionDeclaration,AssignmentStatement,LocalStatement,TableConstructorExpression,CallExpression
+---
+function printToast(content)
+  tsbj={
+    LinearLayout;
+    layout_width="fill";
+    layout_height="fill";
+    gravity="center";
+    orientation="vertical";
+    {
+      CardView;
+      radius=15,
+      CardElevation="0dp";
+      backgroundColor="0xff6f6f6f";
+      {
+        TextView;
+        text="tip";
+        id="message";
+      };
+    };
+  };
+  local toast=Toast.makeText(activity,"content",Toast.LENGTH_SHORT).setView(loadlayout(tsbj))
+  toast.setGravity(Gravity.BOTTOM,0,100)
+  toast.show()
+end
+
+### xml2table-root-converter
+asset: xml2table.lua
+kind: lua
+lines: 1-75
+behavior: strict
+minNodes: 38
+expected: CallStatement,AssignmentStatement,FunctionDeclaration,IfStatement,TableConstructorExpression
+---
+require "import"
+import "console"
+import "android.app.*"
+import "loadlayout3"
+cm=activity.getSystemService(Context.CLIPBOARD_SERVICE)
+t={
+  LinearLayout,
+  id="l",
+  orientation="vertical",
+  {
+    LuaEditor,
+    id="edit",
+    layout_width="fill",
+    layout_height="fill",
+    layout_weight=1,
+  },
+}
+function xml2table(xml)
+  local xml,s=xml:gsub("</%w+>","}")
+  if s==0 then
+    return xml
+  end
+  return xml:gsub("<(%w+)>","{%1,")
+end
+
+### yidian-dialog-and-http
+asset: yidian.lua
+kind: lua
+lines: 1-55
+behavior: strict
+minNodes: 36
+expected: CallStatement,FunctionDeclaration,AssignmentStatement,TableConstructorExpression,LocalStatement
+---
+import "android.net.Uri"
+import "android.content.Intent"
+import "cjson"
+function printToast(content) toasts={ CardView; CardElevation="0"; radius=10; backgroundColor="0xff575757"; { TextView; text=content; layout_gravity="center"; }; }; local toast=Toast.makeText(activity,nil,Toast.LENGTH_SHORT).show() toast.setView(loadlayout(toasts)) toast.show() end
+function border(id,Size,Color,Color1,radiu)
+  local drawable = GradientDrawable()
+  drawable.setStroke(Size,Color)
+  drawable.setColor(Color1)
+  drawable.setCornerRadii({radiu,radiu,radiu,radiu,radiu,radiu,radiu,radiu});
+  id.setBackgroundDrawable(drawable)
+end
+function upAnimation(id)
+  translate=TranslateAnimation(0,0, 500, 0)
+  translate.setDuration(300);
+  translate.setRepeatCount(0);
+  translate.setFillAfter(true)
+  id.startAnimation(translate)
+end

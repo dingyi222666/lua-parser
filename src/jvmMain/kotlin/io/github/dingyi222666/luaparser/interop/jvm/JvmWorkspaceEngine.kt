@@ -11,6 +11,10 @@ import io.github.dingyi222666.luaparser.semantic.workspace.LuaWorkspaceInput
 import io.github.dingyi222666.luaparser.semantic.workspace.VirtualPath
 import io.github.dingyi222666.luaparser.semantic.workspace.WorkspaceSnapshot
 
+/**
+ * JVM workspace engine for Android-Lua / LuaJava reflective modules.
+ * Host android.jar discovery uses ANDROID_HOME/SDK_ROOT and well-known SDK roots; never G:/.
+ */
 class JvmWorkspaceEngine(
     private val workspaceParserFactory: () -> LuaParser = { LuaParser() },
     private val classModuleProvider: JvmClassModuleProvider = JvmClassModuleProvider(),
@@ -179,12 +183,12 @@ class JvmWorkspaceEngine(
                         DocumentFacts.JvmClassLoadKind.BIND_CLASS_CALL,
                         DocumentFacts.JvmClassLoadKind.NEW_INSTANCE_CALL,
                         DocumentFacts.JvmClassLoadKind.CREATE_PROXY_CALL,
-                        DocumentFacts.JvmClassLoadKind.LOAD_LIB_CALL -> {
+                        DocumentFacts.JvmClassLoadKind.LOAD_LIB_CALL,
+                        // createArray("pkg.Foo", ...) mounts element class provider without separate bindClass.
+                        DocumentFacts.JvmClassLoadKind.CREATE_ARRAY_CALL -> {
                             classModuleProvider.importedClassName(fact.target, configuration)
                                 ?.let(::add)
                         }
-
-                        DocumentFacts.JvmClassLoadKind.CREATE_ARRAY_CALL -> Unit
                     }
                 }
             }
@@ -350,7 +354,7 @@ class JvmWorkspaceEngine(
     private fun isIdentifierImportAlias(
         expression: io.github.dingyi222666.luaparser.parser.ast.node.ExpressionNode
     ): Boolean {
-        // Local aliases like `local import = require("import")` still call as Identifier("import").
+        // Local aliases like local import = require("import") still call as Identifier("import").
         // Additional chained aliases (load/again) are covered by DocumentFacts alias scopes; this
         // AST pass focuses on direct import(...) and import table arguments.
         return expression is io.github.dingyi222666.luaparser.parser.ast.node.Identifier &&
@@ -402,24 +406,23 @@ class JvmWorkspaceEngine(
         documentFacts: Map<VirtualPath, DocumentFacts>,
         astImportTargets: Collection<String> = emptyList()
     ): Set<String> {
+        // Mount package module providers for:
+        // - wildcard proxies: import "android.widget.*" / import("android.widget.*")
+        // - package-name aliases: import("android.widget") / import("java.util")
+        // Package modules power widget./util. member completions and hover moduleName.
         return buildSet {
-            configuration.normalized().androluaImports.forEach { importText ->
-                if (wildcardImportPrefix(importText) != null) {
+            fun maybeAddPackageTarget(importText: String) {
+                if (wildcardImportPrefix(importText) != null || isPackageNameAliasTarget(importText)) {
                     add(importText)
                 }
             }
+            configuration.normalized().androluaImports.forEach(::maybeAddPackageTarget)
             documentFacts.values.forEach { facts ->
                 facts.sourceImports.forEach { importFact ->
-                    if (wildcardImportPrefix(importFact.target) != null) {
-                        add(importFact.target)
-                    }
+                    maybeAddPackageTarget(importFact.target)
                 }
             }
-            astImportTargets.forEach { target ->
-                if (wildcardImportPrefix(target) != null) {
-                    add(target)
-                }
-            }
+            astImportTargets.forEach(::maybeAddPackageTarget)
         }
     }
 
@@ -484,4 +487,28 @@ class JvmWorkspaceEngine(
         )
     }
 
+
+    private fun isPackageNameAliasTarget(importText: String): Boolean {
+        return packageNameAliasPrefix(importText) != null
+    }
+
+    private fun packageNameAliasPrefix(importText: String): String? {
+        val normalized = importText.removePrefix("import ").trim()
+        val target = normalized.substringAfter(':', normalized).trim()
+        if (target.isBlank() || target.endsWith(".*") || '.' !in target) {
+            return null
+        }
+        val segments = target.split('.')
+        if (segments.size < 2) {
+            return null
+        }
+        // Package segments are lowercase-leading (android / widget / util); class simple names
+        // are UpperCamelCase and must not mount as package modules.
+        val packageLike = segments.all { segment ->
+            segment.isNotEmpty() &&
+                segment.first().isLowerCase() &&
+                segment.all { ch -> ch.isLetterOrDigit() || ch == '_' }
+        }
+        return target.takeIf { packageLike }
+    }
 }

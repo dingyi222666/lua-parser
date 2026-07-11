@@ -91,6 +91,61 @@ internal class SymbolTableBuilder {
         return declarationWithSymbol
     }
 
+    /**
+     * Attach [declaration] to an existing [symbolId] without minting a peer symbol.
+     * Primary declaration stays the first declaration already on the symbol.
+     */
+    fun addDeclarationToExistingSymbol(
+        declaration: BinderDeclaration,
+        symbolId: SymbolId,
+        scopeId: ScopeId? = currentScopeId
+    ): BinderDeclaration {
+        val symbolIndex = symbols.indexOfFirst { it.id == symbolId }
+        require(symbolIndex >= 0) { "Unknown symbol id $symbolId." }
+        val existing = symbols[symbolIndex]
+        require(declaration.kind.namespace == existing.namespace) {
+            "Declaration namespace ${declaration.kind.namespace} does not match symbol namespace ${existing.namespace}."
+        }
+
+        val declarationWithSymbol = declaration.copy(symbolId = symbolId)
+        declarations += declarationWithSymbol
+        symbols[symbolIndex] = existing.copy(
+            declarationIds = existing.declarationIds + declarationWithSymbol.id
+        )
+        if (scopeId != null) {
+            scopes.getValue(scopeId).declarationIds += declarationWithSymbol.id
+        }
+        return declarationWithSymbol
+    }
+
+    /**
+     * Walk the lexical scope chain from [fromScopeId] (default: current) looking for the
+     * nearest VALUE-namespace declaration with [name]. Later declarations in the same
+     * scope win (Lua-style shadowing within a block as binders are visited in order).
+     */
+    fun findVisibleValueDeclaration(
+        name: String,
+        fromScopeId: ScopeId = currentScopeId
+    ): BinderDeclaration? {
+        var scopeId: ScopeId? = fromScopeId
+        while (scopeId != null) {
+            val scope = scopes.getValue(scopeId)
+            val match = scope.declarationIds
+                .asReversed()
+                .asSequence()
+                .mapNotNull { declarationId -> declarations.firstOrNull { it.id == declarationId } }
+                .firstOrNull { declaration ->
+                    declaration.name == name &&
+                        declaration.kind.namespace == DeclarationNamespace.VALUE
+                }
+            if (match != null) {
+                return match
+            }
+            scopeId = scope.parentId
+        }
+        return null
+    }
+
     fun createSymbolFor(declaration: BinderDeclaration): BinderSymbol {
         val symbol = BinderSymbol(
             id = nextSymbolId(),

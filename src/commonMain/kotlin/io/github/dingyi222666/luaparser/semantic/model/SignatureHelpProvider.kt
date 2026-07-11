@@ -5,6 +5,7 @@ import io.github.dingyi222666.luaparser.parser.ast.node.CallExpression
 import io.github.dingyi222666.luaparser.parser.ast.node.ExpressionNode
 import io.github.dingyi222666.luaparser.parser.ast.node.FunctionDeclaration
 import io.github.dingyi222666.luaparser.parser.ast.node.Identifier
+import io.github.dingyi222666.luaparser.parser.ast.node.LocalStatement
 import io.github.dingyi222666.luaparser.parser.ast.node.MemberExpression
 import io.github.dingyi222666.luaparser.parser.ast.node.Position
 import io.github.dingyi222666.luaparser.parser.ast.node.Range
@@ -14,10 +15,13 @@ import io.github.dingyi222666.luaparser.semantic.api.SignatureHelp
 import io.github.dingyi222666.luaparser.semantic.api.SignatureInformation
 import io.github.dingyi222666.luaparser.semantic.binder.BinderDeclaration
 import io.github.dingyi222666.luaparser.semantic.binder.BinderPassResult
+import io.github.dingyi222666.luaparser.semantic.binder.DeclarationKind
 import io.github.dingyi222666.luaparser.semantic.binder.DeclarationNamespace
+import io.github.dingyi222666.luaparser.semantic.binder.DeclarationOrigin
 import io.github.dingyi222666.luaparser.semantic.binder.DeclarationOwner
 import io.github.dingyi222666.luaparser.semantic.binder.ScopeId
 import io.github.dingyi222666.luaparser.semantic.checker.CallChecker
+import io.github.dingyi222666.luaparser.semantic.checker.CallResolution
 import io.github.dingyi222666.luaparser.semantic.checker.ExpressionTypeEvaluator
 import io.github.dingyi222666.luaparser.semantic.checker.MemberResolver
 import io.github.dingyi222666.luaparser.semantic.checker.ValueSequence
@@ -25,11 +29,13 @@ import io.github.dingyi222666.luaparser.semantic.checker.isColonMethodDeclaratio
 import io.github.dingyi222666.luaparser.semantic.checker.resolveOwningFunctionDeclaration
 import io.github.dingyi222666.luaparser.semantic.comments.ParamTagSyntax
 import io.github.dingyi222666.luaparser.semantic.types.model.CallableType
+import io.github.dingyi222666.luaparser.semantic.types.model.CustomType
 import io.github.dingyi222666.luaparser.semantic.types.model.FunctionParameter
 import io.github.dingyi222666.luaparser.semantic.types.model.FunctionType
 import io.github.dingyi222666.luaparser.semantic.types.model.MultiReturnType
 import io.github.dingyi222666.luaparser.semantic.types.model.OverloadedFunctionType
 import io.github.dingyi222666.luaparser.semantic.types.model.PrimitiveType
+import io.github.dingyi222666.luaparser.semantic.types.model.TableType
 import io.github.dingyi222666.luaparser.semantic.types.model.Type
 import io.github.dingyi222666.luaparser.semantic.types.model.UnknownType
 import io.github.dingyi222666.luaparser.semantic.types.model.VarargType
@@ -51,31 +57,96 @@ internal class SignatureHelpProvider(
         val lexicalScopeId = binder.positionQueries.getScopeAt(call.range.start)?.id ?: binder.scopeGraph.rootScope.id
         val callableBase = callableBase(call)
         val declaration = callableDeclaration(callableBase)
-        val callableType = evaluateCallableType(callableBase, lexicalScopeId, declaration) ?: return null
-        val resolution = callChecker.resolveCallable(callableType, lexicalScopeId, declaration)
-        if (!resolution.isSuccess || resolution.signatures.isEmpty()) {
+        val inferredCallableType = evaluateCallableType(callableBase, lexicalScopeId, declaration)
+        // TASK-394: product wire for luajava.createProxy SignatureHelp. Prefer documented
+        // interfaceNames/callbacks/JavaProxy overloads when the call is a recognized helper
+        // (direct member or local alias). Null remains acceptable when the call is not createProxy.
+        // No runtime proxy validation is invented here — labels only.
+        val documentedCreateProxy = documentedCreateProxyCallableType(callableBase, declaration)
+        val callableType = when {
+            documentedCreateProxy != null && shouldPreferDocumentedCreateProxy(inferredCallableType) ->
+                documentedCreateProxy
+            inferredCallableType != null -> inferredCallableType
+            documentedCreateProxy != null -> documentedCreateProxy
+            else -> return null
+        }
+        // Rank with CallChecker first so activeSignature uses the same signature list
+        // the checker scored (primary + @overload / OverloadedFunctionType), not a second
+        // resolve pass that could drift.
+        val argumentTypes = argumentTypesForResolution(call, lexicalScopeId)
+        val callResolution = callChecker.checkCall(callableType, argumentTypes, lexicalScopeId, declaration)
+        val resolutionSignatures = callResolution.callableResolution?.signatures
+            ?.takeIf { it.isNotEmpty() }
+            ?: callChecker.resolveCallable(callableType, lexicalScopeId, declaration)
+                .takeIf { it.isSuccess }
+                ?.signatures
+                .orEmpty()
+        if (resolutionSignatures.isEmpty()) {
             return null
         }
 
-        val signatures = resolution.signatures.map(::toSignatureInformation)
+        val signatures = resolutionSignatures.map(::toSignatureInformation)
         val activeParameter = activeParameterIndex(call, position)
-        val selectedSignature = callChecker.checkCall(callableType, argumentTypesForResolution(call, lexicalScopeId), lexicalScopeId, declaration)
-            .selectedSignature
-        val activeSignature = selectedSignature
-            ?.let { signature -> resolution.signatures.indexOf(signature) }
-            ?.takeIf { index -> index >= 0 }
-            ?: 0
+        val activeSignature = selectActiveSignatureIndex(resolutionSignatures, callResolution)
+            .coerceIn(0, signatures.lastIndex)
         return SignatureHelp(
             signatures = signatures,
-            activeSignature = activeSignature.coerceIn(0, signatures.lastIndex),
-            activeParameter = clampActiveParameter(resolution.signatures.getOrNull(activeSignature), activeParameter)
+            activeSignature = activeSignature,
+            activeParameter = clampActiveParameter(resolutionSignatures.getOrNull(activeSignature), activeParameter)
         )
+    }
+
+    /**
+     * Map CallChecker-selected [CallResolution.selectedSignature] onto the multi-signature
+     * help list. Prefer exact identity/equality, then label, then parameter-shape so
+     * activeSignature is the ranked best match (not always 0) when argument types discriminate.
+     */
+    private fun selectActiveSignatureIndex(
+        signatures: List<FunctionType>,
+        callResolution: CallResolution
+    ): Int {
+        if (signatures.isEmpty()) {
+            return 0
+        }
+        val selected = callResolution.selectedSignature ?: return 0
+        val exact = signatures.indexOf(selected)
+        if (exact >= 0) {
+            return exact
+        }
+        val byLabel = signatures.indexOfFirst { candidate ->
+            candidate.displayName == selected.displayName || candidate.name == selected.name
+        }
+        if (byLabel >= 0) {
+            return byLabel
+        }
+        val byShape = signatures.indexOfFirst { candidate ->
+            signatureShapeMatches(candidate, selected)
+        }
+        return byShape.takeIf { it >= 0 } ?: 0
+    }
+
+    private fun signatureShapeMatches(left: FunctionType, right: FunctionType): Boolean {
+        if (left.parameters.size != right.parameters.size) {
+            return false
+        }
+        if (left.returnType != right.returnType &&
+            left.returnType.displayName != right.returnType.displayName
+        ) {
+            return false
+        }
+        return left.parameters.zip(right.parameters).all { (a, b) ->
+            a.name == b.name &&
+                a.optional == b.optional &&
+                a.vararg == b.vararg &&
+                (a.type == b.type || a.type.displayName == b.type.displayName)
+        }
     }
 
     private fun clampActiveParameter(signature: FunctionType?, activeParameter: Int): Int {
         if (signature == null || signature.parameters.isEmpty()) {
             return 0
         }
+        // Vararg / trailing optionals: keep the cursor index inside the active signature.
         return activeParameter.coerceIn(0, signature.parameters.lastIndex)
     }
 
@@ -186,6 +257,154 @@ internal class SignatureHelpProvider(
         return callable.callSignatures.all { it.returnType == UnknownType }
     }
 
+    /**
+     * Documented Android-Lua / LuaJava createProxy overload surface (labels only).
+     * Matches builtin overlay / luajava.lua:
+     * - fun(interfaceNames: string, callbacks: { [string]: function }): JavaProxy
+     * - fun(interfaceName1: string, interfaceName2: string, callbacks: { [string]: function }): JavaProxy
+     * - fun(interfaceName: string, callbacks: { [string]: function }): JavaProxy
+     *
+     * Does not invent runtime proxy construction or callback-table validation.
+     */
+    private fun documentedCreateProxyCallableType(
+        callableBase: ExpressionNode,
+        declaration: BinderDeclaration?
+    ): CallableType? {
+        if (!isCreateProxyHelperCallBase(callableBase, declaration)) {
+            return null
+        }
+        return documentedCreateProxyOverloads()
+    }
+
+    private fun shouldPreferDocumentedCreateProxy(type: Type?): Boolean {
+        if (type == null) {
+            return true
+        }
+        if (type !is CallableType) {
+            return true
+        }
+        if (looksLikeDocumentedCreateProxyCallable(type)) {
+            return false
+        }
+        // Prefer documented labels over incomplete/unknown/generic callable surfaces.
+        return type.callSignatures.isEmpty() ||
+            type.callSignatures.all { signature ->
+                signature.returnType == UnknownType ||
+                    signature.parameters.isEmpty() ||
+                    !looksLikeDocumentedCreateProxyLabel(signature.displayName)
+            }
+    }
+
+    private fun looksLikeDocumentedCreateProxyCallable(type: CallableType): Boolean {
+        return type.callSignatures.any { looksLikeDocumentedCreateProxyLabel(it.displayName) } ||
+            looksLikeDocumentedCreateProxyLabel(type.displayName)
+    }
+
+    private fun looksLikeDocumentedCreateProxyLabel(label: String): Boolean {
+        if (label.isBlank()) {
+            return false
+        }
+        val hasInterface =
+            label.contains("interfaceNames", ignoreCase = true) ||
+                label.contains("interfaceName", ignoreCase = true)
+        val hasCallbacks = label.contains("callbacks", ignoreCase = true)
+        val hasProxy = label.contains("JavaProxy", ignoreCase = true)
+        return (hasInterface && hasCallbacks) ||
+            (hasInterface && hasProxy) ||
+            (hasCallbacks && hasProxy)
+    }
+
+    private fun documentedCreateProxyOverloads(): CallableType {
+        val callbacksType = TableType(
+            indexSignature = TableType.IndexSignature(
+                keyType = PrimitiveType.STRING,
+                valueType = PrimitiveType.FUNCTION
+            )
+        )
+        val javaProxy = CustomType("JavaProxy")
+        val singleInterfaceCommaList = FunctionType(
+            parameters = listOf(
+                FunctionParameter(name = "interfaceNames", type = PrimitiveType.STRING),
+                FunctionParameter(name = "callbacks", type = callbacksType)
+            ),
+            returnType = javaProxy
+        )
+        val twoInterfaceNames = FunctionType(
+            parameters = listOf(
+                FunctionParameter(name = "interfaceName1", type = PrimitiveType.STRING),
+                FunctionParameter(name = "interfaceName2", type = PrimitiveType.STRING),
+                FunctionParameter(name = "callbacks", type = callbacksType)
+            ),
+            returnType = javaProxy
+        )
+        val singleInterfaceName = FunctionType(
+            parameters = listOf(
+                FunctionParameter(name = "interfaceName", type = PrimitiveType.STRING),
+                FunctionParameter(name = "callbacks", type = callbacksType)
+            ),
+            returnType = javaProxy
+        )
+        return OverloadedFunctionType(
+            callSignatures = listOf(singleInterfaceCommaList, twoInterfaceNames, singleInterfaceName)
+        )
+    }
+
+    private fun isCreateProxyHelperCallBase(
+        callableBase: ExpressionNode,
+        declaration: BinderDeclaration?
+    ): Boolean {
+        return when (callableBase) {
+            is MemberExpression -> isLuaJavaCreateProxyMember(callableBase)
+            is Identifier -> {
+                // Prefer declaration chain for aliases; fall back to name-based lookup.
+                val resolved = declaration ?: findVisibleValueDeclaration(callableBase.name, callableBase.range.start)
+                resolved != null && declarationResolvesToLuaJavaCreateProxy(resolved, linkedSetOf())
+            }
+            else -> false
+        }
+    }
+
+    private fun isLuaJavaCreateProxyMember(member: MemberExpression): Boolean {
+        val owner = member.base as? Identifier ?: return false
+        if (member.indexer != "." || member.identifier.name != "createProxy" || owner.name != "luajava") {
+            return false
+        }
+        // Unshadowed / builtin `luajava` is the helper owner; local non-builtin bindings shadow it.
+        val ownerDeclaration = findVisibleValueDeclaration(owner.name, owner.range.start)
+        return ownerDeclaration == null || ownerDeclaration.origin == DeclarationOrigin.BUILTIN
+    }
+
+    private fun declarationResolvesToLuaJavaCreateProxy(
+        declaration: BinderDeclaration,
+        visited: MutableSet<io.github.dingyi222666.luaparser.semantic.binder.DeclarationId>
+    ): Boolean {
+        if (declaration.kind != DeclarationKind.LOCAL || !visited.add(declaration.id)) {
+            return false
+        }
+        return when (val initializer = localDeclarationInitializer(declaration)) {
+            is MemberExpression -> isLuaJavaCreateProxyMember(initializer)
+            is Identifier -> {
+                val next = findVisibleValueDeclaration(initializer.name, initializer.range.start) ?: return false
+                // Same-statement locals should not be treated as earlier aliases.
+                if (next.id == declaration.id) {
+                    return false
+                }
+                declarationResolvesToLuaJavaCreateProxy(next, visited)
+            }
+            else -> false
+        }
+    }
+
+    private fun localDeclarationInitializer(declaration: BinderDeclaration): ExpressionNode? {
+        val localStatement = declaration.anchorNode?.parent as? LocalStatement ?: return null
+        val initializerIndex = localStatement.init.indexOf(declaration.anchorNode)
+        if (initializerIndex < 0) {
+            return null
+        }
+        // LocalStatement: init = names, variables = RHS expressions.
+        return localStatement.variables.getOrNull(initializerIndex)
+    }
+
     private fun callableTypeForDeclaration(declaration: BinderDeclaration): CallableType? {
         val declared = declaration.declaredType as? CallableType
         if (declared != null && declared.callSignatures.any { it.returnType != UnknownType }) {
@@ -201,7 +420,7 @@ internal class SignatureHelpProvider(
             }
         }
 
-        val functionNode = resolveOwningFunctionDeclaration(binder, declaration) ?: return null
+        val functionNode = functionNodeForDeclaration(declaration) ?: return null
         val body = functionNode.body ?: return null
         val functionScopeId = functionNode.body?.let(binder.scopeGraph::getScope)?.id
             ?: binder.positionQueries.getScopeAt(functionNode.range.start)?.id
@@ -209,7 +428,10 @@ internal class SignatureHelpProvider(
         val parameterDeclarations = binder.declarationIndex
             .getOwnedDeclarations(DeclarationOwner.Declaration(declaration.id))
             .filter { it.kind.name == "PARAMETER" }
+        val parameterDeclarationsByName = parameterDeclarations.associateBy { it.name }
         val parameterTags = declaration.documentation?.docComment?.tags.orEmpty().filterIsInstance<ParamTagSyntax>()
+        val declaredSignature = (declaration.declaredType as? CallableType)?.callSignatures?.firstOrNull()
+        val declaredParametersByName = declaredSignature?.parameters.orEmpty().associateBy { it.name }
 
         val parameters = buildList {
             if (isColonMethodDeclaration(binder, declaration)) {
@@ -220,7 +442,13 @@ internal class SignatureHelpProvider(
                 add(FunctionParameter(name = "self", type = selfType, vararg = false))
             }
             addAll(functionNode.params.mapIndexed { index, parameterNode ->
-                val parameterType = parameterDeclarations.getOrNull(index)?.declaredType ?: UnknownType
+                val parameterType = firstKnownType(
+                    parameterDeclarationsByName[parameterNode.name]?.declaredType,
+                    parameterDeclarations.getOrNull(index)?.declaredType,
+                    declaredParametersByName[parameterNode.name]?.type,
+                    declaredSignature?.parameters?.getOrNull(index)?.type,
+                    declaration.documentation?.resolvedParameterTypes?.get(parameterNode.name)
+                )
                 FunctionParameter(
                     name = parameterNode.name,
                     type = parameterType,
@@ -231,8 +459,46 @@ internal class SignatureHelpProvider(
         val varargType = parameters.lastOrNull { it.vararg }?.type ?: VarargType(UnknownType)
         val context = evaluator.buildFunctionBodyContext(functionNode, parameters, functionScopeId, varargType)
         val returnSites = evaluator.collectReturnSites(body, context)
-        val returnType = inferReturnType(returnSites.map { it.values })
+        val inferredReturnType = inferReturnType(returnSites.map { it.values })
+        val returnType = if (inferredReturnType == UnknownType) {
+            inferReturnedParameterType(declaration, returnSites, parameters.associate { it.name to it.type }) ?: inferredReturnType
+        } else {
+            inferredReturnType
+        }
         return FunctionType(parameters = parameters, returnType = returnType)
+    }
+
+    private fun inferReturnedParameterType(
+        declaration: BinderDeclaration,
+        returnSites: List<ExpressionTypeEvaluator.ReturnSite>,
+        parameterTypesByName: Map<String, Type>
+    ): Type? {
+        if (returnSites.isEmpty()) {
+            return null
+        }
+
+        val returnedTypes = mutableListOf<Type>()
+        for (returnSite in returnSites) {
+            val returnedIdentifier = returnSite.statement?.arguments?.singleOrNull() as? Identifier ?: return null
+            val returnedDeclaration = findVisibleValueDeclaration(returnedIdentifier.name, returnedIdentifier.range.start)
+            if (returnedDeclaration?.kind?.name != "PARAMETER" || returnedDeclaration.owner != DeclarationOwner.Declaration(declaration.id)) {
+                return null
+            }
+            val returnedType = parameterTypesByName[returnedIdentifier.name]
+                ?.takeIf { it != UnknownType }
+                ?: return null
+            returnedTypes += returnedType
+        }
+        return unionTypeOf(returnedTypes)
+    }
+
+    private fun firstKnownType(vararg types: Type?): Type {
+        return types.firstOrNull { it != null && it != UnknownType } ?: UnknownType
+    }
+
+    private fun functionNodeForDeclaration(declaration: BinderDeclaration): FunctionDeclaration? {
+        return resolveOwningFunctionDeclaration(binder, declaration)
+            ?: declaration.anchorNode?.parent as? FunctionDeclaration
     }
 
     private fun enrichMethodCallableType(declaration: BinderDeclaration, declared: CallableType): CallableType {

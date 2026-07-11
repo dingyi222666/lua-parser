@@ -16,6 +16,11 @@ object WorkspaceModuleGraphBuilder {
             providersFor(path, snapshot.documentFacts).forEach { provider ->
                 providerClaims.getOrPut(provider.moduleName) { mutableListOf() } += provider
             }
+            // Also claim free-form `.aly` layout modules by path-derived module names even when
+            // DocumentFacts omitted VIRTUAL_PATH candidates (sparse parse / empty chunk recovery).
+            alyPathProviders(path).forEach { provider ->
+                providerClaims.getOrPut(provider.moduleName) { mutableListOf() } += provider
+            }
         }
 
         builtinOverlay.providerModules.forEach { (path, overlayModule) ->
@@ -60,7 +65,11 @@ object WorkspaceModuleGraphBuilder {
             val resolved = mutableListOf<WorkspaceModuleGraph.ResolvedDependency>()
             val unresolved = mutableListOf<WorkspaceModuleGraph.UnresolvedRequire>()
             facts.requires.forEach { requireFact ->
+                // Prefer activeProviders (includes path-derived `.aly` claims). Fall back to a
+                // workspace `.aly` path match so layout requires still form graph edges even if
+                // a claim was lost to an overlay/extra conflict.
                 val provider = activeProviders[requireFact.moduleName]
+                    ?: findAlyLayoutProvider(requireFact.moduleName, graphFiles)
                 if (provider == null) {
                     unresolved += WorkspaceModuleGraph.UnresolvedRequire(
                         consumerPath = path,
@@ -120,8 +129,10 @@ object WorkspaceModuleGraphBuilder {
         path: VirtualPath,
         facts: DocumentFacts?
     ): List<WorkspaceModuleGraph.ModuleProvider> {
+        // Always claim Android-Lua `.aly` layout modules by path, even when document facts are
+        // sparse/null, so require("…layout") without a `.lua` suffix can resolve the workspace file.
         if (facts == null) {
-            return emptyList()
+            return alyPathProviders(path)
         }
 
         val explicit = facts.legacyModuleCalls
@@ -149,7 +160,69 @@ object WorkspaceModuleGraphBuilder {
                 )
             }
 
-        return (explicit + derived).toList()
+        val fromFacts = (explicit + derived).toList()
+        if (fromFacts.isNotEmpty()) {
+            // Keep fact-derived claims and also merge any path-only `.aly` aliases so layout
+            // modules remain require()-able under their full virtual-path module name.
+            val aly = alyPathProviders(path)
+            return (fromFacts + aly).distinctBy { it.moduleName to it.path }
+        }
+        // Fallback: path-derived `.aly` claim when facts omitted VIRTUAL_PATH candidates.
+        return alyPathProviders(path)
+    }
+
+    private fun alyPathProviders(path: VirtualPath): List<WorkspaceModuleGraph.ModuleProvider> {
+        val moduleName = alyModuleNameFromPath(path) ?: return emptyList()
+        return listOf(
+            WorkspaceModuleGraph.ModuleProvider(
+                moduleName = moduleName,
+                path = path,
+                source = WorkspaceModuleGraph.ProviderSource.VIRTUAL_PATH
+            )
+        )
+    }
+
+    /**
+     * Recover a workspace `.aly` layout provider for [moduleName] from [graphFiles] when the
+     * active-provider index missed the path-derived claim. Only real `.aly` paths are returned —
+     * never fabricated `.lua` / JVM / stdlib providers.
+     */
+    private fun findAlyLayoutProvider(
+        moduleName: String,
+        graphFiles: Map<VirtualPath, WorkspaceSnapshot.FileSnapshot>
+    ): WorkspaceModuleGraph.ModuleProvider? {
+        if (moduleName.isBlank()) {
+            return null
+        }
+        val dotted = moduleName.replace('\\', '/')
+        val candidates = listOf(
+            "$dotted.aly",
+            "${dotted.replace('.', '/')}.aly"
+        )
+        val match = graphFiles.keys.firstOrNull { path ->
+            val value = path.value
+            if (!value.endsWith(".aly")) {
+                return@firstOrNull false
+            }
+            val pathModule = alyModuleNameFromPath(path)
+            pathModule == moduleName ||
+                candidates.any { candidate ->
+                    value == candidate || value.endsWith("/$candidate") || value.endsWith(candidate)
+                }
+        } ?: return null
+        return WorkspaceModuleGraph.ModuleProvider(
+            moduleName = moduleName,
+            path = match,
+            source = WorkspaceModuleGraph.ProviderSource.VIRTUAL_PATH
+        )
+    }
+
+    private fun alyModuleNameFromPath(path: VirtualPath): String? {
+        val normalized = path.value.replace('\\', '/')
+        if (!normalized.endsWith(".aly")) {
+            return null
+        }
+        return normalized.removeSuffix(".aly").replace('/', '.').ifBlank { null }
     }
 
     private fun computeStronglyConnectedComponents(

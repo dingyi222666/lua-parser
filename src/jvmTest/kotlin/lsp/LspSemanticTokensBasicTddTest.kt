@@ -24,7 +24,7 @@ import kotlin.test.fail
 /**
  * TASK-252 — LSP semantic tokens basic keyword corpus.
  *
- * Encodes the contract for textDocument/semanticTokens/* when the server
+ * Encodes the contract for textDocument/semanticTokens/full|delta when the server
  * advertises semanticTokensProvider:
  * - Full tokens encode keywords and identifiers without crashing.
  * - Empty documents and large documents must not throw.

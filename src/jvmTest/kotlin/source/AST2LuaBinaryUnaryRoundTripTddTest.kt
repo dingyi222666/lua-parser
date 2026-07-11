@@ -26,7 +26,8 @@ import kotlin.test.fail
  *    `renderShape` as the original parse. Whitespace may change; structural nodes must not.
  * 2. **Parentheses** — printer must re-emit parens that override precedence / associativity
  *    (e.g. `(a + b) * c`, `(a or b) and c`, left-grouped `^` / `..`, unary of low-prec
- *    operands). Cosmetic parens that do not change shape may be dropped.
+ *    operands, low-prec bit-or under bit-and). Cosmetic parens that do not change shape may
+ *    be dropped (e.g. `(a // b) << 2` ≡ `a // b << 2`, `(a & m) | n` ≡ `a & m | n`).
  * 3. **Operator spacing** — binary ops print as `left op right` with single spaces around the
  *    operator token; `not` prints with a trailing space (`not x`); `#`, `-`, `~` are tight.
  * 4. **Empty / single-expression** — empty chunks and single-expression return statements must
@@ -255,11 +256,19 @@ class AST2LuaBinaryUnaryRoundTripTddTest {
                         "Chunk(Block[Return(Binary(&,Binary(|,Id(a),Id(b)),Id(c)))])",
                     printedFragments = listOf("(a | b) & c")
                 ),
+                // // binds tighter than << and |, so outer parens around floor-div are cosmetic
+                // and may be dropped; shape-stable print is a // b << 2 | flags & mask ~ toggle
                 Sample(
                     source = "return (a // b) << 2 | flags & mask ~ toggle",
                     expectedShape =
                         "Chunk(Block[Return(Binary(|,Binary(<<,Binary(//,Id(a),Id(b)),Const(2)),Binary(~,Binary(&,Id(flags),Id(mask)),Id(toggle))))])",
-                    printedFragments = listOf("(a // b) << 2", "flags & mask ~ toggle")
+                    printedFragments = listOf("a // b << 2", "flags & mask ~ toggle")
+                ),
+                Sample(
+                    source = "return a // b << 2 | flags & mask ~ toggle",
+                    expectedShape =
+                        "Chunk(Block[Return(Binary(|,Binary(<<,Binary(//,Id(a),Id(b)),Const(2)),Binary(~,Binary(&,Id(flags),Id(mask)),Id(toggle))))])",
+                    printedFragments = listOf("a // b << 2", "flags & mask ~ toggle")
                 ),
 
                 // relational + logical
@@ -410,11 +419,18 @@ class AST2LuaBinaryUnaryRoundTripTddTest {
                         "Chunk(Block[Local(Id(total)=Binary(-,Binary(*,Binary(+,Id(a),Id(b)),Id(c)),Id(d)))])",
                     printedFragments = listOf("local total = (a + b) * c - d")
                 ),
+                // << binds tighter than |; parens around 1 << i are cosmetic and may be dropped
                 Sample(
                     source = "total = total | (1 << i)",
                     expectedShape =
                         "Chunk(Block[Assign(Id(total)=Binary(|,Id(total),Binary(<<,Const(1),Id(i))))])",
-                    printedFragments = listOf("total | (1 << i)")
+                    printedFragments = listOf("total | 1 << i")
+                ),
+                Sample(
+                    source = "total = total | 1 << i",
+                    expectedShape =
+                        "Chunk(Block[Assign(Id(total)=Binary(|,Id(total),Binary(<<,Const(1),Id(i))))])",
+                    printedFragments = listOf("total | 1 << i")
                 ),
                 Sample(
                     source = "while ready and bits << 1 | 1 do break end",
@@ -422,11 +438,18 @@ class AST2LuaBinaryUnaryRoundTripTddTest {
                         "Chunk(Block[While(Binary(and,Id(ready),Binary(|,Binary(<<,Id(bits),Const(1)),Const(1))):Block[Break])])",
                     printedFragments = listOf("ready and bits << 1 | 1")
                 ),
+                // & and << both bind tighter than |; outer paren fragments are cosmetic
                 Sample(
                     source = "function pack(a, b) return (a & 0xFF) | (b << 8) end",
                     expectedShape =
                         "Chunk(Block[Function(Id(pack),Block[Return(Binary(|,Binary(&,Id(a),Const(0xFF)),Binary(<<,Id(b),Const(8))))])])",
-                    printedFragments = listOf("(a & 0xFF) | (b << 8)")
+                    printedFragments = listOf("a & 0xFF | b << 8")
+                ),
+                Sample(
+                    source = "function pack(a, b) return a & 0xFF | b << 8 end",
+                    expectedShape =
+                        "Chunk(Block[Function(Id(pack),Block[Return(Binary(|,Binary(&,Id(a),Const(0xFF)),Binary(<<,Id(b),Const(8))))])])",
+                    printedFragments = listOf("a & 0xFF | b << 8")
                 ),
                 Sample(
                     source = "local t = { a + b * c, not ready, #items }",
@@ -472,7 +495,9 @@ class AST2LuaBinaryUnaryRoundTripTddTest {
     fun printerEmitsRequiredParensForPrecedenceOverrides() {
         // Explicit fragment checks: when the AST groups a lower-prec op under a higher-prec
         // parent, the printed surface must include parentheses so reparse keeps the shape.
-        val cases = listOf(
+        // Cosmetic parens (higher-prec child under lower-prec parent) are intentionally
+        // omitted from this list — e.g. (a // b) << 2 and (1 << i) under | may be dropped.
+        val requiredParenCases = listOf(
             "return (a + b) * c" to listOf("(a + b)"),
             "return (a or b) and c" to listOf("(a or b)"),
             "return (a ^ b) ^ c" to listOf("(a ^ b)"),
@@ -483,12 +508,16 @@ class AST2LuaBinaryUnaryRoundTripTddTest {
             "return ~(a | b)" to listOf("~(a | b)"),
             "return (-a) ^ b" to listOf("(-a)"),
             "return (a | b) & c" to listOf("(a | b)"),
-            "return (a // b) << 2" to listOf("(a // b)"),
             "return (a << b) .. c" to listOf("(a << b)"),
-            "return a * (b + c) / (d - e)" to listOf("(b + c)", "(d - e)")
+            "return a * (b + c) / (d - e)" to listOf("(b + c)", "(d - e)"),
+            // low-prec under higher: bit-or under bit-and / shift under concat already above
+            "return (a ~ b) & c" to listOf("(a ~ b)"),
+            "return (a & b) << 1" to listOf("(a & b)"),
+            "return (a | b) << 1" to listOf("(a | b)"),
+            "return a and (b or c)" to listOf("(b or c)")
         )
 
-        cases.forEach { (source, fragments) ->
+        requiredParenCases.forEach { (source, fragments) ->
             val initial = LuaParser(luaVersion = version).parse(source)
             val printed = printer.asCode(initial)
             val reparsed = LuaParser(luaVersion = version).parse(printed)
@@ -504,6 +533,39 @@ class AST2LuaBinaryUnaryRoundTripTddTest {
                     "Printed code for <$source> dropped required parens fragment <$fragment>:\n$printed"
                 )
             }
+        }
+    }
+
+    @Test
+    fun printerMayDropCosmeticParensThatDoNotChangeShape() {
+        // Higher-prec operands under lower-prec parents do not need parens; printer may drop them.
+        // Shape must still round-trip.
+        val cosmeticCases = listOf(
+            "return (a // b) << 2" to "a // b << 2",
+            "return (a * b) + c" to "a * b + c",
+            "return (a << b) | c" to "a << b | c",
+            "return (a & b) | c" to "a & b | c",
+            "return total | (1 << i)" to "total | 1 << i",
+            "return (a & 0xFF) | (b << 8)" to "a & 0xFF | b << 8",
+            "return (a // b) << 2 | flags & mask ~ toggle" to "a // b << 2",
+            "return (a + b) .. c" to "a + b .. c",
+            "return (a * b) // c" to "a * b // c"
+        )
+
+        cosmeticCases.forEach { (source, expectedFragment) ->
+            val initial = LuaParser(luaVersion = version).parse(source)
+            val printed = printer.asCode(initial)
+            val reparsed = LuaParser(luaVersion = version).parse(printed)
+
+            assertEquals(
+                renderShape(initial),
+                renderShape(reparsed),
+                "shape drift for cosmetic-paren source <$source>\nprinted:\n$printed"
+            )
+            assertTrue(
+                printed.contains(expectedFragment),
+                "Printed code for <$source> should contain unparenthesized form <$expectedFragment>:\n$printed"
+            )
         }
     }
 
@@ -614,6 +676,7 @@ class AST2LuaBinaryUnaryRoundTripTddTest {
             "return (a | b) & c",
             "return ~(a | b)",
             "return (a // b) << 2 | flags & mask ~ toggle",
+            "return a // b << 2 | flags & mask ~ toggle",
             "return 0xFF << 4 | 0x0F & 0x33 ~ 0x01",
             // relational / logical
             "return a < b",
@@ -657,7 +720,9 @@ class AST2LuaBinaryUnaryRoundTripTddTest {
             "return not a | b & c",
             "local total = (a + b) * c - d",
             "total = total | (1 << i)",
+            "total = total | 1 << i",
             "function pack(a, b) return (a & 0xFF) | (b << 8) end",
+            "function pack(a, b) return a & 0xFF | b << 8 end",
             "while ready and bits << 1 | 1 do break end",
             "repeat x = x >> 1 until x & 1 == 0"
         )

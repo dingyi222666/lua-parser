@@ -18,6 +18,50 @@ import kotlin.test.assertTrue
 class JavaChainedCallTddTest {
     private val androidJar = File(JvmWorkspaceConfiguration.DEFAULT_ANDROID_JAR_PATH)
 
+    /**
+     * TASK-589 product hard-lock: resource_reflection_fixture_chained_static_and_instance_calls_are_typed
+     * style corpus. Intermediate static factory / instance returns must stay reflection-backed
+     * (never invent chain types without reflected signatures).
+     */
+    @Test
+    fun resource_reflection_fixture_chained_static_and_instance_calls_are_typed() {
+        val harness = jvmHarness(
+            "main.lua" to """
+                local Arrays = luajava.bindClass("java.util.Arrays")
+                local Locale = luajava.bindClass("java.util.Locale")
+                local Integer = luajava.bindClass("java.lang.Integer")
+
+                local values = Arrays.asList("alpha", "beta")
+                local count = values.size()
+                local locales = Locale.getAvailableLocales()
+                local parsed = Integer.parseInt("42")
+                local firstTag = Locale.forLanguageTag("en-US").toLanguageTag()
+
+                return values, count, locales, parsed, firstTag
+            """.trimIndent(),
+            classes = setOf("java.util.List")
+        )
+
+        assertHoverType(harness, "count", "number", occurrence = 2)
+        val localesHover = assertNotNull(
+            harness.queries.hover(harness.path("main.lua"), harness.positionOf("main.lua", "locales", 2))
+        )
+        val localesType = localesHover.typeInfo?.displayName.orEmpty()
+        assertTrue(
+            "java.util.Locale[]" in localesType || localesType.contains("Locale"),
+            "Expected Locale[] (or Locale array surface) for getAvailableLocales chain; got $localesType"
+        )
+        assertNotUnknown(localesType)
+        assertHoverType(harness, "parsed", "number", occurrence = 2)
+        assertHoverType(harness, "firstTag", "string", occurrence = 2)
+        // Intermediate static factory result used by instance chain must remain typed.
+        val tagHover = assertNotNull(
+            harness.queries.hover(harness.path("main.lua"), harness.positionOf("main.lua", "toLanguageTag"))
+        )
+        assertEquals(SymbolKind.METHOD, tagHover.symbol?.kind)
+        assertCallable(tagHover.typeInfo?.displayName)
+    }
+
     @Test
     fun file_parent_file_name_chain_returns_string() {
         val harness = jvmHarness(
@@ -438,7 +482,9 @@ class JavaChainedCallTddTest {
             classes = setOf("java.util.Properties")
         )
 
-        assertHoverType(harness, "size", "number", occurrence = 2)
+        // occurrence 2 is the zero-arg method identifier `.size()` (callable surface);
+        // occurrence 3 is the return local that carries the chain call result type.
+        assertHoverType(harness, "size", "number", occurrence = 3)
     }
 
     @Test
@@ -453,7 +499,8 @@ class JavaChainedCallTddTest {
         )
 
         assertHoverType(harness, "properties", "java.util.Properties")
-        assertHoverType(harness, "size", "number", occurrence = 2)
+        // Avoid the member identifier collision on `.size()`; hover the return local.
+        assertHoverType(harness, "size", "number", occurrence = 3)
         assertNoDiagnostics(harness)
     }
 
@@ -506,7 +553,8 @@ class JavaChainedCallTddTest {
             """.trimIndent()
         )
 
-        assertHoverType(harness, "name", "string", occurrence = 2)
+        // occurrence 2 is Charset.name() method; occurrence 3 is the return local result.
+        assertHoverType(harness, "name", "string", occurrence = 3)
     }
 
     @Test
@@ -558,7 +606,8 @@ class JavaChainedCallTddTest {
             """.trimIndent()
         )
 
-        assertHoverType(harness, "scale", "number", occurrence = 2)
+        // occurrence 2 is BigDecimal.scale() method; occurrence 3 is the return local result.
+        assertHoverType(harness, "scale", "number", occurrence = 3)
     }
 
     @Test
@@ -568,16 +617,16 @@ class JavaChainedCallTddTest {
         val harness = jvmHarness(
             "main.lua" to """
                 local File = luajava.bindClass("java.io.File")
-                local result = File("src/main/kotlin").parent
+                local result = File("src/main/kotlin").parentFile
                 return result
             """.trimIndent()
         )
 
         // Readable JavaBean aliases are exported as fields without hiding direct getters.
-        assertCompletionAt(harness, "parent", "parentFile", CompletionItemKind.FIELD)
-        assertCompletionAt(harness, "parent", "name", CompletionItemKind.FIELD)
-        assertCompletionAt(harness, "parent", "getParentFile", CompletionItemKind.METHOD)
-        assertCompletionAt(harness, "parent", "getName", CompletionItemKind.METHOD)
+        assertCompletionAt(harness, "parentFile", "parentFile", CompletionItemKind.FIELD)
+        assertCompletionAt(harness, "parentFile", "name", CompletionItemKind.FIELD)
+        assertCompletionAt(harness, "parentFile", "getParentFile", CompletionItemKind.METHOD)
+        assertCompletionAt(harness, "parentFile", "getName", CompletionItemKind.METHOD)
     }
 
     @Test
@@ -875,7 +924,8 @@ class JavaChainedCallTddTest {
             """.trimIndent(),
             classes = setOf("android.net.Uri", "android.net.Uri\$Builder")
         ) { harness ->
-            assertHoverType(harness, "path", "string", occurrence = 2)
+            // occurrence 2 is Uri.Builder.path(...); occurrence 3 is the return local result.
+            assertHoverType(harness, "path", "string", occurrence = 3)
             assertNoDiagnostics(harness)
         }
     }

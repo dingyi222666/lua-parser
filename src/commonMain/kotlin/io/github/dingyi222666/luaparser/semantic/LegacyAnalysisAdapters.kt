@@ -251,7 +251,18 @@ private class LegacySymbolTableBuilder(
 
 private fun collectSyntheticGlobalAssignments(snapshot: SemanticPipelineSnapshot): List<Symbol> {
     val evaluator = ExpressionTypeEvaluator(snapshot.binder)
-    val globals = mutableListOf<Symbol>()
+    val globals = snapshot.workspaceContext.importedSymbols
+        .values
+        .map { imported ->
+            Symbol(
+                name = imported.alias,
+                type = imported.moduleType.toLegacyType(),
+                kind = Symbol.Kind.MODULE,
+                range = null,
+                declaration = null
+            )
+        }
+        .toMutableList()
 
     visitStatements(snapshot.chunk.body) { statement ->
         if (statement !is AssignmentStatement) {

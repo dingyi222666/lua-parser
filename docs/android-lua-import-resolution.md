@@ -1,15 +1,39 @@
 # Android-Lua import resolution order
 
-Status: documentation of static-analysis resolution order for `require "import"`, Android-Lua `import` / `import "..."`, and `luajava.bindClass` (and related LuaJava class-load helpers) after TASK-241 negative-path corpus work and the TASK-176 path-scoped import-surface preservation lane. This file is docs-only; it does not claim TASK-176 or TASK-043 serial green.
+Date: 2026-07-12  
+Task: TASK-506 (docs-only refresh)
+
+Documentation of static-analysis resolution order for `require "import"`, Android-Lua `import` / `import "..."`, and `luajava.bindClass` (and related LuaJava class-load helpers), after TASK-241 negative-path corpus work and the TASK-176 path-scoped import-surface preservation lane. Refreshed for **post-TASK-184 / pre-TASK-043** documentation accuracy on this macOS host.
+
+**Honesty bound (post-TASK-184, pre-TASK-043):** this file is docs-only. It describes intended static resolution order and host analysis classpath assumptions. It does **not** claim final green acceptance, suite green, or inventory finality. Product-surface library stubs / overlay work ending in **TASK-184** are modeled and review-accepted for focused surfaces only. Path-scoped import preservation (**TASK-176**) and negative-path corpus (**TASK-241**) remain documentation anchors for behavior expectations, not a claim that every dual-path query surface is green. Serialized Gradle/test verification remains review-owned under **TASK-043** (`blocked`); final acceptance remains **TASK-037** (`blocked`). Inventory recount / freeze follow-ups (for example TASK-125) are **inventory not final until TASK-043**. No Gradle, compile, or test command was run for this documentation task. Never hard-code Windows `G:/` paths.
+
+## Host analysis environment (macOS only)
+
+Reflective class resolution for Android framework packages (`android.view.*`, `android.widget.*`, etc.) depends on a host `android.jar` when operators enable JVM reflection. On this host, docs and operator notes use **macOS** paths only:
+
+| Item | Host value | Status (2026-07-12 TASK-506 re-check) |
+| --- | --- | --- |
+| JDK for JVM tests / docs examples | Amazon Corretto 17: `/Users/dingyi/Library/Java/JavaVirtualMachines/corretto-17.0.19/Contents/Home` | Present; force as `JAVA_HOME` (do not rely on shell default OpenJDK 26) |
+| Preferred Android platform jar | `/Users/dingyi/Library/Android/sdk/platforms/android-35/android.jar` | **Present** (27,092,450 bytes; Android SDK Platform 35) |
+| Optional drop-in jar | `/Users/dingyi/Downloads/android.jar` | **Absent** on this host; allowed only when present via explicit `jvm.androidJar` |
+| Android SDK root | `/Users/dingyi/Library/Android/sdk` (`ANDROID_HOME` / `ANDROID_SDK_ROOT` when set) | Present |
+
+**Dual-path `android.jar` policy (Downloads + SDK only):** prefer explicit metadata `jvm.androidJar` pointing at the SDK `android-35` path for reproducible analysis. Use `/Users/dingyi/Downloads/android.jar` only when that file exists and is supplied explicitly — product discovery does **not** auto-select Downloads. If neither host jar is available, **skip** reflective Android framework mounting; do not invent classpath entries. **Never hard-code `G:/Android/Sdk/...` or other Windows-only paths** for this host. Full setup notes: [android-platform-setup.md](./android-platform-setup.md).
+
+Without a present `android.jar` (or other configured classpath), concrete Android class mounts and package enumeration are incomplete even when static resolution order below is correct. That incompleteness is expected skip behavior, not final acceptance.
 
 ## Related documents and tasks
 
 - Runtime and overlay study: [android-lua-import-luajava.md](./android-lua-import-luajava.md)
+- Host classpath / Corretto 17 / dual-path jar policy: [android-platform-setup.md](./android-platform-setup.md)
 - Compatibility honesty matrix: [android-lua-compatibility-matrix.md](./android-lua-compatibility-matrix.md)
 - Java interop type model: [java-interop-model.md](./java-interop-model.md)
 - Classloader policy: [jvm-reflection-classloader-design.md](./jvm-reflection-classloader-design.md)
 - TASK-176 — preserve Android-Lua import surfaces under scoped activation (`tasks/TASK-176.md`)
+- TASK-184 — Android-Lua library stub fixture / type surfaces restored (focused; not TASK-043 green)
 - TASK-241 — Android-Lua import fact negative-path corpus (`tasks/TASK-241.md`)
+- TASK-043 — serialized verification (still `blocked`; owns final suite verification)
+- TASK-037 — final acceptance (still `blocked`)
 
 ## Layers
 
@@ -21,7 +45,7 @@ Resolution is layered. Later layers only run when earlier layers do not already 
 4. **Path-scoped activation** — `JvmWorkspaceEngine` / `WorkspaceModuleResolver` expose configured imports workspace-wide and source imports only for the current file (TASK-176 surface).
 5. **Query surfaces** — definitions, completions, and imported symbols read active providers and imported-symbol maps; they do not re-parse runtime `import.lua`.
 
-Runtime Android-Lua `import.lua` order (require → bindClass → dex loaders) is described in [android-lua-import-luajava.md](./android-lua-import-luajava.md). Static analysis approximates that order with reflection/classpath providers instead of live dex loaders.
+Runtime Android-Lua `import.lua` order (require → bindClass → dex loaders) is described in [android-lua-import-luajava.md](./android-lua-import-luajava.md). Static analysis approximates that order with reflection/classpath providers instead of live dex loaders. Reflective Android hits on this host assume Corretto 17 + present `android-35` `android.jar` as above when metadata enables them.
 
 ---
 
@@ -115,6 +139,8 @@ Default import prefixes (when configuration does not override) include:
 
 Wildcard imports also **append** their package prefix to `importPrefixes` for later simple-name resolution (`JvmWorkspaceEngine.configurationWithWildcardImportPrefixes`).
 
+On this macOS host, reflective hits for Android framework types require the present SDK jar (or an explicit present Downloads override) on the effective classpath / `jvm.androidJar`. Without it, analysis falls back to curated static Android-framework overlays where available and otherwise leaves Android targets unresolved — skip, not throw.
+
 ### Package / wildcard resolution
 
 For `import "pkg.*"` (and prefixed forms whose className side is `pkg.*`):
@@ -123,7 +149,7 @@ For `import "pkg.*"` (and prefixed forms whose className side is `pkg.*`):
 2. Enumerate top-level classes under that package from:
    - Classloader resources (`file` / `jar` / `jrt`)
    - Additional `jrt` scan
-   - Configured reflection classpath entries (directories and jars)
+   - Configured reflection classpath entries (directories and jars), including host `android-35` `android.jar` when configured and present
 3. Mount provider at `__jvm__/packages/<pkg/with/slashes>.lua` when at least one class is found.
 4. Imported package symbol alias is the package name (module name = package name); members are simple class names.
 
@@ -201,6 +227,7 @@ Aligned with TASK-241 corpus expectations:
 | Unsupported prefix **with** resolvable wildcard (`dexPath:java.io.*`) | Diagnostic for prefix; package may still mount via fallback classloader as `__jvm__/packages/java/io.lua` |
 | Missing class name | `resolveImport` → `null` without throw |
 | Ordinary valid imports | No prefixed diagnostics; classes requested/mounted when present on classpath |
+| Missing host `android.jar` / incomplete classpath | Skip reflective Android mounts; curated static overlays may still apply; not a startup hard-fail |
 
 Runtime Android-Lua raises `cannot find <package>` for failed explicit imports; static analysis prefers empty resolution + diagnostics over throw.
 
@@ -221,18 +248,21 @@ Static pipeline order:
 
 1. Parse → document facts: require `"import"`; source imports `java.io.*` and `android.view.View_OnClickListener`; bindClass load `java.io.File`.
 2. Module graph: resolve `require "import"` → workspace provider if present, else AndroLua overlay `__lua_std__/androlua5.3/import.lua`.
-3. JVM engine: add wildcard prefix `java.io` to import prefixes; enumerate `java.io` package → `__jvm__/packages/java/io.lua`; resolve inner-class candidates for `View_OnClickListener` / `View$OnClickListener` when android jar/classpath allows; mount `java.io.File` class provider from bindClass/import discovery.
+3. JVM engine: add wildcard prefix `java.io` to import prefixes; enumerate `java.io` package → `__jvm__/packages/java/io.lua`; resolve inner-class candidates for `View_OnClickListener` / `View$OnClickListener` when android jar/classpath allows (this host: SDK `platforms/android-35/android.jar` when configured); mount `java.io.File` class provider from bindClass/import discovery.
 4. Path-scoped context for this file only: merge configured + source imported symbols (`File`, package members, inner class alias).
-5. Queries: require definition → import overlay; simple name `File` → class/package provider; completions prefer module kinds for imported classes/packages (TASK-176 acceptance surface).
+5. Queries: require definition → import overlay; simple name `File` → class/package provider; completions prefer module kinds for imported classes/packages (TASK-176 acceptance surface — documentation of intent, not final green).
 
 ---
 
 ## 6. Honesty / non-claims
 
-- Does **not** claim TASK-176 accepted or Android-Lua import query surfaces fully green; see TASK-176 and the compatibility matrix.
+- Does **not** claim final green acceptance, suite green, or that inventory counts are frozen (**inventory is not final until TASK-043**).
+- Does **not** claim TASK-176 accepted end-to-end or that Android-Lua import query surfaces are fully green; see TASK-176 and the compatibility matrix.
+- Does **not** claim TASK-184 library-stub / overlay restoration substitutes for TASK-043 serialized verification (TASK-184 is focused product-surface modeling only).
 - Does **not** claim live dex/`loadDex` parity; unsupported prefixes are diagnostic + optional fallback reflection only.
-- Does **not** claim complete package inventories without classpath/android jar configuration.
-- Final behavioral verification remains TASK-043 serial Gradle ownership; this file is documentation-only (TASK-266).
+- Does **not** claim complete package inventories without classpath/android jar configuration; on this host Downloads `android.jar` is currently **absent** and must not be invented.
+- Does **not** unlock TASK-043 or TASK-037.
+- Final behavioral verification remains TASK-043 serial Gradle ownership; this file is documentation-only (original TASK-266 lane; refreshed under TASK-506). No Gradle/tests/compile were run for this refresh.
 
 ## Source anchors (implementation)
 
@@ -242,3 +272,4 @@ Static pipeline order:
 - `src/jvmMain/kotlin/.../interop/jvm/JvmClassModuleProvider.kt` — parse, resolveClassLoads, packageProvidersFor, diagnostics
 - `src/jvmTest/kotlin/semantic/workspace/AndroidLuaImportNegativePathTddTest.kt` — TASK-241 negative corpus
 - `src/jvmTest/kotlin/semantic/workspace/AndroidLuaImportWorkspaceTddTest.kt` — TASK-176 workspace surfaces
+- `docs/android-platform-setup.md` — Corretto 17, dual-path macOS `android.jar`, skip-when-absent

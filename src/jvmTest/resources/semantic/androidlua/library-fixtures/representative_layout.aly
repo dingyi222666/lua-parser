@@ -1,0 +1,21 @@
+---@type LuaLayoutSpec
+local layout = {
+    LinearLayout,
+    orientation = "vertical",
+    id = "root",
+    {
+        TextView,
+        id = "title",
+        text = "Dashboard",
+    },
+    {
+        Button,
+        id = "action",
+        text = "Run",
+        onClick = function(view)
+            view.performClick()
+        end,
+    },
+}
+
+return layout

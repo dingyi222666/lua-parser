@@ -22,13 +22,19 @@ import kotlin.test.assertTrue
 import kotlin.test.fail
 
 /**
- * TASK-302 — Android.jar `android.app.Activity` member surface corpus.
+ * TASK-527 / TASK-302 — Android.jar `android.app.Activity` member surface corpus.
  *
  * Encodes the acceptance that a reflected Activity surface exposes a non-empty
  * instance/static member list when the host android.jar is present, and skips
- * cleanly with an explicit TASK-302 reason when the jar is missing.
+ * cleanly with an explicit TASK-527/TASK-302 reason when the jar is missing.
  *
- * Test-only; no production edits. Verification is review-owned (TASK-043).
+ * Host android.jar resolution (never hard-requires G:/; Downloads only via explicit metadata):
+ * 1) ANDROID_HOME / ANDROID_SDK_ROOT platforms/android-35|34/android.jar
+ * 2) [JvmWorkspaceConfiguration.DEFAULT_ANDROID_JAR_PATH] multi-OS discovery
+ * 3) mac well-known `~/Library/Android/sdk/platforms/android-35/android.jar`
+ *
+ * Does not invent framework members when the jar is absent.
+ * Verification is review-owned (TASK-043); workers must not run Gradle.
  */
 class AndroidJarActivityMemberSurfaceTddTest {
     private val provider = JvmClassModuleProvider()
@@ -39,7 +45,10 @@ class AndroidJarActivityMemberSurfaceTddTest {
         val missing = File("/nonexistent/android-sdk/platforms/android-35/android.jar")
         val reason = missingAndroidJarSkipReason(missing)
 
-        assertTrue(reason.contains("TASK-302"), "Skip reason must name TASK-302; got: $reason")
+        assertTrue(
+            reason.contains("TASK-302") || reason.contains("TASK-527"),
+            "Skip reason must name TASK-302 or TASK-527; got: $reason"
+        )
         assertTrue(reason.contains("android.jar"), "Skip reason must mention android.jar; got: $reason")
         assertTrue(reason.contains(missing.path), "Skip reason must include the missing path; got: $reason")
         assertTrue(
@@ -356,28 +365,36 @@ class AndroidJarActivityMemberSurfaceTddTest {
 
     companion object {
         /**
-         * Host-resolution order for TASK-302 corpus:
-         * 1) WAVE31 mac SDK path
+         * Host-resolution order for TASK-527 / TASK-302 corpus:
+         * 1) ANDROID_HOME / ANDROID_SDK_ROOT platforms/android-35|34/android.jar
          * 2) [JvmWorkspaceConfiguration.DEFAULT_ANDROID_JAR_PATH] multi-OS discovery
-         * 3) ANDROID_HOME / ANDROID_SDK_ROOT platforms/android-35|34/android.jar
+         * 3) mac well-known `~/Library/Android/sdk/platforms/android-35/android.jar`
+         *
+         * Explicit Downloads jars are not auto-selected (metadata only). Never hardcodes
+         * or hard-requires Windows-only G:/Android/Sdk paths.
          */
         private fun resolveAndroidJar(): File {
             val candidates = linkedSetOf<File>()
-            candidates += File("/Users/dingyi/Library/Android/sdk/platforms/android-35/android.jar")
-            candidates += File(JvmWorkspaceConfiguration.DEFAULT_ANDROID_JAR_PATH)
             sequenceOf("ANDROID_HOME", "ANDROID_SDK_ROOT")
                 .mapNotNull { env -> System.getenv(env)?.trim()?.takeIf(String::isNotEmpty) }
                 .forEach { sdkRoot ->
                     candidates += File(sdkRoot, "platforms/android-35/android.jar")
                     candidates += File(sdkRoot, "platforms/android-34/android.jar")
                 }
+            candidates += File(JvmWorkspaceConfiguration.DEFAULT_ANDROID_JAR_PATH)
+            candidates += File(
+                System.getProperty("user.home"),
+                "Library/Android/sdk/platforms/android-35/android.jar"
+            )
+            // Prefer an existing jar; never invent members when all candidates are missing.
             return candidates.firstOrNull { it.isFile } ?: candidates.first()
         }
 
         internal fun missingAndroidJarSkipReason(androidJar: File): String {
-            return "TASK-302 skipped: android.jar not found at ${androidJar.path}. " +
+            return "TASK-527/TASK-302 skipped: android.jar not found at ${androidJar.path}. " +
                 "Install Android SDK Platform 35 (or set ANDROID_HOME / ANDROID_SDK_ROOT / jvm.androidJar) " +
-                "before running Activity member surface corpus."
+                "before running Activity member surface corpus. Suites skip cleanly only when the jar " +
+                "is truly absent; framework members are never invented."
         }
     }
 }

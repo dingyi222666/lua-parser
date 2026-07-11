@@ -17,15 +17,17 @@ The repository currently contains:
 
 **This repository is not finally green.** Do not treat partial focused-filter accepts, worker `done` statuses, or this guide as a release statement. TASK-043 must run the serialized Gradle/test suite and TASK-037 must record the final acceptance audit before any global green claim is valid.
 
-### Production readiness gap checklist (TASK-451 refresh, post-TASK-184)
+### Production readiness gap checklist (TASK-501 refresh, post-TASK-184 / pre-TASK-043)
 
-Snapshot date: 2026-07-11 (docs-only inventory from task metadata and host path checks; no Gradle/tests run by this refresh). Supersedes the TASK-228 gap checklist.
+Snapshot date: 2026-07-12 (docs-only inventory criterion note from live task metadata and host path checks; no Gradle/tests run by this refresh). Supersedes the TASK-451 gap checklist.
 
-Host paths (read-only checks for this machine; never hard-code `G:/`):
+Inventory criterion (not final until TASK-043): source-count drafts and TASK-125 recounts may reconcile file/`@Test` bars, but inventory is **not final** until serialized verification accepts those bars under TASK-043. Do not treat raised inventory constants or docs-only recount notes as green suite evidence.
+
+Host paths (read-only checks for this macOS machine; never hard-code `G:/`):
 
 | Path | Purpose | Status |
 | --- | --- | --- |
-| `/Users/dingyi/Library/Android/sdk/platforms/android-35/android.jar` | Preferred host `android.jar` (SDK android-35) | **Present** |
+| `/Users/dingyi/Library/Android/sdk/platforms/android-35/android.jar` | Preferred host `android.jar` (SDK android-35) | **Present** (~27,092,450 bytes) |
 | `/Users/dingyi/Downloads/android.jar` | Alternate host `android.jar` | **Absent** |
 | `/Users/dingyi/Library/Java/JavaVirtualMachines/corretto-17.0.19/Contents/Home` | Coordinated-wave JDK 17 for verification docs | **Present** |
 
@@ -33,7 +35,7 @@ Host paths (read-only checks for this machine; never hard-code `G:/`):
 | --- | --- | --- |
 | Global green / release | **Not green** | Final gates TASK-043 (serialized verification) and TASK-037 (acceptance audit) remain **blocked**. TASK-184 acceptance does **not** unlock or satisfy TASK-043. |
 | Final verification ledger | **Blocked chain** | TASK-105 blocked on TASK-043; TASK-106 blocked on TASK-105. Pre-verification inventory drafts may refresh source counts only. |
-| Pre-verification inventory | **Open pre-final path** | TASK-125 is **in_progress** for the final inventory recount after post-TASK-184 corpus growth. TASK-038 is **ready** and still depends on TASK-125. |
+| Pre-verification inventory | **Open pre-final path** | TASK-125 is **review** after WAVE36F live recount (baseline 331 `*Test.kt` / 4624 `@Test`; campaign 272 `*TddTest.kt` / 4109 `@Test`). Inventory is **not final until TASK-043**. TASK-038 is **ready** and still depends on TASK-125. |
 | Pre-verification traceability | **Done draft (not final)** | TASK-115 is **done** for the broader pre-verification AC matrix refresh after the TASK-085–TASK-184 wave. Final AC pass/fail remains reserved for TASK-105/TASK-106 after TASK-043. |
 | Acceptance traceability draft | May lag live task files | Prefer this checklist and individual task files for current blocked/open state until TASK-106 finalizes the matrix after serialized verification. |
 
@@ -69,11 +71,11 @@ Related follow-ons that progressed after those accepts include TASK-171 (AndroLu
 
 | Blocked / open task | Role | Still-open direct deps or gate notes (non-done) |
 | --- | --- | --- |
-| TASK-043 | Serialized Gradle verification | Remains **blocked**. Historical product deps through TASK-184 are done at task level; pre-final inventory path still open: **TASK-125** (in_progress) then **TASK-038** (ready, depends on TASK-125). REVIEW39 notes keep the gate closed until that path completes and review releases verification. |
+| TASK-043 | Serialized Gradle verification | Remains **blocked**. Historical product deps through TASK-184 are done at task level; pre-final inventory path still open: **TASK-125** (**review**, bars raised to 331/4624 and 272/4109; not accepted final until review + TASK-043) then **TASK-038** (**ready**, depends on TASK-125). Gate stays closed until that path completes and review releases verification. |
 | TASK-037 | Final green acceptance audit | TASK-043, TASK-105, TASK-106 |
 | TASK-105 | Final verification ledger refresh | TASK-043 |
 | TASK-106 | Finalize acceptance traceability | TASK-105 |
-| TASK-125 | Final pre-verification inventory counts | **in_progress**; product deps including TASK-184 are done; recount/doc refresh still required before inventory is accepted |
+| TASK-125 | Final pre-verification inventory counts | **review**; WAVE36F recount raised bars (331/4624 baseline, 272/4109 campaign). **Inventory not final until TASK-043.** |
 | TASK-038 | Inventory compile / assertion alignment | **ready**; depends on TASK-125 |
 
 #### Explicit non-claims
@@ -83,6 +85,7 @@ Related follow-ons that progressed after those accepts include TASK-171 (AndroLu
 - No claim that Android-Lua corpus, LuaJava interop, workspace, or LSP surfaces are release-complete.
 - TASK-184 library stub restoration is **done** for product surface work only; it must not be rolled up into a global green statement.
 - Focused PASS notes for TASK-144/152/156 are **local** accepts only; they must not be rolled up into a global green statement.
+- TASK-125 inventory recount in **review** is a pre-final source-count refresh only; it is **not** final inventory acceptance and does **not** unlock TASK-043 by itself.
 
 ## Setup
 
@@ -263,6 +266,7 @@ The compatibility matrix and known unsupported patterns live in `docs/android-lu
 - LSP synthetic provider URIs such as `file:///__jvm__/classes/java/lang/String.lua` are virtual locations, not files on disk.
 - Compact short-call AST/round-trip (TASK-144), listener setter assignment modeling (TASK-152), and workspace-folder indexing (TASK-156) have focused review accepts only; they are not substitutes for full-suite green.
 - Android-Lua library stub fixture/type surfaces (TASK-184) are restored at task level only; command-level suite proof remains pending TASK-043.
+- Pre-verification inventory recount (TASK-125) may raise source-count bars while remaining **not final until TASK-043**; do not treat inventory docs as suite green.
 
 ## Extension Guide
 
@@ -282,7 +286,7 @@ Every extension that changes behavior should add or update focused tests and rec
 
 Use these pages when preparing or auditing verification:
 
-- This guide's **Production readiness gap checklist** for the current blocked-chain snapshot, closed post-TASK-184 product gates, and the TASK-144/152/156 local accepts.
+- This guide's **Production readiness gap checklist** for the current blocked-chain snapshot, closed post-TASK-184 product gates, inventory-not-final-until-043 criterion, and the TASK-144/152/156 local accepts.
 - `docs/serialized-verification.md` for one-at-a-time Gradle/test execution and locks.
 - `docs/test-strategy.md` for inventory and TDD accounting rules.
 - `docs/android-lua-verification.md` for corpus inputs and the Android-Lua integration gate.

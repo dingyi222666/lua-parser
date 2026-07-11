@@ -1,5 +1,8 @@
 # LSP Concurrency And Shutdown Policy
 
+Date: 2026-07-12  
+Task: TASK-512 (docs-only refresh)
+
 This document records the JVM language-server concurrency and lifecycle
 expectations exercised by the TASK-221 open/close stress corpus and the
 TASK-222 shutdown/exit idempotency corpus. It is a policy note for clients,
@@ -9,9 +12,43 @@ every LSP path.
 Related usage surface: [language-server-usage.md](language-server-usage.md).
 Implementation lives under `src/jvmMain/kotlin/io/github/dingyi222666/luaparser/lsp`.
 
+**Honesty bound (post-TASK-184 / pre-TASK-043):** product-surface work through
+the chain ending in **TASK-184** (Android-Lua library stubs / overlay surfaces)
+is review-accepted at task level. That does **not** unlock **TASK-043**
+(serialized Gradle verification, still `blocked`), does **not** unlock
+**TASK-037** (final acceptance, still `blocked`), and does **not** authorize any
+final-green, suite-green, or production-readiness claim. **Inventory is not
+final until TASK-043.** This page documents intended policy and the tested
+shapes only; it does not re-run Gradle, expand production code, or re-certify
+historical review acceptance of TASK-221 / TASK-222. Never hard-code Windows
+`G:/` (or other non-host) paths.
+
 Command-level confirmation of the corpora remains deferred to TASK-043
-serialized verification. This page documents intended policy and the tested
-shapes only; it does not re-run Gradle or expand production code.
+serialized verification. Docs-only workers must not run the filters below.
+
+## Host analysis environment (macOS only)
+
+Verification notes and deferred filter examples on this host use **macOS** paths
+only. Host path status is analysis-setup inventory only — not final inventory
+and not a green claim.
+
+| Item | Host value | Status (2026-07-12 TASK-512 re-check) |
+| --- | --- | --- |
+| JDK for deferred JVM filters | Corretto 17: `/Users/dingyi/Library/Java/JavaVirtualMachines/corretto-17.0.19/Contents/Home` | Present; use as `JAVA_HOME` when review later runs verification under TASK-043 |
+| Preferred Android platform jar | `/Users/dingyi/Library/Android/sdk/platforms/android-35/android.jar` | **Present** (27,092,450 bytes; Android SDK Platform 35) |
+| Optional drop-in jar | `/Users/dingyi/Downloads/android.jar` | **Absent** on this host; allowed only as explicit metadata when present |
+| Android SDK root | `/Users/dingyi/Library/Android/sdk` (`ANDROID_HOME` / `ANDROID_SDK_ROOT` when set) | Present |
+
+**Dual-path `android.jar` policy:** only Downloads + SDK `android-35` candidates
+above. Prefer explicit metadata `jvm.androidJar` pointing at the SDK path for
+reproducible analysis/LSP Android reflection. Product discovery may also scan
+`ANDROID_HOME` / well-known roots (see [android-platform-setup.md](android-platform-setup.md)
+and [language-server-usage.md](language-server-usage.md)); missing jars must
+**skip** reflective Android mounting — never invent classpath entries. **Never
+hard-code Windows `G:/` paths.** Concurrency/shutdown policy itself does not
+require `android.jar`, but Android-Lua LSP stress that publishes diagnostics or
+symbols under concurrent open/change may depend on host classpath configuration
+when fixtures import Android types.
 
 ## Scope Boundaries
 
@@ -21,7 +58,8 @@ shapes only; it does not re-run Gradle or expand production code.
 | Shutdown/exit idempotency and post-lifecycle request policy on `LuaLanguageServer` (TASK-222) | Full LSP4J transport thread-model guarantees |
 | Coarse service locks observed in the current JVM code (`stateLock`, `lifecycleLock`) | “Thread-safe under any client scheduling” product marketing |
 | Final diagnostics matching the last published snapshot after stress converges | Ordering of intermediate diagnostic publishes during races |
-| Reviewed corpora that REVIEW accepted green | Unlisted concurrent combinations (rename, folding, signature help under load, etc.) |
+| Reviewed corpora that REVIEW accepted green historically | Standing guarantee that every future refactor remains green without TASK-043 |
+| Host path / toolchain inventory for deferred filters | Final inventory bars (not final until TASK-043) |
 
 **Do not treat this document as a full thread-safety certificate.** Safety claims
 stop at the corpora and locks described below. Paths not covered by those tests
@@ -162,7 +200,10 @@ prove:
 - that every future capability (rename, folding, code actions, etc.) is covered
   by concurrent tests;
 - that intermediate diagnostics during a race equal any particular intermediate
-  source version.
+  source version;
+- that Android-Lua reflection / library-stub surfaces under concurrent edits are
+  independently proven beyond what `stateLock` serializes (TASK-184 is product
+  surface acceptance only).
 
 ## Client And Harness Guidance
 
@@ -180,6 +221,10 @@ prove:
    by TASK-221.
 5. Do not run concurrent Gradle/test verification of these corpora outside the
    serialized TASK-043 slot.
+6. When Android-Lua fixtures participate in concurrent stress, configure
+   `jvm.androidJar` with the macOS SDK android-35 path (or an explicit Downloads
+   override if that file is present). Do not rely on missing jars or non-host
+   paths.
 
 ## Test Anchors And Deferred Verification
 
@@ -190,7 +235,8 @@ prove:
 | Related | `src/jvmTest/kotlin/lsp/LspServiceStateConcurrencyTddTest.kt` | Overlapping document/workspace service operations |
 | Related | `src/jvmTest/kotlin/lsp/LspShutdownBehaviorTddTest.kt` | Additional shutdown behavior fixtures (see that suite for details) |
 
-Representative deferred verification filters (do not run in parallel worker waves):
+Representative deferred verification filters (do not run in parallel worker waves;
+TASK-043 serial only; macOS Corretto 17):
 
 ```bash
 export JAVA_HOME=/Users/dingyi/Library/Java/JavaVirtualMachines/corretto-17.0.19/Contents/Home
@@ -198,10 +244,19 @@ export JAVA_HOME=/Users/dingyi/Library/Java/JavaVirtualMachines/corretto-17.0.19
 ./gradlew jvmTest --tests lsp.LspShutdownExitIdempotencyTddTest
 ```
 
+Optional host classpath context when a review run also exercises Android-aware
+LSP paths under concurrency (explicit metadata preferred):
+
+```text
+jvm.androidJar=/Users/dingyi/Library/Android/sdk/platforms/android-35/android.jar
+# optional only if present: /Users/dingyi/Downloads/android.jar
+```
+
 Review notes for TASK-221/TASK-222 record those filters as accepted under serial
-review execution. That acceptance is historical evidence for the corpora that
-existed at review time; it is not a standing guarantee that every future
-refactor remains green until TASK-043 re-runs the suite.
+review execution at historical review time. That acceptance is historical
+evidence for the corpora that existed then; it is **not** a standing guarantee
+that every future refactor remains green until TASK-043 re-runs the suite. This
+docs refresh did **not** re-run those filters.
 
 ## Explicit Non-Claims
 
@@ -214,15 +269,41 @@ refactor remains green until TASK-043 re-runs the suite.
   what holding `LuaLanguageService.stateLock` serializes.
 - **Not claimed:** production readiness or full green suite status — those remain
   TASK-037 / TASK-043 concerns.
+- **Not claimed:** inventory bars / recount fixtures are final — **inventory is
+  not final until TASK-043**.
+- **Not claimed:** TASK-184 product-surface acceptance unlocks concurrency or
+  lifecycle certification; it does not.
 - **Not claimed:** this document itself was command-verified; it is documentation
-  only (TASK-267).
+  only (TASK-512 docs refresh; earlier TASK-267 lineage). No final green
+  acceptance is claimed by this page.
 
 ## Cross-Links
 
 - [language-server-usage.md](language-server-usage.md) — launch, lifecycle
-  overview, capabilities, document sync, workspace folders, configuration.
-- [test-strategy.md](test-strategy.md) — inventory context for LSP corpora.
+  overview, capabilities, document sync, workspace folders, configuration,
+  macOS android-35 / Downloads dual-path notes.
+- [android-platform-setup.md](android-platform-setup.md) — Corretto 17, SDK
+  android-35 jar, skip-when-absent policy.
+- [test-strategy.md](test-strategy.md) — inventory context for LSP corpora
+  (inventory not final until TASK-043).
 - [serialized-verification.md](serialized-verification.md) — why workers must not
   run the Gradle filters above during parallel implementation waves.
 - [acceptance-traceability.md](acceptance-traceability.md) — AC-10 LSP lifecycle,
   shutdown, and concurrency traceability notes.
+- [test-inventory-recount-procedure.md](test-inventory-recount-procedure.md) —
+  recount procedure; inventory not final until TASK-043.
+
+## TASK-512 refresh checklist
+
+| Acceptance item | Where addressed |
+| --- | --- |
+| Post-TASK-184 / pre-TASK-043 accuracy | Honesty bound + Explicit Non-Claims |
+| macOS host paths, Corretto 17, android-35 jar | Host analysis environment table |
+| Dual-path Downloads + SDK; never `G:/` | Dual-path policy paragraph |
+| Inventory not final until TASK-043 | Honesty bound, scope table, non-claims |
+| Do not claim final green | Honesty bound, deferred verification, non-claims |
+| Docs-only; no Gradle | Header + deferred filters labeled TASK-043 only |
+
+When later review runs verification, use Corretto 17 `JAVA_HOME` and (for
+Android-aware paths) explicit `jvm.androidJar` to the SDK android-35 path. That
+work belongs to **TASK-043**, not this docs refresh.

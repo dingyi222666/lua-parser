@@ -2,6 +2,15 @@ package io.github.dingyi222666.luaparser.parser.ast.node
 
 import io.github.dingyi222666.luaparser.parser.ast.visitor.ASTVisitor
 
+private fun <T : BaseASTNode> T.copyBlockCloneMetadataFrom(source: BaseASTNode): T = also {
+    range = source.range.copy()
+    bad = source.bad
+}
+
+private fun <T : BaseASTNode> T.withBlockCloneParent(parentNode: BaseASTNode): T = also {
+    parent = parentNode
+}
+
 /**
  * @author: dingyi
  * @date: 2021/10/7 10:11
@@ -26,10 +35,11 @@ class BlockNode : ASTNode() {
     }
 
     override fun clone(): BlockNode {
-        val thisStatements = statements.map { it.clone() }
-        return BlockNode().apply {
-            statements.addAll(thisStatements)
-            returnStatement = returnStatement?.clone()
+        return BlockNode().copyBlockCloneMetadataFrom(this).also { block ->
+            statements.forEach {
+                block.statements.add(it.clone().withBlockCloneParent(block))
+            }
+            block.returnStatement = returnStatement?.clone()?.withBlockCloneParent(block)
         }
     }
 
@@ -53,8 +63,8 @@ class ChunkNode : ASTNode() {
     }
 
     override fun clone(): ChunkNode {
-        return ChunkNode().apply {
-            body = body.clone()
+        return ChunkNode().copyBlockCloneMetadataFrom(this).also { chunk ->
+            chunk.body = body.clone().withBlockCloneParent(chunk)
         }
     }
 

@@ -133,7 +133,15 @@ class ReturnChecker internal constructor(
             }
         }
 
-        if (!expected.isOpenEnded && actual.hasValueAt(expected.fixed.size)) {
+        // Bare UnknownType is a single closed ValueSequence slot, but freeform /
+        // unannotated functions intentionally use it as an unconstrained return.
+        // Do not emit extraValues solely because `return a, b` exceeds that one slot.
+        // Annotated multi-return (MultiReturnType / vararg tails) keep hard extras.
+        if (
+            !expected.isOpenEnded &&
+            !expected.isBareUnknownReturn &&
+            actual.hasValueAt(expected.fixed.size)
+        ) {
             val extraType = actual.typeAt(expected.fixed.size)
             if (extraType != UnknownType) {
                 diagnostics += Diagnostic(

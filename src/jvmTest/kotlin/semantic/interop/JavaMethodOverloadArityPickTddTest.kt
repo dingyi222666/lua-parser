@@ -31,20 +31,22 @@ import kotlin.test.assertTrue
 import kotlin.test.fail
 
 /**
- * TASK-300 — Java method overload pick-by-arity corpus.
+ * TASK-585 / TASK-300 — Java method overload pick-by-arity product ranking.
  *
  * Encodes the product contract for selecting among multi-arity Java method
  * overloads ([JavaOverloadType] / reflected callables) via [CallChecker]:
  * - Distinct argument counts select the matching closed overload stably.
  * - Zero/one/two/three-arg siblings do not bleed into each other.
- * - Fixed-arity matches beat vararg fallback when both are compatible.
+ * - Exact closed arity is preferred over vararg/spread siblings when both match
+ *   ([CallChecker] requiredPenalty primary key; vararg/spread base penalty).
  * - Same-arity ties degrade safely: [CallFailureReason.AMBIGUOUS_MATCH] with a
  *   deterministic first-signature selection (still returns a type).
  * - Impossible arity fails with [CallFailureReason.NO_MATCHING_SIGNATURE]
  *   rather than inventing a signature.
+ * - Unknown arguments stay soft (assignable) without inventing missing arities.
  *
- * Product code is intentionally out of scope (test-only). Verification is
- * review-owned and serial; this worker does not run Gradle.
+ * Distinct from constructor overload ranking (TASK-523 / TASK-586).
+ * Verification is review-owned and serial; this worker does not run Gradle.
  */
 class JavaMethodOverloadArityPickTddTest {
 
@@ -380,6 +382,132 @@ class JavaMethodOverloadArityPickTddTest {
         assertNoMatch(harness.check(method, emptyList()))
     }
 
+    // --- product ranking: exact arity over varargs/spread (TASK-585) -------------
+
+    @Test
+    fun exactClosedArityPreferredOverVarargEvenWhenVarargListedFirst() {
+        // Declaration order must not invert exact-over-vararg product ranking.
+        val harness = harness()
+        val fixed = oneArg(PrimitiveType.STRING, returnType = PrimitiveType.STRING)
+        val vararg = FunctionType(
+            parameters = listOf(FunctionParameter("...", PrimitiveType.STRING, vararg = true)),
+            returnType = PrimitiveType.BOOLEAN
+        )
+        val callable = javaOverloads(vararg, fixed)
+
+        val result = harness.check(callable, listOf(PrimitiveType.STRING))
+
+        assertSuccess(result, PrimitiveType.STRING)
+        assertFalse(result.selectedSignature!!.parameters.any { it.vararg })
+        assertSame(fixed, result.selectedSignature)
+        assertFalse(result.ambiguous)
+    }
+
+    @Test
+    fun exactClosedArityPreferredOverHeadPlusVarargSibling() {
+        val harness = harness()
+        val exactTwo = twoArg(PrimitiveType.STRING, PrimitiveType.NUMBER, returnType = PrimitiveType.NUMBER)
+        val headPlusVararg = FunctionType(
+            parameters = listOf(
+                FunctionParameter("head", PrimitiveType.STRING),
+                FunctionParameter("...", PrimitiveType.NUMBER, vararg = true)
+            ),
+            returnType = PrimitiveType.BOOLEAN
+        )
+        val callable = javaOverloads(headPlusVararg, exactTwo)
+
+        val result = harness.check(
+            callable,
+            listOf(PrimitiveType.STRING, PrimitiveType.NUMBER)
+        )
+
+        assertSuccess(result, PrimitiveType.NUMBER)
+        assertEquals(2, result.selectedSignature!!.parameters.size)
+        assertFalse(result.selectedSignature!!.parameters.any { it.vararg })
+        assertFalse(result.ambiguous)
+    }
+
+    @Test
+    fun zeroArgExactPreferredOverPureVarargSibling() {
+        val harness = harness()
+        val zero = zeroArg(returnType = PrimitiveType.BOOLEAN)
+        val pureVararg = FunctionType(
+            parameters = listOf(FunctionParameter("...", PrimitiveType.ANY, vararg = true)),
+            returnType = PrimitiveType.STRING
+        )
+        val callable = javaOverloads(pureVararg, zero)
+
+        val result = harness.check(callable, emptyList())
+
+        assertSuccess(result, PrimitiveType.BOOLEAN)
+        assertEquals(0, result.selectedSignature!!.parameters.size)
+        assertFalse(result.selectedSignature!!.parameters.any { it.vararg })
+        assertFalse(result.ambiguous)
+    }
+
+    @Test
+    fun spreadShapedArrayUnaryDoesNotInventScalarPromotion() {
+        // Closed array/"spread-shaped" unary is still fixed arity-1. A scalar string
+        // must not be promoted into an array parameter (no invented spread match).
+        val harness = harness()
+        val scalar = oneArg(PrimitiveType.STRING, returnType = PrimitiveType.STRING)
+        val arrayUnary = FunctionType(
+            parameters = listOf(
+                FunctionParameter(
+                    "values",
+                    io.github.dingyi222666.luaparser.semantic.types.model.ArrayType(PrimitiveType.STRING)
+                )
+            ),
+            returnType = PrimitiveType.BOOLEAN
+        )
+        val callable = javaOverloads(arrayUnary, scalar)
+
+        val scalarOnly = harness.check(callable, listOf(PrimitiveType.STRING))
+        assertSuccess(scalarOnly, PrimitiveType.STRING)
+        assertSame(scalar, scalarOnly.selectedSignature)
+        assertFalse(scalarOnly.selectedSignature!!.parameters.any {
+            it.type is io.github.dingyi222666.luaparser.semantic.types.model.ArrayType
+        })
+
+        // Array-only set still rejects scalar rather than inventing a spread conversion.
+        val arrayOnly = javaOverloads(arrayUnary)
+        assertNoMatch(harness.check(arrayOnly, listOf(PrimitiveType.STRING)))
+    }
+
+    @Test
+    fun unknownArgsStaySoftButDoNotInventMissingArity() {
+        val harness = harness()
+        val callable = javaOverloads(
+            oneArg(PrimitiveType.STRING, returnType = PrimitiveType.STRING),
+            twoArg(PrimitiveType.STRING, PrimitiveType.NUMBER, returnType = PrimitiveType.NUMBER)
+        )
+
+        val unary = harness.check(callable, listOf(UnknownType))
+        assertSuccess(unary, PrimitiveType.STRING)
+        assertEquals(1, unary.selectedSignature!!.parameters.size)
+
+        // Three unknowns cannot invent a third closed overload.
+        assertNoMatch(
+            harness.check(callable, listOf(UnknownType, UnknownType, UnknownType))
+        )
+    }
+
+    @Test
+    fun noMatchingArityDoesNotInventSignatureEvenWithVarargSiblingAbsent() {
+        val harness = harness()
+        val callable = javaOverloads(
+            zeroArg(returnType = PrimitiveType.BOOLEAN),
+            oneArg(PrimitiveType.STRING, returnType = PrimitiveType.STRING)
+        )
+
+        assertNoMatch(
+            harness.check(
+                callable,
+                listOf(PrimitiveType.STRING, PrimitiveType.NUMBER, PrimitiveType.BOOLEAN)
+            )
+        )
+    }
+
     // --- corpus table -----------------------------------------------------------
 
     @Test
@@ -494,6 +622,42 @@ class JavaMethodOverloadArityPickTddTest {
                 arguments = listOf(PrimitiveType.STRING, PrimitiveType.STRING),
                 expectSuccess = true,
                 expectReturn = PrimitiveType.BOOLEAN
+            ),
+            Case(
+                name = "exact closed beats vararg even when vararg listed first",
+                signatures = listOf(
+                    FunctionType(
+                        parameters = listOf(FunctionParameter("...", PrimitiveType.STRING, vararg = true)),
+                        returnType = PrimitiveType.BOOLEAN
+                    ),
+                    oneArg(PrimitiveType.STRING, PrimitiveType.STRING)
+                ),
+                arguments = listOf(PrimitiveType.STRING),
+                expectSuccess = true,
+                expectArity = 1,
+                expectReturn = PrimitiveType.STRING
+            ),
+            Case(
+                name = "zero-arg exact beats pure vararg",
+                signatures = listOf(
+                    FunctionType(
+                        parameters = listOf(FunctionParameter("...", PrimitiveType.ANY, vararg = true)),
+                        returnType = PrimitiveType.STRING
+                    ),
+                    zeroArg(PrimitiveType.BOOLEAN)
+                ),
+                arguments = emptyList(),
+                expectSuccess = true,
+                expectArity = 0,
+                expectReturn = PrimitiveType.BOOLEAN
+            ),
+            Case(
+                name = "unknown soft no invent arity",
+                signatures = listOf(
+                    oneArg(PrimitiveType.STRING, PrimitiveType.STRING)
+                ),
+                arguments = listOf(UnknownType, UnknownType),
+                expectSuccess = false
             )
         )
 

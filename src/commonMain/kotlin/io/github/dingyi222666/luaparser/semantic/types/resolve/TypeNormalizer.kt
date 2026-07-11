@@ -8,6 +8,15 @@ import io.github.dingyi222666.luaparser.semantic.types.model.ErrorType
 import io.github.dingyi222666.luaparser.semantic.types.model.FunctionParameter
 import io.github.dingyi222666.luaparser.semantic.types.model.FunctionType
 import io.github.dingyi222666.luaparser.semantic.types.model.IntersectionType
+import io.github.dingyi222666.luaparser.semantic.types.model.JavaArrayType
+import io.github.dingyi222666.luaparser.semantic.types.model.JavaClassType
+import io.github.dingyi222666.luaparser.semantic.types.model.JavaConstructorType
+import io.github.dingyi222666.luaparser.semantic.types.model.JavaInstanceMemberType
+import io.github.dingyi222666.luaparser.semantic.types.model.JavaInstanceType
+import io.github.dingyi222666.luaparser.semantic.types.model.JavaOverloadSet
+import io.github.dingyi222666.luaparser.semantic.types.model.JavaOverloadType
+import io.github.dingyi222666.luaparser.semantic.types.model.JavaPrimitiveType
+import io.github.dingyi222666.luaparser.semantic.types.model.JavaStaticMemberType
 import io.github.dingyi222666.luaparser.semantic.types.model.LiteralType
 import io.github.dingyi222666.luaparser.semantic.types.model.MultiReturnType
 import io.github.dingyi222666.luaparser.semantic.types.model.ModuleType
@@ -91,10 +100,60 @@ object TypeNormalizer {
         is MultiReturnType -> MultiReturnType(type.types.map { normalize(it, aliasStack) })
         is VarargType -> VarargType(normalize(type.elementType, aliasStack))
         is ArrayType -> ArrayType(normalize(type.elementType, aliasStack))
+        is JavaClassType -> normalizeJavaClass(type, aliasStack)
+        is JavaInstanceType -> JavaInstanceType(
+            classType = normalize(type.classType, aliasStack) as JavaClassType,
+            typeArguments = type.typeArguments.map { normalize(it, aliasStack) },
+            javaName = type.javaName
+        )
+        is JavaConstructorType -> JavaConstructorType(
+            owner = type.owner,
+            signature = normalize(type.signature, aliasStack) as FunctionType,
+            visibility = type.visibility
+        )
+        is JavaStaticMemberType -> JavaStaticMemberType(
+            owner = type.owner,
+            memberName = type.memberName,
+            valueType = normalize(type.valueType, aliasStack),
+            memberKind = type.memberKind,
+            visibility = type.visibility
+        )
+        is JavaInstanceMemberType -> JavaInstanceMemberType(
+            owner = type.owner,
+            memberName = type.memberName,
+            valueType = normalize(type.valueType, aliasStack),
+            memberKind = type.memberKind,
+            visibility = type.visibility
+        )
+        is JavaOverloadType -> JavaOverloadType(
+            javaName = type.javaName,
+            overloadName = type.overloadName,
+            callSignatures = type.callSignatures.map { normalize(it, aliasStack) as FunctionType }
+        )
+        is JavaArrayType -> JavaArrayType(
+            elementType = normalize(type.elementType, aliasStack),
+            dimensions = type.dimensions
+        )
+        is JavaPrimitiveType -> type
         is AppliedType -> AppliedType(type.baseName, type.typeArguments.map { normalize(it, aliasStack) })
         is TypeParameterType -> normalizeTypeParameter(type, aliasStack)
         is CustomType -> type
         UnknownType, ErrorType, NeverType -> type
+    }
+
+    private fun normalizeJavaClass(type: JavaClassType, aliasStack: MutableList<AliasType>): JavaClassType {
+        return JavaClassType(
+            javaName = type.javaName,
+            constructors = JavaOverloadSet(
+                type.constructors.overloads.map { normalize(it, aliasStack) as JavaConstructorType }
+            ),
+            staticMembers = type.staticMembers.mapValues { (_, member) -> normalize(member, aliasStack) as JavaStaticMemberType },
+            instanceMembers = type.instanceMembers.mapValues { (_, member) -> normalize(member, aliasStack) as JavaInstanceMemberType },
+            innerClasses = type.innerClasses.mapValues { (_, innerClass) -> normalize(innerClass, aliasStack) as JavaClassType },
+            superClass = type.superClass?.let { normalize(it, aliasStack) as JavaClassType },
+            interfaces = type.interfaces.map { normalize(it, aliasStack) as JavaClassType },
+            typeParameters = type.typeParameters.map { normalizeTypeParameter(it, aliasStack) }
+        )
     }
 
     private fun normalizeAlias(type: AliasType, aliasStack: MutableList<AliasType>): Type {

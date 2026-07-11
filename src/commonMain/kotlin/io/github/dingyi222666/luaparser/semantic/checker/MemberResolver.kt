@@ -6,10 +6,15 @@ import io.github.dingyi222666.luaparser.semantic.binder.BinderPassResult
 import io.github.dingyi222666.luaparser.semantic.binder.ScopeId
 import io.github.dingyi222666.luaparser.semantic.types.model.AppliedType
 import io.github.dingyi222666.luaparser.semantic.types.model.ArrayType
+import io.github.dingyi222666.luaparser.semantic.types.model.CallableType
 import io.github.dingyi222666.luaparser.semantic.types.model.ClassType
-import io.github.dingyi222666.luaparser.semantic.types.model.FunctionParameter
 import io.github.dingyi222666.luaparser.semantic.types.model.FunctionType
+import io.github.dingyi222666.luaparser.semantic.types.model.FunctionParameter
 import io.github.dingyi222666.luaparser.semantic.types.model.IntersectionType
+import io.github.dingyi222666.luaparser.semantic.types.model.JavaArrayType
+import io.github.dingyi222666.luaparser.semantic.types.model.JavaClassType
+import io.github.dingyi222666.luaparser.semantic.types.model.JavaInstanceType
+import io.github.dingyi222666.luaparser.semantic.types.model.JavaMemberKind
 import io.github.dingyi222666.luaparser.semantic.types.model.ModuleType
 import io.github.dingyi222666.luaparser.semantic.types.model.OverloadedFunctionType
 import io.github.dingyi222666.luaparser.semantic.types.model.PrimitiveType
@@ -35,6 +40,9 @@ class MemberResolver(
             is TableType -> resolveTableMember(normalized, receiverType, memberName, preferMethod)
             is ModuleType -> resolveModuleMember(normalized, receiverType, memberName, preferMethod)
             is ClassType -> resolveClassMember(normalized, receiverType, memberName, preferMethod)
+            is JavaClassType -> resolveJavaStaticMember(normalized, memberName)
+            is JavaInstanceType -> resolveJavaInstanceMember(normalized, memberName, preferMethod)
+            is JavaArrayType -> resolveJavaArrayMember(normalized, memberName)
             is TypeParameterType -> normalized.constraint
                 ?.let { resolveMember(it, memberName, preferMethod, lexicalScopeId) }
                 ?: MemberResolution(baseType = normalized, failureReason = MemberFailureReason.UNSUPPORTED_BASE_TYPE)
@@ -76,6 +84,15 @@ class MemberResolver(
             is TableType -> resolveTableIndex(normalized, indexNode, indexType)
             is ModuleType -> resolveModuleIndex(normalized, indexNode, indexType)
             is ClassType -> resolveClassIndex(normalized, indexNode)
+            is JavaClassType -> resolveJavaClassIndex(normalized, indexNode)
+            is JavaInstanceType -> resolveJavaInstanceIndex(normalized, indexNode)
+            is JavaArrayType -> {
+                if (PrimitiveType.NUMBER.isAssignableFrom(indexType)) {
+                    MemberResolution(type = normalized.elementType, accessKind = MemberAccessKind.INDEX, baseType = normalized)
+                } else {
+                    MemberResolution(baseType = normalized, failureReason = MemberFailureReason.INVALID_INDEX_TYPE)
+                }
+            }
             is TypeParameterType -> normalized.constraint
                 ?.let { resolveIndex(it, indexNode, indexType, lexicalScopeId) }
                 ?: MemberResolution(baseType = normalized, failureReason = MemberFailureReason.UNSUPPORTED_BASE_TYPE)
@@ -126,8 +143,82 @@ class MemberResolver(
                 ?: methods[memberName]?.let { MemberAccessKind.METHOD to it }
         }
         return member?.let { (kind, type) ->
-            MemberResolution(type = bindMethodReceiver(type, receiverType, kind), accessKind = kind, baseType = classType)
+            val resolvedType = if (classType.isJavaProviderClassReference() && kind == MemberAccessKind.METHOD) {
+                type.withJavaCallableSurface(receiverType = receiverType, includeReceiver = preferMethod)
+            } else {
+                bindMethodReceiver(type, receiverType, kind)
+            }
+            MemberResolution(type = resolvedType, accessKind = kind, baseType = classType)
         } ?: MemberResolution(baseType = classType, failureReason = MemberFailureReason.MISSING_MEMBER)
+    }
+
+    private fun resolveJavaStaticMember(
+        classType: JavaClassType,
+        memberName: String
+    ): MemberResolution {
+        classType.allInnerClasses()[memberName]?.let { innerClass ->
+            return MemberResolution(type = innerClass, accessKind = MemberAccessKind.FIELD, baseType = classType)
+        }
+
+        val member = classType.allStaticMembers()[memberName]
+            ?: return classType.resolveStaticJavaBeanProperty(memberName)
+                ?.let { property ->
+                    MemberResolution(
+                        type = property.valueType,
+                        accessKind = MemberAccessKind.FIELD,
+                        baseType = classType
+                    )
+                }
+            ?: MemberResolution(baseType = classType, failureReason = MemberFailureReason.MISSING_MEMBER)
+        val accessKind = javaAccessKind(member.memberKind, member.valueType)
+        return MemberResolution(
+            type = if (accessKind == MemberAccessKind.METHOD) {
+                member.valueType.withJavaCallableSurface(signatureMetadata = member.signatureMetadata)
+            } else {
+                member.valueType
+            },
+            accessKind = accessKind,
+            baseType = classType
+        )
+    }
+
+    private fun resolveJavaInstanceMember(
+        instanceType: JavaInstanceType,
+        memberName: String,
+        includeReceiver: Boolean
+    ): MemberResolution {
+        val member = instanceType.allInstanceMembers()[memberName]
+            ?: return instanceType.resolveInstanceJavaBeanProperty(memberName)
+                ?.let { property ->
+                    MemberResolution(
+                        type = property.valueType,
+                        accessKind = MemberAccessKind.FIELD,
+                        baseType = instanceType
+                    )
+                }
+            ?: MemberResolution(baseType = instanceType, failureReason = MemberFailureReason.MISSING_MEMBER)
+        val accessKind = javaAccessKind(member.memberKind, member.valueType)
+        return MemberResolution(
+            type = if (accessKind == MemberAccessKind.METHOD) {
+                member.valueType.withJavaCallableSurface(
+                    receiverType = instanceType,
+                    includeReceiver = includeReceiver,
+                    signatureMetadata = member.signatureMetadata
+                )
+            } else {
+                member.valueType
+            },
+            accessKind = accessKind,
+            baseType = instanceType
+        )
+    }
+
+    private fun resolveJavaArrayMember(arrayType: JavaArrayType, memberName: String): MemberResolution {
+        return if (memberName == "length") {
+            MemberResolution(type = PrimitiveType.NUMBER, accessKind = MemberAccessKind.FIELD, baseType = arrayType)
+        } else {
+            MemberResolution(baseType = arrayType, failureReason = MemberFailureReason.MISSING_MEMBER)
+        }
     }
 
     private fun resolveModuleMember(
@@ -136,6 +227,13 @@ class MemberResolver(
         memberName: String,
         preferMethod: Boolean
     ): MemberResolution {
+        // Prefer reflected static methods from __class (e.g. Map$Entry.comparingByKey) over any
+        // non-callable field collision on the module table surface.
+        val javaStatic = moduleType.javaClassSurface()
+            ?.let { resolveJavaStaticMember(it, memberName) }
+            ?.takeIf { it.isSuccess }
+            ?.copy(baseType = moduleType)
+
         val member = if (preferMethod) {
             moduleType.methods[memberName]?.let { MemberAccessKind.METHOD to it }
                 ?: moduleType.fields[memberName]?.let { MemberAccessKind.FIELD to it }
@@ -143,9 +241,31 @@ class MemberResolver(
             moduleType.fields[memberName]?.let { MemberAccessKind.FIELD to it }
                 ?: moduleType.methods[memberName]?.let { MemberAccessKind.METHOD to it }
         }
-        return member?.let { (kind, type) ->
-            MemberResolution(type = bindMethodReceiver(type, receiverType, kind), accessKind = kind, baseType = moduleType)
-        } ?: MemberResolution(baseType = moduleType, failureReason = MemberFailureReason.MISSING_MEMBER)
+
+        val moduleResolution = member?.let { (kind, type) ->
+            val resolvedType = if (moduleType.isJavaBackedModule() && kind == MemberAccessKind.METHOD) {
+                type.withJavaCallableSurface()
+            } else if (moduleType.isJavaBackedModule() && kind == MemberAccessKind.FIELD && type is CallableType) {
+                // Static helpers may land on fields as callable types; still surface as methods.
+                type.withJavaCallableSurface()
+            } else {
+                bindMethodReceiver(type, receiverType, kind)
+            }
+            val accessKind = when {
+                kind == MemberAccessKind.METHOD -> MemberAccessKind.METHOD
+                moduleType.isJavaBackedModule() && type is CallableType -> MemberAccessKind.METHOD
+                else -> kind
+            }
+            MemberResolution(type = resolvedType, accessKind = accessKind, baseType = moduleType)
+        }
+
+        return when {
+            javaStatic != null && javaStatic.accessKind == MemberAccessKind.METHOD -> javaStatic
+            moduleResolution != null && moduleResolution.accessKind == MemberAccessKind.METHOD -> moduleResolution
+            javaStatic != null -> javaStatic
+            moduleResolution != null -> moduleResolution
+            else -> MemberResolution(baseType = moduleType, failureReason = MemberFailureReason.MISSING_MEMBER)
+        }
     }
 
     private fun resolveTableIndex(tableType: TableType, indexNode: ExpressionNode, indexType: Type): MemberResolution {
@@ -181,8 +301,13 @@ class MemberResolver(
             return MemberResolution(type = it, accessKind = MemberAccessKind.FIELD, baseType = classType)
         }
         classType.getAllMethods()[key]?.let {
-                return MemberResolution(
-                type = bindMethodReceiver(it, receiverBindingType(classType), MemberAccessKind.METHOD),
+            val resolvedType = if (classType.isJavaProviderClassReference()) {
+                it.withJavaCallableSurface(receiverType = receiverBindingType(classType), includeReceiver = false)
+            } else {
+                bindMethodReceiver(it, receiverBindingType(classType), MemberAccessKind.METHOD)
+            }
+            return MemberResolution(
+                type = resolvedType,
                 accessKind = MemberAccessKind.METHOD,
                 baseType = classType
             )
@@ -190,18 +315,61 @@ class MemberResolver(
         return MemberResolution(baseType = classType, failureReason = MemberFailureReason.MISSING_MEMBER)
     }
 
+    private fun resolveJavaClassIndex(
+        classType: JavaClassType,
+        indexNode: ExpressionNode
+    ): MemberResolution {
+        val key = stringLiteralKey(indexNode)
+            ?: return MemberResolution(baseType = classType, failureReason = MemberFailureReason.INVALID_INDEX_TYPE)
+        return resolveJavaStaticMember(classType, key)
+    }
+
+    private fun resolveJavaInstanceIndex(
+        instanceType: JavaInstanceType,
+        indexNode: ExpressionNode
+    ): MemberResolution {
+        val key = stringLiteralKey(indexNode)
+            ?: return MemberResolution(baseType = instanceType, failureReason = MemberFailureReason.INVALID_INDEX_TYPE)
+        return resolveJavaInstanceMember(instanceType, key, includeReceiver = false)
+    }
+
     private fun resolveModuleIndex(moduleType: ModuleType, indexNode: ExpressionNode, indexType: Type): MemberResolution {
         val literalKey = literalTableKey(indexNode)
         if (literalKey != null) {
+            // Prefer nested/interface static members from __class (Map$Entry.comparingByKey style).
+            moduleType.javaClassSurface()?.let { classType ->
+                val javaResolution = resolveJavaStaticMember(classType, literalKey)
+                if (javaResolution.isSuccess && javaResolution.accessKind == MemberAccessKind.METHOD) {
+                    return javaResolution.copy(baseType = moduleType)
+                }
+            }
             moduleType.fields[literalKey]?.let {
+                if (moduleType.isJavaBackedModule() && it is CallableType) {
+                    return MemberResolution(
+                        type = it.withJavaCallableSurface(),
+                        accessKind = MemberAccessKind.METHOD,
+                        baseType = moduleType
+                    )
+                }
                 return MemberResolution(type = it, accessKind = MemberAccessKind.FIELD, baseType = moduleType)
             }
             moduleType.methods[literalKey]?.let {
+                val resolvedType = if (moduleType.isJavaBackedModule()) {
+                    it.withJavaCallableSurface()
+                } else {
+                    bindMethodReceiver(it, receiverBindingType(moduleType), MemberAccessKind.METHOD)
+                }
                 return MemberResolution(
-                    type = bindMethodReceiver(it, receiverBindingType(moduleType), MemberAccessKind.METHOD),
+                    type = resolvedType,
                     accessKind = MemberAccessKind.METHOD,
                     baseType = moduleType
                 )
+            }
+            moduleType.javaClassSurface()?.let { classType ->
+                val javaResolution = resolveJavaStaticMember(classType, literalKey)
+                if (javaResolution.isSuccess) {
+                    return javaResolution.copy(baseType = moduleType)
+                }
             }
         }
 
@@ -292,5 +460,13 @@ class MemberResolver(
     private fun receiverBindingType(baseType: Type): Type {
         val normalized = baseType
         return if (normalized is AppliedType) normalized else normalized
+    }
+
+    private fun javaAccessKind(memberKind: JavaMemberKind, valueType: Type): MemberAccessKind {
+        return when {
+            memberKind == JavaMemberKind.METHOD -> MemberAccessKind.METHOD
+            valueType is CallableType -> MemberAccessKind.METHOD
+            else -> MemberAccessKind.FIELD
+        }
     }
 }

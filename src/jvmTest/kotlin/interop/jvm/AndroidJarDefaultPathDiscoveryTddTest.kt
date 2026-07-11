@@ -216,6 +216,128 @@ class AndroidJarDefaultPathDiscoveryTddTest {
         )
     }
 
+    @Test
+    fun reflection_classpath_discovers_well_known_macos_when_metadata_unset() {
+        val userHome = Files.createTempDirectory("lua-parser-mac-reflect-home-")
+        val expectedJar = writeFakePlatformJar(userHome.resolve("Library/Android/sdk"), 35).toFile().path
+        val configuration = JvmWorkspaceConfiguration() // no jvm.androidJar metadata
+
+        assertEquals(
+            listOf(expectedJar),
+            configuration.reflectionClasspathEntries(
+                environment = emptyMap(),
+                userHome = userHome.toFile(),
+                localAppData = null
+            )
+        )
+        val note = configuration.androidJarConfigurationNote(
+            environment = emptyMap(),
+            userHome = userHome.toFile(),
+            localAppData = null
+        ).orEmpty()
+        assertTrue(note.contains("well-known"), "Expected well-known discovery note; got: $note")
+        assertTrue(note.contains(expectedJar), "Note should include discovered path; got: $note")
+    }
+
+    @Test
+    fun reflection_classpath_never_auto_selects_downloads_android_jar() {
+        val userHome = Files.createTempDirectory("lua-parser-downloads-home-")
+        val downloadsJar = userHome.resolve("Downloads/android.jar")
+        Files.createDirectories(downloadsJar.parent)
+        Files.createFile(downloadsJar)
+        // Well-known SDK roots intentionally empty; only Downloads has a jar.
+        val configuration = JvmWorkspaceConfiguration()
+
+        val classpath = configuration.reflectionClasspathEntries(
+            environment = emptyMap(),
+            userHome = userHome.toFile(),
+            localAppData = null
+        )
+
+        assertTrue(
+            classpath.none { it.replace('\\', '/').contains("/Downloads/android.jar") },
+            "Downloads android.jar must remain explicit metadata only; classpath=$classpath"
+        )
+        assertTrue(
+            classpath.none { path -> File(path).canonicalFile == downloadsJar.toFile().canonicalFile },
+            "Downloads jar must not be auto-selected; classpath=$classpath"
+        )
+
+        val explicit = JvmWorkspaceConfiguration(androidJar = downloadsJar.toString())
+        assertEquals(
+            listOf(downloadsJar.toString()),
+            explicit.reflectionClasspathEntries(
+                environment = emptyMap(),
+                userHome = userHome.toFile(),
+                localAppData = null
+            )
+        )
+    }
+
+    @Test
+    fun missing_android_jar_soft_skip_reason_is_explicit() {
+        val emptyHome = Files.createTempDirectory("lua-parser-soft-skip-home-")
+        val reason = JvmWorkspaceConfiguration.missingAndroidJarSoftSkipReason(
+            environment = emptyMap(),
+            userHome = emptyHome.toFile(),
+            localAppData = emptyHome.resolve("LocalAppData-missing").toString(),
+            taskId = "TASK-537"
+        )
+
+        assertTrue(reason.contains("TASK-537"), "Soft-skip must name task; got: $reason")
+        assertTrue(reason.contains("android.jar"), "Soft-skip must mention android.jar; got: $reason")
+        assertTrue(
+            reason.contains(JvmWorkspaceConfiguration.ANDROID_HOME_ENV) ||
+                reason.contains(JvmWorkspaceConfiguration.ANDROID_SDK_ROOT_ENV),
+            "Soft-skip must mention SDK env vars; got: $reason"
+        )
+        assertTrue(
+            reason.contains("well-known") ||
+                reason.contains("Library/Android/sdk") ||
+                reason.contains(JvmWorkspaceConfiguration.ANDROID_JAR_METADATA_KEY),
+            "Soft-skip must explain recovery / discovery roots; got: $reason"
+        )
+        assertTrue(
+            !reason.contains("G:/Android/Sdk") || reason.contains("never") || reason.contains("last"),
+            "Soft-skip must not hard-require G:/; got: $reason"
+        )
+    }
+
+    @Test
+    fun host_default_android_jar_path_matches_reflective_discovery_when_present() {
+        val hostMacJar = File(
+            System.getProperty("user.home"),
+            "Library/Android/sdk/platforms/android-35/android.jar"
+        )
+        if (!hostMacJar.isFile) {
+            println(
+                "SKIP reason: host android.jar absent at ${hostMacJar.path}; " +
+                    JvmWorkspaceConfiguration.missingAndroidJarSoftSkipReason(taskId = "TASK-537")
+            )
+            return
+        }
+
+        val discovered = JvmWorkspaceConfiguration.discoverReflectiveAndroidJarPath()
+        val defaultPath = File(JvmWorkspaceConfiguration.DEFAULT_ANDROID_JAR_PATH)
+        val reflective = JvmWorkspaceConfiguration().reflectionClasspathEntries()
+
+        assertTrue(discovered != null, "Expected reflective discovery to find host jar")
+        assertTrue(File(discovered!!).isFile)
+        assertTrue(defaultPath.isFile)
+        assertTrue(
+            reflective.any { File(it).canonicalFile == File(discovered).canonicalFile },
+            "reflectionClasspathEntries without metadata must include discovered jar; got $reflective"
+        )
+        assertTrue(
+            !defaultPath.path.replace('\\', '/').startsWith("G:/Android/Sdk", ignoreCase = true),
+            "DEFAULT_ANDROID_JAR_PATH must not hard-require G:/; got ${defaultPath.path}"
+        )
+        assertTrue(
+            defaultPath.length() > 1_000_000L || hostMacJar.length() > 1_000_000L,
+            "Expected real android-35 sized jar (~27MB); default=${defaultPath.length()} host=${hostMacJar.length()}"
+        )
+    }
+
     private fun fakeAndroidSdk(vararg apiLevels: Int): Path {
         val root = Files.createTempDirectory("lua-parser-android-sdk-")
         apiLevels.forEach { apiLevel ->

@@ -80,7 +80,15 @@ internal class DeclarationBinder(
     }
 
     override fun visitAssignmentStatement(node: AssignmentStatement, value: Unit) {
-        node.init.forEach { visitExpressionNode(it, value) }
+        // AST quirk: AssignmentStatement.init = LHS targets, .variables = RHS expressions.
+        // First bare free-name write invents an AST GLOBAL with identifier-only range;
+        // later writes / shadowed locals / member-index LHS stay non-declarative.
+        node.init.forEach { target ->
+            when (target) {
+                is Identifier -> bindBareGlobalAssignmentTarget(target)
+                else -> visitExpressionNode(target, value)
+            }
+        }
         node.variables.forEach { visitExpressionNode(it, value) }
     }
 
@@ -217,42 +225,96 @@ internal class DeclarationBinder(
     override fun visitAttributeIdentifier(identifier: AttributeIdentifier, value: Unit) {
     }
 
+    /**
+     * First bare free-name assignment introduces a chunk-level AST GLOBAL whose range is
+     * the identifier token only. Visible locals / parameters / prior VALUE decls (including
+     * builtins and prior free-global invents) suppress inventing a peer declaration.
+     */
+    private fun bindBareGlobalAssignmentTarget(identifier: Identifier) {
+        val existing = builder.findVisibleValueDeclaration(identifier.name)
+        if (existing != null) {
+            // Local introducers win shadowing; existing GLOBAL/FUNCTION/builtin VALUE
+            // symbols are re-used as write references (no forked decl at this site).
+            return
+        }
+
+        builder.addDeclarationWithSymbol(
+            globalDeclaration(
+                id = builder.nextDeclarationId(),
+                name = identifier.name,
+                origin = DeclarationOrigin.AST,
+                owner = DeclarationOwner.Root,
+                anchorNode = identifier,
+                range = identifier.range
+            ),
+            scopeId = builder.rootScopeId
+        )
+    }
+
     private fun createFunctionDeclaration(
         node: FunctionDeclaration,
         documentation: DeclarationDocumentation?
     ): BinderDeclaration? {
         val owner = DeclarationOwner.Lexical(currentLexicalOwnerNode())
-        val declaration = when (val identifier = node.identifier) {
+        return when (val identifier = node.identifier) {
             is Identifier -> if (node.isLocal) {
-                functionDeclaration(
-                    id = builder.nextDeclarationId(),
-                    name = identifier.name,
-                    owner = owner,
-                    anchorNode = identifier,
-                    documentation = documentation
+                builder.addDeclarationWithSymbol(
+                    functionDeclaration(
+                        id = builder.nextDeclarationId(),
+                        name = identifier.name,
+                        owner = owner,
+                        anchorNode = identifier,
+                        documentation = documentation
+                    )
                 )
             } else {
-                globalDeclaration(
-                    id = builder.nextDeclarationId(),
-                    name = identifier.name,
-                    owner = owner,
-                    anchorNode = identifier,
-                    documentation = documentation
-                )
+                bindNonLocalFunctionName(identifier, owner, documentation)
             }
 
-            is MemberExpression -> methodDeclaration(
-                id = builder.nextDeclarationId(),
-                name = identifier.identifier.name,
-                origin = DeclarationOrigin.AST,
-                owner = owner,
-                anchorNode = identifier.identifier,
-                documentation = documentation
+            is MemberExpression -> builder.addDeclarationWithSymbol(
+                methodDeclaration(
+                    id = builder.nextDeclarationId(),
+                    name = identifier.identifier.name,
+                    origin = DeclarationOrigin.AST,
+                    owner = owner,
+                    anchorNode = identifier.identifier,
+                    documentation = documentation
+                )
             )
 
-            else -> return null
+            else -> null
         }
-        return builder.addDeclarationWithSymbol(declaration)
+    }
+
+    /**
+     * Non-local `function name()` is itself a GLOBAL introducer. When a prior bare free-name
+     * write already invented the GLOBAL symbol, attach this function-site decl to that
+     * symbol so identity stays unified (later bare writes remain non-declarative).
+     */
+    private fun bindNonLocalFunctionName(
+        identifier: Identifier,
+        owner: DeclarationOwner,
+        documentation: DeclarationDocumentation?
+    ): BinderDeclaration {
+        val declaration = globalDeclaration(
+            id = builder.nextDeclarationId(),
+            name = identifier.name,
+            owner = owner,
+            anchorNode = identifier,
+            documentation = documentation
+        )
+        val existing = builder.findVisibleValueDeclaration(identifier.name)
+        val existingSymbolId = existing?.symbolId
+        return if (
+            existingSymbolId != null &&
+            existing.kind.namespace == DeclarationNamespace.VALUE &&
+            existing.kind != DeclarationKind.LOCAL &&
+            existing.kind != DeclarationKind.PARAMETER
+        ) {
+            builder.addDeclarationToExistingSymbol(declaration, existingSymbolId)
+        } else {
+            builder.addDeclarationWithSymbol(declaration)
+        }
     }
 
     private fun bindFunctionParameters(

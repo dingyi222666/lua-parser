@@ -6,7 +6,8 @@ package io.github.dingyi222666.luaparser.lexer
  * @description:
  **/
 class WrapperLuaLexer(
-    private val currentLexer: LuaLexer
+    private val currentLexer: LuaLexer,
+    private val supportAndroLuaKeywords: Boolean = true
 ) {
 
     private val lastStates = ArrayDeque<LexerState>()
@@ -30,12 +31,23 @@ class WrapperLuaLexer(
     fun column() = currentState.column + 1
 
     fun hasLineBreakBeforeNextSignificantToken(): Boolean {
-        return currentLexer.hasLineBreakBeforeNextSignificantToken(currentState.index + currentState.length)
+        // After pushback/back, the next significant token is queued in currentStates.
+        // Look for a line break immediately before that queued token — not past the
+        // already-re-advanced currentState (which would skip a NAME RHS and see the
+        // newline before a following statement).
+        val fromIndex = if (currentStates.isNotEmpty()) {
+            currentStates.first().index
+        } else {
+            currentState.index + currentState.length
+        }
+        return currentLexer.hasLineBreakBeforeNextSignificantToken(fromIndex)
     }
 
     fun advance(): LuaTokenTypes {
         if (currentStates.isNotEmpty()) {
             currentState = currentStates.removeFirst()
+            // Record queued tokens in lastStates so back()/peekN work after pushback.
+            currentState.let(lastStates::addFirst)
         } else {
             doAdvance()
             currentState.let(lastStates::addFirst)
@@ -68,7 +80,7 @@ class WrapperLuaLexer(
 
 
     private fun doAdvance() {
-        val type = currentLexer.nextToken()
+        val type = versionAwareTokenType(currentLexer.nextToken())
 
         val newState = LexerState(
             index = currentLexer.index,
@@ -92,6 +104,10 @@ class WrapperLuaLexer(
         if (lastStates.size >= 6) {
             lastStates.removeLast()
         }
+    }
+
+    private fun versionAwareTokenType(type: LuaTokenTypes): LuaTokenTypes {
+        return if (supportAndroLuaKeywords || !LuaLexer.isAndroLuaKeyword(type)) type else LuaTokenTypes.NAME
     }
 }
 

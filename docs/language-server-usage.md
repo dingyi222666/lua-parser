@@ -2,7 +2,9 @@
 
 This document describes the JVM LSP entry point, workspace configuration, supported request surface, Android-Lua/JVM metadata behavior, and the serialized verification harness expectations for TASK-053.
 
-The behavior here is based on the current JVM implementation under `src/jvmMain/kotlin/io/github/dingyi222666/luaparser/lsp` and related JVM interop code. Items that still need command-level confirmation are labeled as pending TASK-043 or TASK-037 because this documentation wave does not run Gradle, compile, or test commands.
+**Post-TASK-184 / pre-TASK-043 snapshot (2026-07-11 docs-only refresh, TASK-497).** Product surface work through TASK-184 (Android-Lua library stubs) and several LSP wires (TASK-156 workspace folders, TASK-161 URI normalization, TASK-396 hierarchical document symbols, TASK-397 modern workspace symbols in product code under review) is reflected below from source inspection. This documentation wave does **not** run Gradle, compile, or tests. **TASK-043 remains blocked**; do not treat this page as final-green or production-readiness evidence. Final acceptance audit remains TASK-037 after TASK-043.
+
+Items that still need command-level confirmation are labeled as pending TASK-043 or TASK-037.
 
 ## Scope
 
@@ -62,15 +64,15 @@ Workspace-folder selection during `initialize` follows the policy in [Workspace 
 | References | `textDocument/references` returns location lists |
 | Document highlight | `textDocument/documentHighlight` |
 | Document symbols | `textDocument/documentSymbol` dual-path: hierarchical `DocumentSymbol` when the client advertises hierarchical support, otherwise flattened `SymbolInformation` |
-| Workspace symbols | `workspace/symbol` currently returned as flattened `SymbolInformation`; modern `WorkspaceSymbol` helper exists but wire is pending TASK-397 |
+| Workspace symbols | `workspace/symbol` dual-path (product wire TASK-397 under review): modern `WorkspaceSymbol` when the client advertises `workspace.symbol.resolveSupport`, otherwise flattened `SymbolInformation` |
 
 The implementation returns LSP4J `Either` wrappers where required by the protocol. Navigation still uses location lists rather than `LocationLink`. Document-symbol and workspace-symbol shapes are described in [Hierarchical Document Symbols And Modern Workspace Symbols](#hierarchical-document-symbols-and-modern-workspace-symbols).
 
-Capability advertisement and request behavior are pending serialized confirmation in TASK-043. Final production-readiness claims remain pending TASK-037.
+Capability advertisement and request behavior are pending serialized confirmation in TASK-043. Final production-readiness claims remain pending TASK-037. **This repository is not finally green.**
 
 ## Workspace Folders, rootUri, And Watched Files
 
-After TASK-156, initialization indexes disk-backed Lua sources under the client's workspace roots instead of analyzing only open documents. The policy is implemented in `LuaLanguageService` and exercised by `LspWorkspaceFoldersTddTest` and `LspWatchedFilesTddTest`.
+After TASK-156, initialization indexes disk-backed Lua sources under the client's workspace roots instead of analyzing only open documents. The policy is implemented in `LuaLanguageService` and exercised by `LspWorkspaceFoldersTddTest` and `LspWatchedFilesTddTest` (command confirmation still TASK-043).
 
 ### Folder selection and `rootUri` fallback
 
@@ -100,16 +102,17 @@ The server does not register file watchers itself. Editors or harnesses must sub
 
 Focused coverage for create/change/delete, `.aly` indexing, overlay preservation, and diagnostic republish lives in `LspWatchedFilesTddTest`. Command-level confirmation remains deferred to TASK-043.
 
-### URI normalization caveats (TASK-161)
+### URI normalization (TASK-161 done at task level)
 
-Workspace-folder roots, `rootUri`, open-document URIs, watched-file URIs, and client path-string APIs currently share several ad hoc conversion helpers (`rawWorkspacePathFromUri`, `pathFromFileUri`, `lspVirtualPathFromUri`, `lspFileUri`). Known caveats pending TASK-161:
+Workspace-folder roots, `rootUri`, open-document URIs, watched-file URIs, and client path-string APIs share the hardened helpers on `LuaLanguageService` (`normalizeLspFileUriPath`, `normalizeFileSystemPathFromUriPath`, `lspFileUri`, `pathFromFileUri`). TASK-161 is **done** at task level (REVIEW27 focused accept of `LspUriHandlingTddTest`); full-suite / global confirmation remains TASK-043. Current policy:
 
-- Unix absolute `file:` URIs and Windows drive-letter paths are not yet guaranteed to share one hardened normalization path; leading-slash and percent-encoding roundtrips can still differ by platform.
-- `file:` path decoding currently strips a leading `/` in some helpers, which is Windows-oriented and can confuse POSIX absolute paths until TASK-161 hardens the conversion.
-- Non-file or custom schemes (`untitled:`, `vscode-notebook-cell:`, opaque URIs) are encoded to stable internal virtual paths for analysis, while diagnostics and same-document navigation preserve the original client URI when possible. Synthetic JVM/Android providers continue to use virtual `file:///__jvm__/...` URIs.
-- `rootUri` and workspace-folder URI conversion are intended to share one path (acceptance criterion for TASK-161) but are not yet fully unified across all entry points.
+- Unix absolute `file:` URIs keep their leading slash (`/Users/...`, `/home/...`).
+- Windows drive-letter paths normalize to `C:/...` (only the extra slash before the drive is stripped).
+- Percent-encoded segments decode via `URI` so path text round-trips with `lspFileUri`.
+- Non-file or custom schemes (`untitled:`, `vscode-notebook-cell:`, opaque URIs) map to stable internal virtual paths for analysis, while diagnostics and same-document navigation preserve the original client URI when possible. Synthetic JVM/Android providers continue to use virtual `file:///__jvm__/...` URIs.
+- `rootUri` and workspace-folder URI conversion share the same `WorkspaceFolder` + `pathFromFileUri` path.
 
-Clients should prefer consistent `file:` URIs from the same host/path style for folders, documents, and watched events. Cross-platform URI hardening is owned by TASK-161 (`LspUriHandlingTddTest`); this page only documents the current caveats.
+Clients should prefer consistent `file:` URIs from the same host/path style for folders, documents, and watched events. Treat URI behavior as product-landed but not finally green until TASK-043.
 
 ## Document Sync And Diagnostics
 
@@ -140,19 +143,19 @@ The request surface is backed by `LuaWorkspaceQueryFacade` over the current work
 - Hover returns Markdown containing the symbol name, detail, and type display name when available.
 - Completion returns visible locals, functions, module members, reflected JVM members, configured imports, and keyword/snippet entries as provided by the semantic query layer. The server advertises `.` and `:` as Lua member-completion trigger characters; this advertisement does not change the completion item list shape.
 - Signature help returns callable labels, parameter labels, optional Markdown documentation, active signature, and active parameter. Method receiver offsets and Lua short-string call syntax are implemented in the query layer and covered by pending LSP tests.
-- Definition and declaration resolve locals, module aliases, module fields, reflected JVM class/member providers, and Android-Lua/LuaJava class-load facts when the current snapshot can identify them.
+- Definition and declaration resolve locals, module aliases, module fields, reflected JVM class/member providers, and Android-Lua/LuaJava class-load facts when the current snapshot can identify them. Require-local alias definition prefers `resolveRequire` provider paths so `local dep = require("definition-dep")` navigates to the module file rather than only the local binding (TASK-396 follow-on product path; still pending TASK-043 confirmation).
 - References and document highlights collect known occurrences from the current workspace snapshot and provider surfaces.
 - Document symbols list navigable non-builtin declarations in the requested open document, excluding parameters and type parameters. Response shape is dual-path: nested hierarchical `DocumentSymbol` when the client advertised `hierarchicalDocumentSymbolSupport`, otherwise flattened `SymbolInformation` (see [Hierarchical Document Symbols And Modern Workspace Symbols](#hierarchical-document-symbols-and-modern-workspace-symbols)).
-- Workspace symbols search indexed workspace documents, open document overlays, and synthetic provider entries. Blank queries return all indexed symbols; nonblank queries use case-insensitive substring matching. The live wire currently returns flattened `SymbolInformation` (`Either.left`); a modern `WorkspaceSymbol` helper is present for the pending TASK-397 dual-path wire.
+- Workspace symbols search indexed workspace documents, open document overlays, and synthetic provider entries. Blank queries return all indexed symbols; nonblank queries use case-insensitive substring matching. Response shape is dual-path on `workspace.symbol.resolveSupport` (TASK-397 product wire under review; not a final-green claim).
 
 The current implementation uses a full engine rebuild on cold `initialize` and on metadata configuration changes. Open/change/close and watched-file updates use incremental snapshot deltas when a prior snapshot is ready. Folder indexing runs during initialization; later disk create/change/delete visibility depends on `workspace/didChangeWatchedFiles` as described above.
 
 
 ## Hierarchical Document Symbols And Modern Workspace Symbols
 
-This section documents the current document-symbol and workspace-symbol helper surface and wire status for the JVM LSP. Product code for hierarchical document symbols was wired under TASK-396; modern workspace-symbol dual-path selection remains pending TASK-397. Command-level confirmation is deferred to TASK-043.
+This section documents the document-symbol and workspace-symbol helper surface and wire status for the JVM LSP after TASK-396 (done) and TASK-397 (product wire under review). Command-level confirmation is deferred to TASK-043.
 
-### Hierarchical `textDocument/documentSymbol` (TASK-396 wired)
+### Hierarchical `textDocument/documentSymbol` (TASK-396 done)
 
 At `initialize`, `LuaLanguageService` captures the client capability:
 
@@ -177,37 +180,38 @@ Server capabilities still advertise `documentSymbolProvider` as `DocumentSymbolO
 
 Symbol content is unchanged from the request surface above: navigable non-builtin declarations for the requested document, excluding parameters and type parameters, with module export nodes merged when the workspace query facade supplies them.
 
-### Modern `workspace/symbol` helper status (pending TASK-397)
+### Modern `workspace/symbol` dual-path (TASK-397 product wire under review)
 
-`LuaLanguageService` already exposes both helpers over the same query-facade entries:
+`LuaLanguageService` exposes both helpers over the same query-facade entries, and `LuaWorkspaceService.symbol` now selects dual-path from the initialize capability:
 
 | Helper | LSP type | Status |
 | --- | --- | --- |
-| `workspaceSymbols(query)` | `List<SymbolInformation>` | **Wired** — used by `LuaWorkspaceService.symbol` today via `Either.forLeft` |
-| `modernWorkspaceSymbols(query)` | `List<WorkspaceSymbol>` | **Helper present, dual-path wire pending TASK-397** — maps each `WorkspaceSymbolEntry` to `WorkspaceSymbol` (`name`, `kind`, `Either.forLeft(Location)`, optional `containerName`) |
+| `workspaceSymbols(query)` | `List<SymbolInformation>` | **Wired** — `Either.forLeft` when modern support is absent |
+| `modernWorkspaceSymbols(query)` | `List<WorkspaceSymbol>` | **Wired in product** — `Either.forRight` when `workspace.symbol.resolveSupport` is present at initialize |
 
-Current live behavior:
+Current live behavior (source inspection; not command-verified):
 
-1. `LuaWorkspaceService.symbol` reads `params.query` (blank → all indexed symbols; nonblank → case-insensitive substring match via the query facade).
-2. It always calls `languageService.workspaceSymbols(query)` and completes with `Either.forLeft` `SymbolInformation` lists.
-3. It does **not** yet inspect a client capability for modern workspace symbols / resolve support, and it does **not** yet call `modernWorkspaceSymbols()`.
+1. At `initialize`, `LuaLanguageService` sets `modernWorkspaceSymbolSupport` from `params.capabilities.workspace.symbol.resolveSupport != null`.
+2. `LuaWorkspaceService.symbol` reads `params.query` (blank → all indexed symbols; nonblank → case-insensitive substring match via the query facade).
+3. When `languageService.supportsModernWorkspaceSymbols()` is true, it returns `Either.forRight(modernWorkspaceSymbols(query))`; otherwise `Either.forLeft(workspaceSymbols(query))`.
+4. Modern mapping uses `WorkspaceSymbol` (`name`, `kind`, `Either.forLeft(Location)`, optional `containerName`) via the existing helper.
 
-TASK-397 acceptance is to reuse the existing `modernWorkspaceSymbols()` helper and return `Either.forRight` when the client supports modern `WorkspaceSymbol` (including resolve-oriented modern shapes as implemented by that task), otherwise keep the current `SymbolInformation` left branch. Until TASK-397 lands, clients and harnesses must treat `workspace/symbol` as flat `SymbolInformation` only.
+TASK-397 is **in review** at this documentation snapshot (not done, not a final-green claim). Clients and harnesses should expect dual-path behavior in product code, but must not treat it as serialized-verified until TASK-043.
 
 Both helpers search the same surfaces: indexed workspace documents, open-document overlays, and synthetic provider entries (including JVM/Android-Lua virtual provider URIs).
 
 ### Capability and verification notes
 
 - Capability advertisement remains `documentSymbolProvider = DocumentSymbolOptions` and `workspaceSymbolProvider = WorkspaceSymbolOptions` on `initialize`.
-- Dual-path document-symbol selection is implemented in product code (TASK-396 under review at documentation time) but still needs serialized jvmTest confirmation under TASK-043 (`LspNavigationSymbolsTddTest` / hierarchical document-symbol coverage as owned by verification).
-- Modern workspace-symbol dual-path selection is **not** claimed as live behavior until TASK-397 wires it; only the helper and the pending task status are documented here.
+- Dual-path document-symbol selection is implemented and TASK-396 is **done** at task level (focused review accept of `LspNavigationSymbolsTddTest`); full serialized confirmation remains TASK-043.
+- Dual-path workspace-symbol selection is present in product code under TASK-397 review; only source-level status is documented here.
 - Location-link navigation (`LocationLink` for definition/declaration) is still out of scope for this page section; navigation remains location lists.
 
 ## Workspace Configuration
 
 JVM and Android-Lua behavior is configured through `workspace/didChangeConfiguration`. The server accepts both flat keys and nested sections. List settings may be JSON arrays or newline-separated strings.
 
-Flat settings:
+Flat settings (macOS host paths only; never `G:/`):
 
 ```json
 {
@@ -264,13 +268,26 @@ Configuration changes update workspace metadata. If metadata is unchanged after 
 
 `jvm.classpath` entries are jar files or directories containing package-rooted `.class` files. `jvm.androidJar` is appended to the effective reflective classpath after `jvm.classpath`.
 
-The implementation also has a local fallback path:
+Host `android.jar` paths for this machine (docs-only path check; never hard-code `G:/`):
+
+| Path | Role | Host status (2026-07-11) |
+| --- | --- | --- |
+| `/Users/dingyi/Library/Android/sdk/platforms/android-35/android.jar` | Preferred SDK android-35 platform jar | **Present** |
+| `/Users/dingyi/Downloads/android.jar` | Alternate host jar (explicit metadata only) | **Absent** |
+
+Product discovery when `jvm.androidJar` is unset (`JvmWorkspaceConfiguration.reflectionClasspathEntries` / `discoverReflectiveAndroidJarPath`, TASK-245):
+
+1. Prefer `ANDROID_HOME`, then `ANDROID_SDK_ROOT`, selecting the highest existing `platforms/android-*/android.jar`.
+2. Else scan well-known SDK roots (macOS `~/Library/Android/sdk`, Linux `~/Android/Sdk`, Windows `%LOCALAPPDATA%/Android/Sdk`, etc.).
+3. Never invent a reflective classpath entry for a missing jar. The Downloads jar is **not** auto-selected; pass it only via explicit `jvm.androidJar` metadata.
+
+Example explicit SDK path used in client configuration and local fallback messaging:
 
 ```text
 /Users/dingyi/Library/Android/sdk/platforms/android-35/android.jar
 ```
 
-That fallback is used for reflection classpath entries only when no `jvm.androidJar` is configured and the file exists. Production clients should still send `jvm.androidJar` explicitly so the target Android platform is reproducible.
+Production clients should still send `jvm.androidJar` explicitly so the target Android platform is reproducible.
 
 The reflection provider creates a child `URLClassLoader` when classpath entries are configured. Class loading uses `Class.forName(name, false, classLoader)`, so classes are inspected without class initialization. Missing classpath entries generally leave affected classes unresolved; they do not by themselves make LSP startup fail.
 
@@ -318,7 +335,7 @@ file:///__jvm__/classes/android/view/View$OnClickListener.lua
 
 Android-Lua overlay globals such as `import`, `loadlayout`, `loadbitmap`, `loadmenu`, and `luajava` are modeled by the semantic workspace overlay. Definitions for overlay globals may intentionally remain empty because the overlay is builtin metadata rather than an opened source file.
 
-Android-Lua fixture-level behavior, including `.aly` layout files, layout id tracking, Android listener methods, and Android provider-backed references, is represented in pending LSP tests and must be reconciled in TASK-043 before this page is treated as verified production guidance.
+**Post-TASK-184 product note (not final green):** TASK-184 restored Android-Lua library stub / fixture / type surfaces (`activity`, `service`, `this`, `context`, `loadlayout`, `loadbitmap`, `loadmenu`, `.aly`/layout fixtures, helper modules) at task level (REVIEW38 focused accept). Those surfaces feed hover, completion, and navigation through the same workspace query facade the LSP uses. TASK-184 acceptance does **not** unlock TASK-043 and must not be rolled up into a release statement. Android-Lua fixture-level LSP end-to-end behavior still needs serialized reconciliation in TASK-043 before this page is treated as verified production guidance.
 
 ## Client Message Examples
 
@@ -381,7 +398,7 @@ Example watched-file batch after external disk edits under that folder:
 
 LSP `FileChangeType` values are `1` Created, `2` Changed, and `3` Deleted.
 
-Android-Lua configuration for an Android 35 workspace:
+Android-Lua configuration for an Android 35 workspace on this macOS host (SDK path present; Downloads alternate absent unless supplied explicitly):
 
 ```json
 {
@@ -413,6 +430,16 @@ Android-Lua configuration for an Android 35 workspace:
         ]
       }
     }
+  }
+}
+```
+
+Optional explicit Downloads override when that file exists on the host:
+
+```json
+{
+  "jvm": {
+    "androidJar": "/Users/dingyi/Downloads/android.jar"
   }
 }
 ```
@@ -480,9 +507,11 @@ file:///__jvm__/classes/android/widget/TextView.lua
 
 This repository uses a serialized verification phase for commands that invoke Gradle, compile, tests, or build-output-writing work. Documentation and implementation workers must not run those commands during parallel waves.
 
-TASK-043 is the current serialized verification task. It owns the Gradle/test execution slot and must hold the relevant locks before running verification commands. The LSP-related filters that should reconcile this page include the lifecycle/diagnostics, navigation/symbols, workspace-folder, watched-files, URI-handling, and Android-Lua end-to-end LSP tests under `src/jvmTest/kotlin/lsp`.
+**TASK-043 is the current serialized verification task and remains blocked.** It owns the Gradle/test execution slot and must hold the relevant locks before running verification commands. Historical product deps through TASK-184 are done at task level; the pre-final inventory path (TASK-125 / TASK-038) and review release still keep the gate closed. TASK-184 acceptance does **not** unlock TASK-043. No global green claim is valid until TASK-043 runs and TASK-037 records the final acceptance audit.
 
-Representative verification commands are documented as deferred examples only:
+The LSP-related filters that should reconcile this page include the lifecycle/diagnostics, navigation/symbols, workspace-folder, watched-files, URI-handling, and Android-Lua end-to-end LSP tests under `src/jvmTest/kotlin/lsp`.
+
+Representative verification commands are documented as deferred examples only (macOS primary path):
 
 ```bash
 export JAVA_HOME=/Users/dingyi/Library/Java/JavaVirtualMachines/corretto-17.0.19/Contents/Home
@@ -493,6 +522,7 @@ export JAVA_HOME=/Users/dingyi/Library/Java/JavaVirtualMachines/corretto-17.0.19
 ./gradlew jvmTest --tests lsp.LspWatchedFilesTddTest
 ./gradlew jvmTest --tests lsp.LspUriHandlingTddTest
 ./gradlew jvmTest --tests lsp.LspAndroidLuaE2eTddTest
+./gradlew jvmTest --tests lsp.LspWorkspaceSymbolPrefixTddTest
 ```
 
 Do not run those commands outside the serialized verification phase. The final green audit and production-readiness statement are pending TASK-037 after TASK-043 and the focused documentation tasks have completed.
@@ -500,11 +530,12 @@ Do not run those commands outside the serialized verification phase. The final g
 ## Current Limitations
 
 - Folder indexing runs during initialization for real directory workspace folders (or a `rootUri` fallback) and is limited to `.lua` and `.aly` files. External disk create/change/delete is refreshed only when the client sends `workspace/didChangeWatchedFiles`; the server does not install its own watchers.
-- URI path normalization for Unix absolute paths, Windows drive letters, and percent-encoded segments is incomplete and pending TASK-161 hardening.
+- Cross-platform URI normalization is product-landed (TASK-161 done at task level) but still needs full serialized confirmation under TASK-043.
 - Reflected JVM providers expose public reflection surfaces only. Generic signatures, annotations, JavaDoc, Android API-level metadata, hidden APIs, and runtime side effects are not modeled.
-- Android support reads `android.jar` metadata and does not emulate Android runtime behavior, resources, devices, dex loading, or app class loader semantics.
+- Android support reads `android.jar` metadata and does not emulate Android runtime behavior, resources, devices, dex loading, or app class loader semantics. Host Downloads jar is optional explicit metadata only; preferred SDK path is macOS `.../platforms/android-35/android.jar`.
 - Wildcard package enumeration is shallow and classpath-dependent. It exposes directly loadable top-level classes, not a complete Android or JVM package index.
 - Synthetic provider URIs are virtual and may appear in definitions, declarations, references, document symbols, and workspace symbols.
-- Hierarchical document symbols are dual-path (TASK-396 wire); modern workspace-symbol dual-path remains pending TASK-397 while the `modernWorkspaceSymbols()` helper already exists.
-- Configuration is supplied through `workspace/didChangeConfiguration`; current code does not read `ANDROID_HOME`, `ANDROID_SDK_ROOT`, or editor-specific setting names directly.
-- Launch, LSP transport behavior, and pending TDD fixture coverage must be confirmed in TASK-043 before TASK-036 uses this page for final production-readiness documentation.
+- Hierarchical document symbols are dual-path and TASK-396 is done at task level; modern workspace-symbol dual-path is product-wired under TASK-397 review — neither is a final-green claim.
+- Configuration is supplied through `workspace/didChangeConfiguration`; current LSP code does not read `ANDROID_HOME`, `ANDROID_SDK_ROOT`, or editor-specific setting names directly (reflective classpath discovery does use those env vars when `jvm.androidJar` is unset).
+- Launch, LSP transport behavior, and pending TDD fixture coverage must be confirmed in TASK-043 before TASK-036 / TASK-037 uses this page for final production-readiness documentation.
+- **Not finally green:** do not claim `./gradlew check` or full-suite success from this docs-only refresh.

@@ -100,7 +100,11 @@ class TypeResolver(
             DeclarationKind.METHOD -> resolveMethodDeclaration(declaration)
             DeclarationKind.PARAMETER -> resolveParameterDeclaration(declaration)
             DeclarationKind.FUNCTION -> resolveFunctionDeclaration(declaration)
-            DeclarationKind.LOCAL, DeclarationKind.GLOBAL, DeclarationKind.MODULE -> resolveValueDeclaration(declaration)
+            // Non-local `function name()` is bound as GLOBAL (not FUNCTION). Route those
+            // through the same ---@param/@return/@overload FunctionType materialization as
+            // local FUNCTION declarations; plain GLOBAL values still use syntax-only resolution.
+            DeclarationKind.GLOBAL -> resolveGlobalDeclaration(declaration)
+            DeclarationKind.LOCAL, DeclarationKind.MODULE -> resolveValueDeclaration(declaration)
         }
 
         resolvedDeclarations[declarationId] = resolved
@@ -441,6 +445,30 @@ class TypeResolver(
             0 -> null
             1 -> signatures.single()
             else -> OverloadedFunctionType(signatures)
+        }
+    }
+
+    /**
+     * GLOBAL may be either a non-local function declaration (`function f()`) or a plain
+     * global value. Prefer the FUNCTION declaration path when the binder attached function
+     * parameters/type-parameters or function doc tags; otherwise keep syntax-only value
+     * resolution (and the bare-function guard that avoids synthetic `function(...): unknown`).
+     */
+    private fun resolveGlobalDeclaration(declaration: BinderDeclaration): BinderDeclaration {
+        if (shouldResolveGlobalAsFunction(declaration)) {
+            return resolveFunctionDeclaration(declaration)
+        }
+        return resolveValueDeclaration(declaration)
+    }
+
+    private fun shouldResolveGlobalAsFunction(declaration: BinderDeclaration): Boolean {
+        val owned = binder.declarationIndex.getOwnedDeclarations(DeclarationOwner.Declaration(declaration.id))
+        if (owned.any { it.kind == DeclarationKind.PARAMETER || it.kind == DeclarationKind.TYPE_PARAMETER }) {
+            return true
+        }
+        val tags = declaration.documentation?.docComment?.tags.orEmpty()
+        return tags.any { tag ->
+            tag is ReturnTagSyntax || tag is ParamTagSyntax || tag is OverloadTagSyntax
         }
     }
 

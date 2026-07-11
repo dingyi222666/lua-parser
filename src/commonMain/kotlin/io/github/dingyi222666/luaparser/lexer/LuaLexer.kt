@@ -1,13 +1,28 @@
 package io.github.dingyi222666.luaparser.lexer
 
 import io.github.dingyi222666.luaparser.util.TrieTree
+import kotlin.jvm.JvmOverloads
 
 
-class LuaLexer(
-    private val source: CharSequence
+class LuaLexer @JvmOverloads constructor(
+    source: CharSequence,
+    private val supportAndroLuaKeywords: Boolean = true
 ) : Iterator<Pair<LuaTokenTypes, String>> {
 
-    private val bufferLen = source.length;
+    /**
+     * Source buffer with a single leading UTF-8 BOM (`U+FEFF`) stripped when present.
+     * Editors/Android buffers often ship a BOM; stripping keeps shebang (`#!` at offset 0)
+     * and identifiers (`local`/`print`) from gluing the BOM into a NAME token.
+     * Mid-buffer `U+FEFF` is left unchanged.
+     */
+    private val source: CharSequence =
+        if (source.isNotEmpty() && source[0] == BOM_CHAR) {
+            source.subSequence(1, source.length)
+        } else {
+            source
+        }
+
+    private val bufferLen = this.source.length;
 
     private var offset = 0
 
@@ -81,18 +96,13 @@ class LuaLexer(
         tokenLength = 1
 
         return when {
-            isWhitespace(ch) -> {
-                var chLocal = '\t'
-                while (offset + tokenLength < bufferLen && chatAtOrNull(offset + tokenLength)
-                        ?.also {
-                            chLocal = it
-                        }?.let {
-                            isWhitespace(it)
-                        } == true
+            // Non-newline whitespace only. `\r`/`\n` must not enter this branch or CRLF
+            // becomes two tokens and the per-token line pass double-counts lines
+            // (`\r` then `\n` each advance tokenLine because the CRLF latch resets).
+            isNotNewLineWhiteSpace(ch) -> {
+                while (offset + tokenLength < bufferLen &&
+                    chatAtOrNull(offset + tokenLength)?.let { isNotNewLineWhiteSpace(it) } == true
                 ) {
-                    if (chLocal == '\r' || chLocal == '\n') {
-                        break
-                    }
                     tokenLength++
                 }
                 LuaTokenTypes.WHITE_SPACE
@@ -100,6 +110,7 @@ class LuaLexer(
 
             isIdentifierStart(ch) -> scanIdentifier(ch)
             isPrimeDigit(ch) -> scanNumber(ch)
+            // Dedicated NEW_LINE path: LF alone, CR alone, or CRLF as one logical newline.
             ch == '\n' -> LuaTokenTypes.NEW_LINE
             ch == '\r' -> {
                 scanNewline()
@@ -110,12 +121,11 @@ class LuaLexer(
             ch == '(' -> LuaTokenTypes.LPAREN
             ch == ')' -> LuaTokenTypes.RPAREN
             ch == '[' -> {
-                val next = chatAtOrNull() ?: return LuaTokenTypes.RBRACK
+                val next = chatAtOrNull() ?: return LuaTokenTypes.LBRACK
 
                 if (next != '=' && next != '[') {
                     return LuaTokenTypes.LBRACK
                 }
-
 
                 return scanLongString()
 
@@ -144,7 +154,10 @@ class LuaLexer(
 
             ch == '^' -> LuaTokenTypes.EXP
             ch == '%' -> LuaTokenTypes.MOD
-            ch == '~' -> LuaTokenTypes.BIT_TILDE
+            ch == '~' -> scanTwoOperator(
+                LuaTokenTypes.BIT_TILDE,
+                LuaTokenTypes.NE, '='
+            )
             ch == '&' -> LuaTokenTypes.BIT_AND
             ch == '|' -> LuaTokenTypes.BIT_OR
             ch == '>' -> scanAngleOperator(
@@ -165,11 +178,6 @@ class LuaLexer(
                 val next = chatAtOrNull() ?: return LuaTokenTypes.DOT
 
                 when {
-                    isPrimeDigit(next) -> {
-                        scanPrimeDigit()
-                        LuaTokenTypes.NUMBER
-                    }
-
                     next == '.' -> {
                         if (chatAtOrNull(offset + tokenLength + 1) == '.') {
                             tokenLength += 2
@@ -179,6 +187,8 @@ class LuaLexer(
                             LuaTokenTypes.CONCAT
                         }
                     }
+
+                    isPrimeDigit(next) -> scanNumberStartingWithDot()
 
                     else -> LuaTokenTypes.DOT
                 }
@@ -238,53 +248,122 @@ class LuaLexer(
             tokenLength++
             n = n?.map?.get(ch)
         }
-        return n?.token ?: LuaTokenTypes.NAME
+        val token = n?.token ?: LuaTokenTypes.NAME
+        return if (supportAndroLuaKeywords || !isAndroLuaKeyword(token)) token else LuaTokenTypes.NAME
     }
 
 
     private fun scanString(start: Char): LuaTokenTypes {
-        var finish = false
-
         while (offset + tokenLength < bufferLen) {
             val ch = charAt()
             when (ch) {
                 start -> {
-                    finish = true
-                    break
+                    tokenLength++
+                    return LuaTokenTypes.STRING
                 }
                 // escape
                 '\\' -> {
-                    val next = charAt(offset + tokenLength + 1)
-
-                    when (next) {
-                        'a', 'b', 'f', 'n', 'r', 't', 'v', '\'', '"', '\\', '\n', '\r' -> {
-                            tokenLength++
-                        }
-
-                        'z' -> {
-                            tokenLength += 2
-                        }
-
-                        'x' -> {
-                            tokenLength += 3
-                        }
+                    if (!scanStringEscape()) {
+                        return LuaTokenTypes.BAD_CHARACTER
                     }
                 }
 
-                '\n', '\r' -> throw IllegalStateException("Unfinished string at <$tokenLine, ${tokenColumn}>")
+                '\n', '\r' -> return LuaTokenTypes.BAD_CHARACTER
 
+                else -> tokenLength++
+            }
+        }
+
+        return LuaTokenTypes.BAD_CHARACTER
+    }
+
+    private fun scanStringEscape(): Boolean {
+        val escapeOffset = offset + tokenLength
+        val nextOffset = escapeOffset + 1
+        if (nextOffset >= bufferLen) {
+            tokenLength++
+            return false
+        }
+
+        return when (val next = source[nextOffset]) {
+            'a', 'b', 'f', 'n', 'r', 't', 'v', '\'', '"', '\\' -> {
+                tokenLength += 2
+                true
             }
 
-            tokenLength++
+            '\n' -> {
+                tokenLength += 2
+                true
+            }
+
+            '\r' -> {
+                tokenLength += if (nextOffset + 1 < bufferLen && source[nextOffset + 1] == '\n') 3 else 2
+                true
+            }
+
+            'z' -> {
+                tokenLength += 2
+                while (offset + tokenLength < bufferLen && isWhitespace(source[offset + tokenLength])) {
+                    tokenLength++
+                }
+                true
+            }
+
+            'x' -> {
+                if (nextOffset + 2 >= bufferLen ||
+                    !isHexDigit(source[nextOffset + 1]) ||
+                    !isHexDigit(source[nextOffset + 2])
+                ) {
+                    tokenLength = (nextOffset + 1 - offset).coerceAtMost(bufferLen - offset)
+                    false
+                } else {
+                    tokenLength += 4
+                    true
+                }
+            }
+
+            'u' -> scanUnicodeEscape(nextOffset)
+
+            in '0'..'9' -> {
+                tokenLength += 2
+                var digits = 1
+                while (digits < 3 &&
+                    offset + tokenLength < bufferLen &&
+                    source[offset + tokenLength] in '0'..'9'
+                ) {
+                    tokenLength++
+                    digits++
+                }
+                true
+            }
+
+            else -> {
+                tokenLength += 2
+                false
+            }
+        }
+    }
+
+    private fun scanUnicodeEscape(uOffset: Int): Boolean {
+        var cursor = uOffset + 1
+        if (cursor >= bufferLen || source[cursor] != '{') {
+            tokenLength = (cursor - offset).coerceAtMost(bufferLen - offset)
+            return false
         }
 
-        if (!finish) {
-            throw IllegalStateException("Unfinished string at <$tokenLine, ${tokenColumn}>")
+        cursor++
+        val firstDigit = cursor
+        while (cursor < bufferLen && isHexDigit(source[cursor])) {
+            cursor++
         }
 
-        tokenLength++
+        if (cursor == firstDigit || cursor >= bufferLen || source[cursor] != '}') {
+            tokenLength = (cursor - offset).coerceAtLeast(1).coerceAtMost(bufferLen - offset)
+            return false
+        }
 
-        return LuaTokenTypes.STRING
+        tokenLength = cursor + 1 - offset
+        return true
     }
 
 
@@ -297,8 +376,11 @@ class LuaLexer(
 
         when (next) {
             '[' -> {
-                scanLongString()
-                return LuaTokenTypes.BLOCK_COMMENT
+                val longBracketStart = offset + tokenLength
+                if (longBracketEqualsCount(longBracketStart) >= 0) {
+                    return scanLongBracket(longBracketStart, LuaTokenTypes.BLOCK_COMMENT)
+                }
+                return scanShortComment()
             }
             '-' -> {
                 // This is the third dash, so it's a doc comment
@@ -357,57 +439,179 @@ class LuaLexer(
                 return LuaTokenTypes.DOC_COMMENT
             }
             else -> {
-                // Regular comment
-                while (offset + tokenLength < bufferLen) {
-                    val ch = charAt()
-                    if (ch == '\n' || ch == '\r') {
-                        if (ch == '\r' && offset + tokenLength + 1 < bufferLen && source[offset + tokenLength + 1] == '\n') {
-                            tokenLength += 2
-                        } else {
-                            tokenLength++
-                        }
-                        break
-                    }
-                    tokenLength++
-                }
-                return LuaTokenTypes.SHORT_COMMENT
+                return scanShortComment()
             }
         }
     }
 
     private fun scanLongString(): LuaTokenTypes {
-        tokenLength++
-        val skipCount = scanLongStringSkipComment()
-
-        while (offset + tokenLength < bufferLen && charAt() != ']') {
-            tokenLength++
+        if (longBracketEqualsCount(offset) < 0) {
+            return LuaTokenTypes.LBRACK
         }
 
-        tokenLength++
-
-        if (scanLongStringSkipComment() != skipCount) {
-            throw IllegalStateException("Unfinished long string at <$tokenLine, ${tokenColumn}>")
-        }
-
-        // add \]
-        tokenLength++
-
-        return LuaTokenTypes.LONG_STRING
+        return scanLongBracket(offset, LuaTokenTypes.LONG_STRING)
     }
 
-    private fun scanLongStringSkipComment(): Int {
-        var count = 0
-
-        while (offset + tokenLength < bufferLen && charAt() == '=') {
-            tokenLength++
-            count++
+    private fun scanLongBracket(longBracketStart: Int, tokenType: LuaTokenTypes): LuaTokenTypes {
+        val equalsCount = longBracketEqualsCount(longBracketStart)
+        if (equalsCount < 0) {
+            return LuaTokenTypes.BAD_CHARACTER
         }
 
-        return count
+        var cursor = longBracketStart + equalsCount + 2
+        var nestedDepth = 0
+        // First complete close delimiter whose equals level differs from [equalsCount].
+        // Used only when the matching close is never found: end the BAD span there so
+        // trailing source stays lexable (TASK-595). Must not early-exit on mismatch
+        // while scanning — a well-formed body may embed lower/higher closes before
+        // the true same-level terminator (e.g. [=[keep ]==] still]=]).
+        var firstMismatchEnd = -1
+        while (cursor < bufferLen) {
+            if (tokenType == LuaTokenTypes.BLOCK_COMMENT &&
+                longBracketEqualsCount(cursor) == equalsCount &&
+                (nestedDepth > 0 || hasOuterCloseAfterNestedLongBracket(cursor, equalsCount))
+            ) {
+                nestedDepth++
+                cursor += equalsCount + 2
+                continue
+            }
+
+            val closeLength = longBracketCloseLength(cursor, equalsCount)
+            if (closeLength > 0) {
+                if (nestedDepth > 0) {
+                    nestedDepth--
+                    cursor += closeLength
+                    continue
+                }
+                tokenLength = cursor + closeLength - offset
+                return tokenType
+            }
+
+            if (nestedDepth == 0 && firstMismatchEnd < 0) {
+                val mismatchCloseLength = anyLongBracketCloseLength(cursor)
+                if (mismatchCloseLength > 0) {
+                    firstMismatchEnd = cursor + mismatchCloseLength
+                }
+            }
+            cursor++
+        }
+
+        if (firstMismatchEnd > offset) {
+            tokenLength = firstMismatchEnd - offset
+            return LuaTokenTypes.BAD_CHARACTER
+        }
+
+        tokenLength = bufferLen - offset
+        return LuaTokenTypes.BAD_CHARACTER
+    }
+
+    private fun hasOuterCloseAfterNestedLongBracket(nestedStart: Int, equalsCount: Int): Boolean {
+        var cursor = nestedStart + equalsCount + 2
+        var depth = 1
+        while (cursor < bufferLen) {
+            if (longBracketEqualsCount(cursor) == equalsCount) {
+                depth++
+                cursor += equalsCount + 2
+                continue
+            }
+
+            val closeLength = longBracketCloseLength(cursor, equalsCount)
+            if (closeLength > 0) {
+                depth--
+                cursor += closeLength
+                if (depth == 0) {
+                    return hasLongBracketCloseAtOrAfter(cursor, equalsCount)
+                }
+                continue
+            }
+
+            cursor++
+        }
+
+        return false
+    }
+
+    private fun hasLongBracketCloseAtOrAfter(start: Int, equalsCount: Int): Boolean {
+        var cursor = start
+        while (cursor < bufferLen) {
+            if (longBracketCloseLength(cursor, equalsCount) > 0) {
+                return true
+            }
+            cursor++
+        }
+        return false
+    }
+
+    private fun longBracketEqualsCount(start: Int): Int {
+        if (start >= bufferLen || source[start] != '[') {
+            return -1
+        }
+
+        var cursor = start + 1
+        var equalsCount = 0
+        while (cursor < bufferLen && source[cursor] == '=') {
+            cursor++
+            equalsCount++
+        }
+
+        return if (cursor < bufferLen && source[cursor] == '[') equalsCount else -1
+    }
+
+    /**
+     * Length of a complete long-bracket close delimiter at [start] (`]` `=`* `]`),
+     * regardless of equals level. Returns -1 when [start] is not a full close.
+     * Used for level-mismatch recovery so a wrong-level close ends the bad span
+     * without consuming the remainder of the file (TASK-595).
+     */
+    private fun anyLongBracketCloseLength(start: Int): Int {
+        if (start >= bufferLen || source[start] != ']') {
+            return -1
+        }
+
+        var cursor = start + 1
+        var equalsCount = 0
+        while (cursor < bufferLen && source[cursor] == '=') {
+            cursor++
+            equalsCount++
+        }
+
+        return if (cursor < bufferLen && source[cursor] == ']') equalsCount + 2 else -1
+    }
+
+    private fun longBracketCloseLength(start: Int, equalsCount: Int): Int {
+        if (start >= bufferLen || source[start] != ']') {
+            return -1
+        }
+
+        var cursor = start + 1
+        repeat(equalsCount) {
+            if (cursor >= bufferLen || source[cursor] != '=') {
+                return -1
+            }
+            cursor++
+        }
+
+        return if (cursor < bufferLen && source[cursor] == ']') equalsCount + 2 else -1
+    }
+
+    private fun scanShortComment(): LuaTokenTypes {
+        while (offset + tokenLength < bufferLen) {
+            val ch = charAt()
+            if (ch == '\n' || ch == '\r') {
+                if (ch == '\r' && offset + tokenLength + 1 < bufferLen && source[offset + tokenLength + 1] == '\n') {
+                    tokenLength += 2
+                } else {
+                    tokenLength++
+                }
+                break
+            }
+            tokenLength++
+        }
+        return LuaTokenTypes.SHORT_COMMENT
     }
 
     private fun scanDIV(): LuaTokenTypes {
-        val next = charAt()
+        val next = chatAtOrNull() ?: return LuaTokenTypes.DIV
 
         return when (next) {
             '=' -> {
@@ -471,59 +675,91 @@ class LuaLexer(
 
     @Suppress("SameReturnValue")
     private fun scanNumber(char: Char): LuaTokenTypes {
-        if (tokenLength + offset == bufferLen) {
-            // The number is the last token in the buffer
-            return LuaTokenTypes.NUMBER
-        }
-
-        // check hex number
-
-        var ch = char
-
-        if (ch == '0' && charAt() == 'x') {
+        if (char == '0' && offset + tokenLength < bufferLen && (charAt() == 'x' || charAt() == 'X')) {
             tokenLength++
+            val leadingDigits = scanHexDigits()
+            var trailingDigits = 0
 
+            if (offset + tokenLength < bufferLen && charAt() == '.') {
+                tokenLength++
+                trailingDigits = scanHexDigits()
+            }
+
+            if (leadingDigits + trailingDigits == 0) {
+                return LuaTokenTypes.BAD_CHARACTER
+            }
+
+            return if (scanHexExponentIfPresent()) LuaTokenTypes.NUMBER else LuaTokenTypes.BAD_CHARACTER
         }
 
-        scanDigit()
+        scanDecimalDigits()
 
-        if (offset + tokenLength == bufferLen) {
-            // if the number is the last token, return it
-            return LuaTokenTypes.NUMBER
-        }
-
-        ch = charAt()
-
-        if (ch != '.') {
-            // not a decimal point
-            return LuaTokenTypes.NUMBER
-        }
-
-        try {
-            throwIfNeeded()
-        } catch (e: IllegalStateException) {
-            return LuaTokenTypes.BAD_CHARACTER
-        }
-
-        scanDigit()
-
-        return LuaTokenTypes.NUMBER
-    }
-
-    private fun scanDigit() {
-        while (offset + tokenLength < bufferLen && isDigit(
-                charAt()
-            )
+        if (offset + tokenLength < bufferLen &&
+            charAt() == '.' &&
+            chatAtOrNull(offset + tokenLength + 1) != '.'
         ) {
             tokenLength++
+            scanDecimalDigits()
         }
+
+        return if (scanDecimalExponentIfPresent()) LuaTokenTypes.NUMBER else LuaTokenTypes.BAD_CHARACTER
     }
 
-    private fun scanPrimeDigit() {
-        while (offset + tokenLength < bufferLen && isPrimeDigit(
-                charAt(offset + tokenLength)
-            )
-        ) {
+    private fun scanNumberStartingWithDot(): LuaTokenTypes {
+        scanDecimalDigits()
+        return if (scanDecimalExponentIfPresent()) LuaTokenTypes.NUMBER else LuaTokenTypes.BAD_CHARACTER
+    }
+
+    private fun scanDecimalDigits(): Int {
+        var count = 0
+        while (offset + tokenLength < bufferLen && isPrimeDigit(charAt())) {
+            tokenLength++
+            count++
+        }
+        return count
+    }
+
+    private fun scanHexDigits(): Int {
+        var count = 0
+        while (offset + tokenLength < bufferLen && isHexDigit(charAt())) {
+            tokenLength++
+            count++
+        }
+        return count
+    }
+
+    private fun scanDecimalExponentIfPresent(): Boolean {
+        if (offset + tokenLength >= bufferLen) {
+            return true
+        }
+
+        val ch = charAt()
+        if (ch != 'e' && ch != 'E') {
+            return true
+        }
+
+        tokenLength++
+        scanExponentSign()
+        return scanDecimalDigits() > 0
+    }
+
+    private fun scanHexExponentIfPresent(): Boolean {
+        if (offset + tokenLength >= bufferLen) {
+            return true
+        }
+
+        val ch = charAt()
+        if (ch != 'p' && ch != 'P') {
+            return true
+        }
+
+        tokenLength++
+        scanExponentSign()
+        return scanDecimalDigits() > 0
+    }
+
+    private fun scanExponentSign() {
+        if (offset + tokenLength < bufferLen && (charAt() == '+' || charAt() == '-')) {
             tokenLength++
         }
     }
@@ -531,12 +767,6 @@ class LuaLexer(
     fun pushBack(length: Int) {
         require(length <= tokenLength) { "pushBack length too large" }
         tokenLength -= length
-    }
-
-    private fun throwIfNeeded() {
-        require(offset + tokenLength < bufferLen) {
-            "Token too long"
-        }
     }
 
     private fun scanNewline() {
@@ -563,6 +793,9 @@ class LuaLexer(
     }
 
     companion object {
+        /** UTF-8 BOM character (`U+FEFF`). Leading occurrence is stripped from the source buffer. */
+        private const val BOM_CHAR: Char = '\uFEFF'
+
         val keywords = TrieTree<LuaTokenTypes>()
 
         init {
@@ -687,6 +920,10 @@ class LuaLexer(
             return ((c in '0'..'9') || (c in 'A'..'F') || (c in 'a'..'f'))
         }
 
+        private fun isHexDigit(c: Char): Boolean {
+            return isDigit(c)
+        }
+
         private fun isPrimeDigit(c: Char): Boolean {
             return (c in '0'..'9')
         }
@@ -705,6 +942,19 @@ class LuaLexer(
 
         private fun isIdentifierPart(c: Char): Boolean {
             return (c in '0'..'9') || isIdentifierStart(c)
+        }
+
+        internal fun isAndroLuaKeyword(tokenType: LuaTokenTypes): Boolean {
+            return when (tokenType) {
+                LuaTokenTypes.CASE,
+                LuaTokenTypes.CONTINUE,
+                LuaTokenTypes.DEFAULT,
+                LuaTokenTypes.LAMBDA,
+                LuaTokenTypes.SWITCH,
+                LuaTokenTypes.WHEN -> true
+
+                else -> false
+            }
         }
 
     }

@@ -11,27 +11,20 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 /**
- * TASK-293 corpus: unused-local underscore suppression rules.
+ * TASK-293 / TASK-556 corpus: unused-local underscore suppression rules.
  *
  * Documents the product policy for unused-local diagnostics
  * (`checker.local.unused`) around intentionally discarded names:
  *
  * 1. **`_`** (single underscore) is always suppressed — never reported as unused.
  * 2. **`_name`** (any name with a leading underscore) is always suppressed.
- * 3. **Non-underscore** unused locals remain in scope for reporting **when**
- *    unused-local emission is enabled in the checker.
- *
- * Current product surface (ExpressionUsageChecker / CheckerPass as of TASK-202 /
- * TASK-293): unused-local diagnostics are **not** emitted at all. Therefore the
- * non-underscore positive path is dual-mode:
- * - empty set under current non-emission (green today)
- * - if/when emission lands, only non-underscore names may appear, with stable
- *   code `checker.local.unused`, message `Unused local '<name>'.`, WARNING.
+ * 3. **Non-underscore** unused locals are reported when unused-local emission is
+ *    enabled (ExpressionUsageChecker / TASK-556 product surface).
  *
  * Complements [ExpressionUsageUnusedLocalTddTest] by focusing solely on the
  * underscore ignore contract rather than general unused-local presence/absence.
  *
- * Test-only; no production edits. Review-owned serial verification:
+ * Review-owned serial verification:
  * `jvmTest --tests semantic.checker.UnusedLocalUnderscoreSuppressionTddTest`.
  */
 class UnusedLocalUnderscoreSuppressionTddTest {
@@ -201,8 +194,7 @@ class UnusedLocalUnderscoreSuppressionTddTest {
     @Test
     fun midUnderscoreNameIsNotCoveredByLeadingUnderscoreSuppression() {
         // `mid_name` does not start with `_` → not suppressed by the `_` / `_name`
-        // rule. Under current non-emission the set is empty; if emission is enabled
-        // the name must be eligible for reporting (see non-underscore section).
+        // rule. With emission enabled it must be reported as unused.
         val model = analyze(
             """
             local mid_name = 2
@@ -215,22 +207,19 @@ class UnusedLocalUnderscoreSuppressionTddTest {
             unused.none { mentionedName(it) == "_" || mentionedName(it)?.startsWith("_") == true },
             "suppressed underscore forms must stay absent; got=${unused.map { it.message }}"
         )
-        if (unused.isNotEmpty()) {
-            assertTrue(
-                unused.any { mentionedName(it) == "mid_name" },
-                "when unused-local is enabled, mid_name (no leading _) must be eligible; " +
-                    "got=${unused.map { it.message }}"
-            )
-            unused.filter { mentionedName(it) == "mid_name" }.forEach { assertUnusedLocalShape(it, "mid_name") }
-        }
+        assertTrue(
+            unused.any { mentionedName(it) == "mid_name" },
+            "mid_name (no leading _) must be eligible for unused-local; got=${unused.map { it.message }}"
+        )
+        unused.filter { mentionedName(it) == "mid_name" }.forEach { assertUnusedLocalShape(it, "mid_name") }
     }
 
     // -------------------------------------------------------------------------
-    // Non-underscore unused still flagged when enabled (dual-mode)
+    // Non-underscore unused is flagged under product emission
     // -------------------------------------------------------------------------
 
     @Test
-    fun nonUnderscoreUnusedIsEligibleWhenUnusedLocalEnabled() {
+    fun nonUnderscoreUnusedIsFlaggedWithStableShape() {
         val model = analyze(
             """
             local reportMe = 2
@@ -239,25 +228,16 @@ class UnusedLocalUnderscoreSuppressionTddTest {
         )
 
         val unused = unusedLocalDiagnostics(model)
-        // Always: no false underscore hits on this program
         assertTrue(unused.none { mentionedName(it)?.let { n -> n == "_" || n.startsWith("_") } == true })
-
-        if (unused.isEmpty()) {
-            // Current product: unused-local emission disabled — empty is correct.
-            assertEquals(emptyList(), unused)
-        } else {
-            // Future / enabled: plain unused local must be flagged with stable shape.
-            assertTrue(
-                unused.any { mentionedName(it) == "reportMe" },
-                "when enabled, unused non-underscore local 'reportMe' must be flagged; " +
-                    "got=${unused.map { it.message }}"
-            )
-            unused.filter { mentionedName(it) == "reportMe" }.forEach { assertUnusedLocalShape(it, "reportMe") }
-        }
+        assertTrue(
+            unused.any { mentionedName(it) == "reportMe" },
+            "unused non-underscore local 'reportMe' must be flagged; got=${unused.map { it.message }}"
+        )
+        unused.filter { mentionedName(it) == "reportMe" }.forEach { assertUnusedLocalShape(it, "reportMe") }
     }
 
     @Test
-    fun mixedUnderscoreAndPlainUnused_onlyPlainMayBeFlaggedWhenEnabled() {
+    fun mixedUnderscoreAndPlainUnused_onlyPlainIsFlagged() {
         val model = analyze(
             """
             local _skip = 1
@@ -269,7 +249,7 @@ class UnusedLocalUnderscoreSuppressionTddTest {
 
         val unused = unusedLocalDiagnostics(model)
 
-        // Hard contract (both current and future): underscore forms never reported.
+        // Hard contract: underscore forms never reported.
         assertNoUnusedLocalNamed(model, "_skip")
         assertNoUnusedLocalNamed(model, "_also")
         assertTrue(
@@ -278,27 +258,21 @@ class UnusedLocalUnderscoreSuppressionTddTest {
                 "got=${unused.map { it.message }}"
         )
 
-        if (unused.isEmpty()) {
-            // Current non-emission policy.
-            assertEquals(emptyList(), unused)
-        } else {
-            // Enabled: only the non-underscore unused name may appear.
-            assertTrue(
-                unused.any { mentionedName(it) == "reportMe" },
-                "when enabled, only non-underscore 'reportMe' should be flagged among " +
-                    "{_skip, reportMe, _also}; got=${unused.map { it.message }}"
-            )
-            assertEquals(
-                setOf("reportMe"),
-                unused.mapNotNull { mentionedName(it) }.toSet(),
-                "enabled emission must not invent extra unused names beyond plain unused locals"
-            )
-            unused.forEach { assertUnusedLocalShape(it, "reportMe") }
-        }
+        assertTrue(
+            unused.any { mentionedName(it) == "reportMe" },
+            "only non-underscore 'reportMe' should be flagged among {_skip, reportMe, _also}; " +
+                "got=${unused.map { it.message }}"
+        )
+        assertEquals(
+            setOf("reportMe"),
+            unused.mapNotNull { mentionedName(it) }.toSet(),
+            "emission must not invent extra unused names beyond plain unused locals"
+        )
+        unused.forEach { assertUnusedLocalShape(it, "reportMe") }
     }
 
     @Test
-    fun multiNamePartialUse_underscoreSuppressedAndPlainSiblingEligibleWhenEnabled() {
+    fun multiNamePartialUse_underscoreSuppressedAndPlainSiblingFlagged() {
         val model = analyze(
             """
             local used, _drop, alsoDrop = 1, 2, 3
@@ -310,22 +284,16 @@ class UnusedLocalUnderscoreSuppressionTddTest {
 
         assertNoUnusedLocalNamed(model, "used")
         assertNoUnusedLocalNamed(model, "_drop")
-
-        if (unused.isEmpty()) {
-            assertEquals(emptyList(), unused)
-        } else {
-            assertTrue(
-                unused.any { mentionedName(it) == "alsoDrop" },
-                "when enabled, unused non-underscore 'alsoDrop' must be flagged; " +
-                    "got=${unused.map { it.message }}"
-            )
-            assertTrue(
-                unused.none { mentionedName(it) == "_drop" || mentionedName(it) == "used" },
-                "used and leading-underscore names must not appear; got=${unused.map { it.message }}"
-            )
-            unused.filter { mentionedName(it) == "alsoDrop" }.forEach {
-                assertUnusedLocalShape(it, "alsoDrop")
-            }
+        assertTrue(
+            unused.any { mentionedName(it) == "alsoDrop" },
+            "unused non-underscore 'alsoDrop' must be flagged; got=${unused.map { it.message }}"
+        )
+        assertTrue(
+            unused.none { mentionedName(it) == "_drop" || mentionedName(it) == "used" },
+            "used and leading-underscore names must not appear; got=${unused.map { it.message }}"
+        )
+        unused.filter { mentionedName(it) == "alsoDrop" }.forEach {
+            assertUnusedLocalShape(it, "alsoDrop")
         }
     }
 
@@ -341,7 +309,7 @@ class UnusedLocalUnderscoreSuppressionTddTest {
 
         assertNoUnusedLocalNamed(model, "keep")
         assertNoUnusedLocalNamed(model, "_ignored")
-        // No unused-local diagnostics expected at all for this program under either policy.
+        // No unused-local diagnostics expected at all for this program.
         assertEquals(
             emptyList(),
             unusedLocalDiagnostics(model).filter {
@@ -351,7 +319,8 @@ class UnusedLocalUnderscoreSuppressionTddTest {
     }
 
     @Test
-    fun forLoopPlainControlEligibleWhenEnabled_underscoreControlAlwaysSuppressed() {
+    fun forLoopPlainControlNotReported_underscoreControlAlwaysSuppressed() {
+        // Product policy: loop-control names are out of unused-local scope entirely.
         val model = analyze(
             """
             for i = 1, 3 do
@@ -363,13 +332,8 @@ class UnusedLocalUnderscoreSuppressionTddTest {
         )
 
         assertNoUnusedLocalNamed(model, "_")
-
-        val unused = unusedLocalDiagnostics(model)
-        if (unused.isNotEmpty()) {
-            // If loop controls enter unused-local reporting, `_` stays out; `i` may appear.
-            assertTrue(unused.none { mentionedName(it) == "_" })
-            unused.filter { mentionedName(it) == "i" }.forEach { assertUnusedLocalShape(it, "i") }
-        }
+        assertNoUnusedLocalNamed(model, "i")
+        assertEquals(emptyList(), unusedLocalDiagnostics(model))
     }
 
     // -------------------------------------------------------------------------
@@ -409,6 +373,7 @@ class UnusedLocalUnderscoreSuppressionTddTest {
             first.map { diagnosticFingerprint(it) },
             second.map { diagnosticFingerprint(it) }
         )
+        assertEquals(listOf("plain"), first.mapNotNull { mentionedName(it) })
     }
 
     // -------------------------------------------------------------------------
