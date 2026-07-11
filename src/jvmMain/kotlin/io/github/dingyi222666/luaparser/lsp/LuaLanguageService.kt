@@ -107,7 +107,7 @@ class LuaLanguageService(
             if (!isLuaOrAlyUri(uri)) {
                 return@forEach
             }
-            val virtualPath = pathOf(uri)
+            val virtualPath = virtualPathForWatchedUri(uri)
             when (event.type) {
                 FileChangeType.Deleted -> {
                     val removedSource = indexedWorkspaceFiles.remove(virtualPath) != null
@@ -125,6 +125,12 @@ class LuaLanguageService(
                         val previous = indexedWorkspaceFiles.put(virtualPath, source)
                         indexedWorkspaceUris[virtualPath] = uri
                         if (previous != source) {
+                            mutated = true
+                        }
+                    } else if (event.type == FileChangeType.Changed) {
+                        // File may have been replaced/truncated; drop stale index entry if unreadable.
+                        if (indexedWorkspaceFiles.remove(virtualPath) != null) {
+                            indexedWorkspaceUris.putIfAbsent(virtualPath, uri)
                             mutated = true
                         }
                     }
@@ -424,6 +430,24 @@ class LuaLanguageService(
         val candidate = rawWorkspacePathFromUri(uri) ?: uri
         val lower = candidate.lowercase()
         return lower.endsWith(".lua") || lower.endsWith(".aly")
+    }
+
+    private fun virtualPathForWatchedUri(uri: String): VirtualPath {
+        val absolute = pathFromFileUri(uri)
+        if (absolute != null) {
+            for (folder in workspaceFolders) {
+                val root = workspaceFolderRoot(folder) ?: continue
+                val absoluteRoot = root.toAbsolutePath().normalize()
+                if (!absolute.startsWith(absoluteRoot)) {
+                    continue
+                }
+                val relative = virtualPathForWorkspaceFile(absoluteRoot, absolute)
+                if (relative != null) {
+                    return relative
+                }
+            }
+        }
+        return pathOf(uri)
     }
 
     private fun virtualPathForWorkspaceFile(root: Path, path: Path): VirtualPath? {
