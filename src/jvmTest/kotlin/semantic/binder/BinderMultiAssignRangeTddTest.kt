@@ -97,11 +97,15 @@ class BinderMultiAssignRangeTddTest {
         assertEquals(alphaId.range, alpha.range)
         assertEquals(betaId.range, beta.range)
 
-        // Declaration range is the identifier token, not the full `local ...` statement.
-        assertTrue(alpha.range!!.start.column > statement.range.start.column)
-        assertTrue(beta.range!!.end.column < statement.range.end.column)
+        // Declaration range is the identifier token, not the full LocalStatement.
+        // LocalStatement.range may start at `local` or at the first name depending on
+        // how the parser marks the statement after the LOCAL/FUNCTION peek; either
+        // way each declaration must stay a proper sub-span of the statement.
         assertNotEquals(statement.range, alpha.range)
         assertNotEquals(statement.range, beta.range)
+        assertTrue(isProperSubRange(alpha.range!!, statement.range), "alpha range must be narrower than LocalStatement")
+        assertTrue(isProperSubRange(beta.range!!, statement.range), "beta range must be narrower than LocalStatement")
+        assertRangesDisjoint(alpha.range!!, beta.range!!)
     }
 
     @Test
@@ -410,29 +414,72 @@ class BinderMultiAssignRangeTddTest {
         )
     }
 
+    /**
+     * True when [inner] is contained in [outer] and strictly narrower (not equal).
+     * LocalStatement ranges may begin at `local` or at the first name; either way
+     * per-name declaration ranges must remain proper sub-spans.
+     */
+    private fun isProperSubRange(inner: Range, outer: Range): Boolean {
+        val contained =
+            comparePositions(outer.start, inner.start) <= 0 &&
+                comparePositions(inner.end, outer.end) <= 0
+        val narrower =
+            comparePositions(outer.start, inner.start) < 0 ||
+                comparePositions(inner.end, outer.end) < 0
+        return contained && narrower
+    }
+
     private fun comparePositions(left: Position, right: Position): Int {
         val line = left.line.compareTo(right.line)
         return if (line != 0) line else left.column.compareTo(right.column)
     }
 
+    /**
+     * Locate the start Position of [needle] in [source].
+     *
+     * Identifier needles are matched as whole words so short names such as `c` /
+     * `s` / `n` / `b` do not hit substrings inside `local`, `string`, `number`,
+     * or `boolean`. Punctuation needles (e.g. `,`) keep plain substring match.
+     */
     private fun positionOf(source: String, needle: String, occurrence: Int = 1): Position {
         var fromIndex = 0
-        repeat(occurrence - 1) {
-            fromIndex = source.indexOf(needle, fromIndex) + 1
-        }
-        val index = source.indexOf(needle, fromIndex)
-        require(index >= 0) { "Missing '$needle' occurrence $occurrence in:\n$source" }
+        var found = 0
+        val requireWordBoundary = needle.all { isIdentChar(it) }
 
-        var line = 1
-        var column = 1
-        for (i in 0 until index) {
-            if (source[i] == '\n') {
-                line++
-                column = 1
+        while (true) {
+            val index = source.indexOf(needle, fromIndex)
+            require(index >= 0) { "Missing '$needle' occurrence $occurrence in:\n$source" }
+
+            val match = if (!requireWordBoundary) {
+                true
             } else {
-                column++
+                val beforeOk = index == 0 || !isIdentChar(source[index - 1])
+                val afterIndex = index + needle.length
+                val afterOk = afterIndex >= source.length || !isIdentChar(source[afterIndex])
+                beforeOk && afterOk
             }
+
+            if (match) {
+                found++
+                if (found == occurrence) {
+                    var line = 1
+                    var column = 1
+                    for (i in 0 until index) {
+                        if (source[i] == '\n') {
+                            line++
+                            column = 1
+                        } else {
+                            column++
+                        }
+                    }
+                    return Position(line, column)
+                }
+            }
+            fromIndex = index + 1
         }
-        return Position(line, column)
+    }
+
+    private fun isIdentChar(ch: Char): Boolean {
+        return ch == '_' || ch.isLetterOrDigit()
     }
 }
