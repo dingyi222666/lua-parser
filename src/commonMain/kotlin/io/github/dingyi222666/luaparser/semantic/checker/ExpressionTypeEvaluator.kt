@@ -436,11 +436,86 @@ class ExpressionTypeEvaluator internal constructor(
 
         val elementType = when (helperName) {
             "createArray" -> stringCallTarget(node)?.let(::javaArrayElementTypeForTarget)
-            "newArray" -> callArguments(node).firstOrNull()?.let { evaluate(it, context) }?.javaClassElementType()
+            "newArray" -> {
+                // Invalid/missing dimensions must not keep a known Class[] surface.
+                // Degrade to unknown[] so hover/index typing stays conservative.
+                if (!hasValidNewArrayDimensions(node, context)) {
+                    UnknownType
+                } else {
+                    callArguments(node).firstOrNull()?.let { evaluate(it, context) }?.javaClassElementType()
+                }
+            }
             else -> null
         } ?: UnknownType
 
         return JavaArrayType(elementType = elementType.hydrateJavaProviderType(workspaceContext.resolveImportTarget))
+    }
+
+    /**
+     * TASK-246: LuaJava `newArray(class, dim1 [, dim2, ...])` requires at least one
+     * positive numeric dimension. Missing, zero, negative, nil, or non-numeric
+     * dimensions are treated as invalid for typing purposes and force unknown[].
+     */
+    private fun hasValidNewArrayDimensions(node: CallExpression, context: Context): Boolean {
+        val arguments = callArguments(node)
+        if (arguments.size < 2) {
+            return false
+        }
+        return arguments.drop(1).all { isValidNewArrayDimension(it, context) }
+    }
+
+    private fun isValidNewArrayDimension(expression: ExpressionNode, context: Context): Boolean {
+        return when (expression) {
+            is ConstantNode -> isPositiveNumericConstantDimension(expression)
+            is UnaryExpression -> {
+                // `-n` is always non-positive for array allocation; other unaries
+                // are not valid dimension expressions either.
+                false
+            }
+            else -> isNumberLikeDimensionType(evaluate(expression, context))
+        }
+    }
+
+    private fun isPositiveNumericConstantDimension(node: ConstantNode): Boolean {
+        return when (node.constantType) {
+            ConstantNode.TYPE.INTERGER -> {
+                val value = node.rawValue.toString().toLongOrNull()
+                    ?: node.rawValue.toString().toDoubleOrNull()?.toLong()
+                value != null && value > 0L
+            }
+            ConstantNode.TYPE.FLOAT -> {
+                val value = node.rawValue.toString().toDoubleOrNull()
+                value != null && value > 0.0 && value == value.toLong().toDouble()
+            }
+            else -> false
+        }
+    }
+
+    private fun isNumberLikeDimensionType(type: Type): Boolean {
+        return when (type) {
+            is LiteralType -> type.baseType == PrimitiveType.NUMBER && isPositiveNumberLiteral(type.value)
+            PrimitiveType.NUMBER -> true
+            is UnionType -> type.types.isNotEmpty() && type.types.all(::isNumberLikeDimensionType)
+            else -> false
+        }
+    }
+
+    private fun isPositiveNumberLiteral(value: Any?): Boolean {
+        return when (value) {
+            is Int -> value > 0
+            is Long -> value > 0L
+            is Short -> value > 0
+            is Byte -> value > 0
+            is Double -> value > 0.0 && value == value.toLong().toDouble()
+            is Float -> value > 0f && value == value.toLong().toFloat()
+            is Number -> value.toDouble() > 0.0
+            is String -> {
+                value.toLongOrNull()?.let { it > 0L }
+                    ?: value.toDoubleOrNull()?.let { it > 0.0 && it == it.toLong().toDouble() }
+                    ?: false
+            }
+            else -> false
+        }
     }
 
     private fun resolveJvmConstructorCall(node: CallExpression, context: Context): Type? {
