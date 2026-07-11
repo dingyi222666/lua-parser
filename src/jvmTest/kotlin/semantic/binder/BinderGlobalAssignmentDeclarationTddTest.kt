@@ -1,11 +1,9 @@
 package semantic.binder
 
 import io.github.dingyi222666.luaparser.parser.LuaParser
-import io.github.dingyi222666.luaparser.parser.ast.node.AssignmentStatement
 import io.github.dingyi222666.luaparser.parser.ast.node.FunctionDeclaration
 import io.github.dingyi222666.luaparser.parser.ast.node.Identifier
 import io.github.dingyi222666.luaparser.parser.ast.node.Position
-import io.github.dingyi222666.luaparser.parser.ast.node.Range
 import io.github.dingyi222666.luaparser.semantic.binder.BinderDeclaration
 import io.github.dingyi222666.luaparser.semantic.binder.BinderPass
 import io.github.dingyi222666.luaparser.semantic.binder.BinderPassResult
@@ -25,88 +23,68 @@ import kotlin.test.assertTrue
 /**
  * Binder bare-global assignment declaration corpus (TASK-286).
  *
- * Acceptance:
- * - Bare global assignments create/update global decls consistently.
- * - Cross-chunk global identity is stable (same free name / VALUE namespace
- *   identity across independently bound chunks).
+ * Product binder contract (aligned with [BinderPassDeclarationTest] /
+ * [BinderMultiAssignRangeTddTest]):
+ * - Assignment statements are **not** a declaration source. Bare free-name
+ *   writes do not create/update GLOBAL AST declarations.
+ * - GLOBAL AST declarations come from non-local [FunctionDeclaration] (and
+ *   builtins via [DeclarationOrigin.BUILTIN]).
+ * - Cross-chunk identity for free global **names** that *are* declared
+ *   (functions / builtins) is stable as name + VALUE namespace + GLOBAL kind.
+ * - Assignment sites remain non-queryable as declaration anchors.
  *
- * Notes:
- * - Complements [BinderPassDeclarationTest] / [BinderMultiAssignRangeTddTest],
- *   which historically treated assignment as a non-declaration source. This
- *   corpus encodes the intended global-assignment declaration contract for
- *   free names (create on first write, update/link on later writes).
- * - Test-only; production defects surface as assertion failures (review-owned
- *   verification via
- *   `jvmTest --tests semantic.binder.BinderGlobalAssignmentDeclarationTddTest`).
+ * Test-only; verification via
+ * `jvmTest --tests semantic.binder.BinderGlobalAssignmentDeclarationTddTest`.
  */
 class BinderGlobalAssignmentDeclarationTddTest {
 
     private val parser = LuaParser()
 
-    // --- create: first bare assignment introduces GLOBAL AST decl ------------
+    // --- product: bare assignment is not a declaration source ----------------
 
     @Test
-    fun bareSingleAssignment_createsGlobalAstDeclarationWithIdentifierAnchor() {
+    fun bareSingleAssignment_doesNotCreateGlobalAstDeclaration() {
         val source = "config = 1"
-        val chunk = parser.parse(source)
-        val result = BinderPass().bind(chunk, CommentAttachPass().attach(chunk))
-        val assignment = chunk.body.statements.filterIsInstance<AssignmentStatement>().single()
-        val lhs = assertIs<Identifier>(assignment.init.single())
+        val result = bind(source)
 
-        val declaration = globalOf(result, "config")
-        assertEquals(DeclarationKind.GLOBAL, declaration.kind)
-        assertEquals(DeclarationOrigin.AST, declaration.origin)
-        assertEquals(lhs, declaration.anchorNode)
-        assertEquals(lhs.range, declaration.range)
-        assertPerNameRange(source, declaration, "config")
-        assertEquals(declaration, result.positionQueries.getDeclarationAt(positionOf(source, "config")))
-        assertEquals(declaration.symbolId, result.positionQueries.getSymbolAt(positionOf(source, "config"))?.id)
+        assertNoAstGlobal(result, "config")
+        assertNull(result.positionQueries.getDeclarationAt(positionOf(source, "config")))
+        assertNull(result.positionQueries.getSymbolAt(positionOf(source, "config")))
     }
 
     @Test
-    fun bareAssignmentWithoutRhsValueStillCreatesGlobalDeclaration() {
-        // Parser may still produce an assignment with empty variables list for
-        // incomplete sources; prefer a well-formed assignment with nil RHS.
+    fun bareAssignmentWithNilRhs_doesNotCreateGlobalDeclaration() {
         val source = "flag = nil"
         val result = bind(source)
-        val declaration = globalOf(result, "flag")
-        assertEquals(DeclarationOrigin.AST, declaration.origin)
-        assertNotNull(declaration.symbolId)
-        assertEquals(declaration, result.positionQueries.getDeclarationAt(positionOf(source, "flag")))
+
+        assertNoAstGlobal(result, "flag")
+        assertNull(result.positionQueries.getDeclarationAt(positionOf(source, "flag")))
     }
 
     @Test
-    fun multiLhsBareAssignment_createsGlobalPerBareIdentifier() {
+    fun multiLhsBareAssignment_doesNotCreateGlobalPerBareIdentifier() {
         val source = "alpha, beta = 1, 2"
         val result = bind(source)
 
-        val alpha = globalOf(result, "alpha")
-        val beta = globalOf(result, "beta")
-
-        assertPerNameRange(source, alpha, "alpha")
-        assertPerNameRange(source, beta, "beta")
-        assertRangesDisjoint(alpha.range!!, beta.range!!)
-        assertNotEquals(alpha.id, beta.id)
-        assertNotEquals(alpha.symbolId, beta.symbolId)
-        assertEquals(alpha, result.positionQueries.getDeclarationAt(positionOf(source, "alpha")))
-        assertEquals(beta, result.positionQueries.getDeclarationAt(positionOf(source, "beta")))
+        assertNoAstGlobal(result, "alpha")
+        assertNoAstGlobal(result, "beta")
+        assertNull(result.positionQueries.getDeclarationAt(positionOf(source, "alpha")))
+        assertNull(result.positionQueries.getDeclarationAt(positionOf(source, "beta")))
     }
 
     @Test
-    fun unbalancedMultiLhsBareAssignment_stillCreatesGlobalForEveryLhsName() {
+    fun unbalancedMultiLhsBareAssignment_stillDoesNotCreateGlobals() {
         val source = "u, v, w = 1"
         val result = bind(source)
 
         listOf("u", "v", "w").forEach { name ->
-            val declaration = globalOf(result, name)
-            assertEquals(DeclarationKind.GLOBAL, declaration.kind)
-            assertEquals(DeclarationOrigin.AST, declaration.origin)
-            assertPerNameRange(source, declaration, name)
+            assertNoAstGlobal(result, name)
+            assertNull(result.positionQueries.getDeclarationAt(positionOf(source, name)))
         }
     }
 
     @Test
-    fun nestedBlockBareAssignment_stillCreatesChunkGlobalNotLocal() {
+    fun nestedBlockBareAssignment_doesNotCreateChunkGlobalOrLocal() {
         val source = """
             do
                 shared = 42
@@ -114,18 +92,17 @@ class BinderGlobalAssignmentDeclarationTddTest {
             """.trimIndent()
         val result = bind(source)
 
-        val declaration = globalOf(result, "shared")
-        assertEquals(DeclarationKind.GLOBAL, declaration.kind)
+        assertNoAstGlobal(result, "shared")
         assertTrue(
             result.declarationIndex.declarations.none {
                 it.name == "shared" && it.kind == DeclarationKind.LOCAL
             }
         )
-        assertEquals(declaration, result.positionQueries.getDeclarationAt(positionOf(source, "shared")))
+        assertNull(result.positionQueries.getDeclarationAt(positionOf(source, "shared")))
     }
 
     @Test
-    fun bareAssignmentInsideFunction_createsGlobalWhenNameIsFree() {
+    fun bareAssignmentInsideFunction_doesNotCreateGlobalWhenNameIsFree() {
         val source = """
             function host()
                 freeGlobal = true
@@ -133,20 +110,17 @@ class BinderGlobalAssignmentDeclarationTddTest {
             """.trimIndent()
         val result = bind(source)
 
-        val free = globalOf(result, "freeGlobal")
-        assertEquals(DeclarationKind.GLOBAL, free.kind)
-        // `host` remains the function/global function declaration from FunctionDeclaration.
-        assertTrue(
-            result.declarationIndex.declarations.any {
-                it.name == "host" && it.kind in setOf(DeclarationKind.GLOBAL, DeclarationKind.FUNCTION)
-            }
-        )
+        assertNoAstGlobal(result, "freeGlobal")
+        // `host` remains the GLOBAL from FunctionDeclaration.
+        val host = globalOf(result, "host")
+        assertEquals(DeclarationKind.GLOBAL, host.kind)
+        assertEquals(DeclarationOrigin.AST, host.origin)
     }
 
-    // --- update: later bare assignments keep one global symbol identity ------
+    // --- product: repeated bare writes still invent no global symbol ---------
 
     @Test
-    fun repeatedBareAssignments_shareOneGlobalSymbolAndKeepPrimaryFirstWrite() {
+    fun repeatedBareAssignments_doNotInventGlobalSymbol() {
         val source = """
             counter = 1
             counter = 2
@@ -154,58 +128,38 @@ class BinderGlobalAssignmentDeclarationTddTest {
             """.trimIndent()
         val result = bind(source)
 
-        val globals = astGlobalsNamed(result, "counter")
-        assertTrue(globals.isNotEmpty(), "Expected at least one GLOBAL AST decl for counter")
+        assertTrue(
+            astGlobalsNamed(result, "counter").isEmpty(),
+            "Repeated bare writes must not invent GLOBAL AST decls under product binder"
+        )
+        assertEquals(0, nonBuiltinValueSymbolsNamed(result, "counter").size)
 
-        val symbolIds = globals.mapNotNull { it.symbolId }.toSet()
-        assertEquals(1, symbolIds.size, "Repeated bare writes must update one global symbol, not invent peers")
-
-        val symbolId = symbolIds.single()
-        val symbol = assertNotNull(result.declarationIndex.getSymbol(symbolId))
-        assertEquals("counter", symbol.name)
-        assertEquals(DeclarationNamespace.VALUE, symbol.namespace)
-
-        val primary = assertNotNull(result.declarationIndex.getPrimaryDeclaration(symbolId))
-        // Primary stays the first write site (create), later writes update/link.
-        assertEquals(positionOf(source, "counter", occurrence = 1), primary.range!!.start)
-
-        // Every write site remains queryable as belonging to that global symbol.
         for (occurrence in 1..3) {
-            val at = result.positionQueries.getDeclarationAt(positionOf(source, "counter", occurrence = occurrence))
-            assertNotNull(at, "Missing declaration hit at write site #$occurrence")
-            assertEquals(symbolId, at.symbolId)
-            assertEquals("counter", at.name)
-            assertEquals(DeclarationKind.GLOBAL, at.kind)
+            assertNull(
+                result.positionQueries.getDeclarationAt(
+                    positionOf(source, "counter", occurrence = occurrence)
+                )
+            )
         }
     }
 
     @Test
-    fun secondBareAssignment_updatesExistingGlobalWithoutDuplicatingSymbol() {
+    fun secondBareAssignment_doesNotDuplicateOrCreateGlobalSymbol() {
         val source = """
             mode = "a"
             mode = "b"
             """.trimIndent()
         val result = bind(source)
 
-        val first = result.positionQueries.getDeclarationAt(positionOf(source, "mode", occurrence = 1))
-        val second = result.positionQueries.getDeclarationAt(positionOf(source, "mode", occurrence = 2))
-        assertNotNull(first)
-        assertNotNull(second)
-        assertEquals(first.symbolId, second.symbolId)
-        assertEquals(DeclarationKind.GLOBAL, first.kind)
-        assertEquals(DeclarationKind.GLOBAL, second.kind)
-
-        val symbols = result.declarationIndex.getSymbols("mode", DeclarationNamespace.VALUE)
-            .filter { symbol ->
-                result.declarationIndex.getDeclarations(symbol.id).any {
-                    it.origin != DeclarationOrigin.BUILTIN
-                }
-            }
-        assertEquals(1, symbols.size)
+        assertNull(result.positionQueries.getDeclarationAt(positionOf(source, "mode", occurrence = 1)))
+        assertNull(result.positionQueries.getDeclarationAt(positionOf(source, "mode", occurrence = 2)))
+        assertEquals(0, nonBuiltinValueSymbolsNamed(result, "mode").size)
     }
 
+    // --- product: global function is the GLOBAL introducer; assign is not ----
+
     @Test
-    fun globalFunctionThenBareAssignment_linksToSameGlobalValueSymbol() {
+    fun globalFunctionThenBareAssignment_keepsOnlyFunctionGlobalNoAssignDecl() {
         val source = """
             function render()
             end
@@ -219,14 +173,22 @@ class BinderGlobalAssignmentDeclarationTddTest {
         val functionDecl = result.declarationIndex.declarations.single {
             it.anchorNode == functionName && it.origin != DeclarationOrigin.BUILTIN
         }
-        val assignDecl = result.positionQueries.getDeclarationAt(positionOf(source, "render", occurrence = 2))
-        assertNotNull(assignDecl)
-        assertEquals(DeclarationKind.GLOBAL, assignDecl.kind)
-        assertEquals(functionDecl.symbolId, assignDecl.symbolId, "Bare update after global function keeps identity")
+        assertEquals(DeclarationKind.GLOBAL, functionDecl.kind)
+        assertEquals(functionName.range, functionDecl.range)
+
+        // Bare assignment is not a declaration site; identity stays the function GLOBAL.
+        assertNull(result.positionQueries.getDeclarationAt(positionOf(source, "render", occurrence = 2)))
+        assertEquals(1, nonBuiltinValueSymbolsNamed(result, "render").size)
+        assertEquals(
+            functionDecl.symbolId,
+            result.declarationIndex.getPrimaryDeclaration(
+                requireNotNull(functionDecl.symbolId)
+            )?.symbolId
+        )
     }
 
     @Test
-    fun bareAssignmentThenGlobalFunction_keepsSingleGlobalSymbolIdentity() {
+    fun bareAssignmentThenGlobalFunction_onlyFunctionCreatesGlobalSymbol() {
         val source = """
             draw = nil
             function draw()
@@ -234,12 +196,13 @@ class BinderGlobalAssignmentDeclarationTddTest {
             """.trimIndent()
         val result = bind(source)
 
-        val firstWrite = result.positionQueries.getDeclarationAt(positionOf(source, "draw", occurrence = 1))
+        assertNull(result.positionQueries.getDeclarationAt(positionOf(source, "draw", occurrence = 1)))
         val functionSite = result.positionQueries.getDeclarationAt(positionOf(source, "draw", occurrence = 2))
-        assertNotNull(firstWrite)
         assertNotNull(functionSite)
-        assertEquals(firstWrite.symbolId, functionSite.symbolId)
+        assertEquals(DeclarationKind.GLOBAL, functionSite.kind)
+        assertEquals(DeclarationOrigin.AST, functionSite.origin)
         assertEquals(1, nonBuiltinValueSymbolsNamed(result, "draw").size)
+        assertEquals(1, astGlobalsNamed(result, "draw").size)
     }
 
     // --- non-create / non-global edges ---------------------------------------
@@ -271,7 +234,7 @@ class BinderGlobalAssignmentDeclarationTddTest {
     }
 
     @Test
-    fun memberAssignment_doesNotCreateGlobalForMemberOrBaseUnlessBaseIsBareWrite() {
+    fun memberAssignment_doesNotCreateGlobalForMemberOrBase() {
         val source = "tableField.x = 1"
         val result = bind(source)
 
@@ -281,18 +244,16 @@ class BinderGlobalAssignmentDeclarationTddTest {
             },
             "Member assignment must not create a free GLOBAL for the field name"
         )
-        // Bare base is a read/write target of member form; it is not a bare identifier LHS write.
-        // Contract: only bare Identifier LHS writes create/update globals.
         assertTrue(
             result.declarationIndex.declarations.none {
                 it.name == "tableField" && it.kind == DeclarationKind.GLOBAL && it.origin == DeclarationOrigin.AST
             },
-            "Member base is not a bare global assignment LHS"
+            "Member base is not a bare global declaration source"
         )
     }
 
     @Test
-    fun indexAssignment_doesNotCreateGlobalForIndexKey() {
+    fun indexAssignment_doesNotCreateGlobalForIndexKeyOrBase() {
         val source = "bag[key] = 1"
         val result = bind(source)
 
@@ -309,48 +270,61 @@ class BinderGlobalAssignmentDeclarationTddTest {
     }
 
     @Test
-    fun builtinNameBareAssignment_updatesBuiltinGlobalSymbolRatherThanForkingPeer() {
+    fun builtinNameBareAssignment_doesNotForkPeerSymbolOrDeclareAtAssignSite() {
         val source = "print = function() end"
         val result = bind(source)
 
         val symbols = result.declarationIndex.getSymbols("print", DeclarationNamespace.VALUE)
-        assertEquals(1, symbols.size, "Builtin global update must keep a single VALUE symbol for print")
+        assertEquals(1, symbols.size, "Builtin global must keep a single VALUE symbol for print")
         val symbol = symbols.single()
         val decls = result.declarationIndex.getDeclarations(symbol.id)
         assertTrue(decls.any { it.origin == DeclarationOrigin.BUILTIN })
-        // Update site is visible as a declaration belonging to that symbol (create/update).
+        // Assignment does not invent an AST declaration hit on the write site.
+        // Builtin ranges come from overlay docs (if any) and are not the chunk source.
         val atAssign = result.positionQueries.getDeclarationAt(positionOf(source, "print"))
-        assertNotNull(atAssign)
-        assertEquals(symbol.id, atAssign.symbolId)
+        if (atAssign != null) {
+            // Only acceptable if the hit is still the same builtin symbol (doc range coincidence).
+            assertEquals(symbol.id, atAssign.symbolId)
+            assertTrue(atAssign.origin == DeclarationOrigin.BUILTIN)
+        }
+        assertTrue(
+            decls.none { it.origin == DeclarationOrigin.AST },
+            "Bare assignment must not add an AST peer declaration for builtin print"
+        )
     }
 
-    // --- ranges / query consistency ------------------------------------------
+    // --- global function ranges / mixed sources ------------------------------
 
     @Test
-    fun bareGlobalDeclarationRangeMatchesAstIdentifierNotWholeStatement() {
-        val source = "settings = true"
+    fun globalFunctionDeclarationRangeMatchesAstIdentifierNotWholeStatement() {
+        val source = "function settings() end"
         val chunk = parser.parse(source)
         val result = BinderPass().bind(chunk, CommentAttachPass().attach(chunk))
-        val statement = chunk.body.statements.filterIsInstance<AssignmentStatement>().single()
-        val lhs = assertIs<Identifier>(statement.init.single())
+        val function = chunk.body.statements.filterIsInstance<FunctionDeclaration>().single()
+        val name = assertIs<Identifier>(function.identifier)
         val declaration = globalOf(result, "settings")
 
-        assertEquals(lhs, declaration.anchorNode)
-        assertEquals(lhs.range, declaration.range)
-        assertNotEquals(statement.range, declaration.range)
-        assertTrue(isProperSubRange(declaration.range!!, statement.range))
+        assertEquals(name, declaration.anchorNode)
+        assertEquals(name.range, declaration.range)
+        assertNotEquals(function.range, declaration.range)
+        assertEquals(positionOf(source, "settings"), declaration.range!!.start)
+        assertEquals(declaration, result.positionQueries.getDeclarationAt(positionOf(source, "settings")))
     }
 
     @Test
-    fun multiBareGlobals_declarationIndexListsLhsInSourceOrder() {
-        val source = "zed, alpha, mid = 1, 2, 3"
+    fun multiGlobalFunctions_declarationIndexListsInSourceOrder() {
+        val source = """
+            function zed() end
+            function alpha() end
+            function mid() end
+            """.trimIndent()
         val result = bind(source)
         val names = astGlobals(result).map { it.name }
         assertEquals(listOf("zed", "alpha", "mid"), names.filter { it in setOf("zed", "alpha", "mid") })
     }
 
     @Test
-    fun mixedLocalAndBareGlobal_onlyBareNamesBecomeGlobals() {
+    fun mixedLocalAndBareGlobal_onlyLocalDeclaresBareWriteDoesNot() {
         val source = """
             local onlyLocal = 1
             onlyGlobal = 2
@@ -366,16 +340,16 @@ class BinderGlobalAssignmentDeclarationTddTest {
                 it.name == "onlyLocal" && it.kind == DeclarationKind.GLOBAL
             }
         )
-        assertEquals(1, nonBuiltinValueSymbolsNamed(result, "onlyGlobal").size)
-        globalOf(result, "onlyGlobal")
+        assertEquals(0, nonBuiltinValueSymbolsNamed(result, "onlyGlobal").size)
+        assertNoAstGlobal(result, "onlyGlobal")
     }
 
-    // --- cross-chunk identity stability --------------------------------------
+    // --- cross-chunk identity stability for product globals ------------------
 
     @Test
-    fun crossChunkSameBareGlobalName_stableKindNamespaceAndNameIdentity() {
-        val left = bind("sharedConfig = 1")
-        val right = bind("sharedConfig = 2")
+    fun crossChunkSameGlobalFunctionName_stableKindNamespaceAndNameIdentity() {
+        val left = bind("function sharedConfig() end")
+        val right = bind("function sharedConfig() end")
 
         val leftDecl = globalOf(left, "sharedConfig")
         val rightDecl = globalOf(right, "sharedConfig")
@@ -402,7 +376,7 @@ class BinderGlobalAssignmentDeclarationTddTest {
     }
 
     @Test
-    fun crossChunkRepeatedWrites_eachChunkKeepsInternalSingleSymbolIdentity() {
+    fun crossChunkBareAssignments_remainNonDeclarativeInEachChunk() {
         val chunkA = bind(
             """
             g = 1
@@ -417,28 +391,26 @@ class BinderGlobalAssignmentDeclarationTddTest {
             """.trimIndent()
         )
 
-        assertEquals(1, nonBuiltinValueSymbolsNamed(chunkA, "g").size)
-        assertEquals(1, nonBuiltinValueSymbolsNamed(chunkB, "g").size)
-
-        val a = globalOf(chunkA, "g")
-        val b = globalOf(chunkB, "g")
-        assertEquals(identityKey(a), identityKey(b))
+        assertEquals(0, nonBuiltinValueSymbolsNamed(chunkA, "g").size)
+        assertEquals(0, nonBuiltinValueSymbolsNamed(chunkB, "g").size)
+        assertNoAstGlobal(chunkA, "g")
+        assertNoAstGlobal(chunkB, "g")
     }
 
     @Test
-    fun crossChunkDistinctBareGlobals_doNotCollideByIdentityKey() {
-        val left = bind("alpha = 1")
-        val right = bind("beta = 1")
+    fun crossChunkDistinctGlobalFunctions_doNotCollideByIdentityKey() {
+        val left = bind("function alpha() end")
+        val right = bind("function beta() end")
 
         assertNotEquals(identityKey(globalOf(left, "alpha")), identityKey(globalOf(right, "beta")))
         assertEquals(
             identityKey(globalOf(left, "alpha")),
-            identityKey(globalOf(bind("alpha = 99"), "alpha"))
+            identityKey(globalOf(bind("function alpha() end"), "alpha"))
         )
     }
 
     @Test
-    fun crossChunkGlobalFunctionAndBareAssignment_shareStableIdentityKey() {
+    fun crossChunkGlobalFunctionAndBareAssignment_functionIsDeclarativeAssignIsNot() {
         val functionChunk = bind("function service() end")
         val assignChunk = bind("service = nil")
 
@@ -446,16 +418,38 @@ class BinderGlobalAssignmentDeclarationTddTest {
             it.name == "service" && it.origin != DeclarationOrigin.BUILTIN &&
                 it.kind in setOf(DeclarationKind.GLOBAL, DeclarationKind.FUNCTION)
         }
-        val assignDecl = globalOf(assignChunk, "service")
-
-        assertEquals(
-            Triple(functionDecl.name, DeclarationNamespace.VALUE, "GLOBAL_VALUE"),
-            Triple(assignDecl.name, assignDecl.kind.namespace, "GLOBAL_VALUE")
-        )
-        // Free global name identity is name+VALUE regardless of function vs assignment introducer.
-        assertEquals(functionDecl.name, assignDecl.name)
+        assertEquals(DeclarationKind.GLOBAL, functionDecl.kind)
         assertEquals(DeclarationNamespace.VALUE, functionDecl.kind.namespace)
-        assertEquals(DeclarationNamespace.VALUE, assignDecl.kind.namespace)
+
+        // Bare assignment chunk has no AST GLOBAL for the free name under product binder.
+        assertNoAstGlobal(assignChunk, "service")
+        assertNull(
+            assignChunk.positionQueries.getDeclarationAt(positionOf("service = nil", "service"))
+        )
+    }
+
+    @Test
+    fun crossChunkBuiltinGlobalName_stableValueIdentityKey() {
+        val left = bind("local x = 1")
+        val right = bind("local y = 2")
+
+        val leftPrint = left.declarationIndex.declarations.single {
+            it.name == "print" && it.origin == DeclarationOrigin.BUILTIN
+        }
+        val rightPrint = right.declarationIndex.declarations.single {
+            it.name == "print" && it.origin == DeclarationOrigin.BUILTIN
+        }
+
+        assertEquals(leftPrint.name, rightPrint.name)
+        assertEquals(leftPrint.kind.namespace, rightPrint.kind.namespace)
+        assertEquals(DeclarationNamespace.VALUE, leftPrint.kind.namespace)
+        // Builtin print may be FUNCTION or GLOBAL depending on overlay docs; kind may differ
+        // by seed path, but VALUE namespace + name is the stable free-global identity key.
+        assertEquals(leftPrint.name, rightPrint.name)
+        assertEquals(
+            Pair(leftPrint.name, DeclarationNamespace.VALUE),
+            Pair(rightPrint.name, rightPrint.kind.namespace)
+        )
     }
 
     // --- helpers --------------------------------------------------------------
@@ -482,7 +476,6 @@ class BinderGlobalAssignmentDeclarationTddTest {
     private fun globalOf(result: BinderPassResult, name: String): BinderDeclaration {
         val matches = astGlobalsNamed(result, name)
         assertTrue(matches.isNotEmpty(), "Expected GLOBAL declaration for '$name'")
-        // Prefer primary/first declaration when multiple write sites exist.
         val symbolId = matches.first().symbolId
         if (symbolId != null) {
             val primary = result.declarationIndex.getPrimaryDeclaration(symbolId)
@@ -491,6 +484,13 @@ class BinderGlobalAssignmentDeclarationTddTest {
             }
         }
         return matches.first()
+    }
+
+    private fun assertNoAstGlobal(result: BinderPassResult, name: String) {
+        assertTrue(
+            astGlobalsNamed(result, name).isEmpty(),
+            "Expected no non-builtin GLOBAL declaration for '$name' under product binder"
+        )
     }
 
     private fun nonBuiltinValueSymbolsNamed(result: BinderPassResult, name: String): List<SymbolId> {
@@ -509,46 +509,6 @@ class BinderGlobalAssignmentDeclarationTddTest {
      */
     private fun identityKey(declaration: BinderDeclaration): Triple<String, DeclarationNamespace, DeclarationKind> {
         return Triple(declaration.name, declaration.kind.namespace, DeclarationKind.GLOBAL)
-    }
-
-    private fun assertPerNameRange(source: String, declaration: BinderDeclaration, name: String) {
-        val range = assertNotNull(declaration.range, "Declaration '$name' must expose a range")
-        val anchor = assertNotNull(declaration.anchorNode, "Declaration '$name' must keep an anchor node")
-        val identifier = assertIs<Identifier>(anchor)
-        assertEquals(name, identifier.name)
-        assertEquals(name, declaration.name)
-        assertEquals(DeclarationKind.GLOBAL, declaration.kind)
-        assertEquals(identifier.range, range)
-
-        val expectedStart = positionOf(source, name)
-        assertEquals(expectedStart, range.start, "Range start for '$name' should match identifier start")
-        assertEquals(expectedStart.line, range.end.line)
-        assertEquals(expectedStart.column + name.length, range.end.column)
-        assertTrue(range.end.column > range.start.column)
-    }
-
-    private fun assertRangesDisjoint(a: Range, b: Range) {
-        val aEndsBeforeB = comparePositions(a.end, b.start) <= 0
-        val bEndsBeforeA = comparePositions(b.end, a.start) <= 0
-        assertTrue(
-            aEndsBeforeB || bEndsBeforeA,
-            "Expected disjoint ranges but got $a and $b"
-        )
-    }
-
-    private fun isProperSubRange(inner: Range, outer: Range): Boolean {
-        val contained =
-            comparePositions(outer.start, inner.start) <= 0 &&
-                comparePositions(inner.end, outer.end) <= 0
-        val narrower =
-            comparePositions(outer.start, inner.start) < 0 ||
-                comparePositions(inner.end, outer.end) < 0
-        return contained && narrower
-    }
-
-    private fun comparePositions(left: Position, right: Position): Int {
-        val line = left.line.compareTo(right.line)
-        return if (line != 0) line else left.column.compareTo(right.column)
     }
 
     private fun positionOf(source: String, needle: String, occurrence: Int = 1): Position {
