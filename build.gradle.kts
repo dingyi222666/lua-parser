@@ -100,9 +100,9 @@ tasks.named("mingwX64Test") {
     }
 }
 
-// Parallel JVM tests (Windows self-hosted runner: 8 forks / 4G heap via gradle.properties)
+// Parallel JVM tests (Windows self-hosted: ~80% CPU → 6 forks / workers, 4G heap)
 tasks.withType<Test>().configureEach {
-    maxParallelForks = 8
+    maxParallelForks = 6
     // Avoid one hung suite blocking the whole fork forever without bound
     // (individual tests still use JUnit defaults unless annotated)
 }
