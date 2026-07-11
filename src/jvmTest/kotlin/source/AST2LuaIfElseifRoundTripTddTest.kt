@@ -55,9 +55,17 @@ import kotlin.test.fail
  * 5. **Nested if inside terminated blocks** — when an if lives inside a construct that *does*
  *    print `end`, full parse→print→reparse shape stability is asserted. Nested pure-if still
  *    does not invent its own trailing `end`; outer terminators keep the surface parseable.
- * 6. **Version** — all samples use [LuaVersion.LUA_5_3].
- * 7. **Out of scope** — jump legality, comment preservation, and semantic checks are not
- *    asserted here.
+ * 6. **Nested if + outer else/elseif sibling (REVIEW28)** — because nested [IfStatement]
+ *    also omits `end`, a bare nested `if … else … end` followed by an outer `else` /
+ *    `elseif` is not shape-stable under reparse: the outer clause is absorbed into the
+ *    inner if. Corpus samples that need both nesting and outer siblings therefore wrap
+ *    the nested if in an explicit `do … end` (which *does* print `end`) so clause
+ *    boundaries survive print→reparse. Pure nested trees without trailing outer siblings
+ *    remain unwrapped and still round-trip via the outer terminator.
+ * 7. **Version** — all samples use [LuaVersion.LUA_5_3].
+ * 8. **Out of scope** — jump legality, comment preservation, and semantic checks are not
+ *    asserted here. Production printer `end` emission for IfStatement is out of scope
+ *    (test-only task).
  */
 class AST2LuaIfElseifRoundTripTddTest {
 
@@ -376,18 +384,21 @@ class AST2LuaIfElseifRoundTripTddTest {
 
     @Test
     fun nestedIfInsideDoRoundTripsStructurally() {
-        // Same nested trees as above, wrapped in `do` so the outer terminator makes
-        // parse→print→reparse shape-stable despite IfStatement omitting its own `end`.
+        // Nested trees inside `do`. Nested ifs that are followed by an outer else/elseif
+        // sibling are wrapped in an inner `do … end` so the no-if-end printer cannot absorb
+        // the outer clause into the nested if (REVIEW28 / policy §6).
         assertRoundTrips(
             listOf(
                 Sample(
                     source = """
                         do
                           if outer then
-                            if inner then
-                              work()
-                            else
-                              skip()
+                            do
+                              if inner then
+                                work()
+                              else
+                                skip()
+                              end
                             end
                           else
                             fallback()
@@ -395,18 +406,21 @@ class AST2LuaIfElseifRoundTripTddTest {
                         end
                     """.trimIndent(),
                     expectedShape =
-                        "Chunk(Block[Do(Block[If(Clause(Id(outer):Block[If(Clause(Id(inner):Block[CallStmt(Call(Id(work):))]),Else(Block[CallStmt(Call(Id(skip):))]))]),Else(Block[CallStmt(Call(Id(fallback):))]))])])",
+                        "Chunk(Block[Do(Block[If(Clause(Id(outer):Block[Do(Block[If(Clause(Id(inner):Block[CallStmt(Call(Id(work):))]),Else(Block[CallStmt(Call(Id(skip):))]))])]),Else(Block[CallStmt(Call(Id(fallback):))]))])])",
                     printedFragments = listOf(
                         "do",
                         "if outer then",
                         "if inner then",
                         "work()",
+                        "else",
                         "skip()",
                         "fallback()",
                         "end"
                     )
                 ),
                 Sample(
+                    // Nested pure-if chain with no trailing outer sibling after the innermost
+                    // if: outer `do` terminator alone is enough for shape-stable reparse.
                     source = """
                         do
                           if a then
@@ -428,8 +442,10 @@ class AST2LuaIfElseifRoundTripTddTest {
                           if a then
                             one()
                           elseif b then
-                            if nested then
-                              two()
+                            do
+                              if nested then
+                                two()
+                              end
                             end
                           else
                             three()
@@ -437,7 +453,7 @@ class AST2LuaIfElseifRoundTripTddTest {
                         end
                     """.trimIndent(),
                     expectedShape =
-                        "Chunk(Block[Do(Block[If(Clause(Id(a):Block[CallStmt(Call(Id(one):))]),ElseIf(Id(b):Block[If(Clause(Id(nested):Block[CallStmt(Call(Id(two):))]))]),Else(Block[CallStmt(Call(Id(three):))]))])])",
+                        "Chunk(Block[Do(Block[If(Clause(Id(a):Block[CallStmt(Call(Id(one):))]),ElseIf(Id(b):Block[Do(Block[If(Clause(Id(nested):Block[CallStmt(Call(Id(two):))]))])]),Else(Block[CallStmt(Call(Id(three):))]))])])",
                     printedFragments = listOf(
                         "if a then",
                         "one()",
@@ -454,6 +470,8 @@ class AST2LuaIfElseifRoundTripTddTest {
 
     @Test
     fun nestedIfPrinterStableAcrossControlFlowSurfaces() {
+        // Nested `if deep` sits inside an inner `do` so the outer elseif/else siblings of
+        // the parent if are not absorbed under the no-if-end policy (policy §6).
         val source = """
             ::root::
             while keep do
@@ -640,6 +658,8 @@ class AST2LuaIfElseifRoundTripTddTest {
     @Test
     fun bulkIfElseifElseCorpusWithoutShapeDrift() {
         // Only terminated-block samples so reparse is meaningful under the no-if-end policy.
+        // Nested ifs followed by outer else/elseif siblings use an inner `do` terminator
+        // (policy §6 / REVIEW28).
         val samples = listOf(
             "do if ready then start() end end",
             "do if ready then local value = 1 return value end end",
@@ -661,10 +681,12 @@ class AST2LuaIfElseifRoundTripTddTest {
             """
                 do
                   if outer then
-                    if inner then
-                      work()
-                    else
-                      skip()
+                    do
+                      if inner then
+                        work()
+                      else
+                        skip()
+                      end
                     end
                   else
                     fallback()
@@ -687,8 +709,10 @@ class AST2LuaIfElseifRoundTripTddTest {
                   if a then
                     one()
                   elseif b then
-                    if nested then
-                      two()
+                    do
+                      if nested then
+                        two()
+                      end
                     end
                   else
                     three()
@@ -731,6 +755,8 @@ class AST2LuaIfElseifRoundTripTddTest {
 
     @Test
     fun collectNestedIfStatementsAfterRoundTrip() {
+        // Nested if/elseif/else is the sole statement of the outer if branch (no outer
+        // sibling after the nested if), so bare nesting remains shape-stable.
         val source = """
             do
               if a then
@@ -763,6 +789,56 @@ class AST2LuaIfElseifRoundTripTddTest {
         assertTrue(printed.contains("if b then"), "printed:\n$printed")
         assertTrue(printed.contains("elseif c then"), "printed:\n$printed")
         assertTrue(printed.contains("else"), "printed:\n$printed")
+    }
+
+    @Test
+    fun nestedIfWithOuterSiblingRequiresDoTerminatorForShapeStableReparse() {
+        // Regression for REVIEW28: bare nested if+else then outer else drifts under
+        // no-if-end print; wrapping nested if in do keeps clause ownership.
+        val bareNested = """
+            do
+              if outer then
+                if inner then
+                  work()
+                else
+                  skip()
+                end
+              else
+                fallback()
+              end
+            end
+        """.trimIndent()
+        val bareInitial = LuaParser(luaVersion = version).parse(bareNested)
+        val barePrinted = printer.asCode(bareInitial)
+        val bareReparsed = LuaParser(luaVersion = version).parse(barePrinted)
+        assertTrue(
+            renderShape(bareInitial) != renderShape(bareReparsed),
+            "Expected bare nested if+outer-else to drift under no-if-end policy:\n$barePrinted"
+        )
+
+        val isolated = """
+            do
+              if outer then
+                do
+                  if inner then
+                    work()
+                  else
+                    skip()
+                  end
+                end
+              else
+                fallback()
+              end
+            end
+        """.trimIndent()
+        val initial = LuaParser(luaVersion = version).parse(isolated)
+        val printed = printer.asCode(initial)
+        val reparsed = LuaParser(luaVersion = version).parse(printed)
+        assertEquals(renderShape(initial), renderShape(reparsed), "printed:\n$printed")
+        assertTrue(printed.contains("do"), "printed:\n$printed")
+        assertTrue(printed.contains("if outer then"), "printed:\n$printed")
+        assertTrue(printed.contains("if inner then"), "printed:\n$printed")
+        assertTrue(printed.contains("fallback()"), "printed:\n$printed")
     }
 
     // --- helpers ---
