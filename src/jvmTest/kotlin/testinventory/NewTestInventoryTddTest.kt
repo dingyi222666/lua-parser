@@ -79,9 +79,9 @@ class NewTestInventoryTddTest {
         val strategy = strategyPath.readText()
 
         assertTrue(strategyPath.exists())
-        assertTrue(strategy.contains("| **Total current inventory** | Common + JVM | **209** | **2752** |"))
+        assertTrue(strategy.contains("| **Total current inventory** | Common + JVM | **209** | **2753** |"))
         assertTrue(strategy.contains("current_campaign_files = 150"))
-        assertTrue(strategy.contains("current_campaign_total = 2237"))
+        assertTrue(strategy.contains("current_campaign_total = 2238"))
         assertTrue(strategy.contains("remaining_to_500 = 0"))
 
         assertTrue(strategy.contains("`src/commonTest/kotlin` is included"))
@@ -191,12 +191,12 @@ class NewTestInventoryTddTest {
     private companion object {
         val repoRoot: Path = Path.of("").toAbsolutePath().normalize()
         val testAnnotationRegex = Regex("""(?m)^\s*@Test\b""")
-        // Synced to live inventory + docs/test-strategy.md (TASK-231 WAVE31, 2026-07-11; baseline 209/2752, campaign 150/2237).
+        // Synced to live inventory + docs/test-strategy.md (TASK-231 WAVE31, 2026-07-11; baseline 209/2753, campaign 150/2238).
         // Do not lower these bars; live-tree drift above these values needs a docs refresh first.
         const val expectedBaselineFiles = 209
-        const val expectedBaselineTestMethods = 2752
+        const val expectedBaselineTestMethods = 2753
         const val expectedCampaignFiles = 150
-        const val expectedCampaignTestMethods = 2237
+        const val expectedCampaignTestMethods = 2238
 
         val expectedExcludedAnnotatedKotlinFiles = mapOf(
             "src/commonTest/kotlin/parser.common.kt" to 2,
