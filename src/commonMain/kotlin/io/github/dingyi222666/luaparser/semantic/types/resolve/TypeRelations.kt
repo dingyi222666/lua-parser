@@ -10,6 +10,14 @@ import io.github.dingyi222666.luaparser.semantic.types.model.ErrorType
 import io.github.dingyi222666.luaparser.semantic.types.model.FunctionParameter
 import io.github.dingyi222666.luaparser.semantic.types.model.FunctionType
 import io.github.dingyi222666.luaparser.semantic.types.model.IntersectionType
+import io.github.dingyi222666.luaparser.semantic.types.model.JavaArrayType
+import io.github.dingyi222666.luaparser.semantic.types.model.JavaClassType
+import io.github.dingyi222666.luaparser.semantic.types.model.JavaConstructorType
+import io.github.dingyi222666.luaparser.semantic.types.model.JavaInstanceMemberType
+import io.github.dingyi222666.luaparser.semantic.types.model.JavaInstanceType
+import io.github.dingyi222666.luaparser.semantic.types.model.JavaOverloadType
+import io.github.dingyi222666.luaparser.semantic.types.model.JavaPrimitiveType
+import io.github.dingyi222666.luaparser.semantic.types.model.JavaStaticMemberType
 import io.github.dingyi222666.luaparser.semantic.types.model.LiteralType
 import io.github.dingyi222666.luaparser.semantic.types.model.MultiReturnType
 import io.github.dingyi222666.luaparser.semantic.types.model.ModuleType
@@ -72,6 +80,20 @@ object TypeRelations {
             is MultiReturnType -> isMultiReturnAssignable(normalizedTarget, normalizedSource)
             is VarargType -> isVarargAssignable(normalizedTarget, normalizedSource)
             is AppliedType -> isAppliedAssignable(normalizedTarget, normalizedSource)
+            is JavaPrimitiveType -> isJavaPrimitiveAssignable(normalizedTarget, normalizedSource)
+            is JavaClassType -> isJavaClassAssignable(normalizedTarget, normalizedSource)
+            is JavaInstanceType -> isJavaInstanceAssignable(normalizedTarget, normalizedSource)
+            is JavaConstructorType -> isCallableAssignable(normalizedTarget, normalizedSource)
+            is JavaStaticMemberType -> normalizedSource is JavaStaticMemberType &&
+                normalizedTarget.memberName == normalizedSource.memberName &&
+                normalizedTarget.owner.binaryName == normalizedSource.owner.binaryName &&
+                isAssignable(normalizedTarget.valueType, normalizedSource.valueType)
+            is JavaInstanceMemberType -> normalizedSource is JavaInstanceMemberType &&
+                normalizedTarget.memberName == normalizedSource.memberName &&
+                normalizedTarget.owner.binaryName == normalizedSource.owner.binaryName &&
+                isAssignable(normalizedTarget.valueType, normalizedSource.valueType)
+            is JavaOverloadType -> isCallableAssignable(normalizedTarget, normalizedSource)
+            is JavaArrayType -> isJavaArrayAssignable(normalizedTarget, normalizedSource)
             is CustomType -> normalizedSource is CustomType && normalizedTarget.name == normalizedSource.name
             is AliasType, is UnionType, is IntersectionType -> false
             is TypeParameterType -> false
@@ -176,6 +198,295 @@ object TypeRelations {
         }
     }
 
+    private fun isJavaClassAssignable(target: JavaClassType, source: Type): Boolean {
+        val sourceClass = source as? JavaClassType ?: return false
+        return isSameOrJavaSubclass(target, sourceClass)
+    }
+
+    private fun isJavaInstanceAssignable(target: JavaInstanceType, source: Type): Boolean {
+        if (isJavaContainerAssignableFromLuaTable(target, source)) {
+            return true
+        }
+        val sourceInstance = source as? JavaInstanceType ?: return false
+        if (!isSameOrJavaSubclass(target.classType, sourceInstance.classType)) {
+            return false
+        }
+        if (target.typeArguments.isEmpty()) {
+            return true
+        }
+        if (target.typeArguments.size != sourceInstance.typeArguments.size) {
+            return false
+        }
+        return target.typeArguments.zip(sourceInstance.typeArguments).all { (expected, actual) ->
+            isAssignable(expected, actual)
+        }
+    }
+
+    /**
+     * Conservatively models Lua table / array literals as Java List or Map parameters when
+     * element / key / value types are statically known. Raw or mixed shapes stay non-assignable.
+     */
+    internal fun isJavaContainerAssignable(target: Type, source: Type): Boolean {
+        return when (target) {
+            is JavaArrayType -> isJavaArrayAssignable(target, source)
+            is ArrayType -> when (source) {
+                is ArrayType -> isAssignable(target.elementType, source.elementType)
+                is TableType -> isTableAssignableToJavaArrayElements(target.elementType, source)
+                is ModuleType -> isModuleAssignableToJavaArrayElements(target.elementType, source)
+                else -> false
+            }
+            is JavaInstanceType -> isJavaContainerAssignableFromLuaTable(target, source)
+            else -> false
+        }
+    }
+
+    private fun isJavaContainerAssignableFromLuaTable(target: JavaInstanceType, source: Type): Boolean {
+        return when (javaContainerKind(target)) {
+            JavaContainerKind.LIST -> {
+                val elementType = target.typeArguments.singleOrNull() ?: return false
+                when (source) {
+                    is TableType -> isTableAssignableToJavaArrayElements(elementType, source)
+                    is ArrayType -> isAssignable(elementType, source.elementType)
+                    is ModuleType -> isModuleAssignableToJavaArrayElements(elementType, source)
+                    else -> false
+                }
+            }
+            JavaContainerKind.MAP -> {
+                if (target.typeArguments.size < 2) {
+                    return false
+                }
+                val keyType = target.typeArguments[0]
+                val valueType = target.typeArguments[1]
+                when (source) {
+                    is TableType -> isTableAssignableToJavaMap(keyType, valueType, source)
+                    is ModuleType -> isModuleAssignableToJavaMap(keyType, valueType, source)
+                    else -> false
+                }
+            }
+            null -> false
+        }
+    }
+
+    private fun javaContainerKind(target: JavaInstanceType): JavaContainerKind? {
+        val names = collectJavaBinaryNames(target.classType)
+        return when {
+            names.any { it in javaListContainerNames } -> JavaContainerKind.LIST
+            names.any { it in javaMapContainerNames } -> JavaContainerKind.MAP
+            else -> null
+        }
+    }
+
+    private fun collectJavaBinaryNames(classType: JavaClassType): Set<String> {
+        val names = linkedSetOf<String>()
+        fun visit(current: JavaClassType?) {
+            current ?: return
+            if (!names.add(current.javaName.binaryName)) {
+                return
+            }
+            visit(current.superClass)
+            current.interfaces.forEach(::visit)
+        }
+        visit(classType)
+        return names
+    }
+
+    private fun isTableAssignableToJavaArrayElements(elementType: Type, source: TableType): Boolean {
+        if (!isKnownType(elementType)) {
+            return false
+        }
+        val index = source.indexSignature
+        if (index != null) {
+            if (!isNumberKeyType(index.keyType) || !isAssignable(elementType, index.valueType)) {
+                return false
+            }
+        }
+        if (source.fields.isEmpty()) {
+            // Empty table or index-only array-like table.
+            return index != null || source.methods.isEmpty()
+        }
+        source.fields.forEach { (name, fieldType) ->
+            if (name.toIntOrNull() == null) {
+                return false
+            }
+            if (!isAssignable(elementType, fieldType)) {
+                return false
+            }
+        }
+        // Named methods without integer keys are map/object shaped, not array/list shaped.
+        source.methods.keys.forEach { name ->
+            if (name.toIntOrNull() == null && name !in source.fields) {
+                return false
+            }
+        }
+        return true
+    }
+
+    private fun isModuleAssignableToJavaArrayElements(elementType: Type, source: ModuleType): Boolean {
+        return isTableAssignableToJavaArrayElements(
+            elementType,
+            TableType(
+                fields = source.fields,
+                methods = source.methods,
+                indexSignature = source.indexSignature?.let {
+                    TableType.IndexSignature(it.keyType, it.valueType)
+                }
+            )
+        )
+    }
+
+    private fun isTableAssignableToJavaMap(keyType: Type, valueType: Type, source: TableType): Boolean {
+        if (!isKnownType(keyType) || !isKnownType(valueType)) {
+            return false
+        }
+        val index = source.indexSignature
+        if (index != null) {
+            if (!isAssignable(keyType, index.keyType) || !isAssignable(valueType, index.valueType)) {
+                return false
+            }
+        }
+        if (source.fields.isEmpty() && source.methods.isEmpty()) {
+            return true
+        }
+        // Mixed array+map shapes (integer keys plus non-integer keys) are not converted.
+        val hasIntegerKeys = source.fields.keys.any { it.toIntOrNull() != null } ||
+            source.methods.keys.any { it.toIntOrNull() != null }
+        val hasNamedKeys = source.fields.keys.any { it.toIntOrNull() == null } ||
+            source.methods.keys.any { it.toIntOrNull() == null }
+        if (hasIntegerKeys && hasNamedKeys) {
+            return false
+        }
+        source.fields.forEach { (name, fieldType) ->
+            if (!isAssignable(keyType, tableFieldKeyType(name))) {
+                return false
+            }
+            if (!isAssignable(valueType, fieldType)) {
+                return false
+            }
+        }
+        source.methods.forEach { (name, methodType) ->
+            if (name in source.fields) {
+                return@forEach
+            }
+            if (!isAssignable(keyType, tableFieldKeyType(name))) {
+                return false
+            }
+            if (!isAssignable(valueType, methodType)) {
+                return false
+            }
+        }
+        return true
+    }
+
+    private fun isModuleAssignableToJavaMap(keyType: Type, valueType: Type, source: ModuleType): Boolean {
+        return isTableAssignableToJavaMap(
+            keyType,
+            valueType,
+            TableType(
+                fields = source.fields,
+                methods = source.methods,
+                indexSignature = source.indexSignature?.let {
+                    TableType.IndexSignature(it.keyType, it.valueType)
+                }
+            )
+        )
+    }
+
+    private fun tableFieldKeyType(fieldName: String): Type {
+        return if (fieldName.toIntOrNull() != null) {
+            PrimitiveType.NUMBER
+        } else {
+            PrimitiveType.STRING
+        }
+    }
+
+    private fun isNumberKeyType(type: Type): Boolean {
+        return isAssignable(PrimitiveType.NUMBER, type) || isAssignable(type, PrimitiveType.NUMBER)
+    }
+
+    private fun isKnownType(type: Type): Boolean {
+        val normalized = TypeNormalizer.normalize(type)
+        return when (normalized) {
+            UnknownType, ErrorType, NeverType -> false
+            PrimitiveType.UNKNOWN, PrimitiveType.ANY, PrimitiveType.NEVER, PrimitiveType.ERROR -> false
+            is TypeParameterType -> normalized.constraint?.let(::isKnownType) == true
+            is UnionType -> normalized.types.isNotEmpty() && normalized.types.all(::isKnownType)
+            else -> true
+        }
+    }
+
+    private enum class JavaContainerKind {
+        LIST,
+        MAP
+    }
+
+    private val javaListContainerNames = setOf(
+        "java.util.List",
+        "java.util.Collection",
+        "java.util.AbstractCollection",
+        "java.util.AbstractList",
+        "java.util.ArrayList",
+        "java.util.LinkedList",
+        "java.util.Vector",
+        "java.util.Stack",
+        "java.util.CopyOnWriteArrayList",
+        "java.util.Set",
+        "java.util.AbstractSet",
+        "java.util.HashSet",
+        "java.util.LinkedHashSet",
+        "java.util.SortedSet",
+        "java.util.NavigableSet",
+        "java.util.TreeSet",
+        "java.util.Queue",
+        "java.util.Deque",
+        "java.util.AbstractQueue",
+        "java.util.ArrayDeque",
+        "java.util.concurrent.BlockingQueue",
+        "java.util.concurrent.BlockingDeque",
+        "java.util.concurrent.CopyOnWriteArraySet"
+    )
+
+    private val javaMapContainerNames = setOf(
+        "java.util.Map",
+        "java.util.AbstractMap",
+        "java.util.HashMap",
+        "java.util.LinkedHashMap",
+        "java.util.TreeMap",
+        "java.util.Hashtable",
+        "java.util.WeakHashMap",
+        "java.util.IdentityHashMap",
+        "java.util.SortedMap",
+        "java.util.NavigableMap",
+        "java.util.concurrent.ConcurrentMap",
+        "java.util.concurrent.ConcurrentHashMap",
+        "java.util.concurrent.ConcurrentNavigableMap",
+        "java.util.concurrent.ConcurrentSkipListMap"
+    )
+
+    private fun isJavaArrayAssignable(target: JavaArrayType, source: Type): Boolean = when (source) {
+        is JavaArrayType -> target.dimensions == source.dimensions && isAssignable(target.elementType, source.elementType)
+        is ArrayType -> target.dimensions == 1 && isAssignable(target.elementType, source.elementType)
+        is TableType -> target.dimensions == 1 && isTableAssignableToJavaArrayElements(target.elementType, source)
+        is ModuleType -> target.dimensions == 1 && isModuleAssignableToJavaArrayElements(target.elementType, source)
+        else -> false
+    }
+
+    private fun isJavaPrimitiveAssignable(target: JavaPrimitiveType, source: Type): Boolean {
+        if (source is JavaPrimitiveType) {
+            return target.kind == source.kind || isNumericJavaWidening(target.kind, source.kind)
+        }
+        return when (target.kind) {
+            JavaPrimitiveType.Kind.BOOLEAN -> PrimitiveType.BOOLEAN.isAssignableFrom(source)
+            JavaPrimitiveType.Kind.CHAR -> PrimitiveType.STRING.isAssignableFrom(source)
+            JavaPrimitiveType.Kind.BYTE,
+            JavaPrimitiveType.Kind.SHORT,
+            JavaPrimitiveType.Kind.INT,
+            JavaPrimitiveType.Kind.LONG,
+            JavaPrimitiveType.Kind.FLOAT,
+            JavaPrimitiveType.Kind.DOUBLE -> PrimitiveType.NUMBER.isAssignableFrom(source)
+            JavaPrimitiveType.Kind.VOID -> source == PrimitiveType.NIL
+        }
+    }
+
     private fun isModuleAssignable(target: ModuleType, source: Type): Boolean {
         return when (source) {
             is ModuleType -> isMemberBearingShapeAssignable(
@@ -220,16 +531,10 @@ object TypeRelations {
 
     private fun isArrayAssignable(target: ArrayType, source: Type): Boolean = when (source) {
         is ArrayType -> isAssignable(target.elementType, source.elementType)
-        is TableType -> source.indexSignature?.let { signature ->
-            isAssignable(signature.keyType, PrimitiveType.NUMBER) &&
-                isAssignable(target.elementType, signature.valueType)
-        } ?: false
-
-        is ModuleType -> source.indexSignature?.let { signature ->
-            isAssignable(signature.keyType, PrimitiveType.NUMBER) &&
-                isAssignable(target.elementType, signature.valueType)
-        } ?: false
-
+        // Prefer index-signature array tables; also accept integer-keyed table literals so
+        // reflected Java array parameters can be checked against Lua table constructors.
+        is TableType -> isTableAssignableToJavaArrayElements(target.elementType, source)
+        is ModuleType -> isModuleAssignableToJavaArrayElements(target.elementType, source)
         else -> false
     }
 
@@ -315,8 +620,43 @@ object TypeRelations {
         return null
     }
 
+    private fun isSameOrJavaSubclass(target: JavaClassType, source: JavaClassType): Boolean {
+        fun visit(current: JavaClassType?, visited: MutableSet<String>): Boolean {
+            current ?: return false
+            if (!visited.add(current.javaName.binaryName)) {
+                return false
+            }
+            if (current.javaName.binaryName == target.javaName.binaryName) {
+                return true
+            }
+            if (visit(current.superClass, visited)) {
+                return true
+            }
+            return current.interfaces.any { visit(it, visited) }
+        }
+        return visit(source, linkedSetOf())
+    }
+
+    private fun isNumericJavaWidening(target: JavaPrimitiveType.Kind, source: JavaPrimitiveType.Kind): Boolean {
+        val sourceRank = javaNumericRank(source) ?: return false
+        val targetRank = javaNumericRank(target) ?: return false
+        return sourceRank <= targetRank
+    }
+
+    private fun javaNumericRank(kind: JavaPrimitiveType.Kind): Int? = when (kind) {
+        JavaPrimitiveType.Kind.BYTE -> 1
+        JavaPrimitiveType.Kind.SHORT -> 2
+        JavaPrimitiveType.Kind.CHAR -> 2
+        JavaPrimitiveType.Kind.INT -> 3
+        JavaPrimitiveType.Kind.LONG -> 4
+        JavaPrimitiveType.Kind.FLOAT -> 5
+        JavaPrimitiveType.Kind.DOUBLE -> 6
+        JavaPrimitiveType.Kind.BOOLEAN,
+        JavaPrimitiveType.Kind.VOID -> null
+    }
+
     private fun isTableLike(type: Type): Boolean = when (type) {
-        is TableType, is ModuleType, is ClassType, is ArrayType -> true
+        is TableType, is ModuleType, is ClassType, is ArrayType, is JavaClassType, is JavaInstanceType, is JavaArrayType -> true
         else -> false
     }
 
@@ -341,6 +681,15 @@ object TypeRelations {
         })
         is ClassType -> TableType(fields = type.getAllFields(), methods = type.getAllMethods())
         is ArrayType -> TableType(indexSignature = TableType.IndexSignature(PrimitiveType.NUMBER, type.elementType))
+        is JavaClassType -> TableType(
+            fields = type.allStaticMembers().mapValues { (_, member) -> member.valueType } + type.allInnerClasses(),
+            methods = type.allStaticMembers().filterValues { it.valueType is CallableType }.mapValues { (_, member) -> member.valueType }
+        )
+        is JavaInstanceType -> TableType(
+            fields = type.allInstanceMembers().mapValues { (_, member) -> member.valueType },
+            methods = type.allInstanceMembers().filterValues { it.valueType is CallableType }.mapValues { (_, member) -> member.valueType }
+        )
+        is JavaArrayType -> TableType(indexSignature = TableType.IndexSignature(PrimitiveType.NUMBER, type.elementType))
         else -> null
     }
 
