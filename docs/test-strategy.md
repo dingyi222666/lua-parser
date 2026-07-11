@@ -23,9 +23,9 @@ review-owned.
 | Workspace | Common | 9 | 127 | Document facts, module graphs, module exports, workspace engine behavior, overlays, legacy module environment support, Android import facts. |
 | Workspace | JVM | 18 | 257 | JVM workspace updates, query facade behavior, Android-Lua import workspace behavior, builtin overlay loading, dirty-set planning, module graph cycles, path styles, fingerprint stability, semantic workspace campaign coverage. |
 | Interop | JVM | 10 | 240 | JVM class module provider, reflection-backed workspace modeling, Java class metadata, classloader configuration, Android jar reflection, package enumeration, luajava import modeling. |
-| LSP | JVM | 34 | 486 | Language service, lifecycle diagnostics, navigation symbols, text document service, hover/completion/definition/declaration/references/signature help, shutdown/idempotency, watched files/workspace folders, Android-Lua JVM resolution paths. |
+| LSP | JVM | 34 | 487 | Language service, lifecycle diagnostics, navigation symbols, text document service, hover/completion/definition/declaration/references/signature help, shutdown/idempotency, watched files/workspace folders, Android-Lua JVM resolution paths. |
 | Integration | JVM | 2 | 19 | Android-Lua corpus semantic verification across parser, workspace, and interop fixtures; mixed LuaJava integration coverage. |
-| **Total current inventory** | Common + JVM | **187** | **2355** | Current parser, semantic, workspace, interop, LSP, and integration coverage, excluding the inventory fixture. |
+| **Total current inventory** | Common + JVM | **187** | **2356** | Current parser, semantic, workspace, interop, LSP, and integration coverage, excluding the inventory fixture. |
 
 Inventory notes:
 
@@ -75,7 +75,7 @@ current source-tree accounting reports:
 
 ```text
 current_campaign_files = 128
-current_campaign_total = 1840
+current_campaign_total = 1841
 remaining_to_500 = 0
 ```
 
@@ -106,6 +106,6 @@ does not import or mutate production code and can run before future
 implementation tasks are complete.
 
 TASK-231 WAVE30 raised both this document and the inventory fixture constants
-to the live source-tree counts (baseline 187/2355, campaign 128/1840). Bars were
+to the live source-tree counts (baseline 187/2356, campaign 128/1841). Bars were
 only raised; `testinventory` remains excluded from campaign totals. Verification
 remains deferred to TASK-043.
