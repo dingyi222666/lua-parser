@@ -8,15 +8,13 @@ import io.github.dingyi222666.luaparser.parser.ast.node.Range
 import io.github.dingyi222666.luaparser.semantic.api.CompletionItemKind
 import io.github.dingyi222666.luaparser.semantic.api.DiagnosticSeverity
 import io.github.dingyi222666.luaparser.semantic.api.SymbolKind as SemanticSymbolKind
-import io.github.dingyi222666.luaparser.semantic.binder.BinderDeclaration
-import io.github.dingyi222666.luaparser.semantic.binder.DeclarationKind
-import io.github.dingyi222666.luaparser.semantic.binder.DeclarationOrigin
-import io.github.dingyi222666.luaparser.semantic.binder.DeclarationOwner
 import io.github.dingyi222666.luaparser.semantic.workspace.LuaWorkspaceInput
 import io.github.dingyi222666.luaparser.semantic.workspace.LuaWorkspaceQueryFacade
 import io.github.dingyi222666.luaparser.semantic.workspace.VirtualPath
 import io.github.dingyi222666.luaparser.semantic.workspace.WorkspaceDelta
+import io.github.dingyi222666.luaparser.semantic.workspace.WorkspaceDocumentSymbol
 import io.github.dingyi222666.luaparser.semantic.workspace.WorkspaceSnapshot
+import io.github.dingyi222666.luaparser.semantic.workspace.WorkspaceSymbolEntry
 import io.github.dingyi222666.luaparser.semantic.workspace.WorkspaceUpdateResult
 import org.eclipse.lsp4j.CompletionItem
 import org.eclipse.lsp4j.CompletionList
@@ -32,6 +30,8 @@ import org.eclipse.lsp4j.DidSaveTextDocumentParams
 import org.eclipse.lsp4j.DocumentHighlight
 import org.eclipse.lsp4j.DocumentHighlightKind
 import org.eclipse.lsp4j.DocumentHighlightParams
+import org.eclipse.lsp4j.DocumentSymbol
+import org.eclipse.lsp4j.DocumentSymbolOptions
 import org.eclipse.lsp4j.FileChangeType
 import org.eclipse.lsp4j.FileEvent
 import org.eclipse.lsp4j.Hover
@@ -53,6 +53,7 @@ import org.eclipse.lsp4j.SignatureHelpOptions
 import org.eclipse.lsp4j.SignatureHelpParams
 import org.eclipse.lsp4j.SignatureInformation
 import org.eclipse.lsp4j.SymbolInformation
+import org.eclipse.lsp4j.WorkspaceSymbol
 import org.eclipse.lsp4j.TextDocumentContentChangeEvent
 import org.eclipse.lsp4j.TextDocumentIdentifier
 import org.eclipse.lsp4j.TextDocumentItem
@@ -263,18 +264,21 @@ class LuaLanguageService(
 
     fun documentSymbols(path: String): List<SymbolInformation> = synchronized(stateLock) {
         val virtualPath = pathFromClientPath(path)
-        val file = snapshot.files[virtualPath]?.semanticFile ?: return@synchronized emptyList()
-        declarationSymbolEntries(virtualPath, file.snapshot.binder.declarationIndex.declarations)
-            .map { toSymbolInformation(it) }
+        val uri = uriFor(virtualPath)
+        hierarchicalDocumentSymbols(virtualPath)
+            .flatMap { flattenDocumentSymbol(it, uri = uri, containerName = null) }
+    }
+
+    fun hierarchicalDocumentSymbols(path: String): List<DocumentSymbol> = synchronized(stateLock) {
+        hierarchicalDocumentSymbols(pathFromClientPath(path))
     }
 
     fun workspaceSymbols(query: String): List<SymbolInformation> = synchronized(stateLock) {
-        val normalizedQuery = query.trim()
-        allSymbolEntries()
-            .asSequence()
-            .filter { normalizedQuery.isBlank() || it.name.contains(normalizedQuery, ignoreCase = true) }
-            .map { toSymbolInformation(it) }
-            .toList()
+        queries.workspaceSymbolEntries(query).map { toSymbolInformation(it) }
+    }
+
+    fun modernWorkspaceSymbols(query: String): List<WorkspaceSymbol> = synchronized(stateLock) {
+        queries.workspaceSymbolEntries(query).map { toWorkspaceSymbol(it) }
     }
 
     fun diagnostics(path: String): PublishDiagnosticsParams = synchronized(stateLock) {
@@ -401,6 +405,7 @@ class LuaLanguageService(
         if (folders.isNotEmpty()) {
             return folders
         }
+        // rootUri shares the same WorkspaceFolder + normalization path as workspace folders.
         val rootUri = params.rootUri?.takeIf { it.isNotBlank() } ?: return emptyList()
         return listOf(WorkspaceFolder(rootUri, workspaceFolderName(rootUri)))
     }
@@ -425,7 +430,7 @@ class LuaLanguageService(
                 return@forEach
             }
             val uri = folder.uri ?: return@forEach
-            rawWorkspacePathFromUri(uri)
+            normalizeLspFileUriPath(uri)
                 ?.normalizeWorkspacePathPrefix()
                 ?.takeIf { it.isNotBlank() }
                 ?.let { workspaceFolderUriPrefixes[normalizeUriPrefixKey(it)] = "" }
@@ -457,28 +462,17 @@ class LuaLanguageService(
         }
     }
 
+    /**
+     * Resolves a workspace folder (from either `workspaceFolders` or legacy `rootUri`)
+     * through the shared file-URI → Path normalization path.
+     */
     private fun workspaceFolderRoot(folder: WorkspaceFolder): Path? {
         val uri = folder.uri ?: return null
-        return try {
-            val parsed = URI(uri)
-            val scheme = parsed.scheme
-            val path = when {
-                scheme.equals("file", ignoreCase = true) -> Paths.get(parsed)
-                scheme.isNullOrBlank() -> Paths.get(uri)
-                else -> return null
-            }
-            path.toAbsolutePath().normalize()
-        } catch (_: IllegalArgumentException) {
-            null
-        } catch (_: FileSystemNotFoundException) {
-            null
-        } catch (_: SecurityException) {
-            null
-        }
+        return pathFromFileUri(uri)
     }
 
     private fun workspaceFolderName(uri: String): String {
-        return rawWorkspacePathFromUri(uri)
+        return normalizeLspFileUriPath(uri)
             ?.normalizeWorkspacePathPrefix()
             ?.substringAfterLast('/')
             ?.takeIf { it.isNotBlank() }
@@ -494,7 +488,7 @@ class LuaLanguageService(
     }
 
     private fun isLuaOrAlyUri(uri: String): Boolean {
-        val candidate = rawWorkspacePathFromUri(uri) ?: uri
+        val candidate = normalizeLspFileUriPath(uri) ?: uri
         val lower = candidate.lowercase()
         return lower.endsWith(".lua") || lower.endsWith(".aly")
     }
@@ -543,6 +537,10 @@ class LuaLanguageService(
         return readWorkspaceSource(path)
     }
 
+    /**
+     * Shared file/scheme-less URI → filesystem [Path] conversion used by rootUri,
+     * workspace folders, watched-file events, and disk reads.
+     */
     private fun pathFromFileUri(uri: String): Path? {
         return try {
             val parsed = URI(uri)
@@ -574,154 +572,57 @@ class LuaLanguageService(
                 triggerCharacters = listOf(".", ":")
             }
             signatureHelpProvider = SignatureHelpOptions(listOf("(", ","), listOf(")"))
-            documentSymbolProvider = Either.forLeft(true)
+            documentSymbolProvider = Either.forRight(DocumentSymbolOptions())
             workspaceSymbolProvider = Either.forRight(WorkspaceSymbolOptions())
         }
     }
 
-    private fun allSymbolEntries(): List<LspSymbolEntry> {
-        val entries = buildList {
-            snapshot.files.forEach { (path, file) ->
-                file.semanticFile?.let { semanticFile ->
-                    val declarations = declarationSymbolEntries(path, semanticFile.snapshot.binder.declarationIndex.declarations)
-                    addAll(declarations)
-                    addAll(moduleExportMemberSymbolEntries(path, file, declarations))
-                }
-            }
-            snapshot.extraProviders.forEach { (path, file) ->
-                moduleSymbolEntry(path, file)?.let(::add)
-                val semanticFile = file.semanticFile
-                if (semanticFile != null) {
-                    val declarations = declarationSymbolEntries(path, semanticFile.snapshot.binder.declarationIndex.declarations)
-                    addAll(declarations)
-                    addAll(moduleExportMemberSymbolEntries(path, file, declarations))
-                } else {
-                    addAll(moduleExportMemberSymbolEntries(path, file))
-                }
-            }
+    private fun hierarchicalDocumentSymbols(path: VirtualPath): List<DocumentSymbol> {
+        return queries.documentSymbols(path).map(::toDocumentSymbol)
+    }
+
+    private fun flattenDocumentSymbol(
+        symbol: DocumentSymbol,
+        uri: String,
+        containerName: String?
+    ): List<SymbolInformation> {
+        val current = SymbolInformation(
+            symbol.name,
+            symbol.kind,
+            Location(uri, symbol.selectionRange ?: symbol.range),
+            containerName
+        )
+        val children = symbol.children.orEmpty().flatMap { child ->
+            flattenDocumentSymbol(child, uri, symbol.name)
         }
-        return entries
-            .distinctBy { entry ->
-                listOf(
-                    entry.path.value,
-                    entry.name,
-                    entry.kind.name,
-                    entry.range.start.line.toString(),
-                    entry.range.start.column.toString(),
-                    entry.containerName.orEmpty()
-                ).joinToString(":")
-            }
-            .sortedWith(compareBy<LspSymbolEntry>({ it.name }, { it.path.value }, { it.range.start.line }, { it.range.start.column }))
+        return listOf(current) + children
     }
 
-    private fun declarationSymbolEntries(path: VirtualPath, declarations: List<BinderDeclaration>): List<LspSymbolEntry> {
-        val declarationsById = declarations.associateBy(BinderDeclaration::id)
-        return declarations
-            .asSequence()
-            .filter(::isNavigableSymbolDeclaration)
-            .mapNotNull { declaration ->
-                declaration.range?.let { range ->
-                    LspSymbolEntry(
-                        name = declaration.name,
-                        kind = declaration.kind.toLspSymbolKind(),
-                        path = path,
-                        range = range,
-                        containerName = containerNameFor(declaration, declarationsById)
-                    )
-                }
-            }
-            .toList()
-    }
-
-    private fun isNavigableSymbolDeclaration(declaration: BinderDeclaration): Boolean {
-        if (declaration.name.isBlank() || declaration.range == null) {
-            return false
-        }
-        if (declaration.origin == DeclarationOrigin.BUILTIN) {
-            return false
-        }
-        return declaration.kind != DeclarationKind.PARAMETER && declaration.kind != DeclarationKind.TYPE_PARAMETER
-    }
-
-    private fun containerNameFor(
-        declaration: BinderDeclaration,
-        declarationsById: Map<io.github.dingyi222666.luaparser.semantic.binder.DeclarationId, BinderDeclaration>
-    ): String? {
-        val ownerId = (declaration.owner as? DeclarationOwner.Declaration)?.declarationId ?: return null
-        return declarationsById[ownerId]?.name?.takeIf { it.isNotBlank() }
-    }
-
-    private fun moduleSymbolEntry(path: VirtualPath, file: WorkspaceSnapshot.FileSnapshot): LspSymbolEntry? {
-        val moduleName = file.moduleExportSurface?.moduleType?.moduleName?.takeIf { it.isNotBlank() } ?: return null
-        return LspSymbolEntry(
-            name = moduleName,
-            kind = org.eclipse.lsp4j.SymbolKind.Module,
-            path = path,
-            range = syntheticModuleRange(moduleName),
-            containerName = null
+    private fun toDocumentSymbol(symbol: WorkspaceDocumentSymbol): DocumentSymbol {
+        return DocumentSymbol(
+            symbol.name,
+            symbol.kind.toLspSymbolKind(),
+            symbol.range.toLspRange(),
+            symbol.selectionRange.toLspRange(),
+            symbol.detail,
+            symbol.children.map(::toDocumentSymbol)
         )
     }
 
-    private fun moduleExportMemberSymbolEntries(
-        path: VirtualPath,
-        file: WorkspaceSnapshot.FileSnapshot,
-        existingDeclarations: List<LspSymbolEntry> = emptyList()
-    ): List<LspSymbolEntry> {
-        val surface = file.moduleExportSurface ?: return emptyList()
-        val moduleName = surface.moduleType.moduleName.takeIf { it.isNotBlank() }
-        val declarationKeys = existingDeclarations
-            .asSequence()
-            .map { symbolEntryKey(it.path, it.name, it.kind, it.range) }
-            .toSet()
-
-        return surface.members
-            .asSequence()
-            .filter { isUserFacingExportName(it.name) }
-            .map { member ->
-                val range = member.range ?: syntheticModuleRange(member.name)
-                LspSymbolEntry(
-                    name = member.name,
-                    kind = member.kind.toLspSymbolKind(),
-                    path = path,
-                    range = range,
-                    containerName = moduleName
-                )
-            }
-            .filterNot { symbolEntryKey(it.path, it.name, it.kind, it.range) in declarationKeys }
-            .toList()
-    }
-
-    private fun symbolEntryKey(
-        path: VirtualPath,
-        name: String,
-        kind: org.eclipse.lsp4j.SymbolKind,
-        range: Range
-    ): String {
-        return listOf(
-            path.value,
-            name,
-            kind.name,
-            range.start.line.toString(),
-            range.start.column.toString()
-        ).joinToString(":")
-    }
-
-    private fun isUserFacingExportName(name: String): Boolean {
-        return name.isNotBlank() && !name.startsWith("__")
-    }
-
-    private fun syntheticModuleRange(moduleName: String): Range {
-        return Range(
-            start = Position(1, 1),
-            end = Position(1, maxOf(moduleName.length + 1, 2))
-        )
-    }
-
-    private fun toSymbolInformation(entry: LspSymbolEntry): SymbolInformation {
+    private fun toSymbolInformation(entry: WorkspaceSymbolEntry): SymbolInformation {
         return SymbolInformation(
             entry.name,
-            entry.kind,
+            entry.kind.toLspSymbolKind(),
             Location(uriFor(entry.path), entry.range.toLspRange()),
+            entry.containerName
+        )
+    }
+
+    private fun toWorkspaceSymbol(entry: WorkspaceSymbolEntry): WorkspaceSymbol {
+        return WorkspaceSymbol(
+            entry.name,
+            entry.kind.toLspSymbolKind(),
+            Either.forLeft(Location(uriFor(entry.path), entry.range.toLspRange())),
             entry.containerName
         )
     }
@@ -815,14 +716,6 @@ class LuaLanguageService(
     }
 }
 
-private data class LspSymbolEntry(
-    val name: String,
-    val kind: org.eclipse.lsp4j.SymbolKind,
-    val path: VirtualPath,
-    val range: Range,
-    val containerName: String?
-)
-
 private fun org.eclipse.lsp4j.Position.toParserPosition(): Position {
     return Position(line + 1, character + 1)
 }
@@ -864,30 +757,112 @@ internal fun lspVirtualPathFromUri(
     workspaceFolderUriPrefixes: Map<String, String> = emptyMap(),
     collapseSyntheticWorkspaceRoot: Boolean = false
 ): VirtualPath {
-    val parsedPath = rawWorkspacePathFromUri(uri)
+    val parsedPath = normalizeLspFileUriPath(uri)
     val workspacePath = parsedPath?.workspaceRelativePath(workspaceFolderUriPrefixes)
         ?.syntheticWorkspaceRelativePath(collapseSyntheticWorkspaceRoot)
     return workspacePath?.toVirtualPathOrNull() ?: encodedUriPath(uri)
 }
 
-private fun rawWorkspacePathFromUri(uri: String): String? {
+/**
+ * Cross-platform LSP URI → path-string policy (shared by rootUri, workspace folders,
+ * document mapping, and watched-file handling):
+ *
+ * - `file:` URIs yield a filesystem path string:
+ *   - Unix absolute paths keep their leading slash (`/home/...`).
+ *   - Windows drive paths are returned as `C:/...` (only the slash before the drive is stripped).
+ *   - Percent-encoded segments are decoded (via [URI]) so path text round-trips safely with [lspFileUri].
+ * - Scheme-less values are treated as raw filesystem/path text.
+ * - Non-file / custom schemes return `null` so callers map them to a synthetic virtual path
+ *   while preserving the original document URI separately (never force `file:///...`).
+ */
+internal fun normalizeLspFileUriPath(uri: String): String? {
     val parsed = try {
         URI(uri)
     } catch (_: IllegalArgumentException) {
-        return uri.removePrefix("file:///")
+        return fallbackFileUriPath(uri)
     }
 
     return when {
         parsed.scheme.equals("file", ignoreCase = true) -> parsed.fileWorkspacePath(uri)
-        parsed.scheme.isNullOrBlank() -> parsed.path?.takeIf { it.isNotBlank() } ?: uri
+        parsed.scheme.isNullOrBlank() -> {
+            val raw = parsed.path?.takeIf { it.isNotBlank() } ?: uri
+            normalizeFileSystemPathFromUriPath(raw.replace('\\', '/'))
+        }
         else -> null
     }
 }
 
+private fun fallbackFileUriPath(uri: String): String? {
+    val trimmed = uri.trim()
+    if (!trimmed.regionMatches(0, "file:", 0, 5, ignoreCase = true)) {
+        return trimmed.takeIf { it.isNotBlank() }
+    }
+    var rest = trimmed.substring(5)
+    // file:///path, file://localhost/path, file:/path
+    rest = when {
+        rest.startsWith("///") -> rest.substring(2) // keep one leading '/'
+        rest.startsWith("//") -> {
+            val authorityAndPath = rest.substring(2)
+            val slash = authorityAndPath.indexOf('/')
+            if (slash >= 0) authorityAndPath.substring(slash) else authorityAndPath
+        }
+        rest.startsWith("/") -> rest
+        else -> "/$rest"
+    }
+    return normalizeFileSystemPathFromUriPath(rest.replace('\\', '/'))
+}
+
 private fun URI.fileWorkspacePath(originalUri: String): String {
-    path?.takeIf { it.isNotBlank() }?.let { return it.removePrefix("/") }
-    schemeSpecificPart?.takeIf { it.isNotBlank() }?.let { return it.removePrefix("///").removePrefix("/") }
-    return originalUri.removePrefix("file:///")
+    val rawPath = when {
+        !path.isNullOrBlank() -> path
+        !schemeSpecificPart.isNullOrBlank() -> {
+            val ssp = schemeSpecificPart
+            when {
+                ssp.startsWith("///") -> ssp.substring(2) // "/..."
+                ssp.startsWith("//") -> {
+                    val authorityAndPath = ssp.substring(2)
+                    val slash = authorityAndPath.indexOf('/')
+                    if (slash >= 0) authorityAndPath.substring(slash) else authorityAndPath
+                }
+                else -> ssp
+            }
+        }
+        else -> return fallbackFileUriPath(originalUri) ?: originalUri
+    }
+    return normalizeFileSystemPathFromUriPath(rawPath.replace('\\', '/'))
+}
+
+/**
+ * Normalize a URI path component into a cross-platform filesystem path string.
+ * Keeps Unix absolute leading `/`; strips only the extra slash before a Windows drive.
+ */
+internal fun normalizeFileSystemPathFromUriPath(uriPath: String): String {
+    if (uriPath.isEmpty()) {
+        return uriPath
+    }
+    // Windows drive encoded as "/C:/..." or "/c|/..." style from file URIs.
+    if (uriPath.length >= 3 &&
+        uriPath[0] == '/' &&
+        uriPath[1].isLetter() &&
+        (uriPath[2] == ':' || uriPath[2] == '|')
+    ) {
+        val drive = uriPath[1]
+        val rest = uriPath.substring(3)
+        return buildString {
+            append(drive)
+            append(':')
+            if (rest.isNotEmpty() && !rest.startsWith('/')) {
+                append('/')
+            }
+            append(rest.replace('|', ':'))
+        }
+    }
+    // Already a Windows drive path: "C:/..."
+    if (uriPath.length >= 2 && uriPath[0].isLetter() && (uriPath[1] == ':' || uriPath[1] == '|')) {
+        return uriPath[0] + ":" + uriPath.substring(2).replace('|', ':')
+    }
+    // Unix absolute and all other forms keep their shape (including leading '/').
+    return uriPath
 }
 
 private fun String.toVirtualPathOrNull(): VirtualPath? {
@@ -900,14 +875,26 @@ private fun String.toVirtualPathOrNull(): VirtualPath? {
 private fun String.workspaceRelativePath(workspaceFolderUriPrefixes: Map<String, String>): String {
     val normalized = normalizeWorkspacePathPrefix()
     val match = workspaceFolderUriPrefixes.keys
-        .filter { prefix -> normalized == prefix || normalized.startsWith("$prefix/") }
+        .filter { prefix ->
+            val key = prefix.normalizeWorkspacePathPrefix()
+            normalized == key || normalized.startsWith("$key/")
+        }
         .maxByOrNull { it.length }
         ?: return normalized
-    return normalized.removePrefix(match).removePrefix("/").ifBlank { normalized }
+    return normalized.removePrefix(match.normalizeWorkspacePathPrefix()).removePrefix("/").ifBlank { normalized }
 }
 
 private fun String.syntheticWorkspaceRelativePath(enabled: Boolean): String {
-    return if (enabled) removePrefix("workspace/").ifBlank { this } else this
+    if (!enabled) {
+        return this
+    }
+    val normalized = replace('\\', '/')
+    return when {
+        normalized == "workspace" || normalized == "/workspace" -> normalized
+        normalized.startsWith("workspace/") -> normalized.removePrefix("workspace/").ifBlank { this }
+        normalized.startsWith("/workspace/") -> normalized.removePrefix("/workspace/").ifBlank { this }
+        else -> this
+    }
 }
 
 private fun String.normalizeWorkspacePathPrefix(): String {
@@ -936,30 +923,22 @@ private fun encodedUriPath(uri: String): VirtualPath {
     return VirtualPath.of("__lsp_uri__/$encoded.lua")
 }
 
-private fun lspFileUri(path: VirtualPath): String {
+/**
+ * Build a `file:` URI from a virtual path, percent-encoding path segments so that
+ * paths containing spaces or other reserved characters round-trip with [normalizeLspFileUriPath].
+ */
+internal fun lspFileUri(path: VirtualPath): String {
     val normalized = path.value.replace('\\', '/')
-    return if (normalized.length >= 2 && normalized[1] == ':') {
-        "file:///" + normalized
-    } else {
-        "file:///" + normalized.trimStart('/')
+    val uriPath = when {
+        isWindowsDrivePath(normalized) -> "/$normalized"
+        normalized.startsWith("/") -> normalized
+        else -> "/$normalized"
     }
+    return URI("file", "", uriPath, null).toASCIIString()
 }
 
-private fun DeclarationKind.toLspSymbolKind(): org.eclipse.lsp4j.SymbolKind {
-    return when (this) {
-        DeclarationKind.LOCAL,
-        DeclarationKind.GLOBAL,
-        DeclarationKind.PARAMETER -> org.eclipse.lsp4j.SymbolKind.Variable
-
-        DeclarationKind.FUNCTION -> org.eclipse.lsp4j.SymbolKind.Function
-        DeclarationKind.MODULE -> org.eclipse.lsp4j.SymbolKind.Module
-        DeclarationKind.CLASS -> org.eclipse.lsp4j.SymbolKind.Class
-        DeclarationKind.TYPE_ALIAS,
-        DeclarationKind.TYPE_PARAMETER -> org.eclipse.lsp4j.SymbolKind.TypeParameter
-
-        DeclarationKind.FIELD -> org.eclipse.lsp4j.SymbolKind.Field
-        DeclarationKind.METHOD -> org.eclipse.lsp4j.SymbolKind.Method
-    }
+private fun isWindowsDrivePath(path: String): Boolean {
+    return path.length >= 2 && path[0].isLetter() && path[1] == ':'
 }
 
 private fun SemanticSymbolKind.toLspSymbolKind(): org.eclipse.lsp4j.SymbolKind {
