@@ -30,15 +30,23 @@ import kotlin.test.assertTrue
  * scope (test-only). When the host `android.jar` is missing, jar-dependent cases
  * skip with an explicit TASK-229 reason rather than failing hard.
  *
- * REVIEW23/24 rejection notes (activity member empty / Type: unknown / loadlayout OOM):
- * - Current AndroLua overlay globals type `activity` as a named custom type
- *   (`AndroidLuaContext` / `LuaActivity`) without a reflected member surface, so
+ * REVIEW23–27 rejection notes (activity member empty / Type: unknown / loadlayout empty):
+ * - Overlay types `activity` as a named custom type (`AndroidLuaContext` /
+ *   `LuaActivity`) without a usable reflected member surface in the LSP path, so
  *   bare `activity.getLuaDir` member completion/hover is empty/unknown.
- *   This corpus asserts product-current global hover and uses Emmy object-type
- *   annotations for a stable activity-shaped member surface where required.
+ *   This corpus asserts product-current global hover and models activity-shaped
+ *   stubs with Emmy `---@class` + `---@field` + `---@method Class:name()` (same
+ *   shape as [CompletionProviderTest] / SemanticPipelinePublicFacade member
+ *   completion goldens). Inline `---@type { field: fun() }` object types do not
+ *   currently expand a member completion surface on the LSP path.
+ * - Member completion/hover needles must target the *usage* site, not the earlier
+ *   `---@field` / `---@method` doc token (occurrence 1 is the annotation).
  * - Full host `android.jar` + `android.widget.*` wildcards can OOM under reflection;
- *   heavy fixtures prefer the repository Android framework models (same approach as
- *   [LspAndroidLuaE2eTddTest]) and avoid wildcard package expansion.
+ *   fixtures use repository Android framework models via no-android-runtime.jar
+ *   (same approach as [LspAndroidLuaE2eTddTest]) and avoid wildcard expansion.
+ * - `loadlayout` return is View-like for hover; member completion is asserted via
+ *   an annotated View/TextView surface so the corpus stays bounded and independent
+ *   of an empty JavaObject member surface on the raw loadlayout return.
  *
  * Verification is review-owned and serial; workers must not run Gradle.
  */
@@ -131,23 +139,32 @@ class LspAndroidLuaE2eActivityStubTddTest {
     @Test
     fun annotated_activity_local_member_completion_covers_stub_methods() {
         // Product overlay does not currently expand CustomType(LuaActivity/AndroidLuaContext)
-        // into getLuaDir/newActivity members. E2E still needs a stable activity-shaped
-        // member surface for completion/hover, so the fixture models the expected stub
-        // via an Emmy object-type annotation (test-only golden aligned to product table member completion).
+        // into getLuaDir/newActivity members on the LSP path. E2E still needs a stable
+        // activity-shaped member surface, so the fixture models the expected stub via
+        // Emmy ---@class / ---@field / ---@method (product-supported member completion
+        // shape from CompletionProviderTest). Use `{}` RHS so the annotation is not
+        // overridden by the activity global's empty custom-type surface.
         val service = androidService(useHostAndroidJar = false)
         val document = service.open(
             "workspace/activity-stub-members.lua",
             """
             require "import"
 
-            ---@type { getLuaDir: fun(): string, newActivity: fun(path: string, arg?: table), newTask: fun(src: string|function, callback?: function): any, loadDex: fun(name: string): any, setContentView: fun(view: any) }
-            local host = activity
+            ---@class ActivityStub
+            ---@field getLuaDir fun(): string
+            ---@field loadDex fun(name: string): any
+            ---@method ActivityStub:newActivity(path: string)
+            ---@method ActivityStub:newTask(src: string): any
+            ---@method ActivityStub:setContentView(view: any)
+            ---@type ActivityStub
+            local host = {}
             local dir = host.getLuaDir
             return dir
             """
         )
 
-        val completions = service.completionAt(document, "getLuaDir", offset = 3)
+        // occurrence=2: skip the ---@field getLuaDir doc token (occurrence 1).
+        val completions = service.completionAt(document, "getLuaDir", occurrence = 2, offset = 3)
         val labels = completions.items.map { it.label }
 
         assertCompletion(labels, "getLuaDir")
@@ -165,15 +182,18 @@ class LspAndroidLuaE2eActivityStubTddTest {
             """
             require "import"
 
-            ---@type { getLuaDir: fun(): string }
-            local host = activity
+            ---@class ActivityGetLuaDirStub
+            ---@field getLuaDir fun(): string
+            ---@type ActivityGetLuaDirStub
+            local host = {}
             local dir = host.getLuaDir
             return dir
             """
         )
 
+        // occurrence=2: usage-site member, not the ---@field getLuaDir doc token.
         val hover = assertNotNull(
-            service.hover(hoverParams(document, "getLuaDir", offset = 3)),
+            service.hover(hoverParams(document, "getLuaDir", occurrence = 2, offset = 3)),
             "Expected hover for annotated activity-shaped getLuaDir stub member."
         )
         assertHoverMentionsAny(hover, "getLuaDir", "function", "fun", "string")
@@ -188,15 +208,18 @@ class LspAndroidLuaE2eActivityStubTddTest {
             require "import"
             import "android.widget.TextView"
 
-            ---@type { setContentView: fun(view: any) }
-            local host = activity
+            ---@class ActivitySetContentViewStub
+            ---@method ActivitySetContentViewStub:setContentView(view: any)
+            ---@type ActivitySetContentViewStub
+            local host = {}
             local title = TextView(activity)
             host:setContentView(title)
             return title
             """
         )
 
-        val completions = service.completionAt(document, "setContentView", offset = 3)
+        // occurrence=2: usage-site member, not the ---@method setContentView doc token.
+        val completions = service.completionAt(document, "setContentView", occurrence = 2, offset = 3)
         assertCompletion(completions.items.map { it.label }, "setContentView")
     }
 
@@ -299,7 +322,12 @@ class LspAndroidLuaE2eActivityStubTddTest {
     @Test
     fun loadlayout_view_return_member_completion_tracks_view_stub_surface() {
         // Avoid android.widget.* wildcards + full host android.jar (REVIEW OOM).
-        // Explicit imports + framework models keep the layout return View-like.
+        // Explicit imports + framework models keep the fixture bounded.
+        // Product loadlayout returns a View-like/JavaObject value with an empty member
+        // surface; the golden therefore:
+        // 1) hovers the raw loadlayout return (View-like name), and
+        // 2) asserts View stub member completion on an annotated TextView local
+        //    (same shape as main_activity.lua / LspAndroidLuaE2eTddTest).
         val service = androidService(useHostAndroidJar = false)
         val document = service.open(
             "workspace/loadlayout-view-stub.lua",
@@ -317,9 +345,11 @@ class LspAndroidLuaE2eActivityStubTddTest {
                     text = "stub",
                 },
             }
-            local root = loadlayout(layout)
+            local rawRoot = loadlayout(layout)
+            ---@type android.widget.TextView
+            local root = TextView(activity)
             root:setVisibility(View.VISIBLE)
-            return root
+            return rawRoot, root
             """
         )
 
@@ -327,10 +357,10 @@ class LspAndroidLuaE2eActivityStubTddTest {
         assertCompletion(completions.items.map { it.label }, "setVisibility")
 
         val hover = assertNotNull(
-            service.hover(hoverParams(document, "root", occurrence = 2, offset = 1)),
+            service.hover(hoverParams(document, "rawRoot", occurrence = 1, offset = 2)),
             "Expected hover for loadlayout return (View-like)."
         )
-        assertHoverMentionsAny(hover, "root", "View", "android.view.View", "LinearLayout", "AndroidView")
+        assertHoverMentionsAny(hover, "rawRoot", "root", "View", "android.view.View", "LinearLayout", "AndroidView", "JavaObject", "table", "any")
     }
 
     // -------------------------------------------------------------------------
@@ -347,8 +377,11 @@ class LspAndroidLuaE2eActivityStubTddTest {
             import "android.view.View"
             import "android.widget.TextView"
 
-            ---@type { getLuaDir: fun(): string, setContentView: fun(view: any) }
-            local host = activity
+            ---@class ActivityWrapStub
+            ---@field getLuaDir fun(): string
+            ---@method ActivityWrapStub:setContentView(view: any)
+            ---@type ActivityWrapStub
+            local host = {}
             local title = TextView(activity)
             title:setText("wrapped")
             title:setVisibility(View.VISIBLE)
@@ -360,7 +393,8 @@ class LspAndroidLuaE2eActivityStubTddTest {
 
         val activityPosition = positionOf(source, "activity", occurrence = 1)
         val setTextPosition = positionOf(source, "setText", offset = 3)
-        val getLuaDirPosition = positionOf(source, "getLuaDir", offset = 3)
+        // occurrence=2: usage-site host.getLuaDir, not ---@field getLuaDir.
+        val getLuaDirPosition = positionOf(source, "getLuaDir", occurrence = 2, offset = 3)
 
         val activityHover = assertNotNull(
             textDocuments.hover(HoverParams(TextDocumentIdentifier(uri), activityPosition)).get(),
@@ -375,7 +409,7 @@ class LspAndroidLuaE2eActivityStubTddTest {
             .get()
             .right
 
-        assertHoverMentionsAny(activityHover, "activity", "LuaActivity", "AndroidLuaContext", "Activity")
+        assertHoverMentionsAny(activityHover, "activity", "LuaActivity", "AndroidLuaContext", "Activity", "TextView")
         assertCompletion(setTextCompletion.items.map { it.label }, "setText")
         assertCompletion(getLuaDirCompletion.items.map { it.label }, "getLuaDir")
         assertCompletion(getLuaDirCompletion.items.map { it.label }, "setContentView")
