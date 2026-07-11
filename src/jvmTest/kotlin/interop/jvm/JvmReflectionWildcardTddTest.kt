@@ -30,6 +30,10 @@ import kotlin.test.fail
  *
  * Product code is intentionally out of scope (test-only). Verification is
  * review-owned and serial; this worker does not run Gradle.
+ *
+ * Compile note (REVIEW20): avoid kotlin.test assertNotEquals/@OnlyInputTypes
+ * across unrelated concrete type args after assertIs smart-casts; use
+ * assertTrue(x != y) / explicit assertIs<T> instead.
  */
 class JvmReflectionWildcardTddTest {
     private val provider = JvmClassModuleProvider()
@@ -88,9 +92,10 @@ class JvmReflectionWildcardTddTest {
             "Collection<? extends E> upper-bound E should surface as TypeParameterType, not a concrete invented type"
         )
         assertEquals("E", typeParam.name)
-        assertNotEquals(PrimitiveType.ANY, argument)
-        assertNotEquals(PrimitiveType.STRING, argument)
-        assertNotEquals(UnknownType, argument)
+        // Avoid assertNotEquals/@OnlyInputTypes across PrimitiveType vs TypeParameterType.
+        assertTrue(typeParam != PrimitiveType.ANY, "Wildcard extends E must not collapse to ANY")
+        assertTrue(typeParam != PrimitiveType.STRING, "Wildcard extends E must not collapse to STRING")
+        assertTrue(typeParam != UnknownType, "Wildcard extends E must not collapse to UnknownType")
     }
 
     @Test
@@ -242,7 +247,7 @@ class JvmReflectionWildcardTddTest {
             .firstOrNull { it.javaName.canonicalName == "java.util.Collection" }
             ?: fail("Expected Collections.addAll(Collection<? super T>, T...) collection parameter")
 
-        val argument = collectionArg.typeArguments.singleOrNull()
+        val argument: Type = collectionArg.typeArguments.singleOrNull()
             ?: fail("Collection<? super T> must keep a single type-argument slot")
 
         // Lower-bound wildcards are not modeled from the lower bound; upper is Object → UnknownType.
@@ -256,11 +261,10 @@ class JvmReflectionWildcardTddTest {
             isConservative,
             "Collection<? super T> must stay conservative (UnknownType or T), not invent concrete types; got $argument"
         )
-        assertNotEquals(PrimitiveType.STRING, argument)
-        assertNotEquals(PrimitiveType.ANY, argument)
+        assertTrue(argument != PrimitiveType.STRING, "Lower-bound wildcard must not invent STRING")
+        assertTrue(argument != PrimitiveType.ANY, "Lower-bound wildcard must not invent ANY")
         assertFalse(
-            argument is JavaInstanceType &&
-                argument.javaName.canonicalName == "java.lang.Object",
+            (argument as? JavaInstanceType)?.javaName?.canonicalName == "java.lang.Object",
             "Lower-bound wildcard must not surface as a precise java.lang.Object instance type"
         )
     }
@@ -274,10 +278,9 @@ class JvmReflectionWildcardTddTest {
             .filterIsInstance<JavaInstanceType>()
             .first { it.javaName.canonicalName == "java.util.List" }
 
-        val element = listArg.typeArguments.single()
+        val element: Type = listArg.typeArguments.single()
         assertFalse(
-            element is JavaInstanceType &&
-                element.javaName.canonicalName == "java.lang.Object",
+            (element as? JavaInstanceType)?.javaName?.canonicalName == "java.lang.Object",
             "List<?> must not claim a precise Object element type; got $element"
         )
         assertEquals(UnknownType, element)
@@ -351,13 +354,11 @@ class JvmReflectionWildcardTddTest {
             .filter { it.javaName.canonicalName == "java.util.Collection" }
 
         assertTrue(collectionParams.isNotEmpty(), "Expected Collection wildcard parameter on List.addAll")
-        // Collection<? extends E> must remain a Collection surface — not rewritten into ArrayType.
+        // Collection<? extends E> must remain a Collection surface with a type-argument slot.
         assertTrue(
             collectionParams.all { param -> param.typeArguments.size == 1 },
             "Collection<? extends E> must keep a single type-argument slot"
         )
-        // Guard that none of the Collection-typed parameters were rewritten as ArrayType
-        // (type is already JavaInstanceType via filterIsInstance above).
         assertTrue(
             collectionParams.none { it.typeArguments.isEmpty() },
             "List.addAll Collection<? extends E> must keep type-argument surface, not collapse to raw"
@@ -400,9 +401,9 @@ class JvmReflectionWildcardTddTest {
     private fun module(className: String): ModuleType = providerFile(className).module
 
     private fun classType(className: String): JavaInstanceType =
-        assertIs(module(className).fields.required("__class"))
+        assertIs<JavaInstanceType>(module(className).fields.required("__class"))
 
-    private fun callable(type: Type): CallableType = assertIs(type)
+    private fun callable(type: Type): CallableType = assertIs<CallableType>(type)
 
     private fun jvmClassPath(className: String): VirtualPath =
         VirtualPath.of("__jvm__/classes/${className.replace('.', '/')}.lua")
