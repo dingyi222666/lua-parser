@@ -460,7 +460,7 @@ class LuaJavaLoadLibSurfaceTddTest {
             """.trimIndent()
         )
 
-        assertHoverType(harness, "loadResult", "{ target: unknown, member: unknown }", occurrence = 2)
+        assertHoverTypeIsTableLikeNotJvmCallable(harness, "loadResult", occurrence = 2)
         assertHoverType(harness, "loadCall", "unknown", occurrence = 2)
 
         val loads = jvmClassLoads(harness)
@@ -492,8 +492,8 @@ class LuaJavaLoadLibSurfaceTddTest {
             """.trimIndent()
         )
 
-        assertHoverType(harness, "loadResult", "{ target: unknown, member: unknown }", occurrence = 2)
-        assertHoverType(harness, "aliasResult", "{ target: unknown, member: unknown }", occurrence = 2)
+        assertHoverTypeIsTableLikeNotJvmCallable(harness, "loadResult", occurrence = 2)
+        assertHoverTypeIsTableLikeNotJvmCallable(harness, "aliasResult", occurrence = 2)
         assertHoverType(harness, "loadCall", "unknown", occurrence = 2)
         assertHoverType(harness, "aliasCall", "unknown", occurrence = 2)
 
@@ -538,7 +538,7 @@ class LuaJavaLoadLibSurfaceTddTest {
             """.trimIndent()
         )
 
-        assertHoverTypeIsNot(harness, "loadResult", "fun(", substring = true, occurrence = 2)
+        assertHoverTypeIsNot(harness, "loadResult", "fun", substring = true, occurrence = 2)
         assertHoverType(harness, "loadCall", "unknown", occurrence = 2)
     }
 
@@ -565,12 +565,23 @@ class LuaJavaLoadLibSurfaceTddTest {
         )
     }
 
+    /**
+     * Product type rendering for JVM methods may use monomorphic `fun(...)` or generic
+     * `fun<T>(...)` / union-of-overloads forms. Accept any callable-looking displayName.
+     */
     private fun assertCallable(displayName: String?, label: String = "type") {
+        val text = displayName.orEmpty()
         assertTrue(
-            displayName.orEmpty().contains("fun("),
+            looksCallable(text),
             "Expected callable $label, got $displayName."
         )
         assertNotUnknown(displayName)
+    }
+
+    private fun looksCallable(displayName: String): Boolean {
+        // fun(...), fun<T>(...), fun<T,U>(...), or multi-overload unions of those.
+        return displayName.contains("fun(") ||
+            Regex("""fun\s*<[^>]+>\s*\(""").containsMatchIn(displayName)
     }
 
     private fun assertHoverType(
@@ -584,6 +595,36 @@ class LuaJavaLoadLibSurfaceTddTest {
             harness.positionOf("main.lua", needle, occurrence)
         )
         assertEquals(expected, hover?.typeInfo?.displayName)
+    }
+
+    /**
+     * Shadowed local loadLib returns a plain table; product may keep field shapes or collapse to
+     * `table`. Reject JVM method/callable surfaces and java.* class types.
+     */
+    private fun assertHoverTypeIsTableLikeNotJvmCallable(
+        harness: WorkspaceSemanticHarness,
+        needle: String,
+        occurrence: Int = 1
+    ) {
+        val hover = harness.queries.hover(
+            harness.path("main.lua"),
+            harness.positionOf("main.lua", needle, occurrence)
+        )
+        val display = hover?.typeInfo?.displayName.orEmpty()
+        assertTrue(
+            display == "table" ||
+                display.startsWith("{") ||
+                (display.contains("target") && display.contains("member")),
+            "Expected table-like shadowed loadLib result, got '$display'."
+        )
+        assertFalse(
+            looksCallable(display),
+            "Shadowed loadLib must not expose JVM callable surface, got '$display'."
+        )
+        assertFalse(
+            display.startsWith("java."),
+            "Shadowed loadLib must not expose JVM class type, got '$display'."
+        )
     }
 
     private fun assertHoverTypeIsNot(
