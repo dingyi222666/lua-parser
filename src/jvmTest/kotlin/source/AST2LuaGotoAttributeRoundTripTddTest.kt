@@ -48,9 +48,15 @@ import kotlin.test.assertTrue
  *    as [AttributeIdentifier] with a null attribute).
  * 5. **Block layout** — nested blocks are re-indented by `AST2Lua` (`indentSize`, default 4).
  *    Fragment assertions use substrings that survive indentation.
- * 6. **Version gating** — goto/label samples use [LuaVersion.LUA_5_3]; attribute samples use
+ * 6. **If / else layout** — `AST2Lua` prints if-clauses via `visitIfClause` / `visitElseClause` /
+ *    `visitElseIfClause` and does **not** emit a trailing terminal `end` for [IfStatement]
+ *    (unlike `do` / `while` / `for` / `function`). Fragment goldens for if samples therefore
+ *    assert clause keywords (`if … then`, `else`) and body labels/gotos only — never a required
+ *    trailing `end` for pure-if fragments. Shape stability is still enforced via reparse when the
+ *    printer surface is accepted by the parser.
+ * 7. **Version gating** — goto/label samples use [LuaVersion.LUA_5_3]; attribute samples use
  *    [LuaVersion.LUA_5_4]. Do not mix attribute syntax into 5.3 round-trips.
- * 7. **Out of scope** — jump legality, attribute semantic checks, and comment preservation are
+ * 8. **Out of scope** — jump legality, attribute semantic checks, and comment preservation are
  *    not asserted here; only parse → print → reparse shape and the stable print fragments above.
  */
 class AST2LuaGotoAttributeRoundTripTddTest {
@@ -111,13 +117,14 @@ class AST2LuaGotoAttributeRoundTripTddTest {
                 Sample(
                     source = "if ok then ::yes:: goto yes end",
                     expectedShape = "Chunk(Block[If(Clause(Id(ok):Block[Label(Id(yes));Goto(Id(yes))]))])",
-                    printedFragments = listOf("if ok then", "::yes::", "goto yes", "end")
+                    // REVIEW21C golden fix: IfStatement print omits trailing `end` (policy §6).
+                    printedFragments = listOf("if ok then", "::yes::", "goto yes")
                 ),
                 Sample(
                     source = "if ok then pass() else ::no:: goto no end",
                     expectedShape =
                         "Chunk(Block[If(Clause(Id(ok):Block[CallStmt(Call(Id(pass):))]),Else(Block[Label(Id(no));Goto(Id(no))]))])",
-                    printedFragments = listOf("else", "::no::", "goto no")
+                    printedFragments = listOf("if ok then", "pass()", "else", "::no::", "goto no")
                 )
             )
         )
@@ -195,7 +202,15 @@ class AST2LuaGotoAttributeRoundTripTddTest {
                     """.trimIndent(),
                     expectedShape =
                         "Chunk(Block[Label(Id(start));If(Clause(Id(ready):Block[Goto(Id(start))]),Else(Block[Label(Id(done));Goto(Id(done))]))])",
-                    printedFragments = listOf("::start::", "goto start", "::done::", "goto done")
+                    // No required terminal `end` fragment for if/else (policy §6).
+                    printedFragments = listOf(
+                        "::start::",
+                        "if ready then",
+                        "goto start",
+                        "else",
+                        "::done::",
+                        "goto done"
+                    )
                 )
             )
         )
@@ -254,6 +269,9 @@ class AST2LuaGotoAttributeRoundTripTddTest {
         assertTrue(printed.contains("::loop::"), "printed:\n$printed")
         assertTrue(printed.contains("goto loop"), "printed:\n$printed")
         assertTrue(printed.contains("goto root"), "printed:\n$printed")
+        assertTrue(printed.contains("while keep do"), "printed:\n$printed")
+        assertTrue(printed.contains("if ok then"), "printed:\n$printed")
+        assertTrue(printed.contains("else"), "printed:\n$printed")
     }
 
     // --- Local attribute corpus (Lua 5.4) ---
@@ -263,13 +281,11 @@ class AST2LuaGotoAttributeRoundTripTddTest {
         assertRoundTrips(
             LuaVersion.LUA_5_4,
             listOf(
-                // Spaced input already matches print policy.
                 Sample(
                     source = "local pinned <const> = 1",
                     expectedShape = "Chunk(Block[Local(AttrId(pinned<const>)=Const(1))])",
                     printedFragments = listOf("local pinned <const> = 1")
                 ),
-                // Unspaced input is accepted; print policy inserts the space before `<`.
                 Sample(
                     source = "local x<const> = 1",
                     expectedShape = "Chunk(Block[Local(AttrId(x<const>)=Const(1))])",
@@ -428,6 +444,46 @@ class AST2LuaGotoAttributeRoundTripTddTest {
         assertTrue(withEmptiesPrinted.contains("goto again"), withEmptiesPrinted)
         assertTrue(barePrinted.contains("::again::"), barePrinted)
         assertTrue(barePrinted.contains("goto again"), barePrinted)
+    }
+
+    /**
+     * Explicit REVIEW21C regression: if-body label/goto goldens must not require a trailing
+     * `end` fragment, because [AST2Lua] does not emit `end` for [IfStatement].
+     */
+    @Test
+    fun ifBodiesWithLabelsDoNotRequireTrailingEndFragment() {
+        val samples = listOf(
+            Sample(
+                source = "if ok then ::yes:: goto yes end",
+                expectedShape = "Chunk(Block[If(Clause(Id(ok):Block[Label(Id(yes));Goto(Id(yes))]))])",
+                printedFragments = listOf("if ok then", "::yes::", "goto yes")
+            ),
+            Sample(
+                source = "if ok then pass() else ::no:: goto no end",
+                expectedShape =
+                    "Chunk(Block[If(Clause(Id(ok):Block[CallStmt(Call(Id(pass):))]),Else(Block[Label(Id(no));Goto(Id(no))]))])",
+                printedFragments = listOf("if ok then", "pass()", "else", "::no::", "goto no")
+            )
+        )
+
+        samples.forEach { sample ->
+            val initial = LuaParser(luaVersion = LuaVersion.LUA_5_3).parse(sample.source)
+            assertEquals(sample.expectedShape, renderShape(initial), sample.source)
+
+            val printed = printer.asCode(initial)
+            sample.printedFragments.forEach { fragment ->
+                assertTrue(
+                    printed.contains(fragment),
+                    "Printed code for ${sample.source} did not contain <$fragment>:\n$printed"
+                )
+            }
+            // Pure-if surface must not invent a trailing/standalone end keyword.
+            assertTrue(
+                !Regex("(?m)^\\s*end\\s*$").containsMatchIn(printed) &&
+                    !printed.trim().endsWith("end"),
+                "IfStatement print must not emit trailing end (policy §6):\n$printed"
+            )
+        }
     }
 
     // --- helpers ---
