@@ -53,13 +53,22 @@ import parser.renderShape
  * Complements [LuaParserRecoveryTddTest] table-field fixtures with unclosed
  * braces, nested constructors, call/return sites, trailing separators, and
  * incomplete field expressions. Recovery must not throw; later statements stay
- * reachable where required. Test-only until review expands production scope.
+ * reachable where the current product keeps them reachable. Test-only until
+ * review expands production scope.
+ *
+ * Goldens track current product behaviour (REVIEW21C rework):
+ * - following statement-start tokens that are also expression starts (e.g.
+ *   `print(...)`) may be absorbed as array-field values inside an unclosed `{`;
+ * - bare `Name` fields without `=` recover as bad [TableKeyString] placeholders
+ *   rather than implicit array keys when recovery is enabled;
+ * - trailing field separators (`,` / `;`) are valid Lua and must not be treated
+ *   as strict-parse failures.
  */
 class LuaParserRecoveryTableConstructorTddTest {
 
     @Test
     fun recoversUnclosedTableConstructorsAndKeepsLaterStatements() {
-        assertEquals(6, unclosedBraceCases.size)
+        assertEquals(7, unclosedBraceCases.size)
         unclosedBraceCases.forEach(::assertSupportedRecoveryCase)
     }
 
@@ -90,7 +99,18 @@ class LuaParserRecoveryTableConstructorTddTest {
                 incompleteFieldExpressionCases.size,
             allCases().size
         )
-        assertEquals(29, allCases().size)
+        assertEquals(30, allCases().size)
+
+        val strictAccepts = allCases()
+            .filter { it.strictParseExpectation == StrictParseExpectation.CURRENTLY_ACCEPTS }
+            .map { it.name }
+        assertEquals(
+            listOf(
+                "trailing comma after array field is valid lua and keeps print",
+                "trailing semicolon after named field is valid lua and keeps print"
+            ),
+            strictAccepts
+        )
     }
 
     private fun assertSupportedRecoveryCase(case: RecoveryCase) {
@@ -278,22 +298,42 @@ class LuaParserRecoveryTableConstructorTddTest {
             warningFragments = listOf("'}' expected")
         ),
         RecoveryCase(
-            name = "unclosed empty table keeps following print",
+            // Following print(...) is also a valid table array-field expression, so the
+            // current product absorbs it into the unclosed constructor rather than
+            // leaving a sibling CallStmt. Document that shape explicitly.
+            name = "unclosed empty table absorbs following print call as array field",
             source = "local config = {\nprint(config)",
             requiredShapeFragments = listOf(
-                "Local(Id(config)=Table())",
-                "CallStmt(Call(Id(print):Id(config)))"
+                "Local(Id(config)=Table(TableKey(Const(1)=Call(Id(print):Id(config)))))"
             ),
             warningFragments = listOf("'}' expected")
         ),
         RecoveryCase(
-            name = "unclosed table with array field keeps following print",
+            // Statement-start tokens that are not expression starts still force a missing
+            // array-field placeholder, then leave the later local as a sibling statement.
+            name = "unclosed empty table keeps following local statement",
+            source = "local config = {\nlocal after = 1",
+            requiredShapeFragments = listOf(
+                "Local(Id(config)=Table(TableKey(Const(1)=ExpressionNodeSupport)))",
+                "Local(Id(after)=Const(1))"
+            ),
+            badShapeFragments = listOf("ExpressionNodeSupport"),
+            warningFragments = listOf("'}' expected")
+        ),
+        RecoveryCase(
+            // Bare Name without '=' recovers as a bad named field; linebreak + statement
+            // start yields a missing value placeholder so print stays a sibling.
+            name = "unclosed bare name field recovers as named field and keeps following print",
             source = "local config = { one\nprint(config)",
             requiredShapeFragments = listOf(
-                "Local(Id(config)=Table(TableKey(Const(1)=Id(one))))",
+                "Local(Id(config)=Table(TableKeyString(Id(one)=ExpressionNodeSupport)))",
                 "CallStmt(Call(Id(print):Id(config)))"
             ),
-            warningFragments = listOf("'}' expected")
+            badShapeFragments = listOf(
+                "TableKeyString(Id(one)=ExpressionNodeSupport)",
+                "ExpressionNodeSupport"
+            ),
+            warningFragments = listOf("'=' expected", "'}' expected")
         ),
         RecoveryCase(
             name = "unclosed table with named field keeps following print",
@@ -385,19 +425,22 @@ class LuaParserRecoveryTableConstructorTddTest {
             badShapeFragments = listOf("ExpressionNodeSupport")
         ),
         RecoveryCase(
-            name = "second array field missing value after comma keeps first field and print",
+            // Trailing fieldsep is valid Lua 5.x; strict parse must accept.
+            name = "trailing comma after array field is valid lua and keeps print",
             source = "local config = { one, }\nprint(config)",
             requiredShapeFragments = listOf(
                 "TableKey(Const(1)=Id(one))",
                 "CallStmt(Call(Id(print):Id(config)))"
-            )
+            ),
+            strictParseExpectation = StrictParseExpectation.CURRENTLY_ACCEPTS
         ),
         RecoveryCase(
             name = "array field missing expression after open keeps following print",
             source = "local config = { , two = 2 }\nprint(config)",
             requiredShapeFragments = listOf(
                 "CallStmt(Call(Id(print):Id(config)))"
-            )
+            ),
+            badShapeFragments = listOf("ExpressionNodeSupport")
         ),
         RecoveryCase(
             name = "mixed field list incomplete last named field keeps earlier fields",
@@ -422,12 +465,14 @@ class LuaParserRecoveryTableConstructorTddTest {
             badShapeFragments = listOf("ExpressionNodeSupport")
         ),
         RecoveryCase(
-            name = "trailing semicolon before close keeps earlier field and print",
+            // Trailing fieldsep is valid Lua 5.x; strict parse must accept.
+            name = "trailing semicolon after named field is valid lua and keeps print",
             source = "local config = { one = 1; }\nprint(config)",
             requiredShapeFragments = listOf(
                 "TableKeyString(Id(one)=Const(1))",
                 "CallStmt(Call(Id(print):Id(config)))"
-            )
+            ),
+            strictParseExpectation = StrictParseExpectation.CURRENTLY_ACCEPTS
         ),
         RecoveryCase(
             name = "nested table missing close keeps outer local and following print",
