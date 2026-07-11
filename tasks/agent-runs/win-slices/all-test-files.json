@@ -1,0 +1,2571 @@
+[
+  {
+    "file": "src/jvmTest/kotlin/integration/AndroidLuaCorpusSemanticVerificationTest.kt",
+    "package": "integration",
+    "class": "AndroidLuaCorpusSemanticVerificationTest",
+    "fqcn": "integration.AndroidLuaCorpusSemanticVerificationTest",
+    "testsPattern": "integration.AndroidLuaCorpusSemanticVerificationTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/integration/AndroidLuaMixedLuajavaIntegrationTddTest.kt",
+    "package": "integration",
+    "class": "AndroidLuaMixedLuajavaIntegrationTddTest",
+    "fqcn": "integration.AndroidLuaMixedLuajavaIntegrationTddTest",
+    "testsPattern": "integration.AndroidLuaMixedLuajavaIntegrationTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/integration/LuaJavaBindClassHoverIntegrationTddTest.kt",
+    "package": "integration",
+    "class": "LuaJavaBindClassHoverIntegrationTddTest",
+    "fqcn": "integration.LuaJavaBindClassHoverIntegrationTddTest",
+    "testsPattern": "integration.LuaJavaBindClassHoverIntegrationTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/integration/RequireChainCompletionIntegrationTddTest.kt",
+    "package": "integration",
+    "class": "RequireChainCompletionIntegrationTddTest",
+    "fqcn": "integration.RequireChainCompletionIntegrationTddTest",
+    "testsPattern": "integration.RequireChainCompletionIntegrationTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/interop/jvm/AndroidJarActivityMemberSurfaceTddTest.kt",
+    "package": "interop.jvm",
+    "class": "AndroidJarActivityMemberSurfaceTddTest",
+    "fqcn": "interop.jvm.AndroidJarActivityMemberSurfaceTddTest",
+    "testsPattern": "interop.jvm.AndroidJarActivityMemberSurfaceTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/interop/jvm/AndroidJarContextMemberSurfaceTddTest.kt",
+    "package": "interop.jvm",
+    "class": "AndroidJarContextMemberSurfaceTddTest",
+    "fqcn": "interop.jvm.AndroidJarContextMemberSurfaceTddTest",
+    "testsPattern": "interop.jvm.AndroidJarContextMemberSurfaceTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/interop/jvm/AndroidJarDefaultPathDiscoveryTddTest.kt",
+    "package": "interop.jvm",
+    "class": "AndroidJarDefaultPathDiscoveryTddTest",
+    "fqcn": "interop.jvm.AndroidJarDefaultPathDiscoveryTddTest",
+    "testsPattern": "interop.jvm.AndroidJarDefaultPathDiscoveryTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/interop/jvm/AndroidJarIntentMemberSurfaceTddTest.kt",
+    "package": "interop.jvm",
+    "class": "AndroidJarIntentMemberSurfaceTddTest",
+    "fqcn": "interop.jvm.AndroidJarIntentMemberSurfaceTddTest",
+    "testsPattern": "interop.jvm.AndroidJarIntentMemberSurfaceTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/interop/jvm/AndroidJarPackageEnumerationTddTest.kt",
+    "package": "interop.jvm",
+    "class": "AndroidJarPackageEnumerationTddTest",
+    "fqcn": "interop.jvm.AndroidJarPackageEnumerationTddTest",
+    "testsPattern": "interop.jvm.AndroidJarPackageEnumerationTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/interop/jvm/AndroidJarReflectionTddTest.kt",
+    "package": "interop.jvm",
+    "class": "AndroidJarReflectionTddTest",
+    "fqcn": "interop.jvm.AndroidJarReflectionTddTest",
+    "testsPattern": "interop.jvm.AndroidJarReflectionTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/interop/jvm/JvmClassProviderArrayClassTddTest.kt",
+    "package": "interop.jvm",
+    "class": "JvmClassProviderArrayClassTddTest",
+    "fqcn": "interop.jvm.JvmClassProviderArrayClassTddTest",
+    "testsPattern": "interop.jvm.JvmClassProviderArrayClassTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/interop/jvm/JvmClassProviderInnerClassTddTest.kt",
+    "package": "interop.jvm",
+    "class": "JvmClassProviderInnerClassTddTest",
+    "fqcn": "interop.jvm.JvmClassProviderInnerClassTddTest",
+    "testsPattern": "interop.jvm.JvmClassProviderInnerClassTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/interop/jvm/JvmClassloaderConfigurationTddTest.kt",
+    "package": "interop.jvm",
+    "class": "JvmClassloaderConfigurationTddTest",
+    "fqcn": "interop.jvm.JvmClassloaderConfigurationTddTest",
+    "testsPattern": "interop.jvm.JvmClassloaderConfigurationTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/interop/jvm/JvmClassloaderIsolationPolicyTddTest.kt",
+    "package": "interop.jvm",
+    "class": "JvmClassloaderIsolationPolicyTddTest",
+    "fqcn": "interop.jvm.JvmClassloaderIsolationPolicyTddTest",
+    "testsPattern": "interop.jvm.JvmClassloaderIsolationPolicyTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/interop/jvm/JvmClassloaderParentChildPolicyTddTest.kt",
+    "package": "interop.jvm",
+    "class": "JvmClassloaderParentChildPolicyTddTest",
+    "fqcn": "interop.jvm.JvmClassloaderParentChildPolicyTddTest",
+    "testsPattern": "interop.jvm.JvmClassloaderParentChildPolicyTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/interop/jvm/JvmPackageProviderEmptyRootTddTest.kt",
+    "package": "interop.jvm",
+    "class": "JvmPackageProviderEmptyRootTddTest",
+    "fqcn": "interop.jvm.JvmPackageProviderEmptyRootTddTest",
+    "testsPattern": "interop.jvm.JvmPackageProviderEmptyRootTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/interop/jvm/JvmPackageProviderListingTddTest.kt",
+    "package": "interop.jvm",
+    "class": "JvmPackageProviderListingTddTest",
+    "fqcn": "interop.jvm.JvmPackageProviderListingTddTest",
+    "testsPattern": "interop.jvm.JvmPackageProviderListingTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/interop/jvm/JvmPackageProviderNestedPackageTddTest.kt",
+    "package": "interop.jvm",
+    "class": "JvmPackageProviderNestedPackageTddTest",
+    "fqcn": "interop.jvm.JvmPackageProviderNestedPackageTddTest",
+    "testsPattern": "interop.jvm.JvmPackageProviderNestedPackageTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/interop/jvm/JvmReflectionModelTddTest.kt",
+    "package": "interop.jvm",
+    "class": "JvmReflectionModelTddTest",
+    "fqcn": "interop.jvm.JvmReflectionModelTddTest",
+    "testsPattern": "interop.jvm.JvmReflectionModelTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/interop/jvm/JvmReflectionWildcardTddTest.kt",
+    "package": "interop.jvm",
+    "class": "JvmReflectionWildcardTddTest",
+    "fqcn": "interop.jvm.JvmReflectionWildcardTddTest",
+    "testsPattern": "interop.jvm.JvmReflectionWildcardTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/interop/jvm/JvmWorkspaceEngineTest.kt",
+    "package": "interop.jvm",
+    "class": "JvmWorkspaceEngineTest",
+    "fqcn": "interop.jvm.JvmWorkspaceEngineTest",
+    "testsPattern": "interop.jvm.JvmWorkspaceEngineTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/lexer/LuaLexerLongStringDelimiterEdgeTddTest.kt",
+    "package": "lexer",
+    "class": "LuaLexerLongStringDelimiterEdgeTddTest",
+    "fqcn": "lexer.LuaLexerLongStringDelimiterEdgeTddTest",
+    "testsPattern": "lexer.LuaLexerLongStringDelimiterEdgeTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/lexer/LuaLexerLongStringEdgeRefineTddTest.kt",
+    "package": "lexer",
+    "class": "LuaLexerLongStringEdgeRefineTddTest",
+    "fqcn": "lexer.LuaLexerLongStringEdgeRefineTddTest",
+    "testsPattern": "lexer.LuaLexerLongStringEdgeRefineTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/lexer/LuaLexerShebangBomEdgeTddTest.kt",
+    "package": "lexer",
+    "class": "LuaLexerShebangBomEdgeTddTest",
+    "fqcn": "lexer.LuaLexerShebangBomEdgeTddTest",
+    "testsPattern": "lexer.LuaLexerShebangBomEdgeTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/lexer/LuaLexerUtf8IdentifierEdgeTddTest.kt",
+    "package": "lexer",
+    "class": "LuaLexerUtf8IdentifierEdgeTddTest",
+    "fqcn": "lexer.LuaLexerUtf8IdentifierEdgeTddTest",
+    "testsPattern": "lexer.LuaLexerUtf8IdentifierEdgeTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/lsp/LspAndroidLuaE2eActivityStubTddTest.kt",
+    "package": "lsp",
+    "class": "LspAndroidLuaE2eActivityStubTddTest",
+    "fqcn": "lsp.LspAndroidLuaE2eActivityStubTddTest",
+    "testsPattern": "lsp.LspAndroidLuaE2eActivityStubTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/lsp/LspAndroidLuaE2eTddTest.kt",
+    "package": "lsp",
+    "class": "LspAndroidLuaE2eTddTest",
+    "fqcn": "lsp.LspAndroidLuaE2eTddTest",
+    "testsPattern": "lsp.LspAndroidLuaE2eTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/lsp/LspCallHierarchyLocalFunctionTddTest.kt",
+    "package": "lsp",
+    "class": "LspCallHierarchyLocalFunctionTddTest",
+    "fqcn": "lsp.LspCallHierarchyLocalFunctionTddTest",
+    "testsPattern": "lsp.LspCallHierarchyLocalFunctionTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/lsp/LspCallHierarchySafetyTddTest.kt",
+    "package": "lsp",
+    "class": "LspCallHierarchySafetyTddTest",
+    "fqcn": "lsp.LspCallHierarchySafetyTddTest",
+    "testsPattern": "lsp.LspCallHierarchySafetyTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/lsp/LspCodeActionQuickFixSafetyTddTest.kt",
+    "package": "lsp",
+    "class": "LspCodeActionQuickFixSafetyTddTest",
+    "fqcn": "lsp.LspCodeActionQuickFixSafetyTddTest",
+    "testsPattern": "lsp.LspCodeActionQuickFixSafetyTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/lsp/LspCodeActionSafetyTddTest.kt",
+    "package": "lsp",
+    "class": "LspCodeActionSafetyTddTest",
+    "fqcn": "lsp.LspCodeActionSafetyTddTest",
+    "testsPattern": "lsp.LspCodeActionSafetyTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/lsp/LspCompletionCapabilitiesTddTest.kt",
+    "package": "lsp",
+    "class": "LspCompletionCapabilitiesTddTest",
+    "fqcn": "lsp.LspCompletionCapabilitiesTddTest",
+    "testsPattern": "lsp.LspCompletionCapabilitiesTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/lsp/LspCompletionItemResolveTddTest.kt",
+    "package": "lsp",
+    "class": "LspCompletionItemResolveTddTest",
+    "fqcn": "lsp.LspCompletionItemResolveTddTest",
+    "testsPattern": "lsp.LspCompletionItemResolveTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/lsp/LspCompletionKeywordContextTddTest.kt",
+    "package": "lsp",
+    "class": "LspCompletionKeywordContextTddTest",
+    "fqcn": "lsp.LspCompletionKeywordContextTddTest",
+    "testsPattern": "lsp.LspCompletionKeywordContextTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/lsp/LspCompletionKeywordSnippetTddTest.kt",
+    "package": "lsp",
+    "class": "LspCompletionKeywordSnippetTddTest",
+    "fqcn": "lsp.LspCompletionKeywordSnippetTddTest",
+    "testsPattern": "lsp.LspCompletionKeywordSnippetTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/lsp/LspConcurrentOpenCloseStressTddTest.kt",
+    "package": "lsp",
+    "class": "LspConcurrentOpenCloseStressTddTest",
+    "fqcn": "lsp.LspConcurrentOpenCloseStressTddTest",
+    "testsPattern": "lsp.LspConcurrentOpenCloseStressTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/lsp/LspDefinitionLocationLinkTddTest.kt",
+    "package": "lsp",
+    "class": "LspDefinitionLocationLinkTddTest",
+    "fqcn": "lsp.LspDefinitionLocationLinkTddTest",
+    "testsPattern": "lsp.LspDefinitionLocationLinkTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/lsp/LspDefinitionMultiLocalShadowTddTest.kt",
+    "package": "lsp",
+    "class": "LspDefinitionMultiLocalShadowTddTest",
+    "fqcn": "lsp.LspDefinitionMultiLocalShadowTddTest",
+    "testsPattern": "lsp.LspDefinitionMultiLocalShadowTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/lsp/LspDiagnosticSeverityMappingTddTest.kt",
+    "package": "lsp",
+    "class": "LspDiagnosticSeverityMappingTddTest",
+    "fqcn": "lsp.LspDiagnosticSeverityMappingTddTest",
+    "testsPattern": "lsp.LspDiagnosticSeverityMappingTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/lsp/LspDiagnosticsPublishOnChangeTddTest.kt",
+    "package": "lsp",
+    "class": "LspDiagnosticsPublishOnChangeTddTest",
+    "fqcn": "lsp.LspDiagnosticsPublishOnChangeTddTest",
+    "testsPattern": "lsp.LspDiagnosticsPublishOnChangeTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/lsp/LspDidChangeConfigurationRepublishTddTest.kt",
+    "package": "lsp",
+    "class": "LspDidChangeConfigurationRepublishTddTest",
+    "fqcn": "lsp.LspDidChangeConfigurationRepublishTddTest",
+    "testsPattern": "lsp.LspDidChangeConfigurationRepublishTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/lsp/LspDidChangeWorkspaceFoldersTddTest.kt",
+    "package": "lsp",
+    "class": "LspDidChangeWorkspaceFoldersTddTest",
+    "fqcn": "lsp.LspDidChangeWorkspaceFoldersTddTest",
+    "testsPattern": "lsp.LspDidChangeWorkspaceFoldersTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/lsp/LspDidOpenMultiDocDiagnosticsTddTest.kt",
+    "package": "lsp",
+    "class": "LspDidOpenMultiDocDiagnosticsTddTest",
+    "fqcn": "lsp.LspDidOpenMultiDocDiagnosticsTddTest",
+    "testsPattern": "lsp.LspDidOpenMultiDocDiagnosticsTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/lsp/LspDocumentHighlightTddTest.kt",
+    "package": "lsp",
+    "class": "LspDocumentHighlightTddTest",
+    "fqcn": "lsp.LspDocumentHighlightTddTest",
+    "testsPattern": "lsp.LspDocumentHighlightTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/lsp/LspDocumentLinkDualPathTddTest.kt",
+    "package": "lsp",
+    "class": "LspDocumentLinkDualPathTddTest",
+    "fqcn": "lsp.LspDocumentLinkDualPathTddTest",
+    "testsPattern": "lsp.LspDocumentLinkDualPathTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/lsp/LspDocumentLinkSafetyTddTest.kt",
+    "package": "lsp",
+    "class": "LspDocumentLinkSafetyTddTest",
+    "fqcn": "lsp.LspDocumentLinkSafetyTddTest",
+    "testsPattern": "lsp.LspDocumentLinkSafetyTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/lsp/LspFoldingRangeSafetyTddTest.kt",
+    "package": "lsp",
+    "class": "LspFoldingRangeSafetyTddTest",
+    "fqcn": "lsp.LspFoldingRangeSafetyTddTest",
+    "testsPattern": "lsp.LspFoldingRangeSafetyTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/lsp/LspFoldingRangesTddTest.kt",
+    "package": "lsp",
+    "class": "LspFoldingRangesTddTest",
+    "fqcn": "lsp.LspFoldingRangesTddTest",
+    "testsPattern": "lsp.LspFoldingRangesTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/lsp/LspFormattingFullDocumentSafetyTddTest.kt",
+    "package": "lsp",
+    "class": "LspFormattingFullDocumentSafetyTddTest",
+    "fqcn": "lsp.LspFormattingFullDocumentSafetyTddTest",
+    "testsPattern": "lsp.LspFormattingFullDocumentSafetyTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/lsp/LspFormattingSafetyTddTest.kt",
+    "package": "lsp",
+    "class": "LspFormattingSafetyTddTest",
+    "fqcn": "lsp.LspFormattingSafetyTddTest",
+    "testsPattern": "lsp.LspFormattingSafetyTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/lsp/LspHierarchicalDocumentSymbolTddTest.kt",
+    "package": "lsp",
+    "class": "LspHierarchicalDocumentSymbolTddTest",
+    "fqcn": "lsp.LspHierarchicalDocumentSymbolTddTest",
+    "testsPattern": "lsp.LspHierarchicalDocumentSymbolTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/lsp/LspHoverDocCommentSurfaceTddTest.kt",
+    "package": "lsp",
+    "class": "LspHoverDocCommentSurfaceTddTest",
+    "fqcn": "lsp.LspHoverDocCommentSurfaceTddTest",
+    "testsPattern": "lsp.LspHoverDocCommentSurfaceTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/lsp/LspHoverLocalAnnotationTddTest.kt",
+    "package": "lsp",
+    "class": "LspHoverLocalAnnotationTddTest",
+    "fqcn": "lsp.LspHoverLocalAnnotationTddTest",
+    "testsPattern": "lsp.LspHoverLocalAnnotationTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/lsp/LspHoverMarkupContentTddTest.kt",
+    "package": "lsp",
+    "class": "LspHoverMarkupContentTddTest",
+    "fqcn": "lsp.LspHoverMarkupContentTddTest",
+    "testsPattern": "lsp.LspHoverMarkupContentTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/lsp/LspIncrementalWorkspaceUpdateTddTest.kt",
+    "package": "lsp",
+    "class": "LspIncrementalWorkspaceUpdateTddTest",
+    "fqcn": "lsp.LspIncrementalWorkspaceUpdateTddTest",
+    "testsPattern": "lsp.LspIncrementalWorkspaceUpdateTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/lsp/LspInlayHintsParamNameTddTest.kt",
+    "package": "lsp",
+    "class": "LspInlayHintsParamNameTddTest",
+    "fqcn": "lsp.LspInlayHintsParamNameTddTest",
+    "testsPattern": "lsp.LspInlayHintsParamNameTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/lsp/LspInlayHintsSafetyTddTest.kt",
+    "package": "lsp",
+    "class": "LspInlayHintsSafetyTddTest",
+    "fqcn": "lsp.LspInlayHintsSafetyTddTest",
+    "testsPattern": "lsp.LspInlayHintsSafetyTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/lsp/LspJavaAndroidFeatureTddTest.kt",
+    "package": "lsp",
+    "class": "LspJavaAndroidFeatureTddTest",
+    "fqcn": "lsp.LspJavaAndroidFeatureTddTest",
+    "testsPattern": "lsp.LspJavaAndroidFeatureTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/lsp/LspJvmProviderDefinitionTddTest.kt",
+    "package": "lsp",
+    "class": "LspJvmProviderDefinitionTddTest",
+    "fqcn": "lsp.LspJvmProviderDefinitionTddTest",
+    "testsPattern": "lsp.LspJvmProviderDefinitionTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/lsp/LspLifecycleDiagnosticsTddTest.kt",
+    "package": "lsp",
+    "class": "LspLifecycleDiagnosticsTddTest",
+    "fqcn": "lsp.LspLifecycleDiagnosticsTddTest",
+    "testsPattern": "lsp.LspLifecycleDiagnosticsTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/lsp/LspLinkedEditingRangeLocalTddTest.kt",
+    "package": "lsp",
+    "class": "LspLinkedEditingRangeLocalTddTest",
+    "fqcn": "lsp.LspLinkedEditingRangeLocalTddTest",
+    "testsPattern": "lsp.LspLinkedEditingRangeLocalTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/lsp/LspModernWorkspaceSymbolTddTest.kt",
+    "package": "lsp",
+    "class": "LspModernWorkspaceSymbolTddTest",
+    "fqcn": "lsp.LspModernWorkspaceSymbolTddTest",
+    "testsPattern": "lsp.LspModernWorkspaceSymbolTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/lsp/LspMonikerSafetyTddTest.kt",
+    "package": "lsp",
+    "class": "LspMonikerSafetyTddTest",
+    "fqcn": "lsp.LspMonikerSafetyTddTest",
+    "testsPattern": "lsp.LspMonikerSafetyTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/lsp/LspNavigationSymbolsTddTest.kt",
+    "package": "lsp",
+    "class": "LspNavigationSymbolsTddTest",
+    "fqcn": "lsp.LspNavigationSymbolsTddTest",
+    "testsPattern": "lsp.LspNavigationSymbolsTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/lsp/LspOnTypeFormattingEndKeywordTddTest.kt",
+    "package": "lsp",
+    "class": "LspOnTypeFormattingEndKeywordTddTest",
+    "fqcn": "lsp.LspOnTypeFormattingEndKeywordTddTest",
+    "testsPattern": "lsp.LspOnTypeFormattingEndKeywordTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/lsp/LspPrepareCallHierarchySafetyTddTest.kt",
+    "package": "lsp",
+    "class": "LspPrepareCallHierarchySafetyTddTest",
+    "fqcn": "lsp.LspPrepareCallHierarchySafetyTddTest",
+    "testsPattern": "lsp.LspPrepareCallHierarchySafetyTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/lsp/LspPrepareRenameSafetyTddTest.kt",
+    "package": "lsp",
+    "class": "LspPrepareRenameSafetyTddTest",
+    "fqcn": "lsp.LspPrepareRenameSafetyTddTest",
+    "testsPattern": "lsp.LspPrepareRenameSafetyTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/lsp/LspRangeFormattingTableBodyTddTest.kt",
+    "package": "lsp",
+    "class": "LspRangeFormattingTableBodyTddTest",
+    "fqcn": "lsp.LspRangeFormattingTableBodyTddTest",
+    "testsPattern": "lsp.LspRangeFormattingTableBodyTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/lsp/LspReferencesIncludeDeclarationTddTest.kt",
+    "package": "lsp",
+    "class": "LspReferencesIncludeDeclarationTddTest",
+    "fqcn": "lsp.LspReferencesIncludeDeclarationTddTest",
+    "testsPattern": "lsp.LspReferencesIncludeDeclarationTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/lsp/LspRenamePrepareDualPathTddTest.kt",
+    "package": "lsp",
+    "class": "LspRenamePrepareDualPathTddTest",
+    "fqcn": "lsp.LspRenamePrepareDualPathTddTest",
+    "testsPattern": "lsp.LspRenamePrepareDualPathTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/lsp/LspRenamePrepareMultiFileTddTest.kt",
+    "package": "lsp",
+    "class": "LspRenamePrepareMultiFileTddTest",
+    "fqcn": "lsp.LspRenamePrepareMultiFileTddTest",
+    "testsPattern": "lsp.LspRenamePrepareMultiFileTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/lsp/LspRenameSafetyTddTest.kt",
+    "package": "lsp",
+    "class": "LspRenameSafetyTddTest",
+    "fqcn": "lsp.LspRenameSafetyTddTest",
+    "testsPattern": "lsp.LspRenameSafetyTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/lsp/LspSelectionRangeNestedBlockTddTest.kt",
+    "package": "lsp",
+    "class": "LspSelectionRangeNestedBlockTddTest",
+    "fqcn": "lsp.LspSelectionRangeNestedBlockTddTest",
+    "testsPattern": "lsp.LspSelectionRangeNestedBlockTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/lsp/LspSelectionRangeSafetyTddTest.kt",
+    "package": "lsp",
+    "class": "LspSelectionRangeSafetyTddTest",
+    "fqcn": "lsp.LspSelectionRangeSafetyTddTest",
+    "testsPattern": "lsp.LspSelectionRangeSafetyTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/lsp/LspSemanticTokensBasicTddTest.kt",
+    "package": "lsp",
+    "class": "LspSemanticTokensBasicTddTest",
+    "fqcn": "lsp.LspSemanticTokensBasicTddTest",
+    "testsPattern": "lsp.LspSemanticTokensBasicTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/lsp/LspSemanticTokensSafetyTddTest.kt",
+    "package": "lsp",
+    "class": "LspSemanticTokensSafetyTddTest",
+    "fqcn": "lsp.LspSemanticTokensSafetyTddTest",
+    "testsPattern": "lsp.LspSemanticTokensSafetyTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/lsp/LspServiceStateConcurrencyTddTest.kt",
+    "package": "lsp",
+    "class": "LspServiceStateConcurrencyTddTest",
+    "fqcn": "lsp.LspServiceStateConcurrencyTddTest",
+    "testsPattern": "lsp.LspServiceStateConcurrencyTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/lsp/LspShutdownBehaviorTddTest.kt",
+    "package": "lsp",
+    "class": "LspShutdownBehaviorTddTest",
+    "fqcn": "lsp.LspShutdownBehaviorTddTest",
+    "testsPattern": "lsp.LspShutdownBehaviorTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/lsp/LspShutdownExitIdempotencyTddTest.kt",
+    "package": "lsp",
+    "class": "LspShutdownExitIdempotencyTddTest",
+    "fqcn": "lsp.LspShutdownExitIdempotencyTddTest",
+    "testsPattern": "lsp.LspShutdownExitIdempotencyTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/lsp/LspSignatureHelpActiveParamTddTest.kt",
+    "package": "lsp",
+    "class": "LspSignatureHelpActiveParamTddTest",
+    "fqcn": "lsp.LspSignatureHelpActiveParamTddTest",
+    "testsPattern": "lsp.LspSignatureHelpActiveParamTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/lsp/LspSignatureHelpActiveParameterTddTest.kt",
+    "package": "lsp",
+    "class": "LspSignatureHelpActiveParameterTddTest",
+    "fqcn": "lsp.LspSignatureHelpActiveParameterTddTest",
+    "testsPattern": "lsp.LspSignatureHelpActiveParameterTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/lsp/LspSignatureHelpOverloadTddTest.kt",
+    "package": "lsp",
+    "class": "LspSignatureHelpOverloadTddTest",
+    "fqcn": "lsp.LspSignatureHelpOverloadTddTest",
+    "testsPattern": "lsp.LspSignatureHelpOverloadTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/lsp/LspTypeHierarchyDocClassTddTest.kt",
+    "package": "lsp",
+    "class": "LspTypeHierarchyDocClassTddTest",
+    "fqcn": "lsp.LspTypeHierarchyDocClassTddTest",
+    "testsPattern": "lsp.LspTypeHierarchyDocClassTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/lsp/LspTypeHierarchySafetyTddTest.kt",
+    "package": "lsp",
+    "class": "LspTypeHierarchySafetyTddTest",
+    "fqcn": "lsp.LspTypeHierarchySafetyTddTest",
+    "testsPattern": "lsp.LspTypeHierarchySafetyTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/lsp/LspUriHandlingTddTest.kt",
+    "package": "lsp",
+    "class": "LspUriHandlingTddTest",
+    "fqcn": "lsp.LspUriHandlingTddTest",
+    "testsPattern": "lsp.LspUriHandlingTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/lsp/LspWatchedFilesTddTest.kt",
+    "package": "lsp",
+    "class": "LspWatchedFilesTddTest",
+    "fqcn": "lsp.LspWatchedFilesTddTest",
+    "testsPattern": "lsp.LspWatchedFilesTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/lsp/LspWorkspaceFoldersTddTest.kt",
+    "package": "lsp",
+    "class": "LspWorkspaceFoldersTddTest",
+    "fqcn": "lsp.LspWorkspaceFoldersTddTest",
+    "testsPattern": "lsp.LspWorkspaceFoldersTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/lsp/LspWorkspaceSymbolPrefixTddTest.kt",
+    "package": "lsp",
+    "class": "LspWorkspaceSymbolPrefixTddTest",
+    "fqcn": "lsp.LspWorkspaceSymbolPrefixTddTest",
+    "testsPattern": "lsp.LspWorkspaceSymbolPrefixTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/lsp/LuaLanguageServiceTest.kt",
+    "package": "lsp",
+    "class": "LuaLanguageServiceTest",
+    "fqcn": "lsp.LuaLanguageServiceTest",
+    "testsPattern": "lsp.LuaLanguageServiceTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/parser/AndroLuaSyntaxRegressionTest.kt",
+    "package": "parser",
+    "class": "AndroLuaSyntaxRegressionTest",
+    "fqcn": "parser.AndroLuaSyntaxRegressionTest",
+    "testsPattern": "parser.AndroLuaSyntaxRegressionTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/parser/Lua53SyntaxRegressionTest.kt",
+    "package": "parser",
+    "class": "Lua53SyntaxRegressionTest",
+    "fqcn": "parser.Lua53SyntaxRegressionTest",
+    "testsPattern": "parser.Lua53SyntaxRegressionTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/parser/Lua54SyntaxRegressionTest.kt",
+    "package": "parser",
+    "class": "Lua54SyntaxRegressionTest",
+    "fqcn": "parser.Lua54SyntaxRegressionTest",
+    "testsPattern": "parser.Lua54SyntaxRegressionTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/parser/ParserCommentSyntaxRegressionTest.kt",
+    "package": "parser",
+    "class": "ParserCommentSyntaxRegressionTest",
+    "fqcn": "parser.ParserCommentSyntaxRegressionTest",
+    "testsPattern": "parser.ParserCommentSyntaxRegressionTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/parser/ParserRecoveryRegressionTest.kt",
+    "package": "parser",
+    "class": "ParserRecoveryRegressionTest",
+    "fqcn": "parser.ParserRecoveryRegressionTest",
+    "testsPattern": "parser.ParserRecoveryRegressionTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/parser/ParserRegressionHarnessTest.kt",
+    "package": "parser",
+    "class": "ParserRegressionHarnessTest",
+    "fqcn": "parser.ParserRegressionHarnessTest",
+    "testsPattern": "parser.ParserRegressionHarnessTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/parser/ParserShebangBomTddTest.kt",
+    "package": "parser",
+    "class": "ParserShebangBomTddTest",
+    "fqcn": "parser.ParserShebangBomTddTest",
+    "testsPattern": "parser.ParserShebangBomTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/parser/androidlua/AndroLuaSyntaxTddTest.kt",
+    "package": "parser.androidlua",
+    "class": "AndroLuaSyntaxTddTest",
+    "fqcn": "parser.androidlua.AndroLuaSyntaxTddTest",
+    "testsPattern": "parser.androidlua.AndroLuaSyntaxTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/parser/androidlua/AndroidLuaAssetCorpusExtraFixturesTddTest.kt",
+    "package": "parser.androidlua",
+    "class": "AndroidLuaAssetCorpusExtraFixturesTddTest",
+    "fqcn": "parser.androidlua.AndroidLuaAssetCorpusExtraFixturesTddTest",
+    "testsPattern": "parser.androidlua.AndroidLuaAssetCorpusExtraFixturesTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/parser/androidlua/AndroidLuaAssetCorpusParseTddTest.kt",
+    "package": "parser.androidlua",
+    "class": "AndroidLuaAssetCorpusParseTddTest",
+    "fqcn": "parser.androidlua.AndroidLuaAssetCorpusParseTddTest",
+    "testsPattern": "parser.androidlua.AndroidLuaAssetCorpusParseTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/parser/androidlua/ParserVersionPolicyKeywordGatingTddTest.kt",
+    "package": "parser.androidlua",
+    "class": "ParserVersionPolicyKeywordGatingTddTest",
+    "fqcn": "parser.androidlua.ParserVersionPolicyKeywordGatingTddTest",
+    "testsPattern": "parser.androidlua.ParserVersionPolicyKeywordGatingTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/parser/androidlua/ParserVersionPolicyTddTest.kt",
+    "package": "parser.androidlua",
+    "class": "ParserVersionPolicyTddTest",
+    "fqcn": "parser.androidlua.ParserVersionPolicyTddTest",
+    "testsPattern": "parser.androidlua.ParserVersionPolicyTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/parser/ast/AstShapeTddTest.kt",
+    "package": "parser.ast",
+    "class": "AstShapeTddTest",
+    "fqcn": "parser.ast.AstShapeTddTest",
+    "testsPattern": "parser.ast.AstShapeTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/parser/ast/AstVisitorAndroLuaNodesTddTest.kt",
+    "package": "parser.ast",
+    "class": "AstVisitorAndroLuaNodesTddTest",
+    "fqcn": "parser.ast.AstVisitorAndroLuaNodesTddTest",
+    "testsPattern": "parser.ast.AstVisitorAndroLuaNodesTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/parser/ast/AstVisitorModifierTddTest.kt",
+    "package": "parser.ast",
+    "class": "AstVisitorModifierTddTest",
+    "fqcn": "parser.ast.AstVisitorModifierTddTest",
+    "testsPattern": "parser.ast.AstVisitorModifierTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/parser/ast/BreakContinueAndroidLuaShapeTddTest.kt",
+    "package": "parser.ast",
+    "class": "BreakContinueAndroidLuaShapeTddTest",
+    "fqcn": "parser.ast.BreakContinueAndroidLuaShapeTddTest",
+    "testsPattern": "parser.ast.BreakContinueAndroidLuaShapeTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/parser/ast/CompactCallAstShapeTddTest.kt",
+    "package": "parser.ast",
+    "class": "CompactCallAstShapeTddTest",
+    "fqcn": "parser.ast.CompactCallAstShapeTddTest",
+    "testsPattern": "parser.ast.CompactCallAstShapeTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/parser/ast/DoBlockNestedReturnShapeTddTest.kt",
+    "package": "parser.ast",
+    "class": "DoBlockNestedReturnShapeTddTest",
+    "fqcn": "parser.ast.DoBlockNestedReturnShapeTddTest",
+    "testsPattern": "parser.ast.DoBlockNestedReturnShapeTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/parser/ast/MethodCallColonShapeTddTest.kt",
+    "package": "parser.ast",
+    "class": "MethodCallColonShapeTddTest",
+    "fqcn": "parser.ast.MethodCallColonShapeTddTest",
+    "testsPattern": "parser.ast.MethodCallColonShapeTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/parser/ast/MultiAssignLhsRhsShapeTddTest.kt",
+    "package": "parser.ast",
+    "class": "MultiAssignLhsRhsShapeTddTest",
+    "fqcn": "parser.ast.MultiAssignLhsRhsShapeTddTest",
+    "testsPattern": "parser.ast.MultiAssignLhsRhsShapeTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/parser/ast/ParserAstCampaignGapTddTest.kt",
+    "package": "parser.ast",
+    "class": "ParserAstCampaignGapTddTest",
+    "fqcn": "parser.ast.ParserAstCampaignGapTddTest",
+    "testsPattern": "parser.ast.ParserAstCampaignGapTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/parser/ast/ShebangOnlyChunkShapeTddTest.kt",
+    "package": "parser.ast",
+    "class": "ShebangOnlyChunkShapeTddTest",
+    "fqcn": "parser.ast.ShebangOnlyChunkShapeTddTest",
+    "testsPattern": "parser.ast.ShebangOnlyChunkShapeTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/parser/ast/StringCallVsParenCallShapeTddTest.kt",
+    "package": "parser.ast",
+    "class": "StringCallVsParenCallShapeTddTest",
+    "fqcn": "parser.ast.StringCallVsParenCallShapeTddTest",
+    "testsPattern": "parser.ast.StringCallVsParenCallShapeTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/parser/ast/VarargFunctionParamShapeTddTest.kt",
+    "package": "parser.ast",
+    "class": "VarargFunctionParamShapeTddTest",
+    "fqcn": "parser.ast.VarargFunctionParamShapeTddTest",
+    "testsPattern": "parser.ast.VarargFunctionParamShapeTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/parser/lexer/LuaLexerHexFloatEscapeTddTest.kt",
+    "package": "parser.lexer",
+    "class": "LuaLexerHexFloatEscapeTddTest",
+    "fqcn": "parser.lexer.LuaLexerHexFloatEscapeTddTest",
+    "testsPattern": "parser.lexer.LuaLexerHexFloatEscapeTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/parser/lexer/LuaLexerJvmApiCompatibilityTddTest.kt",
+    "package": "parser.lexer",
+    "class": "LuaLexerJvmApiCompatibilityTddTest",
+    "fqcn": "parser.lexer.LuaLexerJvmApiCompatibilityTddTest",
+    "testsPattern": "parser.lexer.LuaLexerJvmApiCompatibilityTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/parser/lexer/LuaLexerLiteralCommentTddTest.kt",
+    "package": "parser.lexer",
+    "class": "LuaLexerLiteralCommentTddTest",
+    "fqcn": "parser.lexer.LuaLexerLiteralCommentTddTest",
+    "testsPattern": "parser.lexer.LuaLexerLiteralCommentTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/parser/lexer/LuaLexerLongBracketCorpusTddTest.kt",
+    "package": "parser.lexer",
+    "class": "LuaLexerLongBracketCorpusTddTest",
+    "fqcn": "parser.lexer.LuaLexerLongBracketCorpusTddTest",
+    "testsPattern": "parser.lexer.LuaLexerLongBracketCorpusTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/parser/lexer/LuaLexerLongCommentEdgeTddTest.kt",
+    "package": "parser.lexer",
+    "class": "LuaLexerLongCommentEdgeTddTest",
+    "fqcn": "parser.lexer.LuaLexerLongCommentEdgeTddTest",
+    "testsPattern": "parser.lexer.LuaLexerLongCommentEdgeTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/parser/lexer/LuaLexerLongStringEdgeTddTest.kt",
+    "package": "parser.lexer",
+    "class": "LuaLexerLongStringEdgeTddTest",
+    "fqcn": "parser.lexer.LuaLexerLongStringEdgeTddTest",
+    "testsPattern": "parser.lexer.LuaLexerLongStringEdgeTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/parser/lexer/LuaLexerLongStringNestedEqualsTddTest.kt",
+    "package": "parser.lexer",
+    "class": "LuaLexerLongStringNestedEqualsTddTest",
+    "fqcn": "parser.lexer.LuaLexerLongStringNestedEqualsTddTest",
+    "testsPattern": "parser.lexer.LuaLexerLongStringNestedEqualsTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/parser/lexer/LuaLexerOperatorBoundaryTddTest.kt",
+    "package": "parser.lexer",
+    "class": "LuaLexerOperatorBoundaryTddTest",
+    "fqcn": "parser.lexer.LuaLexerOperatorBoundaryTddTest",
+    "testsPattern": "parser.lexer.LuaLexerOperatorBoundaryTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/parser/lexer/LuaLexerUtf8EscapeTddTest.kt",
+    "package": "parser.lexer",
+    "class": "LuaLexerUtf8EscapeTddTest",
+    "fqcn": "parser.lexer.LuaLexerUtf8EscapeTddTest",
+    "testsPattern": "parser.lexer.LuaLexerUtf8EscapeTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/parser/lexer/LuaLexerUtf8NumericCorpusTddTest.kt",
+    "package": "parser.lexer",
+    "class": "LuaLexerUtf8NumericCorpusTddTest",
+    "fqcn": "parser.lexer.LuaLexerUtf8NumericCorpusTddTest",
+    "testsPattern": "parser.lexer.LuaLexerUtf8NumericCorpusTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/parser/lua53/Lua53BitOpChainShapeTddTest.kt",
+    "package": "parser.lua53",
+    "class": "Lua53BitOpChainShapeTddTest",
+    "fqcn": "parser.lua53.Lua53BitOpChainShapeTddTest",
+    "testsPattern": "parser.lua53.Lua53BitOpChainShapeTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/parser/lua53/Lua53BitwiseOpsCorpusTddTest.kt",
+    "package": "parser.lua53",
+    "class": "Lua53BitwiseOpsCorpusTddTest",
+    "fqcn": "parser.lua53.Lua53BitwiseOpsCorpusTddTest",
+    "testsPattern": "parser.lua53.Lua53BitwiseOpsCorpusTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/parser/lua53/Lua53ExpressionPrecedenceTddTest.kt",
+    "package": "parser.lua53",
+    "class": "Lua53ExpressionPrecedenceTddTest",
+    "fqcn": "parser.lua53.Lua53ExpressionPrecedenceTddTest",
+    "testsPattern": "parser.lua53.Lua53ExpressionPrecedenceTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/parser/lua53/Lua53FloorDivBitwisePrecedenceTddTest.kt",
+    "package": "parser.lua53",
+    "class": "Lua53FloorDivBitwisePrecedenceTddTest",
+    "fqcn": "parser.lua53.Lua53FloorDivBitwisePrecedenceTddTest",
+    "testsPattern": "parser.lua53.Lua53FloorDivBitwisePrecedenceTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/parser/lua53/Lua53GotoForwardJumpShapeTddTest.kt",
+    "package": "parser.lua53",
+    "class": "Lua53GotoForwardJumpShapeTddTest",
+    "fqcn": "parser.lua53.Lua53GotoForwardJumpShapeTddTest",
+    "testsPattern": "parser.lua53.Lua53GotoForwardJumpShapeTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/parser/lua53/Lua53GotoLabelCorpusTddTest.kt",
+    "package": "parser.lua53",
+    "class": "Lua53GotoLabelCorpusTddTest",
+    "fqcn": "parser.lua53.Lua53GotoLabelCorpusTddTest",
+    "testsPattern": "parser.lua53.Lua53GotoLabelCorpusTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/parser/lua53/Lua53IntegerDivisionAndModShapeTddTest.kt",
+    "package": "parser.lua53",
+    "class": "Lua53IntegerDivisionAndModShapeTddTest",
+    "fqcn": "parser.lua53.Lua53IntegerDivisionAndModShapeTddTest",
+    "testsPattern": "parser.lua53.Lua53IntegerDivisionAndModShapeTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/parser/lua53/Lua53StatementGrammarTddTest.kt",
+    "package": "parser.lua53",
+    "class": "Lua53StatementGrammarTddTest",
+    "fqcn": "parser.lua53.Lua53StatementGrammarTddTest",
+    "testsPattern": "parser.lua53.Lua53StatementGrammarTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/parser/lua53/Lua53TableCallShapeCorpusTddTest.kt",
+    "package": "parser.lua53",
+    "class": "Lua53TableCallShapeCorpusTddTest",
+    "fqcn": "parser.lua53.Lua53TableCallShapeCorpusTddTest",
+    "testsPattern": "parser.lua53.Lua53TableCallShapeCorpusTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/parser/lua53/Lua53TableFunctionModuleTddTest.kt",
+    "package": "parser.lua53",
+    "class": "Lua53TableFunctionModuleTddTest",
+    "fqcn": "parser.lua53.Lua53TableFunctionModuleTddTest",
+    "testsPattern": "parser.lua53.Lua53TableFunctionModuleTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/parser/lua54/Lua54LocalAttributeConstTddTest.kt",
+    "package": "parser.lua54",
+    "class": "Lua54LocalAttributeConstTddTest",
+    "fqcn": "parser.lua54.Lua54LocalAttributeConstTddTest",
+    "testsPattern": "parser.lua54.Lua54LocalAttributeConstTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/parser/recovery/LuaParserRecoveryAndroluaLambdaTddTest.kt",
+    "package": "parser.recovery",
+    "class": "LuaParserRecoveryAndroluaLambdaTddTest",
+    "fqcn": "parser.recovery.LuaParserRecoveryAndroluaLambdaTddTest",
+    "testsPattern": "parser.recovery.LuaParserRecoveryAndroluaLambdaTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/parser/recovery/LuaParserRecoveryAndroluaSwitchWhenTddTest.kt",
+    "package": "parser.recovery",
+    "class": "LuaParserRecoveryAndroluaSwitchWhenTddTest",
+    "fqcn": "parser.recovery.LuaParserRecoveryAndroluaSwitchWhenTddTest",
+    "testsPattern": "parser.recovery.LuaParserRecoveryAndroluaSwitchWhenTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/parser/recovery/LuaParserRecoveryAttributeLocalTddTest.kt",
+    "package": "parser.recovery",
+    "class": "LuaParserRecoveryAttributeLocalTddTest",
+    "fqcn": "parser.recovery.LuaParserRecoveryAttributeLocalTddTest",
+    "testsPattern": "parser.recovery.LuaParserRecoveryAttributeLocalTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/parser/recovery/LuaParserRecoveryBinaryIncompleteRhsOpsTddTest.kt",
+    "package": "parser.recovery",
+    "class": "LuaParserRecoveryBinaryIncompleteRhsOpsTddTest",
+    "fqcn": "parser.recovery.LuaParserRecoveryBinaryIncompleteRhsOpsTddTest",
+    "testsPattern": "parser.recovery.LuaParserRecoveryBinaryIncompleteRhsOpsTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/parser/recovery/LuaParserRecoveryDiagnosticsExpandTddTest.kt",
+    "package": "parser.recovery",
+    "class": "LuaParserRecoveryDiagnosticsExpandTddTest",
+    "fqcn": "parser.recovery.LuaParserRecoveryDiagnosticsExpandTddTest",
+    "testsPattern": "parser.recovery.LuaParserRecoveryDiagnosticsExpandTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/parser/recovery/LuaParserRecoveryDiagnosticsTddTest.kt",
+    "package": "parser.recovery",
+    "class": "LuaParserRecoveryDiagnosticsTddTest",
+    "fqcn": "parser.recovery.LuaParserRecoveryDiagnosticsTddTest",
+    "testsPattern": "parser.recovery.LuaParserRecoveryDiagnosticsTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/parser/recovery/LuaParserRecoveryForInDoTddTest.kt",
+    "package": "parser.recovery",
+    "class": "LuaParserRecoveryForInDoTddTest",
+    "fqcn": "parser.recovery.LuaParserRecoveryForInDoTddTest",
+    "testsPattern": "parser.recovery.LuaParserRecoveryForInDoTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/parser/recovery/LuaParserRecoveryForInMissingDoTddTest.kt",
+    "package": "parser.recovery",
+    "class": "LuaParserRecoveryForInMissingDoTddTest",
+    "fqcn": "parser.recovery.LuaParserRecoveryForInMissingDoTddTest",
+    "testsPattern": "parser.recovery.LuaParserRecoveryForInMissingDoTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/parser/recovery/LuaParserRecoveryFunctionMissingEndTddTest.kt",
+    "package": "parser.recovery",
+    "class": "LuaParserRecoveryFunctionMissingEndTddTest",
+    "fqcn": "parser.recovery.LuaParserRecoveryFunctionMissingEndTddTest",
+    "testsPattern": "parser.recovery.LuaParserRecoveryFunctionMissingEndTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/parser/recovery/LuaParserRecoveryGenericForTddTest.kt",
+    "package": "parser.recovery",
+    "class": "LuaParserRecoveryGenericForTddTest",
+    "fqcn": "parser.recovery.LuaParserRecoveryGenericForTddTest",
+    "testsPattern": "parser.recovery.LuaParserRecoveryGenericForTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/parser/recovery/LuaParserRecoveryGotoLabelTddTest.kt",
+    "package": "parser.recovery",
+    "class": "LuaParserRecoveryGotoLabelTddTest",
+    "fqcn": "parser.recovery.LuaParserRecoveryGotoLabelTddTest",
+    "testsPattern": "parser.recovery.LuaParserRecoveryGotoLabelTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/parser/recovery/LuaParserRecoveryIfChainTddTest.kt",
+    "package": "parser.recovery",
+    "class": "LuaParserRecoveryIfChainTddTest",
+    "fqcn": "parser.recovery.LuaParserRecoveryIfChainTddTest",
+    "testsPattern": "parser.recovery.LuaParserRecoveryIfChainTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/parser/recovery/LuaParserRecoveryIfElseifChainTddTest.kt",
+    "package": "parser.recovery",
+    "class": "LuaParserRecoveryIfElseifChainTddTest",
+    "fqcn": "parser.recovery.LuaParserRecoveryIfElseifChainTddTest",
+    "testsPattern": "parser.recovery.LuaParserRecoveryIfElseifChainTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/parser/recovery/LuaParserRecoveryIncompleteTableFieldTddTest.kt",
+    "package": "parser.recovery",
+    "class": "LuaParserRecoveryIncompleteTableFieldTddTest",
+    "fqcn": "parser.recovery.LuaParserRecoveryIncompleteTableFieldTddTest",
+    "testsPattern": "parser.recovery.LuaParserRecoveryIncompleteTableFieldTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/parser/recovery/LuaParserRecoveryLayoutTableTddTest.kt",
+    "package": "parser.recovery",
+    "class": "LuaParserRecoveryLayoutTableTddTest",
+    "fqcn": "parser.recovery.LuaParserRecoveryLayoutTableTddTest",
+    "testsPattern": "parser.recovery.LuaParserRecoveryLayoutTableTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/parser/recovery/LuaParserRecoveryLocalAssignTddTest.kt",
+    "package": "parser.recovery",
+    "class": "LuaParserRecoveryLocalAssignTddTest",
+    "fqcn": "parser.recovery.LuaParserRecoveryLocalAssignTddTest",
+    "testsPattern": "parser.recovery.LuaParserRecoveryLocalAssignTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/parser/recovery/LuaParserRecoveryMissingEndFunctionTddTest.kt",
+    "package": "parser.recovery",
+    "class": "LuaParserRecoveryMissingEndFunctionTddTest",
+    "fqcn": "parser.recovery.LuaParserRecoveryMissingEndFunctionTddTest",
+    "testsPattern": "parser.recovery.LuaParserRecoveryMissingEndFunctionTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/parser/recovery/LuaParserRecoveryMultiRhsLineBreakTddTest.kt",
+    "package": "parser.recovery",
+    "class": "LuaParserRecoveryMultiRhsLineBreakTddTest",
+    "fqcn": "parser.recovery.LuaParserRecoveryMultiRhsLineBreakTddTest",
+    "testsPattern": "parser.recovery.LuaParserRecoveryMultiRhsLineBreakTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/parser/recovery/LuaParserRecoveryNumericForEndTddTest.kt",
+    "package": "parser.recovery",
+    "class": "LuaParserRecoveryNumericForEndTddTest",
+    "fqcn": "parser.recovery.LuaParserRecoveryNumericForEndTddTest",
+    "testsPattern": "parser.recovery.LuaParserRecoveryNumericForEndTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/parser/recovery/LuaParserRecoveryNumericForStepTddTest.kt",
+    "package": "parser.recovery",
+    "class": "LuaParserRecoveryNumericForStepTddTest",
+    "fqcn": "parser.recovery.LuaParserRecoveryNumericForStepTddTest",
+    "testsPattern": "parser.recovery.LuaParserRecoveryNumericForStepTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/parser/recovery/LuaParserRecoveryNumericForTddTest.kt",
+    "package": "parser.recovery",
+    "class": "LuaParserRecoveryNumericForTddTest",
+    "fqcn": "parser.recovery.LuaParserRecoveryNumericForTddTest",
+    "testsPattern": "parser.recovery.LuaParserRecoveryNumericForTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/parser/recovery/LuaParserRecoveryRepeatUntilTddTest.kt",
+    "package": "parser.recovery",
+    "class": "LuaParserRecoveryRepeatUntilTddTest",
+    "fqcn": "parser.recovery.LuaParserRecoveryRepeatUntilTddTest",
+    "testsPattern": "parser.recovery.LuaParserRecoveryRepeatUntilTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/parser/recovery/LuaParserRecoveryStringConcatIncompleteTddTest.kt",
+    "package": "parser.recovery",
+    "class": "LuaParserRecoveryStringConcatIncompleteTddTest",
+    "fqcn": "parser.recovery.LuaParserRecoveryStringConcatIncompleteTddTest",
+    "testsPattern": "parser.recovery.LuaParserRecoveryStringConcatIncompleteTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/parser/recovery/LuaParserRecoveryTableConstructorTddTest.kt",
+    "package": "parser.recovery",
+    "class": "LuaParserRecoveryTableConstructorTddTest",
+    "fqcn": "parser.recovery.LuaParserRecoveryTableConstructorTddTest",
+    "testsPattern": "parser.recovery.LuaParserRecoveryTableConstructorTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/parser/recovery/LuaParserRecoveryTableFieldMissingEqTddTest.kt",
+    "package": "parser.recovery",
+    "class": "LuaParserRecoveryTableFieldMissingEqTddTest",
+    "fqcn": "parser.recovery.LuaParserRecoveryTableFieldMissingEqTddTest",
+    "testsPattern": "parser.recovery.LuaParserRecoveryTableFieldMissingEqTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/parser/recovery/LuaParserRecoveryTddTest.kt",
+    "package": "parser.recovery",
+    "class": "LuaParserRecoveryTddTest",
+    "fqcn": "parser.recovery.LuaParserRecoveryTddTest",
+    "testsPattern": "parser.recovery.LuaParserRecoveryTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/parser/recovery/LuaParserRecoveryWhileDoTddTest.kt",
+    "package": "parser.recovery",
+    "class": "LuaParserRecoveryWhileDoTddTest",
+    "fqcn": "parser.recovery.LuaParserRecoveryWhileDoTddTest",
+    "testsPattern": "parser.recovery.LuaParserRecoveryWhileDoTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/LegacySemanticAnalyzerCompatibilityTest.kt",
+    "package": "semantic",
+    "class": "LegacySemanticAnalyzerCompatibilityTest",
+    "fqcn": "semantic.LegacySemanticAnalyzerCompatibilityTest",
+    "testsPattern": "semantic.LegacySemanticAnalyzerCompatibilityTest"
+  },
+  {
+    "file": "src/commonTest/kotlin/semantic/SemanticPipelineIntegrationTest.kt",
+    "package": "semantic",
+    "class": "SemanticPipelineIntegrationTest",
+    "fqcn": "semantic.SemanticPipelineIntegrationTest",
+    "testsPattern": "semantic.SemanticPipelineIntegrationTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/SemanticPipelinePublicFacadeTddTest.kt",
+    "package": "semantic",
+    "class": "SemanticPipelinePublicFacadeTddTest",
+    "fqcn": "semantic.SemanticPipelinePublicFacadeTddTest",
+    "testsPattern": "semantic.SemanticPipelinePublicFacadeTddTest"
+  },
+  {
+    "file": "src/commonTest/kotlin/semantic/SemanticPipelineTest.kt",
+    "package": "semantic",
+    "class": "SemanticPipelineTest",
+    "fqcn": "semantic.SemanticPipelineTest",
+    "testsPattern": "semantic.SemanticPipelineTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/SemanticPublicApiTest.kt",
+    "package": "semantic",
+    "class": "SemanticPublicApiTest",
+    "fqcn": "semantic.SemanticPublicApiTest",
+    "testsPattern": "semantic.SemanticPublicApiTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/androidlua/AlyLayoutRequireResolutionTddTest.kt",
+    "package": "semantic.androidlua",
+    "class": "AlyLayoutRequireResolutionTddTest",
+    "fqcn": "semantic.androidlua.AlyLayoutRequireResolutionTddTest",
+    "testsPattern": "semantic.androidlua.AlyLayoutRequireResolutionTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/androidlua/AndroidLuaDefaultJarDiscoverySurfaceTddTest.kt",
+    "package": "semantic.androidlua",
+    "class": "AndroidLuaDefaultJarDiscoverySurfaceTddTest",
+    "fqcn": "semantic.androidlua.AndroidLuaDefaultJarDiscoverySurfaceTddTest",
+    "testsPattern": "semantic.androidlua.AndroidLuaDefaultJarDiscoverySurfaceTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/androidlua/AndroidLuaLibraryStubsTddTest.kt",
+    "package": "semantic.androidlua",
+    "class": "AndroidLuaLibraryStubsTddTest",
+    "fqcn": "semantic.androidlua.AndroidLuaLibraryStubsTddTest",
+    "testsPattern": "semantic.androidlua.AndroidLuaLibraryStubsTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/androidlua/EnvImportSurfaceTddTest.kt",
+    "package": "semantic.androidlua",
+    "class": "EnvImportSurfaceTddTest",
+    "fqcn": "semantic.androidlua.EnvImportSurfaceTddTest",
+    "testsPattern": "semantic.androidlua.EnvImportSurfaceTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/androidlua/HelperModulesFixtureSurfaceTddTest.kt",
+    "package": "semantic.androidlua",
+    "class": "HelperModulesFixtureSurfaceTddTest",
+    "fqcn": "semantic.androidlua.HelperModulesFixtureSurfaceTddTest",
+    "testsPattern": "semantic.androidlua.HelperModulesFixtureSurfaceTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/androidlua/ImportAliasShadowSurfaceTddTest.kt",
+    "package": "semantic.androidlua",
+    "class": "ImportAliasShadowSurfaceTddTest",
+    "fqcn": "semantic.androidlua.ImportAliasShadowSurfaceTddTest",
+    "testsPattern": "semantic.androidlua.ImportAliasShadowSurfaceTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/androidlua/ImportNestedPackageMultiLevelTddTest.kt",
+    "package": "semantic.androidlua",
+    "class": "ImportNestedPackageMultiLevelTddTest",
+    "fqcn": "semantic.androidlua.ImportNestedPackageMultiLevelTddTest",
+    "testsPattern": "semantic.androidlua.ImportNestedPackageMultiLevelTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/androidlua/ImportPackageAliasCompletionTddTest.kt",
+    "package": "semantic.androidlua",
+    "class": "ImportPackageAliasCompletionTddTest",
+    "fqcn": "semantic.androidlua.ImportPackageAliasCompletionTddTest",
+    "testsPattern": "semantic.androidlua.ImportPackageAliasCompletionTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/androidlua/ImportPackageWildcardProxyTddTest.kt",
+    "package": "semantic.androidlua",
+    "class": "ImportPackageWildcardProxyTddTest",
+    "fqcn": "semantic.androidlua.ImportPackageWildcardProxyTddTest",
+    "testsPattern": "semantic.androidlua.ImportPackageWildcardProxyTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/androidlua/LoadbitmapReturnSurfaceTddTest.kt",
+    "package": "semantic.androidlua",
+    "class": "LoadbitmapReturnSurfaceTddTest",
+    "fqcn": "semantic.androidlua.LoadbitmapReturnSurfaceTddTest",
+    "testsPattern": "semantic.androidlua.LoadbitmapReturnSurfaceTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/androidlua/LoadlayoutIdFieldSurfaceTddTest.kt",
+    "package": "semantic.androidlua",
+    "class": "LoadlayoutIdFieldSurfaceTddTest",
+    "fqcn": "semantic.androidlua.LoadlayoutIdFieldSurfaceTddTest",
+    "testsPattern": "semantic.androidlua.LoadlayoutIdFieldSurfaceTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/androidlua/LoadmenuTableSpecSurfaceTddTest.kt",
+    "package": "semantic.androidlua",
+    "class": "LoadmenuTableSpecSurfaceTddTest",
+    "fqcn": "semantic.androidlua.LoadmenuTableSpecSurfaceTddTest",
+    "testsPattern": "semantic.androidlua.LoadmenuTableSpecSurfaceTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/androidlua/RepresentativeLayoutWidgetImportTddTest.kt",
+    "package": "semantic.androidlua",
+    "class": "RepresentativeLayoutWidgetImportTddTest",
+    "fqcn": "semantic.androidlua.RepresentativeLayoutWidgetImportTddTest",
+    "testsPattern": "semantic.androidlua.RepresentativeLayoutWidgetImportTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/androidlua/Task184OverlayProbeTddTest.kt",
+    "package": "semantic.androidlua",
+    "class": "Task184OverlayProbeTddTest",
+    "fqcn": "semantic.androidlua.Task184OverlayProbeTddTest",
+    "testsPattern": "semantic.androidlua.Task184OverlayProbeTddTest"
+  },
+  {
+    "file": "src/commonTest/kotlin/semantic/api/TypeInfoShapeTest.kt",
+    "package": "semantic.api",
+    "class": "TypeInfoShapeTest",
+    "fqcn": "semantic.api.TypeInfoShapeTest",
+    "testsPattern": "semantic.api.TypeInfoShapeTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/binder/BinderBuiltinOriginRangeTddTest.kt",
+    "package": "semantic.binder",
+    "class": "BinderBuiltinOriginRangeTddTest",
+    "fqcn": "semantic.binder.BinderBuiltinOriginRangeTddTest",
+    "testsPattern": "semantic.binder.BinderBuiltinOriginRangeTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/binder/BinderFunctionSelfParamTddTest.kt",
+    "package": "semantic.binder",
+    "class": "BinderFunctionSelfParamTddTest",
+    "fqcn": "semantic.binder.BinderFunctionSelfParamTddTest",
+    "testsPattern": "semantic.binder.BinderFunctionSelfParamTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/binder/BinderGlobalAssignmentDeclarationTddTest.kt",
+    "package": "semantic.binder",
+    "class": "BinderGlobalAssignmentDeclarationTddTest",
+    "fqcn": "semantic.binder.BinderGlobalAssignmentDeclarationTddTest",
+    "testsPattern": "semantic.binder.BinderGlobalAssignmentDeclarationTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/binder/BinderGlobalAssignmentRangeTddTest.kt",
+    "package": "semantic.binder",
+    "class": "BinderGlobalAssignmentRangeTddTest",
+    "fqcn": "semantic.binder.BinderGlobalAssignmentRangeTddTest",
+    "testsPattern": "semantic.binder.BinderGlobalAssignmentRangeTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/binder/BinderLabelGotoScopeTddTest.kt",
+    "package": "semantic.binder",
+    "class": "BinderLabelGotoScopeTddTest",
+    "fqcn": "semantic.binder.BinderLabelGotoScopeTddTest",
+    "testsPattern": "semantic.binder.BinderLabelGotoScopeTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/binder/BinderLabelScopeVisibilityTddTest.kt",
+    "package": "semantic.binder",
+    "class": "BinderLabelScopeVisibilityTddTest",
+    "fqcn": "semantic.binder.BinderLabelScopeVisibilityTddTest",
+    "testsPattern": "semantic.binder.BinderLabelScopeVisibilityTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/binder/BinderMultiAssignRangeTddTest.kt",
+    "package": "semantic.binder",
+    "class": "BinderMultiAssignRangeTddTest",
+    "fqcn": "semantic.binder.BinderMultiAssignRangeTddTest",
+    "testsPattern": "semantic.binder.BinderMultiAssignRangeTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/binder/BinderMultiLocalExtraShapeTddTest.kt",
+    "package": "semantic.binder",
+    "class": "BinderMultiLocalExtraShapeTddTest",
+    "fqcn": "semantic.binder.BinderMultiLocalExtraShapeTddTest",
+    "testsPattern": "semantic.binder.BinderMultiLocalExtraShapeTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/binder/BinderMultiLocalLineBreakTddTest.kt",
+    "package": "semantic.binder",
+    "class": "BinderMultiLocalLineBreakTddTest",
+    "fqcn": "semantic.binder.BinderMultiLocalLineBreakTddTest",
+    "testsPattern": "semantic.binder.BinderMultiLocalLineBreakTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/binder/BinderMultiLocalSameLineRangeTddTest.kt",
+    "package": "semantic.binder",
+    "class": "BinderMultiLocalSameLineRangeTddTest",
+    "fqcn": "semantic.binder.BinderMultiLocalSameLineRangeTddTest",
+    "testsPattern": "semantic.binder.BinderMultiLocalSameLineRangeTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/binder/BinderMultiLocalShadowingTddTest.kt",
+    "package": "semantic.binder",
+    "class": "BinderMultiLocalShadowingTddTest",
+    "fqcn": "semantic.binder.BinderMultiLocalShadowingTddTest",
+    "testsPattern": "semantic.binder.BinderMultiLocalShadowingTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/binder/BinderPassDeclarationTest.kt",
+    "package": "semantic.binder",
+    "class": "BinderPassDeclarationTest",
+    "fqcn": "semantic.binder.BinderPassDeclarationTest",
+    "testsPattern": "semantic.binder.BinderPassDeclarationTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/binder/BinderPassDocDeclarationTest.kt",
+    "package": "semantic.binder",
+    "class": "BinderPassDocDeclarationTest",
+    "fqcn": "semantic.binder.BinderPassDocDeclarationTest",
+    "testsPattern": "semantic.binder.BinderPassDocDeclarationTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/binder/BinderPassScopeTest.kt",
+    "package": "semantic.binder",
+    "class": "BinderPassScopeTest",
+    "fqcn": "semantic.binder.BinderPassScopeTest",
+    "testsPattern": "semantic.binder.BinderPassScopeTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/binder/BinderPositionQueriesTest.kt",
+    "package": "semantic.binder",
+    "class": "BinderPositionQueriesTest",
+    "fqcn": "semantic.binder.BinderPositionQueriesTest",
+    "testsPattern": "semantic.binder.BinderPositionQueriesTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/binder/BinderUpvalueCaptureRangeTddTest.kt",
+    "package": "semantic.binder",
+    "class": "BinderUpvalueCaptureRangeTddTest",
+    "fqcn": "semantic.binder.BinderUpvalueCaptureRangeTddTest",
+    "testsPattern": "semantic.binder.BinderUpvalueCaptureRangeTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/binder/BinderUpvalueUsageSiteResolveTddTest.kt",
+    "package": "semantic.binder",
+    "class": "BinderUpvalueUsageSiteResolveTddTest",
+    "fqcn": "semantic.binder.BinderUpvalueUsageSiteResolveTddTest",
+    "testsPattern": "semantic.binder.BinderUpvalueUsageSiteResolveTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/binder/BuiltinSymbolSeederClassTypeGlobalTddTest.kt",
+    "package": "semantic.binder",
+    "class": "BuiltinSymbolSeederClassTypeGlobalTddTest",
+    "fqcn": "semantic.binder.BuiltinSymbolSeederClassTypeGlobalTddTest",
+    "testsPattern": "semantic.binder.BuiltinSymbolSeederClassTypeGlobalTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/binder/DeclarationCommentInteropTest.kt",
+    "package": "semantic.binder",
+    "class": "DeclarationCommentInteropTest",
+    "fqcn": "semantic.binder.DeclarationCommentInteropTest",
+    "testsPattern": "semantic.binder.DeclarationCommentInteropTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/binder/DeclarationIndexRangeLookupTddTest.kt",
+    "package": "semantic.binder",
+    "class": "DeclarationIndexRangeLookupTddTest",
+    "fqcn": "semantic.binder.DeclarationIndexRangeLookupTddTest",
+    "testsPattern": "semantic.binder.DeclarationIndexRangeLookupTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/binder/DeclarationIndexTest.kt",
+    "package": "semantic.binder",
+    "class": "DeclarationIndexTest",
+    "fqcn": "semantic.binder.DeclarationIndexTest",
+    "testsPattern": "semantic.binder.DeclarationIndexTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/binder/DeclarationModelTest.kt",
+    "package": "semantic.binder",
+    "class": "DeclarationModelTest",
+    "fqcn": "semantic.binder.DeclarationModelTest",
+    "testsPattern": "semantic.binder.DeclarationModelTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/binder/PositionRangeIndexTest.kt",
+    "package": "semantic.binder",
+    "class": "PositionRangeIndexTest",
+    "fqcn": "semantic.binder.PositionRangeIndexTest",
+    "testsPattern": "semantic.binder.PositionRangeIndexTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/binder/ScopeGraphParentChainTddTest.kt",
+    "package": "semantic.binder",
+    "class": "ScopeGraphParentChainTddTest",
+    "fqcn": "semantic.binder.ScopeGraphParentChainTddTest",
+    "testsPattern": "semantic.binder.ScopeGraphParentChainTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/binder/ScopeGraphTest.kt",
+    "package": "semantic.binder",
+    "class": "ScopeGraphTest",
+    "fqcn": "semantic.binder.ScopeGraphTest",
+    "testsPattern": "semantic.binder.ScopeGraphTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/checker/CallArityFreeformSilenceTddTest.kt",
+    "package": "semantic.checker",
+    "class": "CallArityFreeformSilenceTddTest",
+    "fqcn": "semantic.checker.CallArityFreeformSilenceTddTest",
+    "testsPattern": "semantic.checker.CallArityFreeformSilenceTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/checker/CallArityMismatchSurfaceTddTest.kt",
+    "package": "semantic.checker",
+    "class": "CallArityMismatchSurfaceTddTest",
+    "fqcn": "semantic.checker.CallArityMismatchSurfaceTddTest",
+    "testsPattern": "semantic.checker.CallArityMismatchSurfaceTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/checker/CallCheckerColonDotSelfTddTest.kt",
+    "package": "semantic.checker",
+    "class": "CallCheckerColonDotSelfTddTest",
+    "fqcn": "semantic.checker.CallCheckerColonDotSelfTddTest",
+    "testsPattern": "semantic.checker.CallCheckerColonDotSelfTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/checker/CallCheckerNamedArgsDualPathTddTest.kt",
+    "package": "semantic.checker",
+    "class": "CallCheckerNamedArgsDualPathTddTest",
+    "fqcn": "semantic.checker.CallCheckerNamedArgsDualPathTddTest",
+    "testsPattern": "semantic.checker.CallCheckerNamedArgsDualPathTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/checker/CallCheckerTest.kt",
+    "package": "semantic.checker",
+    "class": "CallCheckerTest",
+    "fqcn": "semantic.checker.CallCheckerTest",
+    "testsPattern": "semantic.checker.CallCheckerTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/checker/CallCheckerVarargArityTddTest.kt",
+    "package": "semantic.checker",
+    "class": "CallCheckerVarargArityTddTest",
+    "fqcn": "semantic.checker.CallCheckerVarargArityTddTest",
+    "testsPattern": "semantic.checker.CallCheckerVarargArityTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/checker/CallCheckerVarargCorpusTddTest.kt",
+    "package": "semantic.checker",
+    "class": "CallCheckerVarargCorpusTddTest",
+    "fqcn": "semantic.checker.CallCheckerVarargCorpusTddTest",
+    "testsPattern": "semantic.checker.CallCheckerVarargCorpusTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/checker/DiagnosticCodeStabilityTddTest.kt",
+    "package": "semantic.checker",
+    "class": "DiagnosticCodeStabilityTddTest",
+    "fqcn": "semantic.checker.DiagnosticCodeStabilityTddTest",
+    "testsPattern": "semantic.checker.DiagnosticCodeStabilityTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/checker/ExpressionAndOrShortCircuitTddTest.kt",
+    "package": "semantic.checker",
+    "class": "ExpressionAndOrShortCircuitTddTest",
+    "fqcn": "semantic.checker.ExpressionAndOrShortCircuitTddTest",
+    "testsPattern": "semantic.checker.ExpressionAndOrShortCircuitTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/checker/ExpressionTypeEvaluatorBinaryOpsTddTest.kt",
+    "package": "semantic.checker",
+    "class": "ExpressionTypeEvaluatorBinaryOpsTddTest",
+    "fqcn": "semantic.checker.ExpressionTypeEvaluatorBinaryOpsTddTest",
+    "testsPattern": "semantic.checker.ExpressionTypeEvaluatorBinaryOpsTddTest"
+  },
+  {
+    "file": "src/commonTest/kotlin/semantic/checker/ExpressionTypeEvaluatorTest.kt",
+    "package": "semantic.checker",
+    "class": "ExpressionTypeEvaluatorTest",
+    "fqcn": "semantic.checker.ExpressionTypeEvaluatorTest",
+    "testsPattern": "semantic.checker.ExpressionTypeEvaluatorTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/checker/ExpressionUsageUnusedLocalTddTest.kt",
+    "package": "semantic.checker",
+    "class": "ExpressionUsageUnusedLocalTddTest",
+    "fqcn": "semantic.checker.ExpressionUsageUnusedLocalTddTest",
+    "testsPattern": "semantic.checker.ExpressionUsageUnusedLocalTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/checker/FunctionSignatureArityTddTest.kt",
+    "package": "semantic.checker",
+    "class": "FunctionSignatureArityTddTest",
+    "fqcn": "semantic.checker.FunctionSignatureArityTddTest",
+    "testsPattern": "semantic.checker.FunctionSignatureArityTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/checker/FunctionSignatureCheckerTest.kt",
+    "package": "semantic.checker",
+    "class": "FunctionSignatureCheckerTest",
+    "fqcn": "semantic.checker.FunctionSignatureCheckerTest",
+    "testsPattern": "semantic.checker.FunctionSignatureCheckerTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/checker/GlobalWriteReadonlyDiagnosticTddTest.kt",
+    "package": "semantic.checker",
+    "class": "GlobalWriteReadonlyDiagnosticTddTest",
+    "fqcn": "semantic.checker.GlobalWriteReadonlyDiagnosticTddTest",
+    "testsPattern": "semantic.checker.GlobalWriteReadonlyDiagnosticTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/checker/MemberMissingDiagnosticTddTest.kt",
+    "package": "semantic.checker",
+    "class": "MemberMissingDiagnosticTddTest",
+    "fqcn": "semantic.checker.MemberMissingDiagnosticTddTest",
+    "testsPattern": "semantic.checker.MemberMissingDiagnosticTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/checker/MemberResolverBracketKeySurfaceTddTest.kt",
+    "package": "semantic.checker",
+    "class": "MemberResolverBracketKeySurfaceTddTest",
+    "fqcn": "semantic.checker.MemberResolverBracketKeySurfaceTddTest",
+    "testsPattern": "semantic.checker.MemberResolverBracketKeySurfaceTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/checker/MemberResolverClassTypeDotMethodTddTest.kt",
+    "package": "semantic.checker",
+    "class": "MemberResolverClassTypeDotMethodTddTest",
+    "fqcn": "semantic.checker.MemberResolverClassTypeDotMethodTddTest",
+    "testsPattern": "semantic.checker.MemberResolverClassTypeDotMethodTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/checker/MemberResolverLengthOperatorSurfaceTddTest.kt",
+    "package": "semantic.checker",
+    "class": "MemberResolverLengthOperatorSurfaceTddTest",
+    "fqcn": "semantic.checker.MemberResolverLengthOperatorSurfaceTddTest",
+    "testsPattern": "semantic.checker.MemberResolverLengthOperatorSurfaceTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/checker/MemberResolverMultiLevelChainTddTest.kt",
+    "package": "semantic.checker",
+    "class": "MemberResolverMultiLevelChainTddTest",
+    "fqcn": "semantic.checker.MemberResolverMultiLevelChainTddTest",
+    "testsPattern": "semantic.checker.MemberResolverMultiLevelChainTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/checker/MemberResolverNestedTableTddTest.kt",
+    "package": "semantic.checker",
+    "class": "MemberResolverNestedTableTddTest",
+    "fqcn": "semantic.checker.MemberResolverNestedTableTddTest",
+    "testsPattern": "semantic.checker.MemberResolverNestedTableTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/checker/MemberResolverTest.kt",
+    "package": "semantic.checker",
+    "class": "MemberResolverTest",
+    "fqcn": "semantic.checker.MemberResolverTest",
+    "testsPattern": "semantic.checker.MemberResolverTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/checker/NilSafeIndexGuardTddTest.kt",
+    "package": "semantic.checker",
+    "class": "NilSafeIndexGuardTddTest",
+    "fqcn": "semantic.checker.NilSafeIndexGuardTddTest",
+    "testsPattern": "semantic.checker.NilSafeIndexGuardTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/checker/ReturnCheckerTest.kt",
+    "package": "semantic.checker",
+    "class": "ReturnCheckerTest",
+    "fqcn": "semantic.checker.ReturnCheckerTest",
+    "testsPattern": "semantic.checker.ReturnCheckerTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/checker/ReturnMultiValueCorpusTddTest.kt",
+    "package": "semantic.checker",
+    "class": "ReturnMultiValueCorpusTddTest",
+    "fqcn": "semantic.checker.ReturnMultiValueCorpusTddTest",
+    "testsPattern": "semantic.checker.ReturnMultiValueCorpusTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/checker/ReturnMultiValuePackPropagationTddTest.kt",
+    "package": "semantic.checker",
+    "class": "ReturnMultiValuePackPropagationTddTest",
+    "fqcn": "semantic.checker.ReturnMultiValuePackPropagationTddTest",
+    "testsPattern": "semantic.checker.ReturnMultiValuePackPropagationTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/checker/TableFieldUnionWidenTddTest.kt",
+    "package": "semantic.checker",
+    "class": "TableFieldUnionWidenTddTest",
+    "fqcn": "semantic.checker.TableFieldUnionWidenTddTest",
+    "testsPattern": "semantic.checker.TableFieldUnionWidenTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/checker/UnusedLocalUnderscoreSuppressionTddTest.kt",
+    "package": "semantic.checker",
+    "class": "UnusedLocalUnderscoreSuppressionTddTest",
+    "fqcn": "semantic.checker.UnusedLocalUnderscoreSuppressionTddTest",
+    "testsPattern": "semantic.checker.UnusedLocalUnderscoreSuppressionTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/checker/VarargsPackPropagationTddTest.kt",
+    "package": "semantic.checker",
+    "class": "VarargsPackPropagationTddTest",
+    "fqcn": "semantic.checker.VarargsPackPropagationTddTest",
+    "testsPattern": "semantic.checker.VarargsPackPropagationTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/comments/CommentAttachPassTest.kt",
+    "package": "semantic.comments",
+    "class": "CommentAttachPassTest",
+    "fqcn": "semantic.comments.CommentAttachPassTest",
+    "testsPattern": "semantic.comments.CommentAttachPassTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/comments/CommentCollectorTest.kt",
+    "package": "semantic.comments",
+    "class": "CommentCollectorTest",
+    "fqcn": "semantic.comments.CommentCollectorTest",
+    "testsPattern": "semantic.comments.CommentCollectorTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/comments/CommentSyntaxModelTest.kt",
+    "package": "semantic.comments",
+    "class": "CommentSyntaxModelTest",
+    "fqcn": "semantic.comments.CommentSyntaxModelTest",
+    "testsPattern": "semantic.comments.CommentSyntaxModelTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/comments/DocClassFieldAttachTddTest.kt",
+    "package": "semantic.comments",
+    "class": "DocClassFieldAttachTddTest",
+    "fqcn": "semantic.comments.DocClassFieldAttachTddTest",
+    "testsPattern": "semantic.comments.DocClassFieldAttachTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/comments/DocCommentSyntaxParserRobustnessTest.kt",
+    "package": "semantic.comments",
+    "class": "DocCommentSyntaxParserRobustnessTest",
+    "fqcn": "semantic.comments.DocCommentSyntaxParserRobustnessTest",
+    "testsPattern": "semantic.comments.DocCommentSyntaxParserRobustnessTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/comments/DocEnumAttachTddTest.kt",
+    "package": "semantic.comments",
+    "class": "DocEnumAttachTddTest",
+    "fqcn": "semantic.comments.DocEnumAttachTddTest",
+    "testsPattern": "semantic.comments.DocEnumAttachTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/comments/DocGenericParamAttachTddTest.kt",
+    "package": "semantic.comments",
+    "class": "DocGenericParamAttachTddTest",
+    "fqcn": "semantic.comments.DocGenericParamAttachTddTest",
+    "testsPattern": "semantic.comments.DocGenericParamAttachTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/comments/DocOverloadSignatureSurfaceTddTest.kt",
+    "package": "semantic.comments",
+    "class": "DocOverloadSignatureSurfaceTddTest",
+    "fqcn": "semantic.comments.DocOverloadSignatureSurfaceTddTest",
+    "testsPattern": "semantic.comments.DocOverloadSignatureSurfaceTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/comments/DocParamOptionalAttachTddTest.kt",
+    "package": "semantic.comments",
+    "class": "DocParamOptionalAttachTddTest",
+    "fqcn": "semantic.comments.DocParamOptionalAttachTddTest",
+    "testsPattern": "semantic.comments.DocParamOptionalAttachTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/comments/DocParamReturnAttachTddTest.kt",
+    "package": "semantic.comments",
+    "class": "DocParamReturnAttachTddTest",
+    "fqcn": "semantic.comments.DocParamReturnAttachTddTest",
+    "testsPattern": "semantic.comments.DocParamReturnAttachTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/comments/DocParamReturnMultiAttachTddTest.kt",
+    "package": "semantic.comments",
+    "class": "DocParamReturnMultiAttachTddTest",
+    "fqcn": "semantic.comments.DocParamReturnMultiAttachTddTest",
+    "testsPattern": "semantic.comments.DocParamReturnMultiAttachTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/comments/DocSeeDeprecatedAttachTddTest.kt",
+    "package": "semantic.comments",
+    "class": "DocSeeDeprecatedAttachTddTest",
+    "fqcn": "semantic.comments.DocSeeDeprecatedAttachTddTest",
+    "testsPattern": "semantic.comments.DocSeeDeprecatedAttachTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/comments/DocTypeAliasAttachTddTest.kt",
+    "package": "semantic.comments",
+    "class": "DocTypeAliasAttachTddTest",
+    "fqcn": "semantic.comments.DocTypeAliasAttachTddTest",
+    "testsPattern": "semantic.comments.DocTypeAliasAttachTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/comments/EmmyLuaDocRegressionTest.kt",
+    "package": "semantic.comments",
+    "class": "EmmyLuaDocRegressionTest",
+    "fqcn": "semantic.comments.EmmyLuaDocRegressionTest",
+    "testsPattern": "semantic.comments.EmmyLuaDocRegressionTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/interop/JavaAndroidInteropCampaignGapTddTest.kt",
+    "package": "semantic.interop",
+    "class": "JavaAndroidInteropCampaignGapTddTest",
+    "fqcn": "semantic.interop.JavaAndroidInteropCampaignGapTddTest",
+    "testsPattern": "semantic.interop.JavaAndroidInteropCampaignGapTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/interop/JavaArrayIndexTypeTddTest.kt",
+    "package": "semantic.interop",
+    "class": "JavaArrayIndexTypeTddTest",
+    "fqcn": "semantic.interop.JavaArrayIndexTypeTddTest",
+    "testsPattern": "semantic.interop.JavaArrayIndexTypeTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/interop/JavaChainedCallTddTest.kt",
+    "package": "semantic.interop",
+    "class": "JavaChainedCallTddTest",
+    "fqcn": "semantic.interop.JavaChainedCallTddTest",
+    "testsPattern": "semantic.interop.JavaChainedCallTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/interop/JavaConstructorOverloadPickTddTest.kt",
+    "package": "semantic.interop",
+    "class": "JavaConstructorOverloadPickTddTest",
+    "fqcn": "semantic.interop.JavaConstructorOverloadPickTddTest",
+    "testsPattern": "semantic.interop.JavaConstructorOverloadPickTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/interop/JavaEnumConstantSurfaceTddTest.kt",
+    "package": "semantic.interop",
+    "class": "JavaEnumConstantSurfaceTddTest",
+    "fqcn": "semantic.interop.JavaEnumConstantSurfaceTddTest",
+    "testsPattern": "semantic.interop.JavaEnumConstantSurfaceTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/interop/JavaMethodOverloadArityPickTddTest.kt",
+    "package": "semantic.interop",
+    "class": "JavaMethodOverloadArityPickTddTest",
+    "fqcn": "semantic.interop.JavaMethodOverloadArityPickTddTest",
+    "testsPattern": "semantic.interop.JavaMethodOverloadArityPickTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/interop/JavaStaticFieldCompletionSurfaceTddTest.kt",
+    "package": "semantic.interop",
+    "class": "JavaStaticFieldCompletionSurfaceTddTest",
+    "fqcn": "semantic.interop.JavaStaticFieldCompletionSurfaceTddTest",
+    "testsPattern": "semantic.interop.JavaStaticFieldCompletionSurfaceTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/interop/JavaStaticFieldCompletionTddTest.kt",
+    "package": "semantic.interop",
+    "class": "JavaStaticFieldCompletionTddTest",
+    "fqcn": "semantic.interop.JavaStaticFieldCompletionTddTest",
+    "testsPattern": "semantic.interop.JavaStaticFieldCompletionTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/interop/JavaStaticFieldReadTddTest.kt",
+    "package": "semantic.interop",
+    "class": "JavaStaticFieldReadTddTest",
+    "fqcn": "semantic.interop.JavaStaticFieldReadTddTest",
+    "testsPattern": "semantic.interop.JavaStaticFieldReadTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/interop/LuaJavaArrayHelpersTddTest.kt",
+    "package": "semantic.interop",
+    "class": "LuaJavaArrayHelpersTddTest",
+    "fqcn": "semantic.interop.LuaJavaArrayHelpersTddTest",
+    "testsPattern": "semantic.interop.LuaJavaArrayHelpersTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/interop/LuaJavaArrayLengthMemberTddTest.kt",
+    "package": "semantic.interop",
+    "class": "LuaJavaArrayLengthMemberTddTest",
+    "fqcn": "semantic.interop.LuaJavaArrayLengthMemberTddTest",
+    "testsPattern": "semantic.interop.LuaJavaArrayLengthMemberTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/interop/LuaJavaBindClassArrayComponentTddTest.kt",
+    "package": "semantic.interop",
+    "class": "LuaJavaBindClassArrayComponentTddTest",
+    "fqcn": "semantic.interop.LuaJavaBindClassArrayComponentTddTest",
+    "testsPattern": "semantic.interop.LuaJavaBindClassArrayComponentTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/interop/LuaJavaBindClassGenericSurfaceTddTest.kt",
+    "package": "semantic.interop",
+    "class": "LuaJavaBindClassGenericSurfaceTddTest",
+    "fqcn": "semantic.interop.LuaJavaBindClassGenericSurfaceTddTest",
+    "testsPattern": "semantic.interop.LuaJavaBindClassGenericSurfaceTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/interop/LuaJavaBindClassInnerClassTddTest.kt",
+    "package": "semantic.interop",
+    "class": "LuaJavaBindClassInnerClassTddTest",
+    "fqcn": "semantic.interop.LuaJavaBindClassInnerClassTddTest",
+    "testsPattern": "semantic.interop.LuaJavaBindClassInnerClassTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/interop/LuaJavaBindClassTddTest.kt",
+    "package": "semantic.interop",
+    "class": "LuaJavaBindClassTddTest",
+    "fqcn": "semantic.interop.LuaJavaBindClassTddTest",
+    "testsPattern": "semantic.interop.LuaJavaBindClassTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/interop/LuaJavaCodingMethodSurfaceTddTest.kt",
+    "package": "semantic.interop",
+    "class": "LuaJavaCodingMethodSurfaceTddTest",
+    "fqcn": "semantic.interop.LuaJavaCodingMethodSurfaceTddTest",
+    "testsPattern": "semantic.interop.LuaJavaCodingMethodSurfaceTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/interop/LuaJavaCreateProxyColonGuardTddTest.kt",
+    "package": "semantic.interop",
+    "class": "LuaJavaCreateProxyColonGuardTddTest",
+    "fqcn": "semantic.interop.LuaJavaCreateProxyColonGuardTddTest",
+    "testsPattern": "semantic.interop.LuaJavaCreateProxyColonGuardTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/interop/LuaJavaCreateProxyMultiInterfaceTddTest.kt",
+    "package": "semantic.interop",
+    "class": "LuaJavaCreateProxyMultiInterfaceTddTest",
+    "fqcn": "semantic.interop.LuaJavaCreateProxyMultiInterfaceTddTest",
+    "testsPattern": "semantic.interop.LuaJavaCreateProxyMultiInterfaceTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/interop/LuaJavaCreateProxySurfaceTddTest.kt",
+    "package": "semantic.interop",
+    "class": "LuaJavaCreateProxySurfaceTddTest",
+    "fqcn": "semantic.interop.LuaJavaCreateProxySurfaceTddTest",
+    "testsPattern": "semantic.interop.LuaJavaCreateProxySurfaceTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/interop/LuaJavaCreateProxyTddTest.kt",
+    "package": "semantic.interop",
+    "class": "LuaJavaCreateProxyTddTest",
+    "fqcn": "semantic.interop.LuaJavaCreateProxyTddTest",
+    "testsPattern": "semantic.interop.LuaJavaCreateProxyTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/interop/LuaJavaHelperShadowingTddTest.kt",
+    "package": "semantic.interop",
+    "class": "LuaJavaHelperShadowingTddTest",
+    "fqcn": "semantic.interop.LuaJavaHelperShadowingTddTest",
+    "testsPattern": "semantic.interop.LuaJavaHelperShadowingTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/interop/LuaJavaLoadLibErrorSurfaceTddTest.kt",
+    "package": "semantic.interop",
+    "class": "LuaJavaLoadLibErrorSurfaceTddTest",
+    "fqcn": "semantic.interop.LuaJavaLoadLibErrorSurfaceTddTest",
+    "testsPattern": "semantic.interop.LuaJavaLoadLibErrorSurfaceTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/interop/LuaJavaLoadLibSurfaceTddTest.kt",
+    "package": "semantic.interop",
+    "class": "LuaJavaLoadLibSurfaceTddTest",
+    "fqcn": "semantic.interop.LuaJavaLoadLibSurfaceTddTest",
+    "testsPattern": "semantic.interop.LuaJavaLoadLibSurfaceTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/interop/LuaJavaNewArrayElementTypeTddTest.kt",
+    "package": "semantic.interop",
+    "class": "LuaJavaNewArrayElementTypeTddTest",
+    "fqcn": "semantic.interop.LuaJavaNewArrayElementTypeTddTest",
+    "testsPattern": "semantic.interop.LuaJavaNewArrayElementTypeTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/interop/LuaJavaNewArrayMultiDimSurfaceTddTest.kt",
+    "package": "semantic.interop",
+    "class": "LuaJavaNewArrayMultiDimSurfaceTddTest",
+    "fqcn": "semantic.interop.LuaJavaNewArrayMultiDimSurfaceTddTest",
+    "testsPattern": "semantic.interop.LuaJavaNewArrayMultiDimSurfaceTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/interop/LuaJavaNewArrayTypingTddTest.kt",
+    "package": "semantic.interop",
+    "class": "LuaJavaNewArrayTypingTddTest",
+    "fqcn": "semantic.interop.LuaJavaNewArrayTypingTddTest",
+    "testsPattern": "semantic.interop.LuaJavaNewArrayTypingTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/interop/LuaJavaNewInstanceAritySurfaceTddTest.kt",
+    "package": "semantic.interop",
+    "class": "LuaJavaNewInstanceAritySurfaceTddTest",
+    "fqcn": "semantic.interop.LuaJavaNewInstanceAritySurfaceTddTest",
+    "testsPattern": "semantic.interop.LuaJavaNewInstanceAritySurfaceTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/interop/LuaJavaNewInstanceArityTddTest.kt",
+    "package": "semantic.interop",
+    "class": "LuaJavaNewInstanceArityTddTest",
+    "fqcn": "semantic.interop.LuaJavaNewInstanceArityTddTest",
+    "testsPattern": "semantic.interop.LuaJavaNewInstanceArityTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/interop/LuaJavaNewInstanceOverloadSurfaceTddTest.kt",
+    "package": "semantic.interop",
+    "class": "LuaJavaNewInstanceOverloadSurfaceTddTest",
+    "fqcn": "semantic.interop.LuaJavaNewInstanceOverloadSurfaceTddTest",
+    "testsPattern": "semantic.interop.LuaJavaNewInstanceOverloadSurfaceTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/interop/LuaJavaNewInstanceOverloadTddTest.kt",
+    "package": "semantic.interop",
+    "class": "LuaJavaNewInstanceOverloadTddTest",
+    "fqcn": "semantic.interop.LuaJavaNewInstanceOverloadTddTest",
+    "testsPattern": "semantic.interop.LuaJavaNewInstanceOverloadTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/interop/PrefixedDexImportUnsupportedTddTest.kt",
+    "package": "semantic.interop",
+    "class": "PrefixedDexImportUnsupportedTddTest",
+    "fqcn": "semantic.interop.PrefixedDexImportUnsupportedTddTest",
+    "testsPattern": "semantic.interop.PrefixedDexImportUnsupportedTddTest"
+  },
+  {
+    "file": "src/commonTest/kotlin/semantic/model/CompletionProviderTest.kt",
+    "package": "semantic.model",
+    "class": "CompletionProviderTest",
+    "fqcn": "semantic.model.CompletionProviderTest",
+    "testsPattern": "semantic.model.CompletionProviderTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/model/NodePositionIndexEdgeTddTest.kt",
+    "package": "semantic.model",
+    "class": "NodePositionIndexEdgeTddTest",
+    "fqcn": "semantic.model.NodePositionIndexEdgeTddTest",
+    "testsPattern": "semantic.model.NodePositionIndexEdgeTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/model/ReferenceQueriesCrossModuleTddTest.kt",
+    "package": "semantic.model",
+    "class": "ReferenceQueriesCrossModuleTddTest",
+    "fqcn": "semantic.model.ReferenceQueriesCrossModuleTddTest",
+    "testsPattern": "semantic.model.ReferenceQueriesCrossModuleTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/model/ReferenceQueriesHoverPreferredTypeTddTest.kt",
+    "package": "semantic.model",
+    "class": "ReferenceQueriesHoverPreferredTypeTddTest",
+    "fqcn": "semantic.model.ReferenceQueriesHoverPreferredTypeTddTest",
+    "testsPattern": "semantic.model.ReferenceQueriesHoverPreferredTypeTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/model/SemanticModelDiagnosticsTest.kt",
+    "package": "semantic.model",
+    "class": "SemanticModelDiagnosticsTest",
+    "fqcn": "semantic.model.SemanticModelDiagnosticsTest",
+    "testsPattern": "semantic.model.SemanticModelDiagnosticsTest"
+  },
+  {
+    "file": "src/commonTest/kotlin/semantic/model/SemanticModelFacadeTest.kt",
+    "package": "semantic.model",
+    "class": "SemanticModelFacadeTest",
+    "fqcn": "semantic.model.SemanticModelFacadeTest",
+    "testsPattern": "semantic.model.SemanticModelFacadeTest"
+  },
+  {
+    "file": "src/commonTest/kotlin/semantic/types/ModuleTypeBridgeTest.kt",
+    "package": "semantic.types",
+    "class": "ModuleTypeBridgeTest",
+    "fqcn": "semantic.types.ModuleTypeBridgeTest",
+    "testsPattern": "semantic.types.ModuleTypeBridgeTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/types/model/TypeModelTest.kt",
+    "package": "semantic.types.model",
+    "class": "TypeModelTest",
+    "fqcn": "semantic.types.model.TypeModelTest",
+    "testsPattern": "semantic.types.model.TypeModelTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/types/resolve/DocFunctionTypeSyntaxParserTest.kt",
+    "package": "semantic.types.resolve",
+    "class": "DocFunctionTypeSyntaxParserTest",
+    "fqcn": "semantic.types.resolve.DocFunctionTypeSyntaxParserTest",
+    "testsPattern": "semantic.types.resolve.DocFunctionTypeSyntaxParserTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/types/resolve/DocTypeResolutionTest.kt",
+    "package": "semantic.types.resolve",
+    "class": "DocTypeResolutionTest",
+    "fqcn": "semantic.types.resolve.DocTypeResolutionTest",
+    "testsPattern": "semantic.types.resolve.DocTypeResolutionTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/types/resolve/GenericTypeArgSurfaceTddTest.kt",
+    "package": "semantic.types.resolve",
+    "class": "GenericTypeArgSurfaceTddTest",
+    "fqcn": "semantic.types.resolve.GenericTypeArgSurfaceTddTest",
+    "testsPattern": "semantic.types.resolve.GenericTypeArgSurfaceTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/types/resolve/TypeNormalizerDisplayNameOrderTddTest.kt",
+    "package": "semantic.types.resolve",
+    "class": "TypeNormalizerDisplayNameOrderTddTest",
+    "fqcn": "semantic.types.resolve.TypeNormalizerDisplayNameOrderTddTest",
+    "testsPattern": "semantic.types.resolve.TypeNormalizerDisplayNameOrderTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/types/resolve/TypeNormalizerIntersectionOrderTddTest.kt",
+    "package": "semantic.types.resolve",
+    "class": "TypeNormalizerIntersectionOrderTddTest",
+    "fqcn": "semantic.types.resolve.TypeNormalizerIntersectionOrderTddTest",
+    "testsPattern": "semantic.types.resolve.TypeNormalizerIntersectionOrderTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/types/resolve/TypeNormalizerNeverAbsorptionTddTest.kt",
+    "package": "semantic.types.resolve",
+    "class": "TypeNormalizerNeverAbsorptionTddTest",
+    "fqcn": "semantic.types.resolve.TypeNormalizerNeverAbsorptionTddTest",
+    "testsPattern": "semantic.types.resolve.TypeNormalizerNeverAbsorptionTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/types/resolve/TypeNormalizerNilabilityTddTest.kt",
+    "package": "semantic.types.resolve",
+    "class": "TypeNormalizerNilabilityTddTest",
+    "fqcn": "semantic.types.resolve.TypeNormalizerNilabilityTddTest",
+    "testsPattern": "semantic.types.resolve.TypeNormalizerNilabilityTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/types/resolve/TypeNormalizerTest.kt",
+    "package": "semantic.types.resolve",
+    "class": "TypeNormalizerTest",
+    "fqcn": "semantic.types.resolve.TypeNormalizerTest",
+    "testsPattern": "semantic.types.resolve.TypeNormalizerTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/types/resolve/TypeNormalizerUnionFlattenTddTest.kt",
+    "package": "semantic.types.resolve",
+    "class": "TypeNormalizerUnionFlattenTddTest",
+    "fqcn": "semantic.types.resolve.TypeNormalizerUnionFlattenTddTest",
+    "testsPattern": "semantic.types.resolve.TypeNormalizerUnionFlattenTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/types/resolve/TypeNormalizerUnionOrderTddTest.kt",
+    "package": "semantic.types.resolve",
+    "class": "TypeNormalizerUnionOrderTddTest",
+    "fqcn": "semantic.types.resolve.TypeNormalizerUnionOrderTddTest",
+    "testsPattern": "semantic.types.resolve.TypeNormalizerUnionOrderTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/types/resolve/TypeRelationsFunctionAssignTddTest.kt",
+    "package": "semantic.types.resolve",
+    "class": "TypeRelationsFunctionAssignTddTest",
+    "fqcn": "semantic.types.resolve.TypeRelationsFunctionAssignTddTest",
+    "testsPattern": "semantic.types.resolve.TypeRelationsFunctionAssignTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/types/resolve/TypeRelationsTableAssignTddTest.kt",
+    "package": "semantic.types.resolve",
+    "class": "TypeRelationsTableAssignTddTest",
+    "fqcn": "semantic.types.resolve.TypeRelationsTableAssignTddTest",
+    "testsPattern": "semantic.types.resolve.TypeRelationsTableAssignTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/types/resolve/TypeRelationsTest.kt",
+    "package": "semantic.types.resolve",
+    "class": "TypeRelationsTest",
+    "fqcn": "semantic.types.resolve.TypeRelationsTest",
+    "testsPattern": "semantic.types.resolve.TypeRelationsTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/types/resolve/TypeResolutionContextTest.kt",
+    "package": "semantic.types.resolve",
+    "class": "TypeResolutionContextTest",
+    "fqcn": "semantic.types.resolve.TypeResolutionContextTest",
+    "testsPattern": "semantic.types.resolve.TypeResolutionContextTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/types/resolve/TypeResolverTest.kt",
+    "package": "semantic.types.resolve",
+    "class": "TypeResolverTest",
+    "fqcn": "semantic.types.resolve.TypeResolverTest",
+    "testsPattern": "semantic.types.resolve.TypeResolverTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/types/resolve/TypeScopeGraphLocalFunctionTddTest.kt",
+    "package": "semantic.types.resolve",
+    "class": "TypeScopeGraphLocalFunctionTddTest",
+    "fqcn": "semantic.types.resolve.TypeScopeGraphLocalFunctionTddTest",
+    "testsPattern": "semantic.types.resolve.TypeScopeGraphLocalFunctionTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/types/resolve/TypeScopeGraphTest.kt",
+    "package": "semantic.types.resolve",
+    "class": "TypeScopeGraphTest",
+    "fqcn": "semantic.types.resolve.TypeScopeGraphTest",
+    "testsPattern": "semantic.types.resolve.TypeScopeGraphTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/types/resolve/TypeSubstitutorTest.kt",
+    "package": "semantic.types.resolve",
+    "class": "TypeSubstitutorTest",
+    "fqcn": "semantic.types.resolve.TypeSubstitutorTest",
+    "testsPattern": "semantic.types.resolve.TypeSubstitutorTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/types/syntax/TypeSyntaxParserTest.kt",
+    "package": "semantic.types.syntax",
+    "class": "TypeSyntaxParserTest",
+    "fqcn": "semantic.types.syntax.TypeSyntaxParserTest",
+    "testsPattern": "semantic.types.syntax.TypeSyntaxParserTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/types/syntax/TypeSyntaxRendererTest.kt",
+    "package": "semantic.types.syntax",
+    "class": "TypeSyntaxRendererTest",
+    "fqcn": "semantic.types.syntax.TypeSyntaxRendererTest",
+    "testsPattern": "semantic.types.syntax.TypeSyntaxRendererTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/types/syntax/TypeSyntaxUnionOptionalTddTest.kt",
+    "package": "semantic.types.syntax",
+    "class": "TypeSyntaxUnionOptionalTddTest",
+    "fqcn": "semantic.types.syntax.TypeSyntaxUnionOptionalTddTest",
+    "testsPattern": "semantic.types.syntax.TypeSyntaxUnionOptionalTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/workspace/AnalysisProgressCancelTddTest.kt",
+    "package": "semantic.workspace",
+    "class": "AnalysisProgressCancelTddTest",
+    "fqcn": "semantic.workspace.AnalysisProgressCancelTddTest",
+    "testsPattern": "semantic.workspace.AnalysisProgressCancelTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/workspace/AndroidLuaImportNegativePathTddTest.kt",
+    "package": "semantic.workspace",
+    "class": "AndroidLuaImportNegativePathTddTest",
+    "fqcn": "semantic.workspace.AndroidLuaImportNegativePathTddTest",
+    "testsPattern": "semantic.workspace.AndroidLuaImportNegativePathTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/workspace/AndroidLuaImportWorkspaceTddTest.kt",
+    "package": "semantic.workspace",
+    "class": "AndroidLuaImportWorkspaceTddTest",
+    "fqcn": "semantic.workspace.AndroidLuaImportWorkspaceTddTest",
+    "testsPattern": "semantic.workspace.AndroidLuaImportWorkspaceTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/workspace/BuiltinOverlayCoroutineLibraryTddTest.kt",
+    "package": "semantic.workspace",
+    "class": "BuiltinOverlayCoroutineLibraryTddTest",
+    "fqcn": "semantic.workspace.BuiltinOverlayCoroutineLibraryTddTest",
+    "testsPattern": "semantic.workspace.BuiltinOverlayCoroutineLibraryTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/workspace/BuiltinOverlayIoOsLibraryTddTest.kt",
+    "package": "semantic.workspace",
+    "class": "BuiltinOverlayIoOsLibraryTddTest",
+    "fqcn": "semantic.workspace.BuiltinOverlayIoOsLibraryTddTest",
+    "testsPattern": "semantic.workspace.BuiltinOverlayIoOsLibraryTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/workspace/BuiltinOverlayLoaderMissingPathTddTest.kt",
+    "package": "semantic.workspace",
+    "class": "BuiltinOverlayLoaderMissingPathTddTest",
+    "fqcn": "semantic.workspace.BuiltinOverlayLoaderMissingPathTddTest",
+    "testsPattern": "semantic.workspace.BuiltinOverlayLoaderMissingPathTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/workspace/BuiltinOverlayLoaderRankCollisionTddTest.kt",
+    "package": "semantic.workspace",
+    "class": "BuiltinOverlayLoaderRankCollisionTddTest",
+    "fqcn": "semantic.workspace.BuiltinOverlayLoaderRankCollisionTddTest",
+    "testsPattern": "semantic.workspace.BuiltinOverlayLoaderRankCollisionTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/workspace/BuiltinOverlayLoaderTddTest.kt",
+    "package": "semantic.workspace",
+    "class": "BuiltinOverlayLoaderTddTest",
+    "fqcn": "semantic.workspace.BuiltinOverlayLoaderTddTest",
+    "testsPattern": "semantic.workspace.BuiltinOverlayLoaderTddTest"
+  },
+  {
+    "file": "src/commonTest/kotlin/semantic/workspace/BuiltinOverlayLoaderTest.kt",
+    "package": "semantic.workspace",
+    "class": "BuiltinOverlayLoaderTest",
+    "fqcn": "semantic.workspace.BuiltinOverlayLoaderTest",
+    "testsPattern": "semantic.workspace.BuiltinOverlayLoaderTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/workspace/BuiltinOverlayLua53CompletenessTddTest.kt",
+    "package": "semantic.workspace",
+    "class": "BuiltinOverlayLua53CompletenessTddTest",
+    "fqcn": "semantic.workspace.BuiltinOverlayLua53CompletenessTddTest",
+    "testsPattern": "semantic.workspace.BuiltinOverlayLua53CompletenessTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/workspace/BuiltinOverlayMathLibraryTddTest.kt",
+    "package": "semantic.workspace",
+    "class": "BuiltinOverlayMathLibraryTddTest",
+    "fqcn": "semantic.workspace.BuiltinOverlayMathLibraryTddTest",
+    "testsPattern": "semantic.workspace.BuiltinOverlayMathLibraryTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/workspace/BuiltinOverlayStringLibraryTddTest.kt",
+    "package": "semantic.workspace",
+    "class": "BuiltinOverlayStringLibraryTddTest",
+    "fqcn": "semantic.workspace.BuiltinOverlayStringLibraryTddTest",
+    "testsPattern": "semantic.workspace.BuiltinOverlayStringLibraryTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/workspace/BuiltinOverlayTableLibraryTddTest.kt",
+    "package": "semantic.workspace",
+    "class": "BuiltinOverlayTableLibraryTddTest",
+    "fqcn": "semantic.workspace.BuiltinOverlayTableLibraryTddTest",
+    "testsPattern": "semantic.workspace.BuiltinOverlayTableLibraryTddTest"
+  },
+  {
+    "file": "src/commonTest/kotlin/semantic/workspace/DocumentFactsAndroidImportTddTest.kt",
+    "package": "semantic.workspace",
+    "class": "DocumentFactsAndroidImportTddTest",
+    "fqcn": "semantic.workspace.DocumentFactsAndroidImportTddTest",
+    "testsPattern": "semantic.workspace.DocumentFactsAndroidImportTddTest"
+  },
+  {
+    "file": "src/commonTest/kotlin/semantic/workspace/DocumentFactsCollectorTest.kt",
+    "package": "semantic.workspace",
+    "class": "DocumentFactsCollectorTest",
+    "fqcn": "semantic.workspace.DocumentFactsCollectorTest",
+    "testsPattern": "semantic.workspace.DocumentFactsCollectorTest"
+  },
+  {
+    "file": "src/commonTest/kotlin/semantic/workspace/LegacyModuleEnvironmentPassTest.kt",
+    "package": "semantic.workspace",
+    "class": "LegacyModuleEnvironmentPassTest",
+    "fqcn": "semantic.workspace.LegacyModuleEnvironmentPassTest",
+    "testsPattern": "semantic.workspace.LegacyModuleEnvironmentPassTest"
+  },
+  {
+    "file": "src/commonTest/kotlin/semantic/workspace/LuaWorkspaceEngineTest.kt",
+    "package": "semantic.workspace",
+    "class": "LuaWorkspaceEngineTest",
+    "fqcn": "semantic.workspace.LuaWorkspaceEngineTest",
+    "testsPattern": "semantic.workspace.LuaWorkspaceEngineTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/workspace/LuaWorkspaceEngineUpdateJvmTest.kt",
+    "package": "semantic.workspace",
+    "class": "LuaWorkspaceEngineUpdateJvmTest",
+    "fqcn": "semantic.workspace.LuaWorkspaceEngineUpdateJvmTest",
+    "testsPattern": "semantic.workspace.LuaWorkspaceEngineUpdateJvmTest"
+  },
+  {
+    "file": "src/commonTest/kotlin/semantic/workspace/LuaWorkspaceEngineUpdateTest.kt",
+    "package": "semantic.workspace",
+    "class": "LuaWorkspaceEngineUpdateTest",
+    "fqcn": "semantic.workspace.LuaWorkspaceEngineUpdateTest",
+    "testsPattern": "semantic.workspace.LuaWorkspaceEngineUpdateTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/workspace/LuaWorkspaceQueryFacadeTest.kt",
+    "package": "semantic.workspace",
+    "class": "LuaWorkspaceQueryFacadeTest",
+    "fqcn": "semantic.workspace.LuaWorkspaceQueryFacadeTest",
+    "testsPattern": "semantic.workspace.LuaWorkspaceQueryFacadeTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/workspace/ModuleExportCollectorNestedRangeTddTest.kt",
+    "package": "semantic.workspace",
+    "class": "ModuleExportCollectorNestedRangeTddTest",
+    "fqcn": "semantic.workspace.ModuleExportCollectorNestedRangeTddTest",
+    "testsPattern": "semantic.workspace.ModuleExportCollectorNestedRangeTddTest"
+  },
+  {
+    "file": "src/commonTest/kotlin/semantic/workspace/ModuleExportCollectorTest.kt",
+    "package": "semantic.workspace",
+    "class": "ModuleExportCollectorTest",
+    "fqcn": "semantic.workspace.ModuleExportCollectorTest",
+    "testsPattern": "semantic.workspace.ModuleExportCollectorTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/workspace/ModuleExportNestedFunctionTddTest.kt",
+    "package": "semantic.workspace",
+    "class": "ModuleExportNestedFunctionTddTest",
+    "fqcn": "semantic.workspace.ModuleExportNestedFunctionTddTest",
+    "testsPattern": "semantic.workspace.ModuleExportNestedFunctionTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/workspace/ModuleExportTableFieldTddTest.kt",
+    "package": "semantic.workspace",
+    "class": "ModuleExportTableFieldTddTest",
+    "fqcn": "semantic.workspace.ModuleExportTableFieldTddTest",
+    "testsPattern": "semantic.workspace.ModuleExportTableFieldTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/workspace/SemanticWorkspaceCampaignGapTddTest.kt",
+    "package": "semantic.workspace",
+    "class": "SemanticWorkspaceCampaignGapTddTest",
+    "fqcn": "semantic.workspace.SemanticWorkspaceCampaignGapTddTest",
+    "testsPattern": "semantic.workspace.SemanticWorkspaceCampaignGapTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/workspace/VirtualPathNormalizationTddTest.kt",
+    "package": "semantic.workspace",
+    "class": "VirtualPathNormalizationTddTest",
+    "fqcn": "semantic.workspace.VirtualPathNormalizationTddTest",
+    "testsPattern": "semantic.workspace.VirtualPathNormalizationTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/workspace/VirtualPathWindowsSlashTddTest.kt",
+    "package": "semantic.workspace",
+    "class": "VirtualPathWindowsSlashTddTest",
+    "fqcn": "semantic.workspace.VirtualPathWindowsSlashTddTest",
+    "testsPattern": "semantic.workspace.VirtualPathWindowsSlashTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/workspace/WorkspaceDirtySetOverlayFingerprintTddTest.kt",
+    "package": "semantic.workspace",
+    "class": "WorkspaceDirtySetOverlayFingerprintTddTest",
+    "fqcn": "semantic.workspace.WorkspaceDirtySetOverlayFingerprintTddTest",
+    "testsPattern": "semantic.workspace.WorkspaceDirtySetOverlayFingerprintTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/workspace/WorkspaceDirtySetPlannerTddTest.kt",
+    "package": "semantic.workspace",
+    "class": "WorkspaceDirtySetPlannerTddTest",
+    "fqcn": "semantic.workspace.WorkspaceDirtySetPlannerTddTest",
+    "testsPattern": "semantic.workspace.WorkspaceDirtySetPlannerTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/workspace/WorkspaceDirtySetRequireEdgeTddTest.kt",
+    "package": "semantic.workspace",
+    "class": "WorkspaceDirtySetRequireEdgeTddTest",
+    "fqcn": "semantic.workspace.WorkspaceDirtySetRequireEdgeTddTest",
+    "testsPattern": "semantic.workspace.WorkspaceDirtySetRequireEdgeTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/workspace/WorkspaceFileDeleteInvalidateTddTest.kt",
+    "package": "semantic.workspace",
+    "class": "WorkspaceFileDeleteInvalidateTddTest",
+    "fqcn": "semantic.workspace.WorkspaceFileDeleteInvalidateTddTest",
+    "testsPattern": "semantic.workspace.WorkspaceFileDeleteInvalidateTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/workspace/WorkspaceFingerprintInvalidationTddTest.kt",
+    "package": "semantic.workspace",
+    "class": "WorkspaceFingerprintInvalidationTddTest",
+    "fqcn": "semantic.workspace.WorkspaceFingerprintInvalidationTddTest",
+    "testsPattern": "semantic.workspace.WorkspaceFingerprintInvalidationTddTest"
+  },
+  {
+    "file": "src/commonTest/kotlin/semantic/workspace/WorkspaceFoundationTest.kt",
+    "package": "semantic.workspace",
+    "class": "WorkspaceFoundationTest",
+    "fqcn": "semantic.workspace.WorkspaceFoundationTest",
+    "testsPattern": "semantic.workspace.WorkspaceFoundationTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/workspace/WorkspaceImportVisibilityTddTest.kt",
+    "package": "semantic.workspace",
+    "class": "WorkspaceImportVisibilityTddTest",
+    "fqcn": "semantic.workspace.WorkspaceImportVisibilityTddTest",
+    "testsPattern": "semantic.workspace.WorkspaceImportVisibilityTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/workspace/WorkspaceModuleCycleDiagnosticTddTest.kt",
+    "package": "semantic.workspace",
+    "class": "WorkspaceModuleCycleDiagnosticTddTest",
+    "fqcn": "semantic.workspace.WorkspaceModuleCycleDiagnosticTddTest",
+    "testsPattern": "semantic.workspace.WorkspaceModuleCycleDiagnosticTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/workspace/WorkspaceModuleGraphCycleTddTest.kt",
+    "package": "semantic.workspace",
+    "class": "WorkspaceModuleGraphCycleTddTest",
+    "fqcn": "semantic.workspace.WorkspaceModuleGraphCycleTddTest",
+    "testsPattern": "semantic.workspace.WorkspaceModuleGraphCycleTddTest"
+  },
+  {
+    "file": "src/commonTest/kotlin/semantic/workspace/WorkspaceModuleGraphTest.kt",
+    "package": "semantic.workspace",
+    "class": "WorkspaceModuleGraphTest",
+    "fqcn": "semantic.workspace.WorkspaceModuleGraphTest",
+    "testsPattern": "semantic.workspace.WorkspaceModuleGraphTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/workspace/WorkspaceModuleResolutionCaseTddTest.kt",
+    "package": "semantic.workspace",
+    "class": "WorkspaceModuleResolutionCaseTddTest",
+    "fqcn": "semantic.workspace.WorkspaceModuleResolutionCaseTddTest",
+    "testsPattern": "semantic.workspace.WorkspaceModuleResolutionCaseTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/workspace/WorkspaceModuleResolverPathStyleTddTest.kt",
+    "package": "semantic.workspace",
+    "class": "WorkspaceModuleResolverPathStyleTddTest",
+    "fqcn": "semantic.workspace.WorkspaceModuleResolverPathStyleTddTest",
+    "testsPattern": "semantic.workspace.WorkspaceModuleResolverPathStyleTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/workspace/WorkspaceMultiRootPathStyleTddTest.kt",
+    "package": "semantic.workspace",
+    "class": "WorkspaceMultiRootPathStyleTddTest",
+    "fqcn": "semantic.workspace.WorkspaceMultiRootPathStyleTddTest",
+    "testsPattern": "semantic.workspace.WorkspaceMultiRootPathStyleTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/workspace/WorkspaceMultiRootRelativeCollisionTddTest.kt",
+    "package": "semantic.workspace",
+    "class": "WorkspaceMultiRootRelativeCollisionTddTest",
+    "fqcn": "semantic.workspace.WorkspaceMultiRootRelativeCollisionTddTest",
+    "testsPattern": "semantic.workspace.WorkspaceMultiRootRelativeCollisionTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/workspace/WorkspacePackagePathSearchOrderTddTest.kt",
+    "package": "semantic.workspace",
+    "class": "WorkspacePackagePathSearchOrderTddTest",
+    "fqcn": "semantic.workspace.WorkspacePackagePathSearchOrderTddTest",
+    "testsPattern": "semantic.workspace.WorkspacePackagePathSearchOrderTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/workspace/WorkspacePublicFingerprintStabilityTddTest.kt",
+    "package": "semantic.workspace",
+    "class": "WorkspacePublicFingerprintStabilityTddTest",
+    "fqcn": "semantic.workspace.WorkspacePublicFingerprintStabilityTddTest",
+    "testsPattern": "semantic.workspace.WorkspacePublicFingerprintStabilityTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/workspace/WorkspaceRequireChainVisibilityTddTest.kt",
+    "package": "semantic.workspace",
+    "class": "WorkspaceRequireChainVisibilityTddTest",
+    "fqcn": "semantic.workspace.WorkspaceRequireChainVisibilityTddTest",
+    "testsPattern": "semantic.workspace.WorkspaceRequireChainVisibilityTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/workspace/WorkspaceRequireRelativePathTddTest.kt",
+    "package": "semantic.workspace",
+    "class": "WorkspaceRequireRelativePathTddTest",
+    "fqcn": "semantic.workspace.WorkspaceRequireRelativePathTddTest",
+    "testsPattern": "semantic.workspace.WorkspaceRequireRelativePathTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/semantic/workspace/WorkspaceRequireShadowLocalTddTest.kt",
+    "package": "semantic.workspace",
+    "class": "WorkspaceRequireShadowLocalTddTest",
+    "fqcn": "semantic.workspace.WorkspaceRequireShadowLocalTddTest",
+    "testsPattern": "semantic.workspace.WorkspaceRequireShadowLocalTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/source/AST2LuaBinaryUnaryRoundTripTddTest.kt",
+    "package": "source",
+    "class": "AST2LuaBinaryUnaryRoundTripTddTest",
+    "fqcn": "source.AST2LuaBinaryUnaryRoundTripTddTest",
+    "testsPattern": "source.AST2LuaBinaryUnaryRoundTripTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/source/AST2LuaCallChainRoundTripTddTest.kt",
+    "package": "source",
+    "class": "AST2LuaCallChainRoundTripTddTest",
+    "fqcn": "source.AST2LuaCallChainRoundTripTddTest",
+    "testsPattern": "source.AST2LuaCallChainRoundTripTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/source/AST2LuaForWhileRepeatRoundTripTddTest.kt",
+    "package": "source",
+    "class": "AST2LuaForWhileRepeatRoundTripTddTest",
+    "fqcn": "source.AST2LuaForWhileRepeatRoundTripTddTest",
+    "testsPattern": "source.AST2LuaForWhileRepeatRoundTripTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/source/AST2LuaFunctionLocalRoundTripTddTest.kt",
+    "package": "source",
+    "class": "AST2LuaFunctionLocalRoundTripTddTest",
+    "fqcn": "source.AST2LuaFunctionLocalRoundTripTddTest",
+    "testsPattern": "source.AST2LuaFunctionLocalRoundTripTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/source/AST2LuaGotoAttributeRoundTripTddTest.kt",
+    "package": "source",
+    "class": "AST2LuaGotoAttributeRoundTripTddTest",
+    "fqcn": "source.AST2LuaGotoAttributeRoundTripTddTest",
+    "testsPattern": "source.AST2LuaGotoAttributeRoundTripTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/source/AST2LuaGotoLabelRoundTripTddTest.kt",
+    "package": "source",
+    "class": "AST2LuaGotoLabelRoundTripTddTest",
+    "fqcn": "source.AST2LuaGotoLabelRoundTripTddTest",
+    "testsPattern": "source.AST2LuaGotoLabelRoundTripTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/source/AST2LuaIfElseifRoundTripTddTest.kt",
+    "package": "source",
+    "class": "AST2LuaIfElseifRoundTripTddTest",
+    "fqcn": "source.AST2LuaIfElseifRoundTripTddTest",
+    "testsPattern": "source.AST2LuaIfElseifRoundTripTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/source/AST2LuaNestedTableRoundTripTddTest.kt",
+    "package": "source",
+    "class": "AST2LuaNestedTableRoundTripTddTest",
+    "fqcn": "source.AST2LuaNestedTableRoundTripTddTest",
+    "testsPattern": "source.AST2LuaNestedTableRoundTripTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/source/AST2LuaRoundTripTest.kt",
+    "package": "source",
+    "class": "AST2LuaRoundTripTest",
+    "fqcn": "source.AST2LuaRoundTripTest",
+    "testsPattern": "source.AST2LuaRoundTripTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/source/AST2LuaStringLiteralRoundTripTddTest.kt",
+    "package": "source",
+    "class": "AST2LuaStringLiteralRoundTripTddTest",
+    "fqcn": "source.AST2LuaStringLiteralRoundTripTddTest",
+    "testsPattern": "source.AST2LuaStringLiteralRoundTripTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/source/AST2LuaTableKeyFormsRoundTripTddTest.kt",
+    "package": "source",
+    "class": "AST2LuaTableKeyFormsRoundTripTddTest",
+    "fqcn": "source.AST2LuaTableKeyFormsRoundTripTddTest",
+    "testsPattern": "source.AST2LuaTableKeyFormsRoundTripTddTest"
+  },
+  {
+    "file": "src/jvmTest/kotlin/testinventory/NewTestInventoryTddTest.kt",
+    "package": "testinventory",
+    "class": "NewTestInventoryTddTest",
+    "fqcn": "testinventory.NewTestInventoryTddTest",
+    "testsPattern": "testinventory.NewTestInventoryTddTest"
+  }
+]

@@ -1,21 +1,22 @@
-# Windows self-hosted runner only. Does not run on main.
-# Runner labels: self-hosted, Windows, X64 (DINGYI-PC)
-# CPU HARD CAP:
-#   scripts/windows-run-gradle-capped.ps1
-#   - ProcessorAffinity 0x3F = 6 of 8 cores (~75-80%)
-#   - BelowNormal priority on cmd/gradle + all java/javaw children
-# Soft Gradle caps: workers.max=5, maxParallelForks=5, --max-workers=5
+# Windows self-hosted slice runner (progress-bar mode).
+# One small --tests group per run. Does NOT run full jvmTest.
+# Progress: tasks/agent-runs/win-slices/progress.json
 name: windows-jvmtest
 
 on:
   workflow_dispatch:
+    inputs:
+      slice:
+        description: 'Slice id from slices.json (empty = next non-success)'
+        required: false
+        default: ''
   push:
     branches: [windows-verify]
 
 jobs:
-  jvm-test:
+  jvm-slice:
     runs-on: [self-hosted, Windows, X64]
-    timeout-minutes: 240
+    timeout-minutes: 45
     env:
       JAVA_HOME: C:\Users\dingyi\.jdks\temurin-17.0.11
       ANDROID_HOME: C:\Users\dingyi\AppData\Local\Android\Sdk
@@ -29,12 +30,13 @@ jobs:
         run: |
           $env:Path = "$env:JAVA_HOME\bin;$env:Path"
           Write-Host "JAVA_HOME=$env:JAVA_HOME"
-          Write-Host "ANDROID_HOME=$env:ANDROID_HOME"
-          Write-Host "PATH_head=$($env:Path.Split(';')[0..2] -join ';')"
           & "$env:JAVA_HOME\bin\java.exe" -version
           Write-Host "processor_count=$env:NUMBER_OF_PROCESSORS"
           git rev-parse --short HEAD
-          Write-Host "cpu_hard_cap=ProcessorAffinity_0x3F_6of8 + BelowNormal + workers=5"
+          Write-Host "mode=slice-progress cpu_hard_cap=affinity_0x3F workers=5"
+          if (Test-Path tasks/agent-runs/win-slices/progress.json) {
+            Get-Content tasks/agent-runs/win-slices/progress.json | Select-Object -First 40
+          }
 
       - name: Compile test sources (CPU hard-capped)
         shell: pwsh
@@ -42,11 +44,18 @@ jobs:
           $env:Path = "$env:JAVA_HOME\bin;$env:Path"
           ./scripts/windows-run-gradle-capped.ps1 compileTestKotlinJvm --parallel --max-workers=5
 
-      - name: Full jvmTest (CPU hard-capped)
+      - name: Run next test slice (CPU hard-capped)
         shell: pwsh
+        env:
+          SLICE_INPUT: ${{ github.event.inputs.slice }}
         run: |
           $env:Path = "$env:JAVA_HOME\bin;$env:Path"
-          ./scripts/windows-run-gradle-capped.ps1 jvmTest --parallel --max-workers=5
+          $slice = $env:SLICE_INPUT
+          if ([string]::IsNullOrWhiteSpace($slice)) {
+            ./scripts/windows-run-slice.ps1
+          } else {
+            ./scripts/windows-run-slice.ps1 -Slice $slice
+          }
 
       - name: Stop Gradle and kill leftover Java
         if: always()
@@ -64,6 +73,18 @@ jobs:
         with:
           name: junit-xml
           path: build/test-results/jvmTest/**
+          if-no-files-found: warn
+
+      - name: Upload slice progress
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: slice-progress
+          path: |
+            slice-result.json
+            slice-progress.json
+            tasks/agent-runs/win-slices/progress.json
+            tasks/agent-runs/win-slices/results/**
           if-no-files-found: warn
 
       - name: Upload HTML report
