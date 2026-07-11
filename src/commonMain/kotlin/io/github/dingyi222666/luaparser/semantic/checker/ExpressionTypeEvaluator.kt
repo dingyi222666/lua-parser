@@ -683,7 +683,7 @@ class ExpressionTypeEvaluator internal constructor(
     }
 
     private fun builtinRequireModuleName(node: CallExpression, context: Context): String? {
-        val identifier = node.base as? Identifier ?: return null
+        val identifier = effectiveCallBase(node) as? Identifier ?: return null
         if (identifier.name != "require") {
             return null
         }
@@ -691,9 +691,7 @@ class ExpressionTypeEvaluator internal constructor(
         if (declaration.origin != DeclarationOrigin.BUILTIN || declaration.name != "require") {
             return null
         }
-        return (node.arguments.singleOrNull() as? ConstantNode)
-            ?.takeIf { it.constantType == ConstantNode.TYPE.STRING }
-            ?.stringOf()
+        return stringLiteralOf(callArguments(node).singleOrNull() ?: return null)
     }
 
     private fun isBuiltinRequireImportCall(node: CallExpression, context: Context): Boolean {

@@ -92,8 +92,12 @@ class LuaWorkspaceQueryFacade(
             symbol.type
         } else {
             // Prefer import-call local MODULE typing (carries moduleName) over coarse node types.
-            preferredHoverType(importCallLocal?.type ?: symbol?.type, exportType ?: memberType ?: nodeType)
-                ?: preferredHoverType(nodeType, symbol?.type)
+            // Always run preferredHoverType so structural table literals collapse to "table"
+            // even when the symbol surface has a null type and only nodeType is available.
+            preferredHoverType(
+                importCallLocal?.type ?: symbol?.type ?: exportType ?: memberType ?: nodeType,
+                exportType ?: memberType ?: nodeType ?: symbol?.type
+            )
         }
         return WorkspaceHoverResult(
             path = path,
@@ -649,8 +653,8 @@ class LuaWorkspaceQueryFacade(
         return when {
             primary == null -> fallback
             // Prefer coarse table kind for local table shadows so hover does not expose
-            // the concrete structural table literal display.
-            primary.kind == TypeInfoKind.TABLE && primary.displayName.startsWith("{") -> {
+            // the concrete structural table literal display (kind may be TABLE or UNKNOWN).
+            primary.displayName.startsWith("{") -> {
                 TypeInfo(
                     displayName = "table",
                     detail = "table",

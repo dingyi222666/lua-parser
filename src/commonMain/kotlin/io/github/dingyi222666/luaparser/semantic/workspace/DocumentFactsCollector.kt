@@ -720,7 +720,9 @@ object DocumentFactsCollector {
         if (field is TableKeyString) {
             return false
         }
-        return field.key.range.start == field.key.range.end
+        // Array-style fields in table constructors use integer keys. After finishNode, the key
+        // range may be non-degenerate; still treat non-named keys as sequence entries for import({...}).
+        return true
     }
 
     private fun extractStringTargets(expression: ExpressionNode?): List<String> {
