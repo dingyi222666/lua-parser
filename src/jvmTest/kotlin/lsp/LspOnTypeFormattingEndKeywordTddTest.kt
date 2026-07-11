@@ -24,9 +24,9 @@ import kotlin.test.fail
  * supports (or later advertises) trigger characters around block-closing /
  * branch-introducing keywords:
  * - Typing the final character of `end` (typically `d`) after a block opener
- *   (`function` / `if` / `for` / `while` / `do` / `repeat`) degrades safely
- *   when the feature is unimplemented, and returns only well-formed TextEdits
- *   once implemented.
+ *   (`function` / `if` / `for` / `while` / `do`) degrades safely when the
+ *   feature is unimplemented, and returns only well-formed TextEdits once
+ *   implemented.
  * - Typing the final character of `then` (typically `n`) after `if` / `elseif`
  *   follows the same dual-path contract.
  * - Malformed / incomplete buffers, empty documents, and out-of-range positions
@@ -48,6 +48,32 @@ class LspOnTypeFormattingEndKeywordTddTest {
     // -------------------------------------------------------------------------
     // Capability / surface probe
     // -------------------------------------------------------------------------
+
+    @Test
+    fun initialize_on_type_formatting_capability_is_probeable() {
+        val service = service()
+        val capabilities = service.initialize(InitializeParams()).capabilities
+
+        // Capability may be null today (documented gap) or present once product
+        // lands on-type formatting. Reading the field must not throw.
+        val provider = capabilities.documentOnTypeFormattingProvider
+        if (provider == null) {
+            assertTrue(
+                true,
+                "documentOnTypeFormattingProvider absent is an accepted pre-product surface"
+            )
+            return
+        }
+
+        // When advertised, firstTriggerCharacter is the only required field.
+        assertTrue(
+            !provider.firstTriggerCharacter.isNullOrEmpty() ||
+                !provider.moreTriggerCharacter.isNullOrEmpty(),
+            "advertised documentOnTypeFormattingProvider should declare at least one " +
+                "trigger character; got first=${provider.firstTriggerCharacter} " +
+                "more=${provider.moreTriggerCharacter}"
+        )
+    }
 
     @Test
     fun on_type_formatting_capability_or_documented_gap_when_unimplemented() {
@@ -134,7 +160,7 @@ class LspOnTypeFormattingEndKeywordTddTest {
     }
 
     // -------------------------------------------------------------------------
-    // `end` keyword: function / if / for / while / do / repeat
+    // `end` keyword: function / if / for / while / do / nested
     // -------------------------------------------------------------------------
 
     @Test
@@ -162,6 +188,22 @@ class LspOnTypeFormattingEndKeywordTddTest {
                 """,
             endOccurrence = 1,
             context = "global function ... end"
+        )
+    }
+
+    @Test
+    fun on_type_after_end_of_method_style_function_degrades_safely() {
+        assertEndKeywordSafe(
+            path = "workspace/on-type-end-method-function.lua",
+            source = """
+                local M = {}
+                function M:run(x)
+                    return x
+                end
+                return M
+                """,
+            endOccurrence = 1,
+            context = "method-style function M:run ... end"
         )
     }
 
@@ -194,6 +236,25 @@ class LspOnTypeFormattingEndKeywordTddTest {
                 """,
             endOccurrence = 1,
             context = "if ... else ... end"
+        )
+    }
+
+    @Test
+    fun on_type_after_end_of_if_elseif_else_chain_degrades_safely() {
+        assertEndKeywordSafe(
+            path = "workspace/on-type-end-if-elseif-else.lua",
+            source = """
+                local n = 0
+                if n == 1 then
+                    return "one"
+                elseif n == 2 then
+                    return "two"
+                else
+                    return "other"
+                end
+                """,
+            endOccurrence = 1,
+            context = "if ... elseif ... else ... end"
         )
     }
 
@@ -288,8 +349,7 @@ class LspOnTypeFormattingEndKeywordTddTest {
                     end
                 end
                 """,
-            // Third `end` is the function closer (if has one, function has one).
-            // Source has two `end` tokens; use the last.
+            // Source has two `end` tokens; use the last (function closer).
             endOccurrence = 2,
             context = "outer function end after nested if"
         )
@@ -413,6 +473,35 @@ class LspOnTypeFormattingEndKeywordTddTest {
             )
         )
         assertSafeDegradeOrWellFormed(outcome, document, context = "trigger ch='\\n' after end")
+    }
+
+    @Test
+    fun on_type_trigger_d_while_finishing_partial_end_token_is_safe() {
+        // User has typed `en` and is about to complete with `d`.
+        val service = service()
+        val textDocuments = LuaTextDocumentService(service)
+        val document = textDocuments.open(
+            "workspace/on-type-trigger-partial-end-d.lua",
+            """
+            local function f()
+                return 1
+            en
+            """
+        )
+
+        val outcome = invokeOnTypeFormatting(
+            textDocuments,
+            onTypeParams(
+                document,
+                position = document.positionAfter("en", occurrence = 1),
+                ch = "d"
+            )
+        )
+        assertSafeDegradeOrWellFormed(
+            outcome,
+            document,
+            context = "trigger ch='d' finishing partial 'en' toward end"
+        )
     }
 
     // -------------------------------------------------------------------------
@@ -551,6 +640,32 @@ class LspOnTypeFormattingEndKeywordTddTest {
     }
 
     @Test
+    fun on_type_on_malformed_unclosed_for_does_not_crash() {
+        val service = service()
+        val textDocuments = LuaTextDocumentService(service)
+        val document = textDocuments.open(
+            "workspace/on-type-malformed-for.lua",
+            """
+            for i = 1, 10 do
+                print(i
+            """
+        )
+
+        val outcome = invokeOnTypeFormatting(
+            textDocuments,
+            onTypeParams(
+                document,
+                position = document.endPosition(),
+                ch = "d"
+            )
+        )
+        assertNoHardCrash(outcome, context = "malformed unclosed for")
+        if (outcome is OnTypeOutcome.Succeeded) {
+            assertWellFormedEdits(outcome.edits, document)
+        }
+    }
+
+    @Test
     fun on_type_at_out_of_range_position_does_not_crash() {
         val service = service()
         val textDocuments = LuaTextDocumentService(service)
@@ -599,6 +714,34 @@ class LspOnTypeFormattingEndKeywordTddTest {
             )
         )
         assertNoHardCrash(outcome, context = "unknown trigger ch='z'")
+        if (outcome is OnTypeOutcome.Succeeded) {
+            assertWellFormedEdits(outcome.edits, document)
+        }
+    }
+
+    @Test
+    fun on_type_with_multi_char_trigger_does_not_crash() {
+        // Spec expects a single character, but defensive clients may send more.
+        val service = service()
+        val textDocuments = LuaTextDocumentService(service)
+        val document = textDocuments.open(
+            "workspace/on-type-multi-char-trigger.lua",
+            """
+            if true then
+                return 1
+            end
+            """
+        )
+
+        val outcome = invokeOnTypeFormatting(
+            textDocuments,
+            onTypeParams(
+                document,
+                position = document.positionAfter("end", occurrence = 1),
+                ch = "end"
+            )
+        )
+        assertNoHardCrash(outcome, context = "multi-char trigger ch='end'")
         if (outcome is OnTypeOutcome.Succeeded) {
             assertWellFormedEdits(outcome.edits, document)
         }
