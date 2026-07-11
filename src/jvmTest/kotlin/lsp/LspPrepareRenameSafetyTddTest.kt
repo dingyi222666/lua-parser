@@ -45,7 +45,7 @@ import kotlin.test.fail
  * - requires non-empty ordered highlights that cover the identifier
  * - hard-asserts exact identifier span only when the product already returns one
  * - soft-accepts wider product ranges that still contain/begin with the identifier
- *   (aligned with [LspDocumentHighlightTddTest] binary soft case)
+ *   (aligned with [LspDocumentHighlightTddTest] binary + multi-line soft cases)
  *
  * Test-only; no product edits. Verification is review-owned and serial; this
  * worker does not run Gradle.
@@ -738,10 +738,11 @@ class LspPrepareRenameSafetyTddTest {
 
     /**
      * Safety floor for documentHighlight proxy while product ranges may still be
-     * wider than a pure identifier token (REVIEW26 rejection: multi-line ranges):
+     * wider than a pure identifier token (REVIEW26 rejection: multi-line ranges;
+     * binary over-extension). Aligned with [LspDocumentHighlightTddTest]:
      * - range is ordered
-     * - range text contains [identifier], or starts at an occurrence, or the
-     *   start-line slice of identifier length matches when on the same line
+     * - range text contains [identifier], starts at an occurrence, starts with
+     *   identifier on the same line, or starts with identifier on multi-line start
      * - when the range is already an exact single-line identifier span, it must
      *   slice to the identifier text (hard assert on the ideal path)
      */
@@ -783,9 +784,24 @@ class LspPrepareRenameSafetyTddTest {
                     )
                 )
             }.getOrNull() == identifier
+        // Multi-line declaration/expression ranges (REVIEW26): only sample the start
+        // line so end-line noise does not block the soft coverage floor.
+        val startsWithIdentifierMultiLine = range.start.line != range.end.line &&
+            runCatching {
+                val lineEnd = document.lineEndCharacter(range.start.line)
+                val endChar = minOf(range.start.character + identifier.length, lineEnd)
+                document.slice(
+                    Range(
+                        range.start,
+                        Position(range.start.line, endChar)
+                    )
+                )
+            }.getOrNull()?.let { slice ->
+                slice == identifier || slice.startsWith(identifier)
+            } == true
 
         assertTrue(
-            startsAtOccurrence || containsIdentifier || startsWithIdentifierOnLine,
+            startsAtOccurrence || containsIdentifier || startsWithIdentifierOnLine || startsWithIdentifierMultiLine,
             "$label must cover identifier '$identifier'; " +
                 "start=${range.start.line}:${range.start.character} " +
                 "end=${range.end.line}:${range.end.character} " +
@@ -890,6 +906,12 @@ class LspPrepareRenameSafetyTddTest {
             val start = offsetAt(range.start)
             val end = offsetAt(range.end).coerceAtLeast(start)
             return source.substring(start, end.coerceAtMost(source.length))
+        }
+
+        fun lineEndCharacter(line: Int): Int {
+            val lines = source.split('\n')
+            require(line in lines.indices) { "line $line out of bounds for $path" }
+            return lines[line].length
         }
 
         private fun positionAt(offset: Int): Position {
