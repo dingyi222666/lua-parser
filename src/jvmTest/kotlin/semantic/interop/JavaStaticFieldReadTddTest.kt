@@ -13,19 +13,19 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 /**
- * TASK-214 — Java static field read modeling corpus.
+ * TASK-214 / TASK-247 — Java static field read modeling corpus.
  *
  * Acceptance (test-only; review-owned verification):
  * - Static field reads on bound classes resolve for at least two JDK examples.
  * - Missing fields remain unknown without crashing the semantic pipeline.
+ * - Completions for static fields on `luajava.bindClass` targets use
+ *   [CompletionItemKind.FIELD], coherent with hover [SymbolKind.FIELD].
  *
  * Corpus focuses on `luajava.bindClass` static field access (not instance chains).
- * Product sources are out of scope; no Gradle from workers.
+ * CompletionProvider is in TASK-247 scope for member completion kind. No Gradle from workers.
  *
- * Note (REVIEW20/22): product may map some static-field completions (e.g. System.out/err)
- * as CompletionItemKind.VARIABLE rather than FIELD. Hover still reports SymbolKind.FIELD.
- * Completion asserts accept VARIABLE or FIELD. Cursor must land on the member identifier
- * (not a same-named local) so member completions surface out/err together.
+ * Cursor must land on the member identifier (not a same-named local) so member
+ * completions surface out/err together as FIELD.
  */
 class JavaStaticFieldReadTddTest {
 
@@ -249,19 +249,9 @@ class JavaStaticFieldReadTddTest {
             harness.path("main.lua"),
             harness.positionOf("main.lua", "MAX_VALUE")
         )
-        // Product may surface primitive static fields as FIELD or VARIABLE.
-        assertCompletionAnyKind(
-            completions,
-            "MAX_VALUE",
-            CompletionItemKind.FIELD,
-            CompletionItemKind.VARIABLE
-        )
-        assertCompletionAnyKind(
-            completions,
-            "MIN_VALUE",
-            CompletionItemKind.FIELD,
-            CompletionItemKind.VARIABLE
-        )
+        // TASK-247: static fields on bindClass targets complete as FIELD.
+        assertCompletion(completions, "MAX_VALUE", CompletionItemKind.FIELD)
+        assertCompletion(completions, "MIN_VALUE", CompletionItemKind.FIELD)
     }
 
     @Test
@@ -280,19 +270,9 @@ class JavaStaticFieldReadTddTest {
             harness.path("main.lua"),
             harness.positionOf("main.lua", "out")
         )
-        // REVIEW20: product may emit VARIABLE (not FIELD) for System.out / System.err.
-        assertCompletionAnyKind(
-            completions,
-            "out",
-            CompletionItemKind.VARIABLE,
-            CompletionItemKind.FIELD
-        )
-        assertCompletionAnyKind(
-            completions,
-            "err",
-            CompletionItemKind.VARIABLE,
-            CompletionItemKind.FIELD
-        )
+        // TASK-247: System.out / System.err complete as FIELD (hover SymbolKind.FIELD).
+        assertCompletion(completions, "out", CompletionItemKind.FIELD)
+        assertCompletion(completions, "err", CompletionItemKind.FIELD)
     }
 
     // ------------------------------------------------------------------
@@ -495,17 +475,6 @@ class JavaStaticFieldReadTddTest {
         )
     }
 
-    private fun assertCompletionAnyKind(
-        completions: List<CompletionItem>,
-        label: String,
-        vararg kinds: CompletionItemKind
-    ) {
-        val allowed = kinds.toSet()
-        assertTrue(
-            completions.any { it.label == label && it.kind in allowed },
-            "Expected completion $label of kind in $allowed; actual: ${completions.map { "${it.label}:${it.kind}" }}."
-        )
-    }
 
     private fun assertNotUnknown(displayName: String?) {
         assertFalse(displayName.isNullOrBlank(), "Expected a modeled Java static field type, got no type.")
