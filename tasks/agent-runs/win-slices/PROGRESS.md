@@ -1,7 +1,8 @@
 # Windows slice progress  cycle=1  chunk=15  files=367  slices=25
-# updated 2026-07-11T23:11:12Z
+# updated 2026-07-11T23:21:22Z
+# summary success=0 failure=1 pending=24 running=0 total=25 filesDone=0
 
-[ ] s001  15 files  integration..interop.jvm
+[F] s001  15 files  integration..interop.jvm
 [ ] s002  15 files  interop.jvm..lsp
 [ ] s003  15 files  lsp
 [ ] s004  15 files  lsp

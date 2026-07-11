@@ -46,7 +46,7 @@ data class JvmWorkspaceConfiguration(
         }
         // Soft-skip reason when metadata, env, and well-known SDK roots all miss a jar.
         // Downloads copies are never auto-selected; pass them only via jvm.androidJar.
-        // Never invent a silent G:/ classpath fallback when discovery fails.
+        // Never invent a silent G: classpath fallback when discovery fails.
         return envDiscovery.note?.let { note ->
             if (note.contains("well-known") || note.contains("Library/Android/sdk")) {
                 note
@@ -69,14 +69,14 @@ data class JvmWorkspaceConfiguration(
      * Reflective classpath entries for JVM module providers.
      *
      * Includes explicit [classpathEntries] and [androidJar] metadata first. When
-     * [androidJar] is unset, discovers an existing platform `android.jar` with the
-     * same precedence as [DEFAULT_ANDROID_JAR_PATH]: `ANDROID_HOME` /
-     * `ANDROID_SDK_ROOT`, then well-known host SDK roots (macOS
-     * `~/Library/Android/sdk`, Linux `~/Android/Sdk`, Windows `%LOCALAPPDATA%/Android/Sdk`
-     * plus a documented Windows candidate used only after those roots). Missing jars
-     * are never invented; Downloads host jars remain an explicit metadata override only
-     * and are never auto-selected. Never hard-requires `G:/`. Effective classpath
-     * includes a resolved `android.jar` only when discovery (or explicit config) succeeds.
+     * [androidJar] is unset, discovers an existing platform android.jar with the
+     * same precedence as [DEFAULT_ANDROID_JAR_PATH]: ANDROID_HOME /
+     * ANDROID_SDK_ROOT, then well-known host SDK roots (macOS
+     * ~/Library/Android/sdk, Linux ~/Android/Sdk, Windows %LOCALAPPDATA%/Android/Sdk).
+     * Missing jars are never invented; absolute drive-letter SDK roots such as G:
+     * are never auto-selected. Downloads host jars remain an explicit metadata
+     * override only. Effective classpath includes a resolved android.jar only when
+     * discovery (or explicit config) succeeds.
      */
     fun reflectionClasspathEntries(
         environment: Map<String, String> = System.getenv(),
@@ -185,25 +185,35 @@ data class JvmWorkspaceConfiguration(
         const val LOCAL_APPDATA_ENV = "LOCALAPPDATA"
 
         /**
-         * Host-resolved default `android.jar` path for tests and convenience consumers.
+         * Host-resolved default android.jar path for tests and convenience consumers.
          *
-         * Prefers `ANDROID_HOME` / `ANDROID_SDK_ROOT`, then well-known SDK install roots
-         * (macOS `~/Library/Android/sdk`, Linux `~/Android/Sdk`, Windows `%LOCALAPPDATA%/Android/Sdk`
-         * and a documented Windows path used only as a last-resort candidate). When a real jar is
-         * present it returns that absolute path; otherwise it returns a host-preferred candidate
-         * path that may not exist (callers must check [File.isFile] and skip when absent).
+         * Prefers ANDROID_HOME / ANDROID_SDK_ROOT, then well-known SDK install roots
+         * (macOS ~/Library/Android/sdk, Linux ~/Android/Sdk, Windows
+         * %LOCALAPPDATA%/Android/Sdk and user-home AppData layouts). When a real jar is
+         * present it returns that absolute path; otherwise it returns a host-preferred
+         * candidate under platforms/android-35 that may not exist (callers must check
+         * File.isFile and skip when absent).
          *
          * Downloads jars and other non-SDK copies are never auto-selected; pass them via
-         * [ANDROID_JAR_METADATA_KEY] / [androidJar] only. Never hard-requires `G:/`.
+         * ANDROID_JAR_METADATA_KEY / androidJar only. Absolute drive-letter roots such as
+         * G: are never auto-selected as inventing defaults.
          */
         val DEFAULT_ANDROID_JAR_PATH: String
             get() = resolveDefaultAndroidJarPath()
 
         private val ANDROID_PLATFORM_DIRECTORY = Regex("""android-(\d+)""")
         private val ANDROID_DEX_IMPORT_EXTENSIONS = setOf("dex", "apk", "odex", "vdex")
-        /** Documented Windows SDK root used only as a last-resort candidate, never a hard requirement. */
-        private const val WINDOWS_DOCUMENTED_SDK_ROOT = "G:/Android/Sdk"
+        /** Preferred platform API for absent-jar candidate messaging (host dual-path hard-lock). */
         private const val PREFERRED_PLATFORM_API = 35
+        /**
+         * Absolute drive-letter SDK roots that must never be auto-discovered.
+         * They may still be used when ANDROID_HOME / ANDROID_SDK_ROOT / jvm.androidJar
+         * explicitly points at them.
+         */
+        private val FORBIDDEN_AUTO_SDK_ROOT_PREFIXES = listOf(
+            "G:/Android/Sdk",
+            "G:\\Android\\Sdk"
+        )
 
         fun fromMetadata(metadata: Map<String, String>): JvmWorkspaceConfiguration {
             return JvmWorkspaceConfiguration(
@@ -239,12 +249,13 @@ data class JvmWorkspaceConfiguration(
         }
 
         /**
-         * Resolve a host-local default `android.jar` path for tests/docs convenience.
+         * Resolve a host-local default android.jar path for tests/docs convenience.
          *
-         * Order: `ANDROID_HOME`, `ANDROID_SDK_ROOT`, then well-known host SDK roots.
+         * Order: ANDROID_HOME, ANDROID_SDK_ROOT, then well-known host SDK roots.
          * Never invents a classpath entry for a missing jar: when no jar exists, returns a
-         * preferred candidate path for messaging/skip guards only. Explicit Downloads jars
-         * are not auto-selected; pass them via [androidJar] metadata. Never hard-requires `G:/`.
+         * preferred candidate under platforms/android-35 for messaging/skip guards only.
+         * Explicit Downloads jars are not auto-selected; pass them via androidJar metadata.
+         * Absolute G: SDK roots are never auto-selected.
          */
         fun resolveDefaultAndroidJarPath(
             environment: Map<String, String> = System.getenv(),
@@ -256,15 +267,12 @@ data class JvmWorkspaceConfiguration(
         }
 
         /**
-         * Existing platform `android.jar` for reflective classpaths / defaults.
+         * Existing platform android.jar for reflective classpaths / defaults.
          *
          * Same discovery order as [DEFAULT_ANDROID_JAR_PATH] without inventing a
          * missing candidate path. Explicit Downloads jars are not auto-selected;
-         * pass them via [androidJar] metadata. Never hard-requires `G:/`.
-         *
-         * When both a non-`G:` host jar and the documented Windows last-resort root
-         * exist, the non-`G:` jar wins so reflective classpaths never silently fall
-         * back to `G:/` on multi-root hosts.
+         * pass them via androidJar metadata. Absolute G: SDK roots are never
+         * auto-selected as inventing defaults (env/metadata may still point there).
          */
         fun discoverReflectiveAndroidJarPath(
             environment: Map<String, String> = System.getenv(),
@@ -276,11 +284,13 @@ data class JvmWorkspaceConfiguration(
         }
 
         /**
-         * Explicit soft-skip reason when no reflective `android.jar` is available.
+         * Explicit soft-skip reason when no reflective android.jar is available.
          *
-         * Used by Android-Lua workspace/import suites when [ANDROID_JAR_METADATA_KEY] is unset
+         * Used by Android-Lua workspace/import suites when ANDROID_JAR_METADATA_KEY is unset
          * and env + well-known SDK discovery both miss. Never invents a jar; Downloads paths
-         * remain metadata-only. Never hard-requires `G:/`.
+         * remain metadata-only. Absolute G: roots are never auto-selected, so isolation tests
+         * with empty env/userHome do not claim presence solely because a G: android-36 jar
+         * exists on the agent.
          */
         fun missingAndroidJarSoftSkipReason(
             environment: Map<String, String> = System.getenv(),
@@ -350,8 +360,9 @@ data class JvmWorkspaceConfiguration(
             val discovered = wellKnownSdkRoots(userHome, localAppData)
                 .asSequence()
                 .filter { it.isDirectory }
+                .filterNot { isForbiddenAutoSdkRoot(it) }
                 .mapNotNull { sdkRoot ->
-                    highestAndroidPlatformJar(sdkRoot)?.let { jar -> sdkRoot to jar }
+                    preferredAndroidPlatformJar(sdkRoot)?.let { jar -> sdkRoot to jar }
                 }
                 .toList()
 
@@ -359,11 +370,13 @@ data class JvmWorkspaceConfiguration(
                 return AndroidJarDiscovery(path = null, note = null)
             }
 
-            // Prefer non-G: host roots when multiple well-known jars exist so reflective
-            // classpaths never silently fall back to the documented Windows last-resort path.
+            // Prefer preferred API (35) when present, else highest installed platform.
+            // Never auto-select absolute G: inventing roots (filtered above).
             val preferred = discovered
                 .sortedWith(
-                    compareBy<Pair<File, AndroidPlatformJar>> { isWindowsDocumentedSdkRoot(it.first) }
+                    compareByDescending<Pair<File, AndroidPlatformJar>> {
+                        if (it.second.apiLevel == PREFERRED_PLATFORM_API) 1 else 0
+                    }
                         .thenByDescending { it.second.apiLevel }
                         .thenBy { it.first.path }
                 )
@@ -377,10 +390,11 @@ data class JvmWorkspaceConfiguration(
         }
 
         private fun preferredDefaultAndroidJarCandidate(userHome: File, localAppData: String?): File {
-            // Prefer non-G: well-known roots; never hard-require the documented Windows path.
-            // Host WAVE hard-lock prefers platforms/android-35 under macOS Library/Android/sdk.
+            // Prefer first non-forbidden well-known root; never invent absolute G: candidates.
+            // Host dual-path hard-lock prefers platforms/android-35 under macOS Library/Android/sdk
+            // or Windows %LOCALAPPDATA%/Android/Sdk / user-home AppData layouts.
             val preferredRoot = wellKnownSdkRoots(userHome, localAppData)
-                .firstOrNull { root -> !isWindowsDocumentedSdkRoot(root) }
+                .firstOrNull { root -> !isForbiddenAutoSdkRoot(root) }
                 ?: File(userHome, "Android/Sdk")
             return File(preferredRoot, "platforms/android-$PREFERRED_PLATFORM_API/android.jar")
         }
@@ -395,8 +409,6 @@ data class JvmWorkspaceConfiguration(
                     ordered += File(userHome, "Android/sdk")
                     localAppData?.takeIf { it.isNotBlank() }?.let { ordered += File(it, "Android/Sdk") }
                     ordered += File(userHome, "AppData/Local/Android/Sdk")
-                    // Documented Windows path is last-resort only; never a hard requirement.
-                    ordered += File(WINDOWS_DOCUMENTED_SDK_ROOT)
                 }
                 osName.contains("win") -> {
                     localAppData?.takeIf { it.isNotBlank() }?.let { ordered += File(it, "Android/Sdk") }
@@ -404,7 +416,6 @@ data class JvmWorkspaceConfiguration(
                     ordered += File(userHome, "Library/Android/sdk")
                     ordered += File(userHome, "Android/Sdk")
                     ordered += File(userHome, "Android/sdk")
-                    ordered += File(WINDOWS_DOCUMENTED_SDK_ROOT)
                 }
                 else -> {
                     ordered += File(userHome, "Android/Sdk")
@@ -412,16 +423,23 @@ data class JvmWorkspaceConfiguration(
                     ordered += File(userHome, "Library/Android/sdk")
                     localAppData?.takeIf { it.isNotBlank() }?.let { ordered += File(it, "Android/Sdk") }
                     ordered += File(userHome, "AppData/Local/Android/Sdk")
-                    ordered += File(WINDOWS_DOCUMENTED_SDK_ROOT)
                 }
             }
-            return ordered.distinctBy { it.absolutePath }
+            // Absolute drive-letter inventing roots (G:/Android/Sdk) are intentionally
+            // excluded from well-known auto-discovery so empty-home isolation tests and
+            // multi-host agents never claim presence solely because android-36 exists there.
+            return ordered
+                .filterNot { isForbiddenAutoSdkRoot(it) }
+                .distinctBy { it.absolutePath }
         }
 
-
-        private fun isWindowsDocumentedSdkRoot(root: File): Boolean {
+        private fun isForbiddenAutoSdkRoot(root: File): Boolean {
             val normalized = root.path.replace('\\', '/').trimEnd('/')
-            return normalized.equals(WINDOWS_DOCUMENTED_SDK_ROOT.trimEnd('/'), ignoreCase = true)
+            return FORBIDDEN_AUTO_SDK_ROOT_PREFIXES.any { prefix ->
+                val prefixNorm = prefix.replace('\\', '/').trimEnd('/')
+                normalized.equals(prefixNorm, ignoreCase = true) ||
+                    normalized.startsWith("$prefixNorm/", ignoreCase = true)
+            }
         }
 
         private fun defaultUserHome(): File {
@@ -432,7 +450,25 @@ data class JvmWorkspaceConfiguration(
             return environment[name] ?: environment.entries.firstOrNull { it.key.equals(name, ignoreCase = true) }?.value
         }
 
+        /**
+         * Prefer platforms/android-35 when present (host dual-path hard-lock), else highest API.
+         * Never invents a missing jar.
+         */
+        private fun preferredAndroidPlatformJar(sdkRoot: File): AndroidPlatformJar? {
+            val jars = androidPlatformJars(sdkRoot)
+            if (jars.isEmpty()) {
+                return null
+            }
+            return jars.firstOrNull { it.apiLevel == PREFERRED_PLATFORM_API }
+                ?: jars.maxByOrNull { it.apiLevel }
+        }
+
         private fun highestAndroidPlatformJar(sdkRoot: File): AndroidPlatformJar? {
+            // Env discovery keeps highest installed platform (existing ANDROID_HOME contract).
+            return androidPlatformJars(sdkRoot).maxByOrNull { it.apiLevel }
+        }
+
+        private fun androidPlatformJars(sdkRoot: File): List<AndroidPlatformJar> {
             val platformDirectories = File(sdkRoot, "platforms").listFiles().orEmpty()
             return platformDirectories
                 .asSequence()
@@ -448,7 +484,7 @@ data class JvmWorkspaceConfiguration(
                     if (androidJar.isFile) AndroidPlatformJar(apiLevel, androidJar) else null
                 }
                 .sortedWith(compareByDescending<AndroidPlatformJar> { it.apiLevel }.thenBy { it.file.path })
-                .firstOrNull()
+                .toList()
         }
 
         private fun hasLowerPrioritySdkWithDifferentJar(

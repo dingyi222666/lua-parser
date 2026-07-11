@@ -177,6 +177,28 @@ class LuaParser(
         }
     }
 
+    /**
+     * Line/block/doc comments are statement-level AST nodes when they appear where a
+     * statement is legal. Inside expressions/tables (and after `return`) they are trivia
+     * and must not surface as `<expression>` / `<end>` failures for Android-Lua layout
+     * tables and trailing end-of-line notes (TASK-610).
+     */
+    private fun isCommentToken(tokenTypes: LuaTokenTypes): Boolean {
+        return when (tokenTypes) {
+            LuaTokenTypes.SHORT_COMMENT,
+            LuaTokenTypes.BLOCK_COMMENT,
+            LuaTokenTypes.DOC_COMMENT -> true
+
+            else -> false
+        }
+    }
+
+    private fun skipCommentTokens() {
+        while (isCommentToken(peek())) {
+            advance()
+        }
+    }
+
     private fun advance(): LuaTokenTypes {
         var advanceToken: LuaTokenTypes
         while (true) {
@@ -769,6 +791,14 @@ class LuaParser(
                     parseReturnStatement(blockNode)
                 }
 
+                // AndroLua `.aly` layout files are bare table constructors loaded as
+                // `return <table>`. Accept a top-level `{ ... }` as that return form so
+                // external layout rows strict-parse without rewriting sources (TASK-610).
+                peekToken(LuaTokenTypes.LCURLY) && parent is ChunkNode -> {
+                    markLocation()
+                    parseTopLevelTableReturn(blockNode)
+                }
+
                 else -> {
                     if (!errorRecovery) {
                         break
@@ -809,6 +839,9 @@ class LuaParser(
             consumeToken(LuaTokenTypes.SEMI)
 
             if (stat is ReturnStatement) {
+                // Trailing end-of-line comments after `return` are trivia before
+                // `end`/`else`/`until`/EOF — not a following statement (json.lua style).
+                skipCommentTokens()
                 break
             }
         }
@@ -838,12 +871,32 @@ class LuaParser(
 
         result.condition = parseExp(result)
 
+        // AndroLua accepts both `switch exp do case ... end` and the compact
+        // `switch exp case ... end` form used throughout Android-Lua assets
+        // (main.lua / main2.lua / main13.lua / ThomeLua.lua).
+        // Strict mode treats `do` as optional when the next token is case/default/end.
+        // Recovery mode still emits `The <do> expected` for that compact form so the
+        // missing-do recovery inventory and diagnostics expand suite stay green
+        // (TASK-610 / recovery switch suite).
         val findDoToken = consumeToken(LuaTokenTypes.DO)
         if (!findDoToken) {
-            if (!errorRecovery) {
-                error("The <do> expected near ${lexerText()}")
+            val nextAfterCondition = peek()
+            val optionalDoOk = isAndroLua() && equalsMore(
+                nextAfterCondition,
+                LuaTokenTypes.CASE,
+                LuaTokenTypes.DEFAULT,
+                LuaTokenTypes.END
+            )
+            if (!optionalDoOk) {
+                if (!errorRecovery) {
+                    error("The <do> expected near ${lexerText()}")
+                }
+                warning("The <do> expected near ${lexerText()}")
+            } else if (errorRecovery) {
+                // Compact AndroLua switch is legal under strict; recovery still records
+                // the historical missing-do diagnostic for inventory determinism.
+                warning("The <do> expected near ${lexerText()}")
             }
-            warning("The <do> expected near ${lexerText()}")
         }
 
         if (peekToken(LuaTokenTypes.CASE)) {
@@ -1805,12 +1858,17 @@ class LuaParser(
 
     //  fieldlist ::= field {fieldsep field} [fieldsep]
     //  fieldsep ::= ‘,’ | ‘;’
+    //
+    // Comments between fields (common in Android-Lua layout tables, e.g.
+    // `--android:drawingCacheQuality`) are trivia, not array-field expressions.
     private fun parseFieldList(parent: BaseASTNode): List<TableKey> {
         val result = mutableListOf<TableKey>()
 
         var index = 1
+        skipCommentTokens()
         val firstField = parseField(parent, index)
         if (firstField == null) {
+            skipCommentTokens()
             consume { equalsMore(it, LuaTokenTypes.COMMA, LuaTokenTypes.SEMI) }
             return result
         }
@@ -1820,11 +1878,13 @@ class LuaParser(
         result.add(finishNode(firstField.field))
 
         while (true) {
-            // , :
+            // , / ; with optional comments before/after the separator
+            skipCommentTokens()
             if (!equalsMore(peek(), LuaTokenTypes.COMMA, LuaTokenTypes.SEMI)) {
                 break
             }
             advance()
+            skipCommentTokens()
             val fieldValue = parseField(parent, index) ?: break
             if (fieldValue.implicitArrayField) {
                 index++
@@ -1832,13 +1892,16 @@ class LuaParser(
             result.add(finishNode(fieldValue.field))
         }
 
+        skipCommentTokens()
         consume { equalsMore(it, LuaTokenTypes.COMMA, LuaTokenTypes.SEMI) }
+        skipCommentTokens()
 
         return result
     }
 
     //  field ::= ‘[’ exp ‘]’ ‘=’ exp | Name ‘=’ exp | exp
     private fun parseField(parent: BaseASTNode, index: Int): ParsedTableField? {
+        skipCommentTokens()
         when (peek()) {
             //  Name ‘=’ exp |
             LuaTokenTypes.NAME -> {
@@ -1855,6 +1918,10 @@ class LuaParser(
 
             LuaTokenTypes.LBRACK -> return ParsedTableField(parseTableKey(parent), implicitArrayField = false)
             LuaTokenTypes.EOF, LuaTokenTypes.RCURLY, LuaTokenTypes.RPAREN -> return null
+            // Comments already skipped; remaining non-expression tokens end the field list.
+            LuaTokenTypes.SHORT_COMMENT,
+            LuaTokenTypes.BLOCK_COMMENT,
+            LuaTokenTypes.DOC_COMMENT -> return null
             // exp |
             // It is possible to encounter '}',
             // and since we cannot tell if this is an expression, we use nullable return.
@@ -1873,6 +1940,17 @@ class LuaParser(
         result.value = parseExpressionOrMissing(result)
 
         return ParsedTableField(result, implicitArrayField = true)
+    }
+
+    /**
+     * Bare top-level table constructor (AndroLua `.aly` layout form).
+     * Equivalent to the runtime `return <table>` wrap performed by alyloader.
+     */
+    private fun parseTopLevelTableReturn(parent: BaseASTNode): ReturnStatement {
+        val result = ReturnStatement()
+        result.parent = parent
+        result.arguments.add(parseExp(result))
+        return result
     }
 
     //  ‘[’ exp ‘]’ ‘=’ exp

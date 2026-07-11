@@ -92,6 +92,115 @@ class AndroLuaSyntaxTddTest {
         assertTrue(renderShape(layout).contains("Lambda(Id(view):Call(Id(save):Id(view)))"))
     }
 
+    /**
+     * TASK-610: Windows corpus strict rows fail when Android-Lua comment/attribute
+     * forms inside tables, optional switch-do, bare .aly tables, or trailing
+     * end-of-line comments after `return` are treated as expressions/statements.
+     */
+    @Test
+    fun acceptsAndroidLuaTableCommentsOptionalSwitchDoAndBareAlyForms() {
+        // loadlayout-style attribute comments between table fields
+        val loadlayoutLike = parse(
+            LuaVersion.ANDROLUA_5_3,
+            """
+            local toint={
+              --android:drawingCacheQuality
+              auto=0,
+              low=1,
+              high=2,
+              --android:visibility
+              visible=0,
+              gone=8,
+            }
+            """.trimIndent()
+        )
+        val toint = assertIs<LocalStatement>(loadlayoutLike.body.statements.single())
+        val tointTable = assertIs<TableConstructorExpression>(toint.variables.single())
+        assertEquals(5, tointTable.fields.size)
+        assertEquals("TableKeyString(Id(auto)=Const(0))", renderShape(tointTable.fields[0]))
+        assertEquals("TableKeyString(Id(gone)=Const(8))", renderShape(tointTable.fields[4]))
+
+        // http.lua-style table call with leading field comments
+        val httpLike = parse(
+            LuaVersion.ANDROLUA_5_3,
+            """
+            local result = trequest {
+              -- the RFC says the redirect URL has to be absolute, but some
+              -- servers do not respect that
+              url = location,
+              source = reqt.source,
+            }
+            """.trimIndent()
+        )
+        val httpLocal = assertIs<LocalStatement>(httpLike.body.statements.single())
+        assertTrue(renderShape(httpLocal.variables.single()).contains("TableKeyString(Id(url)=Id(location))"))
+
+        // json.lua-style trailing comment after return before end
+        val jsonLike = parse(
+            LuaVersion.ANDROLUA_5_3,
+            """
+            if ready then
+              return value -- Need to handle encoding in string
+            end
+            """.trimIndent()
+        )
+        assertEquals(1, jsonLike.body.statements.size)
+
+        // AndroLua compact switch without `do` (main.lua / main2.lua assets)
+        val switchChunk = parse(
+            LuaVersion.ANDROLUA_5_3,
+            """
+            switch s
+             case true
+              handle(s)
+            end
+            """.trimIndent()
+        )
+        val switchStmt = assertIs<SwitchStatement>(switchChunk.body.statements.single())
+        assertEquals(1, switchStmt.causes.size)
+        assertIs<CaseCause>(switchStmt.causes.single())
+
+        // Bare .aly layout table (alyloader wraps as return at runtime)
+        val alyChunk = parse(
+            LuaVersion.ANDROLUA_5_3,
+            """
+            {
+              LinearLayout;
+              orientation="vertical";
+              {
+                TextView;
+                text="Hi";
+              };
+            }
+            """.trimIndent()
+        )
+        val alyTable = assertIs<TableConstructorExpression>(alyChunk.returnExpression())
+        assertEquals(3, alyTable.fields.size)
+        assertEquals("LinearLayout", assertIs<Identifier>(alyTable.fields[0].value).name)
+        assertEquals("TableKeyString(Id(orientation)=Const(\"vertical\"))", renderShape(alyTable.fields[1]))
+
+        // Inline layout field comment after semicolon (file.lua / plugin-main style)
+        val inlineComment = parse(
+            LuaVersion.ANDROLUA_5_3,
+            """
+            local layout = {
+              ListView;
+              id="lv",
+              DividerHeight=0;-- no divider
+              layout_width="match_parent";
+            }
+            """.trimIndent()
+        )
+        val layoutLocal = assertIs<LocalStatement>(inlineComment.body.statements.single())
+        val layoutTable = assertIs<TableConstructorExpression>(layoutLocal.variables.single())
+        assertEquals(4, layoutTable.fields.size)
+        assertTrue(renderShape(layoutTable).contains("TableKeyString(Id(DividerHeight)=Const(0))"))
+        assertTrue(renderShape(layoutTable).contains("TableKeyString(Id(layout_width)=Const(\"match_parent\"))"))
+
+        // Strict mode still rejects missing do when next token is not case/default/end
+        assertParseFails(LuaVersion.ANDROLUA_5_3, "switch s then case 1 print(1) end")
+    }
+
     @Test
     fun parsesAndroLuaOnlyStatementShapes() {
         assertCaseShapes(androluaStatementShapeCases, LuaVersion.ANDROLUA_5_3)

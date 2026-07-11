@@ -1,32 +1,44 @@
 {
   "version": 2,
-  "updatedAt": "2026-07-11T23:16:50Z",
+  "updatedAt": "2026-07-11T23:21:22Z",
   "strategy": "must-green-to-advance",
   "chunkSize": 15,
   "cycle": 1,
   "summary": {
     "total": 25,
     "totalFiles": 367,
-    "pending": 25,
+    "pending": 24,
     "success": 0,
-    "failure": 0,
+    "failure": 1,
     "running": 0,
     "filesDone": 0
   },
   "slices": {
     "s001": {
-      "status": "pending",
+      "status": "failure",
       "label": "integration..interop.jvm",
       "fileCount": 15,
-      "lastRunId": null,
-      "lastSha": null,
-      "tests": 0,
-      "failures": 0,
+      "lastRunId": "29171889166",
+      "lastSha": "f797e964a3608d02d5613a528b075cd8b7de0b92",
+      "tests": 246,
+      "failures": 11,
       "errors": 0,
-      "failedTests": [],
-      "durationSec": null,
-      "artifact": null,
-      "updatedAt": null
+      "failedTests": [
+        "integration.AndroidLuaCorpusSemanticVerificationTest#lsp_queries_external_android_lua_sources_with_android_metadata[jvm]",
+        "integration.AndroidLuaCorpusSemanticVerificationTest#semantic_workspace_analyzes_representative_external_sources_with_android_java_metadata[jvm]",
+        "integration.AndroidLuaCorpusSemanticVerificationTest#host_dual_path_root_and_android_jar_joint_green_lock[jvm]",
+        "integration.AndroidLuaCorpusSemanticVerificationTest#semantic_workspace_full_tree_external_paths_resolve_require_import_and_helpers[jvm]",
+        "integration.AndroidLuaCorpusSemanticVerificationTest#parser_accepts_strict_rows_and_recovers_marked_rows_without_crashing[jvm]",
+        "interop.jvm.AndroidJarDefaultPathDiscoveryTddTest#file_constructed_from_default_android_jar_path_is_skip_safe_when_absent[jvm]",
+        "interop.jvm.AndroidJarDefaultPathDiscoveryTddTest#resolve_default_does_not_invent_missing_jar_file[jvm]",
+        "interop.jvm.AndroidJarDefaultPathDiscoveryTddTest#missing_android_jar_soft_skip_reason_is_explicit[jvm]",
+        "interop.jvm.AndroidJarReflectionTddTest#android_jar_path_is_available_for_task_019_reflection_tests[jvm]",
+        "interop.jvm.JvmClassloaderConfigurationTddTest#missing_android_sdk_environment_reports_configuration_note_without_classpath_fallback[jvm]",
+        "interop.jvm.JvmClassloaderConfigurationTddTest#configured_android_jar_loads_framework_classes_from_expected_sdk_path[jvm]"
+      ],
+      "durationSec": 191,
+      "artifact": "results/s001-29171889166.json",
+      "updatedAt": "2026-07-11T23:21:22Z"
     },
     "s002": {
       "status": "pending",
@@ -365,11 +377,19 @@
       "updatedAt": null
     }
   },
-  "history": [],
+  "history": {
+    "sliceId": "s001",
+    "runId": "29171889166",
+    "status": "failure",
+    "tests": 246,
+    "failures": 11,
+    "durationSec": 191,
+    "at": "2026-07-11T23:21:22Z"
+  },
   "gate": {
     "rule": "A slice may advance to the next only when its status is success. Failure/pending/running must re-run the same slice until green.",
     "advanceOnlyIfSuccess": true,
     "workersPerSliceMax": 30
   },
-  "activeSlice": null
+  "activeSlice": "s001"
 }

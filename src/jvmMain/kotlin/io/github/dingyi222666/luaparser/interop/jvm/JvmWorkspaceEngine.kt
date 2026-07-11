@@ -29,45 +29,47 @@ class JvmWorkspaceEngine(
             documentFacts,
             astImportTargets
         )
+        // Explicit / bindClass / simple import targets only. Wildcard package members are mounted
+        // by packageProvidersFor (package module + shallow class providers) so android.jar wildcards
+        // never force full deep reflection of every package class into configuration.classes.
         val sourceDiscoveredClasses = collectSourceDiscoveredClasses(documentFacts, resolvedConfiguration, astImportTargets)
-        val astDiscoveredClasses = astImportTargets.flatMap { target ->
-            classModuleProvider.importedClassNames(target, resolvedConfiguration)
-        }.toSet()
+        val packageTargets = collectWildcardImportTargets(baseConfiguration, documentFacts, astImportTargets)
         val packageProviders = classModuleProvider.packageProvidersFor(
-            collectWildcardImportTargets(baseConfiguration, documentFacts, astImportTargets),
+            packageTargets,
             resolvedConfiguration
         )
-        val providerConfiguration = if (sourceDiscoveredClasses.isEmpty() && astDiscoveredClasses.isEmpty()) {
+        val providerConfiguration = if (sourceDiscoveredClasses.isEmpty()) {
             resolvedConfiguration
         } else {
             resolvedConfiguration.copy(
-                classes = (resolvedConfiguration.classes + sourceDiscoveredClasses + astDiscoveredClasses)
+                classes = (resolvedConfiguration.classes + sourceDiscoveredClasses)
                     .toCollection(linkedSetOf())
             )
         }
-        return classModuleProvider.providersFor(providerConfiguration) + packageProviders
+        // Package shallow class providers first; explicit/full providers win on path collision
+        // so bindClass / configured classes keep deep reflection surfaces.
+        return packageProviders + classModuleProvider.providersFor(providerConfiguration)
     }
 
     internal override fun workspaceContext(input: LuaWorkspaceInput, path: io.github.dingyi222666.luaparser.semantic.workspace.VirtualPath, snapshot: WorkspaceSnapshot): SemanticWorkspaceContext {
         val baseConfiguration = configuration.overlay(JvmWorkspaceConfiguration.fromMetadata(input.metadata))
-        val documentFacts = collectDocumentFacts(input)
-        val currentFacts = snapshot.files[path]?.documentFacts ?: documentFacts[path]
+        // Path-scoped only: never re-parse the full multi-file workspace for each document.
+        // Snapshot documentFacts from analyzeFile are authoritative; fall back to a single-path collect.
+        val currentSource = input.files[path]
+            ?: snapshot.files[path]?.semanticFile?.source
+        val currentFacts = snapshot.files[path]?.documentFacts
+            ?: currentSource?.let { source ->
+                DocumentFactsCollector.collect(path, parseWorkspaceSource(source))
+            }
         // Configured imports are workspace-wide; source imports stay scoped to the current file.
         val configuredImports = collectConfiguredImports(baseConfiguration)
-        val currentAstImportTargets = collectAstImportTargets(
-            LuaWorkspaceInput(
-                files = currentFacts?.let { mapOf(path to (input.files[path] ?: "")) }.orEmpty(),
-                metadata = input.metadata,
-                standardLibraryOverlayVersion = input.standardLibraryOverlayVersion
-            )
-        ).takeIf { currentFacts != null || input.files.containsKey(path) }
-            ?: collectAstImportTargets(
-                LuaWorkspaceInput(
-                    files = input.files.filterKeys { it == path },
-                    metadata = input.metadata,
-                    standardLibraryOverlayVersion = input.standardLibraryOverlayVersion
-                )
-            )
+        val currentAstImportTargets = if (currentSource != null) {
+            val targets = linkedSetOf<String>()
+            collectImportTargetsFromNode(parseWorkspaceSource(currentSource), targets)
+            targets
+        } else {
+            emptySet()
+        }
         val resolvedConfiguration = configurationWithWildcardImportPrefixes(
             baseConfiguration,
             currentFacts?.let { mapOf(path to it) }.orEmpty(),
@@ -138,9 +140,16 @@ class JvmWorkspaceEngine(
     ): Map<String, WorkspaceImportedSymbol> {
         val imported = linkedMapOf<String, WorkspaceImportedSymbol>()
         configuration.normalized().androluaImports.forEach { importText ->
-            classModuleProvider.importedClassNames(importText, configuration)
-                .mapNotNull { classModuleProvider.importedSymbol(it, configuration) }
-                .forEach { imported[it.alias] = it }
+            // Prefer package/class symbol resolution over expanding every wildcard member.
+            classModuleProvider.importedSymbolForTarget(importText, configuration)?.let { symbol ->
+                imported[symbol.alias] = symbol
+            }
+            // Bare AndroLua short names (TextView/Button) still need class alias activation.
+            if (!isWildcardOrPackageTarget(importText)) {
+                classModuleProvider.importedClassNames(importText, configuration)
+                    .mapNotNull { classModuleProvider.importedSymbol(it, configuration) }
+                    .forEach { imported[it.alias] = it }
+            }
         }
         return imported
     }
@@ -151,18 +160,24 @@ class JvmWorkspaceEngine(
         astImportTargets: Collection<String> = emptyList()
     ): Map<String, WorkspaceImportedSymbol> {
         val imported = linkedMapOf<String, WorkspaceImportedSymbol>()
+        fun activate(target: String) {
+            // Package/wildcard targets activate package module only; class members resolve via
+            // WorkspaceModuleResolver.packageMembers + shallow class providers (not deep expand).
+            classModuleProvider.importedSymbolForTarget(target, configuration)?.let { symbol ->
+                imported[symbol.alias] = symbol
+            }
+            if (!isWildcardOrPackageTarget(target)) {
+                classModuleProvider.importedClassNames(target, configuration)
+                    .mapNotNull { classModuleProvider.importedSymbol(it, configuration) }
+                    .forEach { imported[it.alias] = it }
+            }
+        }
         facts?.sourceImports?.forEach { importFact ->
-            classModuleProvider.importedClassNames(importFact.target, configuration)
-                .mapNotNull { classModuleProvider.importedSymbol(it, configuration) }
-                .forEach { imported[it.alias] = it }
+            activate(importFact.target)
         }
         // AST-derived table import targets keep path-scoped activation even when
         // DocumentFacts sequence-key filtering drops import({ "A", "B" }) entries.
-        astImportTargets.forEach { target ->
-            classModuleProvider.importedClassNames(target, configuration)
-                .mapNotNull { classModuleProvider.importedSymbol(it, configuration) }
-                .forEach { imported[it.alias] = it }
-        }
+        astImportTargets.forEach(::activate)
         return imported
     }
 
@@ -172,10 +187,17 @@ class JvmWorkspaceEngine(
         astImportTargets: Collection<String> = emptyList()
     ): Set<String> {
         return buildSet {
+            fun addExplicitClassTarget(target: String) {
+                // Never expand wildcards/package aliases into full package class lists here.
+                // packageProvidersFor mounts package modules + shallow class providers instead.
+                if (isWildcardOrPackageTarget(target)) {
+                    return
+                }
+                classModuleProvider.importedClassName(target, configuration)?.let(::add)
+            }
             documentFacts.values.forEach { facts ->
                 facts.sourceImports.forEach { importFact ->
-                    classModuleProvider.importedClassNames(importFact.target, configuration)
-                        .forEach(::add)
+                    addExplicitClassTarget(importFact.target)
                 }
                 facts.jvmClassLoads.forEach { fact ->
                     when (fact.kind) {
@@ -186,15 +208,33 @@ class JvmWorkspaceEngine(
                         DocumentFacts.JvmClassLoadKind.LOAD_LIB_CALL,
                         // createArray("pkg.Foo", ...) mounts element class provider without separate bindClass.
                         DocumentFacts.JvmClassLoadKind.CREATE_ARRAY_CALL -> {
-                            classModuleProvider.importedClassName(fact.target, configuration)
-                                ?.let(::add)
+                            addExplicitClassTarget(fact.target)
                         }
                     }
                 }
             }
-            astImportTargets.forEach { target ->
-                classModuleProvider.importedClassNames(target, configuration).forEach(::add)
-            }
+            astImportTargets.forEach(::addExplicitClassTarget)
+        }
+    }
+
+    private fun isWildcardOrPackageTarget(importText: String): Boolean {
+        val normalized = importText.removePrefix("import ").trim()
+        val target = normalized.substringAfter(':', normalized).trim()
+        if (target.isBlank()) {
+            return false
+        }
+        if (target.endsWith(".*")) {
+            return true
+        }
+        // Package-name aliases (android.widget / java.util) are dotted lowercase segments.
+        if ('.' !in target) {
+            return false
+        }
+        val segments = target.split('.')
+        return segments.size >= 2 && segments.all { segment ->
+            segment.isNotEmpty() &&
+                segment.first().isLowerCase() &&
+                segment.all { ch -> ch.isLetterOrDigit() || ch == '_' }
         }
     }
 

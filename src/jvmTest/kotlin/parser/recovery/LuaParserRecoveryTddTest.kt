@@ -422,7 +422,10 @@ class LuaParserRecoveryTddTest {
             requiredShapeFragments = listOf(
                 "Switch(Id(mode):Case(Const(1):Block[CallStmt(Call(Id(one):))]),Default(Block[CallStmt(Call(Id(fallback):))]))"
             ),
-            warningFragments = listOf("The <do> expected")
+            // Recovery still records historical missing-do diagnostic; AndroLua strict
+            // accepts compact `switch exp case ... end` (TASK-610 Android-Lua assets).
+            warningFragments = listOf("The <do> expected"),
+            strictParseExpectation = StrictParseExpectation.CURRENTLY_ACCEPTS
         ),
         RecoveryCase(
             name = "missing do end at eof keeps all body statements",

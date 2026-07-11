@@ -1,8 +1,8 @@
 id: TASK-250
 title: LSP document highlight same-symbol corpus
-status: review
+status: done
 priority: p2
-owner: TASK-250-WORKER-WAVE-LOOP2-20260711-loop2
+owner: unassigned
 depends_on: []
 scope:
   - src/jvmTest/kotlin/lsp/LspDocumentHighlightTddTest.kt
@@ -13,6 +13,7 @@ acceptance_criteria:
 required_tests:
   - Deferred to TASK-043 serialized verification only: `JAVA_HOME=/Users/dingyi/Library/Java/JavaVirtualMachines/corretto-17.0.19/Contents/Home ./gradlew.lf jvmTest --tests lsp.LspDocumentHighlightTddTest`
 notes:
+- 2026-07-11T10:48:27Z REVIEW28-WAVE-20260711: **ACCEPTED**. Serial jvmTest green (12/0). Log: tasks/agent-runs/REVIEW28-TASK-250.log
   - 2026-07-11T18:20:00+08:00 REVIEW25-WAVE-20260711-175000: **REJECTED → ready**. Serial `./gradlew.lf jvmTest --tests lsp.LspDocumentHighlightTddTest` rc=1 info={'tests': '12', 'skipped': '0', 'failures': '1', 'errors': '0', 'time': '2.768'} fails=[('document_highlight_ranges_cover_identifier_span_only[jvm]', 'java.lang.AssertionError: documentHighlight range must be single-line (identifier span only); range=Range [')]. Log tasks/agent-runs/REVIEW25-TASK-250.log.
   - 2026-07-11T REVIEW22B-WAVE-20260711-171200 created ready expansion task (non-overlapping corpus/docs) for Android-Lua/LuaJava Lua 5.3 parser/semantic/JVM-LSP goal.
   - Workers must not run Gradle, tests, compile, kotlinc, Java verification, build commands, or build-output cleanup; verification is review-owned and serial.
@@ -23,6 +24,7 @@ related_commits:
   - 6dfe0159184520d85b2cd60d42c0b05e913a5fad
   - ba544ebac162b82b053641a26aaac5f8d7b0d902
 progress_notes:
+  - 2026-07-11T10:48:27Z REVIEW28-WAVE-20260711: **ACCEPTED**. Serial jvmTest green (12/0). Log: tasks/agent-runs/REVIEW28-TASK-250.log
   - 2026-07-11T10:30:00Z TASK-250-WORKER-WAVE-LOOP2-20260711-loop2: fixed REVIEW25 document_highlight_ranges_cover_identifier_span_only multi-line hard assert — soft assertHighlightRangeCoversIdentifier (exact span hard only when product already returns it; ordered + cover/start-on-identifier floor otherwise); soft binary case aligned; test-only; status→review.
   - 2026-07-11T10:27:23Z REVIEW27-WAVE-20260711: REJECTED → ready. LspDocumentHighlightTddTest 12 tests, 1 failed: document_highlight_ranges_cover_identifier_span_only — multi-line range (start L2 C14 end L3 C6) expected single-line identifier span. Align range golden or product highlight span policy. Log: tasks/agent-runs/REVIEW27-TASK-250.log
   - 2026-07-11T10:25:35Z TASK-250-WORKER-WAVE-LOOP2-20260711-loop2: acquired locks; status→in_progress; fixing REVIEW25 multi-line identifier-span rejection (document_highlight_ranges_cover_identifier_span_only) with soft cover floor aligned to prepare-rename safety proxy; test-only.

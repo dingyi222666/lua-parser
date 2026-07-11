@@ -175,12 +175,13 @@ class LuaParserRecoveryAndroluaSwitchWhenTddTest {
     @Test
     fun strictParseRejectsIncompleteSwitchWhenWhileRecoveryDoesNotThrow() {
         // Strict-reject corpus: only sources that product currently rejects with recovery=false.
+        // Compact AndroLua `switch exp case ... end` (optional do) is legal under strict
+        // (TASK-610); those live in missingDoCases as CURRENTLY_ACCEPTS.
         // Incomplete binary RHS/condition followed by a statement-start line (e.g.
         // `value = value +\nprint(...)` / `when value +\nprint(1)`) currently accepts by
         // absorbing the next call as an expression RHS — those live in whenRecoveryCases as
         // CURRENTLY_ACCEPTS and are not asserted here.
         val incompleteSources = listOf(
-            "switch mode case 1 one() default fallback() end",
             "switch mode do case 1 one() default fallback()",
             "switch mode case 1 one()",
             "switch mode do case 1 then value = value + end",
@@ -449,6 +450,8 @@ class LuaParserRecoveryAndroluaSwitchWhenTddTest {
     )
 
     // Missing `do` with present `end` — causes retained; later statements siblings.
+    // AndroLua strict accepts compact `switch exp case/default/end` (TASK-610); recovery
+    // still emits the historical `The <do> expected` diagnostic for inventory green-lock.
     private val missingDoCases = listOf(
         RecoveryCase(
             name = "missing do keeps case and default bodies",
@@ -456,7 +459,8 @@ class LuaParserRecoveryAndroluaSwitchWhenTddTest {
             requiredShapeFragments = listOf(
                 "Switch(Id(mode):Case(Const(1):Block[CallStmt(Call(Id(one):))]),Default(Block[CallStmt(Call(Id(fallback):))]))"
             ),
-            warningFragments = listOf("The <do> expected")
+            warningFragments = listOf("The <do> expected"),
+            strictParseExpectation = StrictParseExpectation.CURRENTLY_ACCEPTS
         ),
         RecoveryCase(
             name = "missing do keeps multi-case bodies",
@@ -464,7 +468,8 @@ class LuaParserRecoveryAndroluaSwitchWhenTddTest {
             requiredShapeFragments = listOf(
                 "Switch(Id(mode):Case(Const(1):Block[CallStmt(Call(Id(one):))]),Case(Const(2):Block[CallStmt(Call(Id(two):))]),Default(Block[CallStmt(Call(Id(three):))]))"
             ),
-            warningFragments = listOf("The <do> expected")
+            warningFragments = listOf("The <do> expected"),
+            strictParseExpectation = StrictParseExpectation.CURRENTLY_ACCEPTS
         ),
         RecoveryCase(
             name = "missing do keeps following print after switch",
@@ -473,7 +478,8 @@ class LuaParserRecoveryAndroluaSwitchWhenTddTest {
                 "Switch(Id(mode):Case(Const(1):Block[CallStmt(Call(Id(one):))]),Default(Block[CallStmt(Call(Id(fallback):))]))",
                 "CallStmt(Call(Id(print):Id(mode)))"
             ),
-            warningFragments = listOf("The <do> expected")
+            warningFragments = listOf("The <do> expected"),
+            strictParseExpectation = StrictParseExpectation.CURRENTLY_ACCEPTS
         ),
         RecoveryCase(
             name = "missing do with optional then keeps case body and trailing local",
@@ -482,7 +488,8 @@ class LuaParserRecoveryAndroluaSwitchWhenTddTest {
                 "Switch(Id(value):Case(Const(1):Block[CallStmt(Call(Id(handle):Id(value)))]))",
                 "Local(Id(after)=Const(1))"
             ),
-            warningFragments = listOf("The <do> expected")
+            warningFragments = listOf("The <do> expected"),
+            strictParseExpectation = StrictParseExpectation.CURRENTLY_ACCEPTS
         ),
         RecoveryCase(
             name = "missing do empty switch keeps following return",
@@ -491,7 +498,8 @@ class LuaParserRecoveryAndroluaSwitchWhenTddTest {
                 "Switch(Id(mode):)",
                 "Return(Id(mode))"
             ),
-            warningFragments = listOf("The <do> expected")
+            warningFragments = listOf("The <do> expected"),
+            strictParseExpectation = StrictParseExpectation.CURRENTLY_ACCEPTS
         )
     )
 

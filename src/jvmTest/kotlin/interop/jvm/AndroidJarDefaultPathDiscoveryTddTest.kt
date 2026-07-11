@@ -11,12 +11,13 @@ import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 
 /**
- * TDD coverage for multi-OS android.jar default path discovery (TASK-245).
+ * TDD coverage for multi-OS android.jar default path discovery (TASK-245 / TASK-606).
  *
- * Default path resolution prefers explicit env (`ANDROID_HOME` / `ANDROID_SDK_ROOT`),
+ * Default path resolution prefers explicit env (ANDROID_HOME / ANDROID_SDK_ROOT),
  * then well-known host SDK roots. Missing jars are never invented as existing files;
  * consumers of [JvmWorkspaceConfiguration.DEFAULT_ANDROID_JAR_PATH] must still
- * check [File.isFile] and skip when absent.
+ * check [File.isFile] and skip when absent. Absolute G: inventing roots are never
+ * auto-selected, so isolation tests stay honest on multi-host agents.
  */
 class AndroidJarDefaultPathDiscoveryTddTest {
     @Test
@@ -163,11 +164,17 @@ class AndroidJarDefaultPathDiscoveryTddTest {
             localAppData = emptyHome.resolve("LocalAppData-missing").toString()
         )
         val file = File(candidate)
+        val normalized = candidate.replace('\\', '/')
 
         assertFalse(file.isFile, "Candidate path must not invent a jar file: ${file.path}")
         assertTrue(
-            candidate.replace('\\', '/').endsWith("/platforms/android-35/android.jar"),
+            normalized.endsWith("/platforms/android-35/android.jar"),
             "Expected preferred candidate under platforms/android-35; got $candidate"
+        )
+        assertFalse(
+            normalized.startsWith("G:/Android/Sdk", ignoreCase = true) ||
+                normalized.contains("/platforms/android-36/"),
+            "Isolation must not invent G: or android-36 defaults; got $candidate"
         )
     }
 
@@ -180,8 +187,17 @@ class AndroidJarDefaultPathDiscoveryTddTest {
             localAppData = null
         )
         val file = File(candidate)
+        val normalized = candidate.replace('\\', '/')
 
         assertFalse(file.isFile, "Candidate path must not invent a jar file: ${file.path}")
+        assertFalse(
+            normalized.startsWith("G:/Android/Sdk", ignoreCase = true),
+            "Skip-safe candidate must not be absolute G: inventing root; got $candidate"
+        )
+        assertFalse(
+            normalized.contains("/platforms/android-36/"),
+            "Skip-safe candidate must not invent android-36; got $candidate"
+        )
         // Mirrors existing consumer pattern: File(DEFAULT_ANDROID_JAR_PATH) + isFile guard.
         if (!file.isFile) {
             println("SKIP reason: android.jar absent at ${file.path}")
@@ -283,6 +299,7 @@ class AndroidJarDefaultPathDiscoveryTddTest {
             localAppData = emptyHome.resolve("LocalAppData-missing").toString(),
             taskId = "TASK-537"
         )
+        val normalizedReason = reason.replace('\\', '/')
 
         assertTrue(reason.contains("TASK-537"), "Soft-skip must name task; got: $reason")
         assertTrue(reason.contains("android.jar"), "Soft-skip must mention android.jar; got: $reason")
@@ -296,6 +313,11 @@ class AndroidJarDefaultPathDiscoveryTddTest {
                 reason.contains("Library/Android/sdk") ||
                 reason.contains(JvmWorkspaceConfiguration.ANDROID_JAR_METADATA_KEY),
             "Soft-skip must explain recovery / discovery roots; got: $reason"
+        )
+        assertFalse(
+            reason.contains("is present at", ignoreCase = true) &&
+                (normalizedReason.contains("G:/Android/Sdk") || normalizedReason.contains("android-36")),
+            "Soft-skip isolation must not claim G:/android-36 presence; got: $reason"
         )
         assertTrue(
             !reason.contains("G:/Android/Sdk") || reason.contains("never") || reason.contains("last"),
