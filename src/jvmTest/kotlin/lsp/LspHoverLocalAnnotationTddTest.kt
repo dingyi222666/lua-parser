@@ -27,8 +27,10 @@ import kotlin.test.fail
  * - `integer` annotations surface as `number` (PrimitiveType.NUMBER).
  * - `table<K, V>` annotations surface as `{ [K]: V }` (TableType index shape).
  * - Multi-name `local a, b = ...` under a single `---@type` may show inferred
- *   initializer types rather than the annotation for all names; assert product
- *   hover without requiring annotation text on every name.
+ *   initializer types (e.g. Type `1`) rather than the annotation for all names;
+ *   assert product hover without requiring annotation text on every name.
+ * - Hover type line is formatted as `Type: \`displayName\`` by
+ *   LuaLanguageService.buildHoverContent.
  *
  * Product code is intentionally out of scope (test-only). Verification is
  * review-owned and serial; this worker does not run Gradle.
@@ -160,10 +162,15 @@ class LspHoverLocalAnnotationTddTest {
         val markup = hover.markup
         assertTrue(markup.contains("scores"), "Expected symbol name in hover: $markup")
         // Product TableType display uses index-signature shape `{ [string]: number }`,
-        // not EmmyLua `table<string, number>` spelling.
+        // not EmmyLua `table<string, number>` spelling (Type.buildTableName /
+        // model.TableType.buildTableTypeName).
+        val productIndexShape =
+            markup.contains("{ [string]: number }") ||
+                (markup.contains("[string]") && markup.contains("number"))
+        val emmyLuaFallback =
+            markup.contains("table") && markup.contains("string") && markup.contains("number")
         assertTrue(
-            markup.contains("[string]") && markup.contains("number") ||
-                (markup.contains("table") && markup.contains("string") && markup.contains("number")),
+            productIndexShape || emmyLuaFallback,
             "Expected product table shape `{ [string]: number }` (or table/string/number) in hover: $markup"
         )
     }
@@ -246,9 +253,15 @@ class LspHoverLocalAnnotationTddTest {
         )
 
         // occurrence 1 is the declaration name.
-        // Product maps EmmyLua `integer` → PrimitiveType.NUMBER (`number` display).
+        // Product maps EmmyLua `integer` → PrimitiveType.NUMBER (`number` display),
+        // so goldens expect `number` rather than raw EmmyLua `integer`.
         val hover = assertNotNull(service.hover(hoverParams(document, "age", occurrence = 1)))
         assertHoverMentions(hover, "age", "number")
+        val markup = hover.markup
+        assertTrue(
+            markup.contains("Type: `number`") || markup.contains("number"),
+            "Expected product display `number` for ---@type integer at def-site: $markup"
+        )
     }
 
     @Test
@@ -310,11 +323,14 @@ class LspHoverLocalAnnotationTddTest {
             annotatedMarkup.contains("a"),
             "Expected symbol name 'a' in multi-local hover: $annotatedMarkup"
         )
+        val hasAnnotationString = annotatedMarkup.contains("string")
+        val hasInferredLiteralTypeLine =
+            annotatedMarkup.contains("Type: `1`") ||
+                (annotatedMarkup.contains("Type:") && annotatedMarkup.contains("`1`"))
+        val hasInferredLiteral = annotatedMarkup.contains("`1`") || annotatedMarkup.contains("1")
         assertTrue(
-            annotatedMarkup.contains("string") ||
-                annotatedMarkup.contains("Type:") ||
-                annotatedMarkup.contains("1"),
-            "Expected product type text for multi-local 'a' (annotation string and/or inferred `1`): $annotatedMarkup"
+            hasAnnotationString || hasInferredLiteralTypeLine || hasInferredLiteral,
+            "Expected product type text for multi-local 'a' (annotation string and/or inferred Type `1`): $annotatedMarkup"
         )
 
         // Unannotated sibling must not crash; type text is best-effort.
@@ -521,7 +537,7 @@ class LspHoverLocalAnnotationTddTest {
         val markup = hover.markup
         // LuaLanguageService.buildHoverContent formats types as `Type: \`displayName\``
         assertTrue(
-            markup.contains("Type:") && markup.contains("`string`") || markup.contains("string"),
+            (markup.contains("Type:") && markup.contains("`string`")) || markup.contains("string"),
             "Expected type markdown (Type: `string` or string) in hover: $markup"
         )
     }
