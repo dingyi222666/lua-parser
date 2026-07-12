@@ -36,7 +36,9 @@ class Lua53ExpressionPrecedenceTddTest {
             "Call(Member(Index(Call(Member(Id(root):method):Id(a),Id(b))[Binary(+,Id(i),Const(1))]).field):Binary(..,Const(\"x\"),Const(\"y\")))",
             renderShape(chunk.body.returnStatement!!.arguments[1])
         )
-        assertEquals("Binary(^,Unary(-,Id(unary)),Binary(^,Id(power),Const(2)))", renderShape(chunk.body.returnStatement!!.arguments[2]))
+        // Lua 5.3: power binds tighter than unary, so -unary ^ power ^ 2 is
+        // Unary(-, Binary(^, unary, Binary(^, power, 2))).
+        assertEquals("Unary(-,Binary(^,Id(unary),Binary(^,Id(power),Const(2))))", renderShape(chunk.body.returnStatement!!.arguments[2]))
         assertEquals("Binary(+,Binary(*,Binary(+,Id(a),Id(b)),Binary(-,Id(c),Id(d))),Id(e))", renderShape(chunk.body.returnStatement!!.arguments[3]))
         assertEquals("Unary(not,Binary(or,Id(a),Id(b)))", renderShape(chunk.body.returnStatement!!.arguments[4]))
         assertEquals("Binary(or,Binary(and,Id(a),Id(b)),Id(c))", renderShape(chunk.body.returnStatement!!.arguments[5]))
@@ -62,7 +64,8 @@ class Lua53ExpressionPrecedenceTddTest {
             "bitwise xor binds above bitwise or" to ("a | b ~ c" to "Binary(|,Id(a),Binary(~,Id(b),Id(c)))"),
             "bitwise and binds above bitwise or" to ("a | b & c" to "Binary(|,Id(a),Binary(&,Id(b),Id(c)))"),
             "shift binds above bitwise and" to ("a & b << c" to "Binary(&,Id(a),Binary(<<,Id(b),Id(c)))"),
-            "concat binds below shifts" to ("a << b .. c" to "Binary(..,Binary(<<,Id(a),Id(b)),Id(c))"),
+            // Lua 5.3: concat (..) binds tighter than shifts (<< >>).
+            "concat binds tighter than shifts" to ("a << b .. c" to "Binary(<<,Id(a),Binary(..,Id(b),Id(c)))"),
             "concat binds above addition on right" to ("a .. b + c" to "Binary(..,Id(a),Binary(+,Id(b),Id(c)))"),
             "concat is right associative" to ("a .. b .. c" to "Binary(..,Id(a),Binary(..,Id(b),Id(c)))"),
             "concat chains after arithmetic groups right" to ("a + b .. c * d .. e" to "Binary(..,Binary(+,Id(a),Id(b)),Binary(..,Binary(*,Id(c),Id(d)),Id(e)))"),
@@ -139,8 +142,10 @@ class Lua53ExpressionPrecedenceTddTest {
 
     @Test
     fun exposesSourceRangesForRepresentativeExpressionNodes() {
+        // Source (no trailing trivia in range end): return a + b * c, root:method(value)[i]
+        // Columns are 1-based; end is exclusive (one past last char), so `]` at col 39 ends at 40.
         val returnStatement = parse(LuaVersion.LUA_5_3, "return a + b * c, root:method(value)[i]\n").body.returnStatement!!
-        assertRange(returnStatement, startLine = 1, startColumn = 1, endLine = 1, endColumn = 38)
+        assertRange(returnStatement, startLine = 1, startColumn = 1, endLine = 1, endColumn = 40)
 
         val arithmetic = assertIs<BinaryExpression>(returnStatement.arguments[0])
         assertRange(arithmetic, startLine = 1, startColumn = 8, endLine = 1, endColumn = 17)
@@ -152,9 +157,10 @@ class Lua53ExpressionPrecedenceTddTest {
         assertRange(assertIs<Identifier>(multiply.right), startLine = 1, startColumn = 16, endLine = 1, endColumn = 17)
 
         val index = assertIs<IndexExpression>(returnStatement.arguments[1])
-        assertRange(index, startLine = 1, startColumn = 19, endLine = 1, endColumn = 38)
+        assertRange(index, startLine = 1, startColumn = 19, endLine = 1, endColumn = 40)
         val call = assertIs<CallExpression>(index.base)
-        assertRange(call, startLine = 1, startColumn = 19, endLine = 1, endColumn = 35)
+        // Call span includes the closing ')'; exclusive end is one past ')'.
+        assertRange(call, startLine = 1, startColumn = 19, endLine = 1, endColumn = 37)
         assertRange(assertIs<MemberExpression>(call.base), startLine = 1, startColumn = 19, endLine = 1, endColumn = 30)
         assertRange(assertIs<Identifier>(call.arguments.single()), startLine = 1, startColumn = 31, endLine = 1, endColumn = 36)
     }
@@ -169,10 +175,12 @@ class Lua53ExpressionPrecedenceTddTest {
             """.trimIndent()
         )
 
+        // parseExpression wraps as `return $source`, so line-1 `left` starts at column 8
+        // (after `return `). Later lines keep their indent-relative columns.
         val concat = assertIs<BinaryExpression>(expression)
         assertEquals(ExpressionOperator.CONCAT, concat.operator)
-        assertRange(concat, startLine = 1, startColumn = 1, endLine = 3, endColumn = 20)
-        assertRange(assertIs<Identifier>(concat.left), startLine = 1, startColumn = 1, endLine = 1, endColumn = 5)
+        assertRange(concat, startLine = 1, startColumn = 8, endLine = 3, endColumn = 20)
+        assertRange(assertIs<Identifier>(concat.left), startLine = 1, startColumn = 8, endLine = 1, endColumn = 12)
 
         val rightConcat = assertIs<BinaryExpression>(concat.right)
         assertEquals(ExpressionOperator.CONCAT, rightConcat.operator)

@@ -1,15 +1,15 @@
 {
   "version": 2,
-  "updatedAt": "2026-07-12T15:28:46Z",
+  "updatedAt": "2026-07-12T15:33:16Z",
   "strategy": "must-green-to-advance",
   "chunkSize": 15,
   "cycle": 1,
   "summary": {
     "total": 25,
     "totalFiles": 367,
-    "pending": 17,
+    "pending": 16,
     "success": 8,
-    "failure": 0,
+    "failure": 1,
     "running": 0,
     "filesDone": 120
   },
@@ -131,18 +131,24 @@
       "updatedAt": "2026-07-12T15:28:46Z"
     },
     "s009": {
-      "status": "pending",
+      "status": "failure",
       "label": "parser.lexer..parser.recovery",
       "fileCount": 15,
-      "lastRunId": null,
-      "lastSha": null,
-      "tests": 0,
-      "failures": 0,
+      "lastRunId": "29198381786",
+      "lastSha": "dfe27fff5f5d06caae66f21db90040347c385146",
+      "tests": 115,
+      "failures": 5,
       "errors": 0,
-      "failedTests": [],
-      "durationSec": null,
-      "artifact": null,
-      "updatedAt": null
+      "failedTests": [
+        "parser.lua53.Lua53ExpressionPrecedenceTddTest#exposesRangesForRightAssociativeExpressionsAcrossLines[jvm]",
+        "parser.lua53.Lua53ExpressionPrecedenceTddTest#parsesResourceBackedComprehensiveExpressionPrecedenceFixture[jvm]",
+        "parser.lua53.Lua53ExpressionPrecedenceTddTest#exposesSourceRangesForRepresentativeExpressionNodes[jvm]",
+        "parser.lua53.Lua53ExpressionPrecedenceTddTest#coversLua53PrecedenceWithNamedShapeAssertions[jvm]",
+        "parser.lua53.Lua53TableFunctionModuleTddTest#exposesAstStructureAndRangesForRepresentativeModuleForms[jvm]"
+      ],
+      "durationSec": 10,
+      "artifact": "results/s009-29198381786.json",
+      "updatedAt": "2026-07-12T15:33:16Z"
     },
     "s010": {
       "status": "pending",
@@ -570,6 +576,15 @@
       "failures": 0,
       "durationSec": 5,
       "at": "2026-07-12T15:28:46Z"
+    },
+    {
+      "sliceId": "s009",
+      "runId": "29198381786",
+      "status": "failure",
+      "tests": 115,
+      "failures": 5,
+      "durationSec": 10,
+      "at": "2026-07-12T15:33:16Z"
     }
   ],
   "gate": {

@@ -2254,8 +2254,18 @@ class LuaParser(
         result.base = base
         base.parent = result
 
-        // consume string
-        result.arguments.add(parseExp(result))
+        // String-call arguments are a single string / long-string primary only.
+        // Using parseExp here would keep consuming binary ops (e.g. `printer 'ready' or
+        // fallback` wrongly became StringCall(..., Binary(or, 'ready', fallback))).
+        // Mark at the string token so the ConstantNode range is the literal itself.
+        peek { markLocation() }
+        result.arguments.add(
+            finishNode(
+                consume {
+                    ConstantNode(ConstantNode.TYPE.STRING, lexerText())
+                }
+            )
+        )
 
         return result
     }
