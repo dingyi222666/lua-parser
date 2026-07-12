@@ -9,16 +9,17 @@ scope:
   - src/jvmMain/kotlin/io/github/dingyi222666/luaparser/interop/jvm/JvmClassModuleProvider.kt
   - src/jvmTest/kotlin/interop/jvm/JvmWorkspaceEngineTest.kt
 acceptance_criteria:
-  - Clear Windows slice failure (evidence run 29176527021 / WINSLICE-29176527021 / slice s002):
+  - Clear Windows slice failure (evidence run 29184300559 / WINSLICE-29184300559 / slice s002; prior test red run 29176527021):
     - interop.jvm.JvmWorkspaceEngineTest#androlua_import_metadata_resolves_nested_androlua_classes_via_underscore_aliases
   - androlua_import_metadata_resolves_nested_androlua_classes_via_underscore_aliases hard-locks nested Map$Entry-style / View$OnClickListener style aliases when host android.jar present via dual-path discovery.
   - Binary and dotted nested names remain resolvable when jar present; when jar truly absent, explicit soft-skip — never hard-require missing AppData android-35 alone if another host jar is discoverable.
   - Prefer product engine alias path; never hardcode G:/.
+  - Blocked until TASK-621 restores compileKotlinJvm (29184300559 compileFailure).
 required_tests:
   - Deferred to TASK-043 / windows-jvmtest slice s002: `./gradlew.bat jvmTest --tests interop.jvm.JvmWorkspaceEngineTest.androlua_import_metadata_resolves_nested_androlua_classes_via_underscore_aliases`
 notes:
-  - Windows slice s002 run 29176527021 still red (4/307); underscore nested AndroLua alias still fails.
-  - Reused ready product task; AC evidence updated to WINSLICE-29176527021.
+  - Windows slice s002 run 29184300559: compileFailure before tests; prior 29176527021 still red for underscore nested AndroLua alias.
+  - Re-ready from review for WINSLICE-29184300559; AC evidence updated (compile break + prior red).
   - Workers must not run Gradle/tests/compile; verification review-owned serial (TASK-043).
   - Host android.jar dual-path only — never G:/.
   - One task one agent. No docs.
@@ -30,6 +31,9 @@ related_locks:
   - locks/files/src__jvmTest__kotlin__interop__jvm__JvmWorkspaceEngineTest.kt.lock
 related_commits: []
 progress:
+  - 2026-07-12T07:47:15Z worker-WINSLICE-29184300559-TASK-570: product nested AndroLua underscore alias path hardened — shortNameClassCandidates (View$OnClickListener / View_OnClickListener / package+Outer_Inner), candidateClassNames underscore rewrite, reflectedClassProviderModuleNames nested binary/dotted/underscore/simple claims for require("OnClickListener"). Test: Map$Entry JDK hard-lock; dual-path host android.jar + Assume soft-skip when jar truly absent; short-name and underscore-short requestedClasses hard-locks before harness; never G:/. Engine compile-align walk kept for TASK-621 gate. No Gradle. status→review.
+  - 2026-07-12T07:35:45Z worker-WINSLICE-29184300559-TASK-570 claimed; implementing nested AndroLua underscore alias (View$OnClickListener / Map$Entry) via host android.jar dual-path; never G:/; no Gradle.
+  - 2026-07-12T materialize WINSLICE-29184300559: re-ready from review; AC evidence updated to run 29184300559 (compile break blocks re-verify; prior underscore nested AndroLua alias still red on 29176527021).
   - 2026-07-12T07:27:05Z worker-WINSLICE-29176527021-TASK-570: fixed s002 hard-fail (assertTrue missing AppData android-35). Product short-name path: View$OnClickListener / View_OnClickListener and package+View_OnClickListener underscore rewrite. Test: Map$Entry JDK hard-lock always first; dual-path host jar + Assume soft-skip when jar truly absent; never G:/. No Gradle. status→review.
   - 2026-07-12T07:23:50Z worker-WINSLICE-29176527021-TASK-570 claimed; Windows s002 failure is assertTrue host android.jar at AppData android-35 (no soft-skip on evidence SHA).
   - 2026-07-12T07:14:52Z worker-WINSLICE-29176527021-TASK-570: fixed Windows s002 hard-fail (missing AppData android-35 assert). Product: short-name import prefixes try View$OnClickListener / View_OnClickListener before dotted candidates. Test: dual-path host jar discovery + explicit soft-skip when jar truly absent; Map$Entry underscore alias hard-lock. Never G:/. No Gradle. status→review.

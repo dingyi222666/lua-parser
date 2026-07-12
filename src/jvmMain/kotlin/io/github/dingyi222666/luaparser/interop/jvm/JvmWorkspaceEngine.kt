@@ -313,13 +313,10 @@ class JvmWorkspaceEngine(
             is io.github.dingyi222666.luaparser.parser.ast.node.ReturnStatement -> {
                 node.arguments.forEach { collectFreeClassLikeNamesFromNode(it, names) }
             }
-            is io.github.dingyi222666.luaparser.parser.ast.node.IfClause,
-            is io.github.dingyi222666.luaparser.parser.ast.node.ElseifClause -> {
-                // Walk children generically below via statement containers.
-            }
             else -> Unit
         }
         // Generic child walk for statement/block containers and remaining AST shapes.
+        // Align with real parser AST: IfStatement.causes, ElseIfClause, CallStatement.
         when (node) {
             is io.github.dingyi222666.luaparser.parser.ast.node.ChunkNode -> {
                 collectFreeClassLikeNamesFromNode(node.body, names)
@@ -340,20 +337,12 @@ class JvmWorkspaceEngine(
                 collectFreeClassLikeNamesFromNode(node.condition, names)
             }
             is io.github.dingyi222666.luaparser.parser.ast.node.IfStatement -> {
-                node.clauses.forEach { clause ->
-                    when (clause) {
-                        is io.github.dingyi222666.luaparser.parser.ast.node.IfClause -> {
-                            collectFreeClassLikeNamesFromNode(clause.condition, names)
-                            collectFreeClassLikeNamesFromNode(clause.body, names)
-                        }
-                        is io.github.dingyi222666.luaparser.parser.ast.node.ElseifClause -> {
-                            collectFreeClassLikeNamesFromNode(clause.condition, names)
-                            collectFreeClassLikeNamesFromNode(clause.body, names)
-                        }
-                        is io.github.dingyi222666.luaparser.parser.ast.node.ElseClause -> {
-                            collectFreeClassLikeNamesFromNode(clause.body, names)
-                        }
+                node.causes.forEach { cause ->
+                    // ElseIfClause extends IfClause; ElseClause has no condition to walk.
+                    if (cause !is io.github.dingyi222666.luaparser.parser.ast.node.ElseClause) {
+                        collectFreeClassLikeNamesFromNode(cause.condition, names)
                     }
+                    collectFreeClassLikeNamesFromNode(cause.body, names)
                 }
             }
             is io.github.dingyi222666.luaparser.parser.ast.node.ForNumericStatement -> {
@@ -375,7 +364,7 @@ class JvmWorkspaceEngine(
             is io.github.dingyi222666.luaparser.parser.ast.node.ArrayConstructorExpression -> {
                 node.values.forEach { collectFreeClassLikeNamesFromNode(it, names) }
             }
-            is io.github.dingyi222666.luaparser.parser.ast.node.ExpressionStatement -> {
+            is io.github.dingyi222666.luaparser.parser.ast.node.CallStatement -> {
                 collectFreeClassLikeNamesFromNode(node.expression, names)
             }
             else -> Unit
@@ -711,6 +700,21 @@ class JvmWorkspaceEngine(
             DocumentFacts.JvmClassLoadKind.NEW_INSTANCE_CALL,
             DocumentFacts.JvmClassLoadKind.CREATE_PROXY_CALL,
             DocumentFacts.JvmClassLoadKind.LOAD_LIB_CALL
+        )
+
+        // UpperCamel free identifiers that must not mount as JVM class roots.
+        // Filters host/Lua-ish false positives; real classes (Locale/TextView/File) stay eligible.
+        private val NON_CLASS_FREE_IDENTIFIERS: Set<String> = setOf(
+            "And",
+            "Or",
+            "Not",
+            "True",
+            "False",
+            "Nil",
+            "Self",
+            "This",
+            "Super",
+            "Global"
         )
     }
 

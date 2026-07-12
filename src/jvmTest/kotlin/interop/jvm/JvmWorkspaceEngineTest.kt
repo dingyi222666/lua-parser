@@ -81,6 +81,33 @@ class JvmWorkspaceEngineTest {
             !androidJar.path.replace('\\', '/').startsWith("G:/Android/Sdk", ignoreCase = true),
             "Host resolution must not hardcode Windows G:/Android/Sdk; got ${androidJar.path}."
         )
+
+        // Product short-name path: enclosing-type prefix + OnClickListener → View$OnClickListener
+        // before workspace require wiring (hard-locks Class.forName alias expansion).
+        val shortNameRequested = JvmClassModuleProvider().requestedClasses(
+            JvmWorkspaceConfiguration(
+                androidJar = androidJar.path,
+                androluaImports = listOf("OnClickListener"),
+                importPrefixes = listOf("android.view.View")
+            )
+        )
+        assertTrue(
+            "android.view.View\$OnClickListener" in shortNameRequested,
+            "Expected OnClickListener under android.view.View prefix to load View\$OnClickListener; got $shortNameRequested"
+        )
+        assertEquals(1, shortNameRequested.size)
+
+        // Package prefix + Outer_Inner underscore short name also rewrites to binary nested form.
+        val underscoreShortRequested = JvmClassModuleProvider().requestedClasses(
+            JvmWorkspaceConfiguration(
+                androidJar = androidJar.path,
+                androluaImports = listOf("View_OnClickListener"),
+                importPrefixes = listOf("android.view")
+            )
+        )
+        assertTrue("android.view.View\$OnClickListener" in underscoreShortRequested)
+        assertEquals(1, underscoreShortRequested.size)
+
         val harness = WorkspaceSemanticHarness.build(
             "main.lua" to "local OnClickListener = require(\"OnClickListener\")\nreturn OnClickListener",
             metadata = mapOf(

@@ -1,0 +1,17 @@
+{
+  "sliceId": "s002",
+  "runId": "29184300559",
+  "sha": "0ae7bb563807209a2c055734443e14a2bc9aba7d",
+  "status": "failure",
+  "exitCode": 1,
+  "durationSec": null,
+  "tests": 0,
+  "failures": 0,
+  "errors": 0,
+  "skipped": 0,
+  "failedTests": [],
+  "compileFailure": true,
+  "compileNotes": "compileKotlinJvm failed before slice jvmTest: JvmWorkspaceEngine.kt unresolved ElseifClause/clauses/condition/body/ExpressionStatement/expression/NON_CLASS_FREE_IDENTIFIERS (~L317-386). No TEST-*.xml produced. Gate retains s002 failure (prior 4 test reds on 29176527021).",
+  "gate": "must-green-to-advance",
+  "finishedAt": "2026-07-12T07:30:10Z"
+}

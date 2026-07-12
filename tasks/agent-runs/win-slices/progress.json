@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "updatedAt": "2026-07-12T02:18:58Z",
+  "updatedAt": "2026-07-12T07:30:10Z",
   "strategy": "must-green-to-advance",
   "chunkSize": 15,
   "cycle": 1,
@@ -33,20 +33,16 @@
       "status": "failure",
       "label": "interop.jvm..lsp",
       "fileCount": 15,
-      "lastRunId": "29176527021",
-      "lastSha": "2a8cdf056eacde4033e44b9f1106d629269e69a4",
-      "tests": 307,
-      "failures": 4,
+      "lastRunId": "29184300559",
+      "lastSha": "0ae7bb563807209a2c055734443e14a2bc9aba7d",
+      "tests": 0,
+      "failures": 0,
       "errors": 0,
-      "failedTests": [
-        "interop.jvm.JvmWorkspaceEngineTest#realiased_load_lib_helper_resolves_reflected_jvm_static_members[jvm]",
-        "interop.jvm.JvmWorkspaceEngineTest#androlua_import_metadata_resolves_nested_androlua_classes_via_underscore_aliases[jvm]",
-        "interop.jvm.JvmWorkspaceEngineTest#short_string_realiased_load_lib_helper_resolves_reflected_jvm_static_members[jvm]",
-        "interop.jvm.JvmWorkspaceEngineTest#unresolved_short_name_falls_back_to_android_lua_default_import_prefixes[jvm]"
-      ],
-      "durationSec": 35,
-      "artifact": "results/s002-29176527021.json",
-      "updatedAt": "2026-07-12T02:18:58Z"
+      "failedTests": [],
+      "durationSec": null,
+      "artifact": "results/s002-29184300559.json",
+      "updatedAt": "2026-07-12T07:30:10Z",
+      "note": "compileKotlinJvm failed on run 29184300559; no junit; gate hold s002"
     },
     "s003": {
       "status": "pending",
@@ -444,6 +440,16 @@
       "failures": 4,
       "durationSec": 35,
       "at": "2026-07-12T02:18:58Z"
+    },
+    {
+      "sliceId": "s002",
+      "runId": "29184300559",
+      "status": "failure",
+      "tests": 0,
+      "failures": 0,
+      "durationSec": null,
+      "at": "2026-07-12T07:30:10Z",
+      "note": "compileKotlinJvm unresolved refs in JvmWorkspaceEngine.kt; no junit xml"
     }
   ],
   "gate": {

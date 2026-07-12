@@ -1,0 +1,20 @@
+{
+  "runId": "29184300559",
+  "sliceId": "s002",
+  "status": "failure",
+  "tests": 0,
+  "failures": 0,
+  "failedTests": [],
+  "progressSummary": {
+    "total": 25,
+    "totalFiles": 367,
+    "pending": 23,
+    "success": 1,
+    "failure": 1,
+    "running": 0,
+    "filesDone": 15,
+    "activeSlice": "s002",
+    "updatedAt": "2026-07-12T07:30:10Z"
+  },
+  "notes": "Merged run 29184300559 into win-slices. CI artifact progress was not newer (same updatedAt as local; no history for this runId; empty junit/html). compileKotlinJvm failed: JvmWorkspaceEngine.kt unresolved ElseifClause/clauses/ExpressionStatement/NON_CLASS_FREE_IDENTIFIERS. No TEST-*.xml; failures.txt empty. Recorded results/s002-29184300559.json; s002 remains failure. Gate: must-green-to-advance; stay on s002 until green (prior test reds on 29176527021 plus compile break)."
+}

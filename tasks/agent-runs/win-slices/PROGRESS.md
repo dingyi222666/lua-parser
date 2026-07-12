@@ -1,6 +1,6 @@
 # Windows slice progress (must-green-to-advance)
 
-Updated: 2026-07-12T02:18:58Z
+Updated: 2026-07-12T07:30:10Z
 Strategy: must-green-to-advance
 Active/HEAD: s002 failure
 Summary: success=1 failure=1 pending=23 total=25 filesDone=15
@@ -10,7 +10,7 @@ Checkbox: [x]=success [F]=failure [ ]=pending [~]=running
 | Slice | Status | Files | Notes |
 | --- | --- | --- | --- |
 | s001 | [x] success | 15 | green 29175268346 |
-| s002 | [F] failure | 15 | run 29176527021 failures=4 |
+| s002 | [F] failure | 15 | compileKotlinJvm failed on run 29184300559; no junit; gate hold s002 |
 | s003 | [ ] pending | 15 |  |
 | s004 | [ ] pending | 15 |  |
 | s005 | [ ] pending | 15 |  |

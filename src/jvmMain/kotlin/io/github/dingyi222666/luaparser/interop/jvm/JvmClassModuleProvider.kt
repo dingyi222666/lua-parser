@@ -417,21 +417,7 @@ class JvmClassModuleProvider(
             if (trimmedPrefix.isEmpty()) {
                 return@firstNotNullOfOrNull null
             }
-            val shortNameCandidates = buildList {
-                // Nested short names are UpperCamel (OnClickListener / View_OnClickListener).
-                // Prefer `$` join, then underscore join, then dotted candidate expansion.
-                if (target.isNotEmpty() && target.first().isUpperCase()) {
-                    add("$trimmedPrefix\$$target")
-                    add("${trimmedPrefix}_$target")
-                    // Underscore-alias short names already encode Outer_Inner; rewrite under
-                    // the package prefix as Outer$Inner before pure dotted Class.forName.
-                    if ('_' in target) {
-                        add("$trimmedPrefix.${target.replace('_', '$')}")
-                        add("$trimmedPrefix\$${target.replace('_', '$')}")
-                    }
-                }
-                addAll(candidateClassNames("$trimmedPrefix.$target"))
-            }.distinct()
+            val shortNameCandidates = shortNameClassCandidates(trimmedPrefix, target)
             shortNameCandidates.firstNotNullOfOrNull { candidate ->
                 runCatching { Class.forName(candidate, false, targetClassLoader) }
                     .getOrNull()
@@ -439,6 +425,44 @@ class JvmClassModuleProvider(
                     ?.let { listOf(ResolvedClassLoad(it, targetClassLoader)) }
             }
         }.orEmpty()
+    }
+
+    /**
+     * Expand AndroLua short-name import targets under a single import prefix.
+     *
+     * Handles:
+     * - enclosing-type prefixes: `android.view.View` + `OnClickListener` →
+     *   `android.view.View$OnClickListener` (binary `$` preferred)
+     * - package prefixes + Outer_Inner short names: `android.view` + `View_OnClickListener` →
+     *   `android.view.View$OnClickListener`
+     * - package prefixes that already end in Outer: same as enclosing-type path
+     *
+     * Never invents loadable names; [Class.forName] remains the authority.
+     */
+    private fun shortNameClassCandidates(prefix: String, target: String): List<String> {
+        if (target.isEmpty()) {
+            return emptyList()
+        }
+        return buildList {
+            val upperCamelTarget = target.first().isUpperCase()
+            if (upperCamelTarget) {
+                // Prefer binary `$` join for nested types (View$OnClickListener / Map$Entry).
+                add("$prefix\$$target")
+                add("${prefix}_$target")
+                // Underscore-alias short names already encode Outer_Inner under a package prefix.
+                if ('_' in target) {
+                    val nestedBinary = target.replace('_', '$')
+                    add("$prefix.$nestedBinary")
+                    add("$prefix\$$nestedBinary")
+                    // Also keep package.Outer.Inner dotted form for candidateClassNames rewrite.
+                    add("$prefix.${target.replace('_', '.')}")
+                }
+                // When prefix is a package (android.view) and target is a nested simple name,
+                // try common Outer$target patterns only via explicit Outer_Inner aliases above;
+                // do not invent Outer type names here.
+            }
+            addAll(candidateClassNames("$prefix.$target"))
+        }.distinct()
     }
 
     /**
@@ -674,8 +698,21 @@ class JvmClassModuleProvider(
         val candidates = buildSet {
             add(trimmed)
             // AndroLua underscore nested aliases: Map_Entry / View_OnClickListener /
-            // Context_BindServiceFlags → Map$Entry / View$OnClickListener / Context$BindServiceFlags
-            trimmed.takeIf { '_' in it }?.replace('_', '$')?.let(::add)
+            // Context_BindServiceFlags → Map$Entry / View$OnClickListener / Context$BindServiceFlags.
+            // Only rewrite '_' segments that look like Outer_Inner (UpperCamel_UpperCamel), not
+            // arbitrary package underscores.
+            if ('_' in trimmed) {
+                add(trimmed.replace('_', '$'))
+                // Also allow mixed forms where only the final Outer_Inner segment is rewritten.
+                val lastDot = trimmed.lastIndexOf('.')
+                if (lastDot >= 0) {
+                    val head = trimmed.substring(0, lastDot + 1)
+                    val tail = trimmed.substring(lastDot + 1)
+                    if ('_' in tail) {
+                        add(head + tail.replace('_', '$'))
+                    }
+                }
+            }
             // Dotted nested segments: Map.Entry / Context.BindServiceFlags → Map$Entry /
             // Context$BindServiceFlags by selectively replacing '.' with '$'
             if (separatorIndexes.isNotEmpty()) {
@@ -1100,10 +1137,46 @@ class JvmClassModuleProvider(
             cacheKey = workspaceFingerprintHash(source),
             moduleExportSurface = surface,
             publicFingerprint = io.github.dingyi222666.luaparser.semantic.workspace.WorkspacePublicFingerprint(
-                providedModuleNames = linkedSetOf(clazz.simpleName),
+                // Nested AndroLua aliases (View$OnClickListener / Map$Entry / View_OnClickListener)
+                // claim binary, dotted, underscore, and simple names so require()/imports resolve.
+                providedModuleNames = reflectedClassProviderModuleNames(clazz),
                 value = workspaceFingerprintHash(fingerprintPayload)
             )
         )
+    }
+
+    /**
+     * Module-name aliases advertised for a reflected class provider.
+     *
+     * Top-level: simple name only (String / Locale / TextView).
+     * Nested (Map$Entry / View$OnClickListener): also binary, dotted, and underscore forms so
+     * AndroLua underscore aliases and require("OnClickListener") stay resolvable when the host
+     * android.jar (or JDK) mounts the class. Never invents names outside the reflected binary.
+     */
+    private fun reflectedClassProviderModuleNames(clazz: Class<*>): Set<String> {
+        val simple = clazz.simpleName.takeIf(String::isNotBlank)
+        val binary = clazz.name
+        val names = linkedSetOf<String>()
+        // Always claim the reflection simple name (String / Locale / OnClickListener / Entry).
+        simple?.let(names::add)
+        // Nested types also advertise binary / dotted / underscore AndroLua aliases so
+        // require("OnClickListener") and Map_Entry-style names stay resolvable.
+        if ('$' in binary) {
+            names += binary
+            names += binary.replace('$', '.')
+            names += binary.replace('$', '_')
+            val nestedSimple = binary.substringAfterLast('$')
+            if (nestedSimple.isNotBlank()) {
+                names += nestedSimple
+            }
+            val afterPackage = binary.substringAfterLast('.')
+            if (afterPackage.isNotBlank()) {
+                names += afterPackage
+                names += afterPackage.replace('$', '_')
+                names += afterPackage.replace('$', '.')
+            }
+        }
+        return names.filterTo(linkedSetOf()) { it.isNotBlank() }
     }
 
     private fun providerForPackage(
