@@ -1,9 +1,9 @@
 # Windows slice progress (must-green-to-advance)
 
-Updated: 2026-07-12T19:32:40Z
+Updated: 2026-07-12T19:42:56Z
 Strategy: must-green-to-advance
-Active/HEAD: s014 failure
-Summary: success=13 failure=1 pending=11 total=25 filesDone=195
+Active/HEAD: s014 success
+Summary: success=14 failure=0 pending=11 total=25 filesDone=210
 
 Checkbox: [x]=success [F]=failure [ ]=pending [~]=running
 
@@ -22,7 +22,7 @@ Checkbox: [x]=success [F]=failure [ ]=pending [~]=running
 | s011 | [x] success | 15 | green on run 29203714569; 131 tests 0 failures |
 | s012 | [x] success | 15 | green on run 29204945941; 250 tests 0 failures |
 | s013 | [x] success | 15 | green on run 29205780117; 198 tests 0 failures |
-| s014 | [F] failure | 15 | fail on run 29205966350; 166 tests 1 failures; first=semantic.checker.CallArityMismatchSurfaceTddTest#reservedCallArityCodeStringsRemainLockedAndDistinctFromProductCatalog[jvm] |
+| s014 | [x] success | 15 | green on run 29206269986; 166 tests 0 failures |
 | s015 | [ ] pending | 15 |  |
 | s016 | [ ] pending | 15 |  |
 | s017 | [ ] pending | 15 |  |

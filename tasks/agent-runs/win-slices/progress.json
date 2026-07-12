@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "updatedAt": "2026-07-12T19:32:40Z",
+  "updatedAt": "2026-07-12T19:42:56Z",
   "strategy": "must-green-to-advance",
   "chunkSize": 15,
   "cycle": 1,
@@ -8,10 +8,10 @@
     "total": 25,
     "totalFiles": 367,
     "pending": 11,
-    "success": 13,
-    "failure": 1,
+    "success": 14,
+    "failure": 0,
     "running": 0,
-    "filesDone": 195
+    "filesDone": 210
   },
   "slices": {
     "s001": {
@@ -201,20 +201,18 @@
       "updatedAt": "2026-07-12T19:28:28Z"
     },
     "s014": {
-      "status": "failure",
+      "status": "success",
       "label": "semantic.binder..semantic.checker",
       "fileCount": 15,
-      "lastRunId": "29205966350",
-      "lastSha": "658993efeba095a3d8dd0c8071c3d6282d9e0d82",
+      "lastRunId": "29206269986",
+      "lastSha": "69bdba0c8230c727193365cf9f8682524756c8be",
       "tests": 166,
-      "failures": 1,
+      "failures": 0,
       "errors": 0,
-      "failedTests": [
-        "semantic.checker.CallArityMismatchSurfaceTddTest#reservedCallArityCodeStringsRemainLockedAndDistinctFromProductCatalog[jvm]"
-      ],
-      "durationSec": 15,
-      "artifact": "results/s014-29205966350.json",
-      "updatedAt": "2026-07-12T19:32:40Z"
+      "failedTests": [],
+      "durationSec": 10,
+      "artifact": "results/s014-29206269986.json",
+      "updatedAt": "2026-07-12T19:42:56Z"
     },
     "s015": {
       "status": "pending",
@@ -725,6 +723,15 @@
       "failures": 1,
       "durationSec": 15,
       "at": "2026-07-12T19:32:40Z"
+    },
+    {
+      "sliceId": "s014",
+      "runId": "29206269986",
+      "status": "success",
+      "tests": 166,
+      "failures": 0,
+      "durationSec": 10,
+      "at": "2026-07-12T19:42:56Z"
     }
   ],
   "gate": {
