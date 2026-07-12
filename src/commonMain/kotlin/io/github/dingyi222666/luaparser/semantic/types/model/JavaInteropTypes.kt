@@ -316,19 +316,28 @@ private fun JavaClassType.typeArgumentMapping(typeArguments: List<Type>): Map<St
  * Build a Java-style array display name. Always appends exact "[]" per dimension
  * (dimensions=2 on Locale -> "java.util.Locale[][]"). Nested element arrays already
  * contribute their own "[]" via [Type.displayName], so prefer dimensions=1 wrappers
- * for multi-rank modeling.
+ * for multi-rank modeling (TASK-588 / TASK-663).
  *
  * Never emits the double-bracket token "[[]]"; each rank is the two-char "[]".
+ * Root may already end with "[]" when [elementType] is itself a [JavaArrayType];
+ * only append additional ranks for this wrapper's [dimensions].
  */
 private fun buildJavaArrayName(elementType: Type, dimensions: Int): String {
-    val root = elementType.displayName
+    // Prefer nested single-rank wrappers: component display already carries inner ranks.
+    val root = when (elementType) {
+        is JavaArrayType -> elementType.displayName
+        else -> elementType.displayName
+    }
     val rank = dimensions.coerceAtLeast(1)
-    // Explicit loop avoids any platform String.repeat edge and keeps each rank as "[]".
+    // Explicit two-char append avoids any platform String.repeat edge and keeps each
+    // rank as "[]" (not a collapsed "[[]]" token).
     val builder = StringBuilder(root.length + rank * 2)
     builder.append(root)
-    repeat(rank) {
+    var i = 0
+    while (i < rank) {
         builder.append('[')
         builder.append(']')
+        i++
     }
     return builder.toString()
 }

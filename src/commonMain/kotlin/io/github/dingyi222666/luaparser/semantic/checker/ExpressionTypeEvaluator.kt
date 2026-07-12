@@ -880,7 +880,10 @@ class ExpressionTypeEvaluator internal constructor(
 
         return when (helperName) {
             "createArray" -> {
-                // createArray(className, size) is always a single-rank JVM array.
+                // createArray(className, values) is always a single-rank JVM array.
+                // Element display: java.lang.String/char/string map to PrimitiveType.STRING so
+                // hover is honest `string[]` (LuaJavaArrayHelpersTddTest hard lock). Object
+                // classes stay reflected instance surfaces (e.g. java.util.Locale[]).
                 val elementType = stringCallTarget(node)?.let(::javaArrayElementTypeForTarget) ?: UnknownType
                 JavaArrayType(
                     elementType = elementType.hydrateJavaProviderType(workspaceContext.resolveImportTarget)
@@ -921,15 +924,19 @@ class ExpressionTypeEvaluator internal constructor(
      * Build nested single-rank [JavaArrayType] wrappers of [rank] around [componentType].
      * Nested ranks (rather than only `dimensions=N` on a flat component) keep
      * [MemberResolver] index peeling working: each index returns the next inner array,
-     * and [JavaArrayType.displayName] stays `T` + `"[]".repeat(totalRank)` without "[[]]".
+     * and [JavaArrayType.displayName] stays honest nested ranks (`T[][]`, never "[[]]")
+     * via buildJavaArrayName (TASK-588 / TASK-663).
      */
     private fun nestedJavaArrayType(componentType: Type, rank: Int): Type {
         var current = componentType
         // Always dimensions=1 wrappers so elementType is the previous rank surface.
         // Flat multi-dim (dimensions=N) would also display as T[]...[] but would not peel
         // intermediate arrays on index without extra MemberResolver logic.
-        repeat(rank.coerceAtLeast(1)) {
+        val safeRank = rank.coerceAtLeast(1)
+        var i = 0
+        while (i < safeRank) {
             current = JavaArrayType(elementType = current, dimensions = 1)
+            i++
         }
         return current
     }

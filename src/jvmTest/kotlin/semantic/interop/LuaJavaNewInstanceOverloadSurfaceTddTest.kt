@@ -1142,6 +1142,7 @@ class LuaJavaNewInstanceOverloadSurfaceTddTest {
     private fun missingAndroidJarSkipReason(): String {
         val tried = hostAndroidJarCandidates().joinToString("; ") { it.path }
         return "android.jar not found on host. Place at Downloads/android.jar or " +
-            "Library/Android/sdk/platforms/android-35/android.jar (never G:/). Tried: $tried"
+            "Library/Android/sdk/platforms/android-35/android.jar " +
+            "(never invent Windows drive-letter defaults). Tried: $tried"
     }
 }

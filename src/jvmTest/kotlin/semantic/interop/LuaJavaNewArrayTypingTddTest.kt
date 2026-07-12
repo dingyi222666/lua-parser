@@ -125,11 +125,11 @@ class LuaJavaNewArrayTypingTddTest {
             """.trimIndent()
         )
 
-        // Element typing must remain rooted in the bound class even when more than
-        // one dimension argument is supplied. Multi-rank array surface may still
-        // collapse to a single Java array rank until rank modeling lands.
-        assertHoverType(harness, "matrix", "java.util.Locale[]", occurrence = 2)
-        assertHoverType(harness, "first", "java.util.Locale", occurrence = 2)
+        // Nested JavaArrayType rank from newArray(Locale, 2, 3): matrix is Locale[][];
+        // one numeric index peels a single rank to intermediate Locale[] (component root
+        // still Locale / java.util.Locale; display uses repeated "[]" only, never "[[]]").
+        assertHoverType(harness, "matrix", "java.util.Locale[][]", occurrence = 2)
+        assertHoverType(harness, "first", "java.util.Locale[]", occurrence = 2)
     }
 
     @Test

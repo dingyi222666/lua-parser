@@ -822,7 +822,7 @@ class LuaJavaBindClassArrayComponentTddTest {
             append("or SDK android-35 (")
             append(sdkAndroid35Jar.path)
             append("), ANDROID_HOME / ANDROID_SDK_ROOT platforms/android-35|34/android.jar, ")
-            append("or jvm.androidJar metadata. Never use Windows-only G:/ paths.")
+            append("or jvm.androidJar metadata. Never invent Windows drive-letter defaults.")
         }
     }
 

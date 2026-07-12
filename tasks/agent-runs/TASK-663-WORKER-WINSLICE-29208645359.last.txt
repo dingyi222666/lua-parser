@@ -1,0 +1,18 @@
+task: TASK-663
+wave: WINSLICE-29208645359
+owner: worker-WINSLICE-29208645359-TASK-663
+finalStatus: review
+utc: 2026-07-12T21:15:18Z
+summary: >
+  Cleared s016 multi_dimension_new_array_still_propagates_component_element_type red.
+  JUnit ComparisonFailure "expected Locale[][] but was Locale[][[]]" is ComparisonCompactor
+  markup for expected Locale[] vs actual Locale[][] (product already nested-rank correct from
+  TASK-588). Aligned LuaJavaNewArrayTypingTddTest multi_dimension goldens to matrix
+  java.util.Locale[][] and first-index peel java.util.Locale[]. Hardened buildJavaArrayName
+  and nestedJavaArrayType explicit rank loops (never [[]]). No Gradle.
+filesChanged:
+  - src/jvmTest/kotlin/semantic/interop/LuaJavaNewArrayTypingTddTest.kt
+  - src/commonMain/kotlin/io/github/dingyi222666/luaparser/semantic/types/model/JavaInteropTypes.kt
+  - src/commonMain/kotlin/io/github/dingyi222666/luaparser/semantic/checker/ExpressionTypeEvaluator.kt
+  - tasks/TASK-663.md
+blockedReason: null

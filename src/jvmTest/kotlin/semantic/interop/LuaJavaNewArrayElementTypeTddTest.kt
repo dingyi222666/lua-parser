@@ -225,25 +225,28 @@ class LuaJavaNewArrayElementTypeTddTest {
 
     @Test
     fun multi_index_reads_share_same_element_type() {
+        // Use unique multi-char needles (elemOne/Two/Zero). Single-letter names like "a"/"b"/"c"
+        // collide as substrings inside "local"/"Locale"/"bindClass", so occurrence=2 hover lands
+        // on the bindClass ModuleType (simple name "Locale") instead of the index element FQCN.
         val harness = jvmHarness(
             "main.lua" to """
                 local Locale = luajava.bindClass("java.util.Locale")
                 local locales = luajava.newArray(Locale, 3)
-                local a = locales[1]
-                local b = locales[2]
-                local c = locales[0]
-                return locales, a, b, c
+                local elemOne = locales[1]
+                local elemTwo = locales[2]
+                local elemZero = locales[0]
+                return locales, elemOne, elemTwo, elemZero
             """.trimIndent()
         )
 
         assertArrayElementSurface(
             harness = harness,
             arrayNeedle = "locales",
-            elementNeedle = "a",
+            elementNeedle = "elemOne",
             componentFqcn = "java.util.Locale"
         )
-        assertElementHoverDualPath(harness, "b", "java.util.Locale")
-        assertElementHoverDualPath(harness, "c", "java.util.Locale")
+        assertElementHoverDualPath(harness, "elemTwo", "java.util.Locale")
+        assertElementHoverDualPath(harness, "elemZero", "java.util.Locale")
     }
 
     @Test
@@ -827,7 +830,7 @@ class LuaJavaNewArrayElementTypeTddTest {
             append("or SDK android-35 (")
             append(sdkAndroid35Jar.path)
             append("), ANDROID_HOME / ANDROID_SDK_ROOT platforms/android-35|34/android.jar, ")
-            append("or jvm.androidJar metadata. Never use Windows-only G:/ paths.")
+            append("or jvm.androidJar metadata. Never invent Windows drive-letter defaults.")
         }
     }
 

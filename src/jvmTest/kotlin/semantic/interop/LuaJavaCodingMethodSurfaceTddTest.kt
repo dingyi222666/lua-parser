@@ -441,11 +441,18 @@ class LuaJavaCodingMethodSurfaceTddTest {
         )
 
         val display = hoverDisplay(harness, "array", occurrence = 2).orEmpty()
+        // Product createArray("java.lang.String", ...) is modeled as JavaArrayType whose element
+        // is PrimitiveType.STRING via primitiveArrayElementTypeFor, so display is honest `string[]`
+        // (same surface locked by LuaJavaArrayHelpersTddTest / JavaArrayIndexTypeTddTest).
+        // Dual-path also accepts FQCN / JavaArray labels and CURRENTLY_ACCEPTS weak gaps —
+        // do not invent false java.lang.String[] precision when product uses the primitive alias.
         val ideal =
-            (display.contains("String") &&
-                (display.contains("[]") || display.contains("Array") || display.contains("JavaArray"))) ||
+            display == "string[]" ||
                 display.contains("java.lang.String[]") ||
-                display.contains("JavaArray")
+                display.contains("String[]") ||
+                display.contains("JavaArray") ||
+                (display.contains("String") &&
+                    (display.contains("[]") || display.contains("Array")))
         val productGap =
             display.isBlank() ||
                 display == "unknown" ||
@@ -454,7 +461,7 @@ class LuaJavaCodingMethodSurfaceTddTest {
                 display.startsWith("{")
         assertTrue(
             ideal || productGap,
-            "createArray result dual-path: JavaArray/String[] or CURRENTLY_ACCEPTS gap; got '$display'"
+            "createArray result dual-path: string[]/JavaArray/String[] or CURRENTLY_ACCEPTS gap; got '$display'"
         )
         assertNoCrashDiagnosticsQuery(harness)
     }
@@ -686,14 +693,18 @@ class LuaJavaCodingMethodSurfaceTddTest {
                     createArray = function(target, values) return { value = target } end,
                     getContext = function() return { value = "local" } end
                 }
-                local Locale = luajava.bindClass("java.util.Locale")
+                -- Use class names that do not substring-match the local result identifiers so
+                -- occurrence=2 lands on the local result (return site), not the string literal
+                -- argument (e.g. "java.util.Locale" contains "Locale").
+                local Locale = luajava.bindClass("java.util.Date")
                 local builder = luajava.newInstance("java.lang.StringBuilder")
-                local array = luajava.createArray("java.lang.String", {})
+                local array = luajava.createArray("java.lang.Integer", {})
                 local context = luajava.getContext()
                 return Locale, builder, array, context
             """.trimIndent()
         )
 
+        // occurrence=2: declaration site is 1, return-site identifier is 2 (no class-name collision).
         assertTableLikeNotJvm(harness, "Locale", occurrence = 2)
         assertTableLikeNotJvm(harness, "builder", occurrence = 2)
         assertTableLikeNotJvm(harness, "array", occurrence = 2)
@@ -800,7 +811,8 @@ class LuaJavaCodingMethodSurfaceTddTest {
 
     private fun missingAndroidJarSkipReason(missing: File): String {
         return "TASK-474 skip: android.jar missing at ${missing.path}; " +
-            "luajava coding method surface corpus uses host Downloads + SDK android-35 only (never G:/)."
+            "luajava coding method surface corpus uses host Downloads + SDK android-35 only " +
+            "(never invent Windows drive-letter defaults)."
     }
 
     private fun resourceText(name: String): String {

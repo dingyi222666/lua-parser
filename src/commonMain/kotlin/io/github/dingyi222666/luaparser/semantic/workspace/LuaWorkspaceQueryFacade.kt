@@ -149,8 +149,22 @@ class LuaWorkspaceQueryFacade(
         if (bindClassLocalDefinition != null) {
             return listOf(bindClassLocalDefinition)
         }
+        // Prefer require()-initialized local aliases to the provider module export/return site so
+        // goto on `local dep = require("dep")` / `return dep` lands on dep.lua (TASK-664).
+        // Do this only when the caret is NOT on a member-access identifier; those use export
+        // member resolution below and must stay empty when the export is missing.
+        val memberAccess = memberAccessAt(node, position)
+        if (memberAccess == null) {
+            val requireBackedLocalDefinition = semanticFile?.let {
+                requireBackedLocalDefinition(it, path, node, symbol)
+            }
+            if (requireBackedLocalDefinition != null) {
+                return listOf(requireBackedLocalDefinition)
+            }
+        }
         // Local AST declarations win for true locals (including shadowing of imported modules).
         // Imported MODULE aliases continue through the import-definition path below.
+        // Require-backed locals already returned above when not on member access.
         if (symbol != null && symbol.kind != SymbolKind.MODULE && symbol.kind != SymbolKind.FUNCTION) {
             val localDeclaration = semanticFile?.let { declarationLocationForSymbol(it, path, symbol.symbolId) }
             if (localDeclaration != null) {
@@ -177,19 +191,30 @@ class LuaWorkspaceQueryFacade(
         if (memberExport != null) {
             return listOf(exportLocation(memberExport))
         }
-        val requireBackedLocalDefinition = semanticFile?.let { requireBackedLocalDefinition(it, path, node, symbol) }
-        if (requireBackedLocalDefinition != null) {
-            return listOf(requireBackedLocalDefinition)
-        }
         val export = symbol?.symbolId?.let(resolver::exportedMemberByHandle)
             ?: resolver.exportAt(path, position)
             ?: exportFromMemberBase(node, symbol)
         if (export != null) {
             return listOf(exportLocation(export))
         }
+        // On require-backed member access, never invent a definition from the provider module
+        // root / local range when the export member itself is missing (TASK-664).
+        if (memberAccess != null && semanticFile != null) {
+            val requireReceiver = resolvedRequireForNavigationReceiver(
+                semanticFile,
+                path,
+                memberAccess.base
+            )
+            if (requireReceiver != null) {
+                return emptyList()
+            }
+        }
         val requireBackedDefinition = semanticFile?.let { requireBackedDefinition(it, path, node, symbol) }
         if (requireBackedDefinition != null) {
-            return listOf(requireBackedDefinition)
+            // Guard: only for non-member-access carets (member miss already returned empty above).
+            if (memberAccess == null) {
+                return listOf(requireBackedDefinition)
+            }
         }
         return symbol?.range?.let { listOf(WorkspaceLocation(path, it)) }.orEmpty()
     }
@@ -252,14 +277,28 @@ class LuaWorkspaceQueryFacade(
         val node = semanticFile?.nodeAt(position)
         val symbol = semanticFile?.model?.getSymbolAt(position)
             ?: semanticFile?.let { importedSymbolAt(path, position, node, it)?.let(::importedSymbol) }
+        val memberAccess = memberAccessAt(node, position)
         val memberExport = semanticFile?.let { exportedMemberAt(it, path, position, node) }
+        // Missing require-backed export members must not invent local or provider references
+        // (TASK-664 sibling missing-export isolation).
+        if (memberAccess != null && memberExport == null && semanticFile != null) {
+            val requireReceiver = resolvedRequireForNavigationReceiver(
+                semanticFile,
+                path,
+                memberAccess.base
+            )
+            val hasExportHandle = symbol?.symbolId?.let { ModuleExportIdentity.parse(it) != null } == true
+            if (requireReceiver != null && !hasExportHandle) {
+                return emptyList()
+            }
+        }
         val importedHandle = symbol?.symbolId?.takeIf(::isImportedSymbolHandle)
         if (importedHandle != null) {
             return importedSymbolReferences(importedHandle)
         }
 
         val localReferences = semanticFile
-            ?.takeIf { memberExport == null }
+            ?.takeIf { memberExport == null && memberAccess == null }
             ?.let { localSymbolReferences(it, path, symbol) }
             ?.takeIf { it.isNotEmpty() }
         if (localReferences != null) {
@@ -269,7 +308,11 @@ class LuaWorkspaceQueryFacade(
         val targetHandle = memberExport?.handle
             ?: symbol?.symbolId?.takeIf { ModuleExportIdentity.parse(it) != null }
             ?: resolver.exportAt(path, position)?.handle
-            ?: return symbol?.range?.let { listOf(WorkspaceLocation(path, it)) }.orEmpty()
+            ?: return if (memberAccess != null) {
+                emptyList()
+            } else {
+                symbol?.range?.let { listOf(WorkspaceLocation(path, it)) }.orEmpty()
+            }
 
         val locations = linkedMapOf<String, WorkspaceLocation>()
         resolver.exportedMemberByHandle(targetHandle)?.let { export ->
@@ -821,7 +864,12 @@ class LuaWorkspaceQueryFacade(
         node: BaseASTNode?,
         symbol: io.github.dingyi222666.luaparser.semantic.api.Symbol?
     ): WorkspaceLocation? {
-        val identifier = node as? Identifier
+        val identifier = node as? Identifier ?: return null
+        // Never treat a member-access identifier (dep.missing) as the require-local itself.
+        val parent = runCatching { identifier.parent }.getOrNull()
+        if (parent is MemberExpression && parent.identifier === identifier) {
+            return null
+        }
         val moduleName = resolveRequiredModuleNameForLocal(semanticFile, symbol?.symbolId, identifier) ?: return null
         val providerPath = resolveWorkspaceRequire(path, moduleName)?.provider?.path ?: return null
         return WorkspaceLocation(providerPath, syntheticModuleRange(moduleName))
@@ -833,6 +881,14 @@ class LuaWorkspaceQueryFacade(
         symbol: io.github.dingyi222666.luaparser.semantic.api.Symbol?
     ): List<String> {
         val identifier = node as? Identifier
+        // Member-access carets (dep.missing) must not be treated as require-local aliases.
+        // Callers that intentionally want the receiver module should pass the receiver node.
+        if (identifier != null) {
+            val parent = runCatching { identifier.parent }.getOrNull()
+            if (parent is MemberExpression && parent.identifier === identifier) {
+                return emptyList()
+            }
+        }
         return buildList {
             identifier
                 ?.let { resolveRequiredModuleNameForLocal(semanticFile, symbol?.symbolId, it) }
@@ -1004,20 +1060,26 @@ class LuaWorkspaceQueryFacade(
         semanticFile: WorkspaceSemanticFile,
         call: CallExpression
     ): String? {
-        val callee = call.base as? Identifier ?: return null
+        // Support both require("mod") and require "mod" (StringCallExpression base).
+        val callee = effectiveCallBase(call) as? Identifier ?: return null
         if (callee.name != "require") {
             return null
         }
+        // Unshadowed free-id `require` is the language builtin even when the overlay-seeded
+        // declaration is temporarily invisible (documented ranges live on virtual overlay docs).
+        // Only a true non-builtin local/parameter binding may shadow it (TASK-664).
         val declaration = visibleLocalValueDeclaration(
             semanticFile,
             callee.name,
             callee.range.start,
             localInitializerDeclarationIds(semanticFile, call)
-        ) ?: return null
-        if (declaration.origin != DeclarationOrigin.BUILTIN || declaration.name != "require") {
+        )
+        if (declaration != null &&
+            (declaration.origin != DeclarationOrigin.BUILTIN || declaration.name != "require")
+        ) {
             return null
         }
-        return (call.arguments.singleOrNull() as? ConstantNode)
+        return (callArguments(call).singleOrNull() as? ConstantNode)
             ?.takeIf { it.constantType == ConstantNode.TYPE.STRING }
             ?.stringOf()
     }
@@ -1935,6 +1997,12 @@ class LuaWorkspaceQueryFacade(
     }
 
     private fun isDeclarationVisibleAt(declaration: BinderDeclaration, position: Position): Boolean {
+        // Ambient binder builtins (require/print/import helpers) are file-global. Their
+        // documented ranges come from overlay virtual documents and must not gate visibility
+        // against real file positions used by require-local / free-id navigation (TASK-664).
+        if (declaration.origin == DeclarationOrigin.BUILTIN) {
+            return true
+        }
         val range = declaration.range ?: return true
         return comparePositions(range.start, position) <= 0
     }
@@ -1991,7 +2059,7 @@ class LuaWorkspaceQueryFacade(
     private fun requireCallSite(path: VirtualPath, position: Position): RequireCallSite? {
         val semanticFile = snapshot.files[path]?.semanticFile ?: return null
         val call = enclosingCallExpression(semanticFile.nodeAt(position)) ?: return null
-        val callee = call.base as? Identifier ?: return null
+        val callee = effectiveCallBase(call) as? Identifier ?: return null
         if (callee.name != "require") {
             return null
         }
@@ -2000,11 +2068,13 @@ class LuaWorkspaceQueryFacade(
             callee.name,
             callee.range.start,
             localInitializerDeclarationIds(semanticFile, call)
-        ) ?: return null
-        if (declaration.origin != DeclarationOrigin.BUILTIN || declaration.name != "require") {
+        )
+        if (declaration != null &&
+            (declaration.origin != DeclarationOrigin.BUILTIN || declaration.name != "require")
+        ) {
             return null
         }
-        val moduleName = (call.arguments.singleOrNull() as? ConstantNode)
+        val moduleName = (callArguments(call).singleOrNull() as? ConstantNode)
             ?.takeIf { it.constantType == ConstantNode.TYPE.STRING }
             ?.stringOf()
             ?: return null

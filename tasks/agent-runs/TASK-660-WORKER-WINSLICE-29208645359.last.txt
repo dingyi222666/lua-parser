@@ -1,0 +1,25 @@
+task: TASK-660
+wave: WINSLICE-29208645359
+owner: worker-WINSLICE-29208645359-TASK-660
+finalStatus: review
+completed_at: 2026-07-12T21:08:46Z
+
+summary:
+  Fixed false-positive Windows skip-reason AssertionError "Skip reason must never mention G:/" by removing the literal substring G:/ from missingAndroidJarSkipReason helpers in the four s016 interop surface suites.
+
+filesChanged:
+  - src/jvmTest/kotlin/semantic/interop/LuaJavaBindClassArrayComponentTddTest.kt
+  - src/jvmTest/kotlin/semantic/interop/LuaJavaCodingMethodSurfaceTddTest.kt
+  - src/jvmTest/kotlin/semantic/interop/LuaJavaNewArrayElementTypeTddTest.kt
+  - src/jvmTest/kotlin/semantic/interop/LuaJavaNewInstanceOverloadSurfaceTddTest.kt
+
+details:
+  - LuaJavaBindClassArrayComponentTddTest.missingAndroidJarSkipReason: "Never use Windows-only G:/ paths." -> "Never invent Windows drive-letter defaults."
+  - LuaJavaCodingMethodSurfaceTddTest.missingAndroidJarSkipReason: "(never G:/)" -> "(never invent Windows drive-letter defaults)."
+  - LuaJavaNewArrayElementTypeTddTest.missingAndroidJarSkipReason: same as bindClass array component.
+  - LuaJavaNewInstanceOverloadSurfaceTddTest.missingAndroidJarSkipReason: "(never G:/)" -> "(never invent Windows drive-letter defaults)".
+  - Present-jar feature goldens untouched; only soft-skip/host dual-path reason text changed.
+  - JvmWorkspaceConfiguration product discovery already excludes inventing G:/ candidates; no product edit required for these four reds (FORBIDDEN_AUTO_SDK_ROOT_PREFIXES remains internal filter only).
+  - Workers no Gradle verification per contract.
+
+blockedReason: null
