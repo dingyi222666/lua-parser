@@ -194,8 +194,9 @@ data class JvmWorkspaceConfiguration(
          * candidate under platforms/android-35 that may not exist (callers must check
          * File.isFile and soft-skip when absent). Never hard-requires a missing Windows
          * AppData android-35 path alone when another present host jar can be discovered.
-         * Joint green-lock and sibling isolation suites must soft-skip with
-         * [missingAndroidJarSoftSkipReason] when discovery returns a non-file candidate.
+         * LspJavaAndroidFeature and joint green-lock suites must soft-skip with
+         * [missingAndroidJarSoftSkipReason] when discovery returns a non-file candidate
+         * (Windows CI without an SDK platform is the common case; never invent G:).
          *
          * Downloads jars and other non-SDK copies are never auto-selected; pass them via
          * ANDROID_JAR_METADATA_KEY / androidJar only. Absolute drive-letter roots such as

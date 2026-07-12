@@ -141,6 +141,14 @@ class LuaWorkspaceQueryFacade(
             importedAt != null -> importedSymbol(importedAt)
             else -> modelSymbol ?: importedAt?.let(::importedSymbol)
         }
+        // Prefer bindClass/loadLib/newInstance local aliases over same-file local declaration so
+        // definition lands on __jvm__/classes/... provider paths (TASK-628).
+        val bindClassLocalDefinition = semanticFile?.let {
+            bindClassLocalDefinition(it, path, node, symbol)
+        }
+        if (bindClassLocalDefinition != null) {
+            return listOf(bindClassLocalDefinition)
+        }
         // Local AST declarations win for true locals (including shadowing of imported modules).
         // Imported MODULE aliases continue through the import-definition path below.
         if (symbol != null && symbol.kind != SymbolKind.MODULE && symbol.kind != SymbolKind.FUNCTION) {
@@ -158,6 +166,7 @@ class LuaWorkspaceQueryFacade(
                 WorkspaceLocation(it.providerPath, syntheticModuleRange(it.alias))
             }
             ?: semanticFile?.let { importCallLocalDefinition(it, path, node, symbol) }
+            ?: semanticFile?.let { bindClassLocalDefinition(it, path, node, symbol) }
         if (importDefinition != null) {
             return listOf(importDefinition)
         }
@@ -1461,6 +1470,146 @@ class LuaWorkspaceQueryFacade(
             ?: resolver.classProviderForAlias(moduleName)
             ?: return null
         return WorkspaceLocation(provider.path, syntheticModuleRange(moduleName))
+    }
+
+    /**
+     * Definition for locals initialized by LuaJava class-load helpers
+     * (bindClass / newInstance / loadLib / createProxy / createArray).
+     * Lands on mounted __jvm__/classes provider when the target class was source-discovered.
+     */
+    private fun bindClassLocalDefinition(
+        semanticFile: WorkspaceSemanticFile,
+        path: VirtualPath,
+        node: BaseASTNode?,
+        symbol: io.github.dingyi222666.luaparser.semantic.api.Symbol?
+    ): WorkspaceLocation? {
+        val identifier = node as? Identifier
+        val declaration = when {
+            identifier != null -> {
+                val parent = runCatching { identifier.parent }.getOrNull()
+                if (parent is MemberExpression && parent.identifier === identifier) {
+                    // Member access: resolve receiver local alias (Locale.getDefault -> Locale).
+                    null
+                } else {
+                    localDeclarationForSymbol(semanticFile, symbol?.symbolId)
+                        ?: exactLocalDeclarationForIdentifier(semanticFile, identifier)
+                        ?: visibleLocalValueDeclaration(semanticFile, identifier.name, identifier.range.start)
+                }
+            }
+            else -> localDeclarationForSymbol(semanticFile, symbol?.symbolId)
+        }
+        // Member receiver path: Identifier base of MemberExpression.
+        val receiverDeclaration = declaration ?: run {
+            val member = when (node) {
+                is MemberExpression -> node
+                is Identifier -> runCatching { node.parent }.getOrNull() as? MemberExpression
+                else -> null
+            } ?: return null
+            val receiver = member.base as? Identifier ?: return null
+            val receiverSymbol = semanticFile.model.getSymbolAt(receiver.range.start)
+            localDeclarationForSymbol(semanticFile, receiverSymbol?.symbolId)
+                ?: exactLocalDeclarationForIdentifier(semanticFile, receiver)
+                ?: visibleLocalValueDeclaration(semanticFile, receiver.name, receiver.range.start)
+                ?: return null
+        }
+        val moduleName = bindClassTargetModuleName(semanticFile, path, receiverDeclaration)
+            ?: symbol?.type?.moduleName?.takeIf { it.isNotBlank() }
+            ?: return null
+        val provider = resolver.activeProvider(moduleName)
+            ?: resolver.classProviderForAlias(moduleName)
+            ?: return null
+        // Only claim definition when a real class provider is mounted (has __class field).
+        if (resolver.classProviderForAlias(moduleName) == null &&
+            resolver.exportSurface(provider)?.moduleType?.fields?.containsKey("__class") != true
+        ) {
+            return null
+        }
+        return WorkspaceLocation(provider.path, syntheticModuleRange(moduleName))
+    }
+
+    private fun bindClassTargetModuleName(
+        semanticFile: WorkspaceSemanticFile,
+        path: VirtualPath,
+        declaration: BinderDeclaration
+    ): String? {
+        if (declaration.kind != DeclarationKind.LOCAL || declaration.anchorNode !is Identifier) {
+            return null
+        }
+        val initializer = requireInitializerForLocal(declaration) ?: return null
+        val target = luaJavaClassLoadTarget(semanticFile, initializer) ?: return null
+        val imported = resolver.importTargetSymbolFor(path, target)
+            ?: resolver.importTargetSymbol(target)
+            ?: return null
+        return imported.moduleType.moduleName.takeIf { it.isNotBlank() }
+            ?: imported.alias.takeIf { it.isNotBlank() }
+    }
+
+    private fun luaJavaClassLoadTarget(
+        semanticFile: WorkspaceSemanticFile,
+        call: CallExpression
+    ): String? {
+        if (!isLuaJavaClassLoadCallee(semanticFile, effectiveCallBase(call))) {
+            return null
+        }
+        return importCallStringTargets(call).firstOrNull()?.takeIf { it.isNotBlank() }
+    }
+
+    private fun isLuaJavaClassLoadCallee(
+        semanticFile: WorkspaceSemanticFile,
+        expression: io.github.dingyi222666.luaparser.parser.ast.node.ExpressionNode
+    ): Boolean {
+        return when (expression) {
+            is MemberExpression -> {
+                val helper = expression.identifier.name
+                helper in LUA_JAVA_CLASS_LOAD_HELPERS && isLuaJavaOwnerIdentifier(expression.base)
+            }
+            is Identifier -> {
+                if (expression.name !in LUA_JAVA_CLASS_LOAD_HELPERS) {
+                    return false
+                }
+                // Bare helper or local alias of luajava.bindClass.
+                val declaration = visibleLocalValueDeclaration(
+                    semanticFile,
+                    expression.name,
+                    expression.range.start
+                )
+                declaration == null || declaration.origin == DeclarationOrigin.BUILTIN ||
+                    declarationResolvesToLuaJavaHelper(semanticFile, declaration, expression.name)
+            }
+            else -> false
+        }
+    }
+
+    private fun isLuaJavaOwnerIdentifier(
+        expression: io.github.dingyi222666.luaparser.parser.ast.node.ExpressionNode
+    ): Boolean {
+        val identifier = expression as? Identifier ?: return false
+        return identifier.name == "luajava" || identifier.name == "LuaJava"
+    }
+
+    private fun declarationResolvesToLuaJavaHelper(
+        semanticFile: WorkspaceSemanticFile,
+        declaration: BinderDeclaration,
+        helperName: String
+    ): Boolean {
+        val initializer = requireInitializerForLocal(declaration) ?: return false
+        return when (val base = effectiveCallBase(initializer)) {
+            is MemberExpression ->
+                base.identifier.name == helperName && isLuaJavaOwnerIdentifier(base.base)
+            is Identifier -> base.name == helperName
+            else -> false
+        }
+    }
+
+    private companion object {
+        val LUA_JAVA_CLASS_LOAD_HELPERS: Set<String> = setOf(
+            "bindClass",
+            "newInstance",
+            "createProxy",
+            "loadLib",
+            "createArray",
+            "newArray"
+        )
     }
 
     private fun memberExpressionAt(

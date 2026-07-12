@@ -33,12 +33,15 @@ class JvmWorkspaceEngine(
         // packageProvidersFor (packages/ paths only). Shallow class providers for package
         // members come from packageMemberClassProvidersFor (classes/ paths) so package-list
         // keys never mix __jvm__/classes prefixes.
-        val freeClassNames = collectFreeClassLikeNames(input)
+        // Free UpperCamel identifiers still activate path-scoped import aliases in
+        // workspaceContext (Android-Lua bare Locale/TextView). They must NOT auto-mount
+        // reflective class providers into extraProviders: short require("Arrays") without
+        // CLASSES_METADATA / explicit import/bindClass must stay unresolved (TASK-628).
         val sourceDiscoveredClasses = collectSourceDiscoveredClasses(
             documentFacts,
             resolvedConfiguration,
             astImportTargets,
-            freeClassNames
+            freeClassNames = emptySet()
         )
         val packageTargets = collectWildcardImportTargets(baseConfiguration, documentFacts, astImportTargets)
             .mapNotNull(::normalizePackageProviderTarget)
@@ -243,8 +246,10 @@ class JvmWorkspaceEngine(
                 }
             }
             astImportTargets.forEach(::addExplicitClassTarget)
-            // Free short names resolve through DEFAULT_IMPORT_PREFIXES (java.util.Locale, …).
-            freeClassNames.forEach(::addExplicitClassTarget)
+            // freeClassNames: intentionally not mounted into extraProviders (TASK-628).
+            // Path-scoped activation still uses free names in collectSourceImports.
+            @Suppress("UNUSED_PARAMETER")
+            val ignoredFreeClassNames = freeClassNames
         }
     }
 

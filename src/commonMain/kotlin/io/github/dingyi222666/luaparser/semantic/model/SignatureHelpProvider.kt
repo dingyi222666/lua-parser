@@ -85,7 +85,12 @@ internal class SignatureHelpProvider(
             return null
         }
 
-        val signatures = resolutionSignatures.map(::toSignatureInformation)
+        // Reflected Java static/instance members often surface generic callables as
+        // fun<T>(...): R. That form does not contain the literal "fun(" substring and also
+        // omits the Java method name, so LSP hard-locks for Arrays.asList / similar static
+        // members fail. Prefer labels that include the call-site member name when present.
+        val methodName = callableMethodName(callableBase, declaration)
+        val signatures = resolutionSignatures.map { toSignatureInformation(it, methodName) }
         val activeParameter = activeParameterIndex(call, position)
         val activeSignature = selectActiveSignatureIndex(resolutionSignatures, callResolution)
             .coerceIn(0, signatures.lastIndex)
@@ -150,11 +155,46 @@ internal class SignatureHelpProvider(
         return activeParameter.coerceIn(0, signature.parameters.lastIndex)
     }
 
-    private fun toSignatureInformation(signature: FunctionType): SignatureInformation {
+    private fun toSignatureInformation(
+        signature: FunctionType,
+        methodName: String? = null
+    ): SignatureInformation {
         return SignatureInformation(
-            label = signature.displayName,
+            label = signatureHelpLabel(signature, methodName),
             parameters = signature.parameters.map(::toParameterInformation)
         )
+    }
+
+    /**
+     * Build the LSP signature label for one overload.
+     *
+     * Plain Lua/function surfaces already use `fun(...): R` and must keep that exact form
+     * for existing exact-label asserts. Generic Java reflection surfaces render as
+     * `fun<T>(...): R` (type parameters sit between `fun` and `(`), so they match neither
+     * `fun(` nor the member name. When the call base is a named member (e.g. asList),
+     * prefix the member name so signature help remains discoverable.
+     */
+    private fun signatureHelpLabel(signature: FunctionType, methodName: String?): String {
+        val display = signature.displayName
+        if (display.contains("fun(")) {
+            return display
+        }
+        val trimmedName = methodName?.trim().orEmpty()
+        if (trimmedName.isNotEmpty() && !display.contains(trimmedName)) {
+            return "$trimmedName $display"
+        }
+        return display
+    }
+
+    private fun callableMethodName(
+        callableBase: ExpressionNode,
+        declaration: BinderDeclaration?
+    ): String? {
+        return when (callableBase) {
+            is MemberExpression -> callableBase.identifier.name.takeIf { it.isNotBlank() }
+            is Identifier -> callableBase.name.takeIf { it.isNotBlank() }
+            else -> declaration?.name?.takeIf { it.isNotBlank() }
+        }
     }
 
     private fun toParameterInformation(parameter: FunctionParameter): ParameterInformation {
