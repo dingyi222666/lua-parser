@@ -1,0 +1,32 @@
+{
+  "sliceId": "s001",
+  "runId": "29175268346",
+  "sha": "aeeb33d96437fe98bf54ffac4360e66145cd988e",
+  "status": "success",
+  "exitCode": 0,
+  "durationSec": 20,
+  "tests": 246,
+  "failures": 0,
+  "errors": 0,
+  "skipped": 102,
+  "failedTests": [],
+  "testsPatterns": [
+    "integration.AndroidLuaCorpusSemanticVerificationTest",
+    "integration.AndroidLuaMixedLuajavaIntegrationTddTest",
+    "integration.LuaJavaBindClassHoverIntegrationTddTest",
+    "integration.RequireChainCompletionIntegrationTddTest",
+    "interop.jvm.AndroidJarActivityMemberSurfaceTddTest",
+    "interop.jvm.AndroidJarContextMemberSurfaceTddTest",
+    "interop.jvm.AndroidJarDefaultPathDiscoveryTddTest",
+    "interop.jvm.AndroidJarIntentMemberSurfaceTddTest",
+    "interop.jvm.AndroidJarPackageEnumerationTddTest",
+    "interop.jvm.AndroidJarReflectionTddTest",
+    "interop.jvm.JvmClassProviderArrayClassTddTest",
+    "interop.jvm.JvmClassProviderInnerClassTddTest",
+    "interop.jvm.JvmClassloaderConfigurationTddTest",
+    "interop.jvm.JvmClassloaderIsolationPolicyTddTest",
+    "interop.jvm.JvmClassloaderParentChildPolicyTddTest"
+  ],
+  "gate": "must-green-to-advance",
+  "finishedAt": "2026-07-12T01:29:07Z"
+}

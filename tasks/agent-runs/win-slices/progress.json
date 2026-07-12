@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "updatedAt": "2026-07-12T01:20:00Z",
+  "updatedAt": "2026-07-12T01:29:07Z",
   "strategy": "must-green-to-advance",
   "chunkSize": 15,
   "cycle": 1,
@@ -8,26 +8,26 @@
     "total": 25,
     "totalFiles": 367,
     "pending": 24,
-    "success": 0,
-    "failure": 1,
+    "success": 1,
+    "failure": 0,
     "running": 0,
-    "filesDone": 0
+    "filesDone": 15
   },
   "slices": {
     "s001": {
-      "status": "failure",
+      "status": "success",
       "label": "integration..interop.jvm",
       "fileCount": 15,
-      "lastRunId": "29174854977",
-      "lastSha": "02fd9561441845187a4b668f80c35389a109ec7f",
-      "tests": 0,
+      "lastRunId": "29175268346",
+      "lastSha": "aeeb33d96437fe98bf54ffac4360e66145cd988e",
+      "tests": 246,
       "failures": 0,
       "errors": 0,
       "failedTests": [],
-      "durationSec": null,
-      "artifact": "results/s001-29174854977.json",
-      "updatedAt": "2026-07-12T01:20:00Z",
-      "note": "compileTestKotlinJvm failed before tests; gate holds s001 failure from prior joint green-lock red"
+      "durationSec": 20,
+      "artifact": "results/s001-29175268346.json",
+      "updatedAt": "2026-07-12T01:29:07Z",
+      "note": "green on run 29175268346; 246 tests 0 failures"
     },
     "s002": {
       "status": "pending",
@@ -412,6 +412,15 @@
       "durationSec": null,
       "at": "2026-07-12T01:20:00Z",
       "note": "compileTestKotlinJvm syntax errors; no junit xml"
+    },
+    {
+      "sliceId": "s001",
+      "runId": "29175268346",
+      "status": "success",
+      "tests": 246,
+      "failures": 0,
+      "durationSec": 20,
+      "at": "2026-07-12T01:29:07Z"
     }
   ],
   "gate": {
