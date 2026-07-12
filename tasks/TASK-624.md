@@ -1,6 +1,6 @@
 id: TASK-624
 title: Windows LSP diagnostics publish on didChange product fix
-status: ready
+status: review
 priority: p0
 owner: unassigned
 depends_on: []
@@ -9,7 +9,7 @@ scope:
   - src/jvmMain/kotlin/io/github/dingyi222666/luaparser/lsp/LuaTextDocumentService.kt
   - src/jvmTest/kotlin/lsp/LspDiagnosticsPublishOnChangeTddTest.kt
 acceptance_criteria:
-  - Clear Windows slice failures (evidence run 29191587333 / WINSLICE-29191587333 / slice s003):
+  - Clear Windows slice failures (evidence run 29192058315 / WINSLICE-29192058315 / slice s003; prior 29191587333):
     - lsp.LspDiagnosticsPublishOnChangeTddTest#range_edit_introducing_parse_error_publishes_diagnostics
     - lsp.LspDiagnosticsPublishOnChangeTddTest#multi_range_content_changes_in_one_notification_apply_in_order
     - lsp.LspDiagnosticsPublishOnChangeTddTest#server_connected_client_receives_change_publishes_in_edit_order
@@ -19,10 +19,11 @@ acceptance_criteria:
   - Observed failures: ranged/full didChange paths that introduce invalid Lua do not publish non-empty Error diagnostics as required; multi-range apply order and server-client publish order fail asserts; corpus valid/invalid/repair matrix across URIs fails; range repair of bare local-name error must clear diagnostics (assert message).
   - Product must apply contentChanges (single/multi range + full sync) then republish diagnostics for that URI only; invalid→non-empty Error diagnostics; repair→clear; sibling URIs isolated; edit-order publish deterministic.
   - Prefer product fix in LuaTextDocumentService/LuaLanguageService publish path; coordinate with TASK-623 if parse diagnostics severity is Warning-only (Error hard-lock). No CURRENTLY_ACCEPTS weakening of green-lock asserts.
-  - Related ready TASK-519/TASK-600 remain capability/product locks but this task owns the s003 failed method list with evidence run 29191587333.
+  - Related ready TASK-519/TASK-600 remain capability/product locks but this task owns the s003 failed method list with evidence run 29192058315.
 required_tests:
   - Deferred to TASK-043 / windows-jvmtest slice s003: `./gradlew.bat jvmTest --tests lsp.LspDiagnosticsPublishOnChangeTddTest`
 notes:
+  - Windows slice s003 run 29192058315: same 6 LspDiagnosticsPublishOnChange reds remain among 11 failures. Reuse ready product task; locks cleared after TASK-622.
   - Windows slice s003 run 29191587333: 6 LspDiagnosticsPublishOnChange reds after prior test-only TASK-449 accepted on Mac.
   - Distinct from TASK-449 (done corpus) and supersedes incomplete TASK-600 AC for these methods under WINSLICE evidence.
   - Serialize exclusive claim on LuaTextDocumentService.kt / LuaLanguageService.kt vs TASK-623/625.
@@ -36,3 +37,6 @@ related_commits: []
 progress:
   - 2026-07-12T materialize WINSLICE-29191587333: created ready product fix for 6 LspDiagnosticsPublishOnChange reds.
   - 2026-07-12T12:01:37Z: worker-WINSLICE-29191587333-TASK-624 STOP leave ready — exclusive locks held by live TASK-622 (LuaLanguageService.kt) and TASK-625 (LuaTextDocumentService.kt). No product files edited.
+  - 2026-07-12T materialize WINSLICE-29192058315: still ready; 6 didChange reds remain on evidence run 29192058315; locks cleared; re-queue for product fix.
+  - 2026-07-12T12:13:46Z: worker-WINSLICE-29192058315-TASK-624 claimed in_progress; exclusive locks acquired; investigating didChange publish diagnostics product path.
+  - 2026-07-12T12:23:07Z: worker-WINSLICE-29192058315-TASK-624 product fix for s003 didChange reds: LuaLanguageService.publishDiagnostics always omits checker.local.unused Warnings and drops non-Error semantic diags when parse recovery present; ExpressionUsageChecker blank-name ignore retained (from TASK-625). status=review. Workers no Gradle.

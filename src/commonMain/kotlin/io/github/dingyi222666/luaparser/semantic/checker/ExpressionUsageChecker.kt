@@ -329,6 +329,12 @@ internal class ExpressionUsageChecker(
     }
 
     private fun isIgnoredLocalName(name: String): Boolean {
+        // Blank/empty names are parse-recovery placeholders (e.g. `local =`), not
+        // real locals. Suppress unused-local noise so LSP Error hard-locks on
+        // invalid sources are not diluted by "Unused local ''" warnings.
+        if (name.isBlank()) {
+            return true
+        }
         return name == "_" || name.startsWith("_")
     }
 

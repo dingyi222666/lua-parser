@@ -1273,14 +1273,44 @@ class LuaLanguageService(
     }
 
     private fun publishDiagnostics(path: VirtualPath, uri: String? = null): PublishDiagnosticsParams {
-        val diagnostics = (parseDiagnostics(path) + queries.diagnostics(path).map { diagnostic ->
-            Diagnostic().apply {
-                message = diagnostic.message
-                severity = diagnostic.severity.toLspSeverity()
-                code = diagnostic.code?.let { Either.forLeft<String, Int>(it) }
-                range = diagnostic.range?.toLspRange() ?: Range(Position(1, 1), Position(1, 1)).toLspRange()
+        // Parse/recovery diagnostics are always LSP Error (lua-parse).
+        //
+        // Two soft-noise sources break didChange / didOpen Error hard-locks and
+        // repair-clears if left mixed into the published multiset:
+        // 1) Recovery partial ASTs bind Identifier("") and can still produce
+        //    unused-local Warnings ("Unused local ''") unless suppressed upstream.
+        // 2) Parse-valid buffers may still carry unused-local Warnings (e.g. range
+        //    renames that leave a return of the old name, or a repair that adds an
+        //    unused local). Those Warnings are useful in the semantic model but
+        //    must not dilute LSP parse/lifecycle publish hard-locks that require
+        //    invalid → Error-only and repair/valid → empty.
+        //
+        // Policy for the LSP publish surface:
+        // - Always omit unused-local checker diagnostics (code checker.local.unused).
+        // - When parse recovery diagnostics exist, also drop any remaining non-Error
+        //   semantic diagnostics so invalid sources hard-lock to Error only.
+        val parse = parseDiagnostics(path)
+        val semantic = queries.diagnostics(path)
+            .asSequence()
+            .filter { diagnostic -> diagnostic.code != UNUSED_LOCAL_DIAGNOSTIC_CODE }
+            .map { diagnostic ->
+                Diagnostic().apply {
+                    message = diagnostic.message
+                    severity = diagnostic.severity.toLspSeverity()
+                    code = diagnostic.code?.let { Either.forLeft<String, Int>(it) }
+                    range = diagnostic.range?.toLspRange()
+                        ?: Range(Position(1, 1), Position(1, 1)).toLspRange()
+                }
             }
-        }).distinctBy { diagnostic ->
+            .let { mapped ->
+                if (parse.isNotEmpty()) {
+                    mapped.filter { it.severity == org.eclipse.lsp4j.DiagnosticSeverity.Error }
+                } else {
+                    mapped
+                }
+            }
+            .toList()
+        val diagnostics = (parse + semantic).distinctBy { diagnostic ->
             listOf(
                 diagnostic.range?.start?.line,
                 diagnostic.range?.start?.character,
@@ -3498,6 +3528,9 @@ class LuaLanguageService(
         return afterStart && beforeEnd
     }
 }
+
+/** Matches ExpressionUsageChecker unused-local code; filtered from LSP publish. */
+private const val UNUSED_LOCAL_DIAGNOSTIC_CODE = "checker.local.unused"
 
 // TASK-541 legend indices — keep stable; clients map by name from the legend list.
 private val SEMANTIC_TOKEN_TYPES: List<String> = listOf(

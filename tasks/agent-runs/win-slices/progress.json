@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "updatedAt": "2026-07-12T11:53:21Z",
+  "updatedAt": "2026-07-12T12:09:37Z",
   "strategy": "must-green-to-advance",
   "chunkSize": 15,
   "cycle": 1,
@@ -48,13 +48,12 @@
       "status": "failure",
       "label": "lsp",
       "fileCount": 15,
-      "lastRunId": "29191587333",
-      "lastSha": "81d78f57b41c8feb7be2a6d5a5d29e29b9117167",
+      "lastRunId": "29192058315",
+      "lastSha": "dbfead19df41cd7bbaf0431899df261cb03a13df",
       "tests": 208,
-      "failures": 12,
+      "failures": 11,
       "errors": 0,
       "failedTests": [
-        "lsp.LspDefinitionMultiLocalShadowTddTest#definition_nested_block_inside_function_prefers_block_local_over_parameter[jvm]",
         "lsp.LspDiagnosticSeverityMappingTddTest#queriedDiagnosticsAgreeWithPublishedSeveritiesForParseError[jvm]",
         "lsp.LspDiagnosticSeverityMappingTddTest#parseRecoveryDiagnosticPublishesAsLspError[jvm]",
         "lsp.LspDiagnosticsPublishOnChangeTddTest#range_edit_introducing_parse_error_publishes_diagnostics[jvm]",
@@ -67,9 +66,9 @@
         "lsp.LspDidOpenMultiDocDiagnosticsTddTest#server_connected_client_receives_multi_doc_open_diagnostics_in_order[jvm]",
         "lsp.LspDidOpenMultiDocDiagnosticsTddTest#multi_doc_corpus_table_covers_valid_invalid_and_reopen_matrix[jvm]"
       ],
-      "durationSec": 45,
-      "artifact": "results/s003-29191587333.json",
-      "updatedAt": "2026-07-12T11:53:21Z"
+      "durationSec": 40,
+      "artifact": "results/s003-29192058315.json",
+      "updatedAt": "2026-07-12T12:09:37Z"
     },
     "s004": {
       "status": "pending",
@@ -481,6 +480,15 @@
       "failures": 12,
       "durationSec": 45,
       "at": "2026-07-12T11:53:21Z"
+    },
+    {
+      "sliceId": "s003",
+      "runId": "29192058315",
+      "status": "failure",
+      "tests": 208,
+      "failures": 11,
+      "durationSec": 40,
+      "at": "2026-07-12T12:09:37Z"
     }
   ],
   "gate": {

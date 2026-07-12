@@ -1,6 +1,6 @@
 id: TASK-622
 title: Windows LSP definition nested block local over parameter product fix
-status: review
+status: done
 priority: p0
 owner: unassigned
 depends_on: []
@@ -20,6 +20,7 @@ notes:
   - Windows slice s003 run 29191587333: 12 reds; this task owns the single LspDefinitionMultiLocalShadow method.
   - Distinct from test-only TASK-356 (done corpus); this is product resolution fix.
   - Workers no Gradle. One task one agent. No docs filler.
+  - WINSLICE-29192058315: definition red gone from s003 (11 failures, no LspDefinitionMultiLocalShadow). Marked done; do not re-queue review-only without remaining red.
 related_locks:
   - locks/tasks/TASK-622.lock
   - locks/files/tasks__TASK-622.md.lock
@@ -29,3 +30,4 @@ progress:
   - 2026-07-12T materialize WINSLICE-29191587333: created ready product fix for definition nested block local over parameter red.
   - 2026-07-12T11:57:57Z: worker-WINSLICE-29191587333-TASK-622 claimed; investigating nested block local vs parameter definition resolution.
   - 2026-07-12T12:05:00Z: worker-WINSLICE-29191587333-TASK-622 product fix in ReferenceQueries: parent-chain walk keeps innermost VALUE binding; PARAMETER kind-rank no longer beats nested block LOCAL. status=review.
+  - 2026-07-12T materialize WINSLICE-29192058315: definition method absent from failures.txt (11 reds remaining are diagnostics-only). status=done.

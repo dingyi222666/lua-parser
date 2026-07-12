@@ -1,0 +1,32 @@
+{
+  "runId": "29192058315",
+  "sliceId": "s003",
+  "status": "failure",
+  "tests": 208,
+  "failures": 11,
+  "failedTests": [
+    "lsp.LspDiagnosticSeverityMappingTddTest#queriedDiagnosticsAgreeWithPublishedSeveritiesForParseError[jvm]",
+    "lsp.LspDiagnosticSeverityMappingTddTest#parseRecoveryDiagnosticPublishesAsLspError[jvm]",
+    "lsp.LspDiagnosticsPublishOnChangeTddTest#range_edit_introducing_parse_error_publishes_diagnostics[jvm]",
+    "lsp.LspDiagnosticsPublishOnChangeTddTest#multi_range_content_changes_in_one_notification_apply_in_order[jvm]",
+    "lsp.LspDiagnosticsPublishOnChangeTddTest#server_connected_client_receives_change_publishes_in_edit_order[jvm]",
+    "lsp.LspDiagnosticsPublishOnChangeTddTest#full_sync_valid_to_invalid_publishes_non_empty_errors_for_that_uri_only[jvm]",
+    "lsp.LspDiagnosticsPublishOnChangeTddTest#corpus_table_valid_invalid_repair_matrix_across_uris[jvm]",
+    "lsp.LspDiagnosticsPublishOnChangeTddTest#range_edit_repairing_parse_error_clears_diagnostics[jvm]",
+    "lsp.LspDidOpenMultiDocDiagnosticsTddTest#mixed_valid_and_invalid_opens_isolate_diagnostics_per_uri[jvm]",
+    "lsp.LspDidOpenMultiDocDiagnosticsTddTest#server_connected_client_receives_multi_doc_open_diagnostics_in_order[jvm]",
+    "lsp.LspDidOpenMultiDocDiagnosticsTddTest#multi_doc_corpus_table_covers_valid_invalid_and_reopen_matrix[jvm]"
+  ],
+  "progressSummary": {
+    "success": 2,
+    "failure": 1,
+    "pending": 22,
+    "running": 0,
+    "total": 25,
+    "filesDone": 30,
+    "activeSlice": "s003",
+    "activeStatus": "failure",
+    "updatedAt": "2026-07-12T12:09:37Z"
+  },
+  "notes": "Merged CI progress.json (updatedAt 2026-07-12T12:09:37Z) over local; copied result s003-29192058315.json; s003 still failure with 11 failures / 208 tests (down from prior 12). Parsed 11 failed tests from JUnit XML."
+}
