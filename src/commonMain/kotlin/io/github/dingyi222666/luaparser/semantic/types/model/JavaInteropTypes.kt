@@ -236,7 +236,13 @@ data class JavaPrimitiveType(
     }
 }
 
-/** JVM array surface used for reflected array returns and LuaJava typed array helpers. */
+/**
+ * JVM array surface used for reflected array returns and LuaJava typed array helpers.
+ *
+ * Prefer nested single-rank wrappers for multi-dim allocations so index peeling yields
+ * intermediate arrays (Locale[][] -> Locale[] -> Locale). Display uses repeated "[]"
+ * suffixes only (never "[[]]").
+ */
 data class JavaArrayType(
     val elementType: Type,
     val dimensions: Int = 1,
@@ -245,6 +251,10 @@ data class JavaArrayType(
     init {
         require(dimensions > 0) { "Java array dimensions must be positive." }
     }
+
+    /** Canonical hover/display: component root plus one "[]" per nested/flat rank. */
+    override val displayName: String
+        get() = buildJavaArrayName(elementType, dimensions)
 }
 
 internal fun Type.javaVarargElementType(): Type? = when (this) {
@@ -302,7 +312,23 @@ private fun JavaClassType.typeArgumentMapping(typeArguments: List<Type>): Map<St
     }
 }
 
+/**
+ * Build a Java-style array display name. Always appends exact "[]" per dimension
+ * (dimensions=2 on Locale -> "java.util.Locale[][]"). Nested element arrays already
+ * contribute their own "[]" via [Type.displayName], so prefer dimensions=1 wrappers
+ * for multi-rank modeling.
+ *
+ * Never emits the double-bracket token "[[]]"; each rank is the two-char "[]".
+ */
 private fun buildJavaArrayName(elementType: Type, dimensions: Int): String {
-    val suffix = "[]".repeat(dimensions.coerceAtLeast(1))
-    return "${elementType.displayName}$suffix"
+    val root = elementType.displayName
+    val rank = dimensions.coerceAtLeast(1)
+    // Explicit loop avoids any platform String.repeat edge and keeps each rank as "[]".
+    val builder = StringBuilder(root.length + rank * 2)
+    builder.append(root)
+    repeat(rank) {
+        builder.append('[')
+        builder.append(']')
+    }
+    return builder.toString()
 }

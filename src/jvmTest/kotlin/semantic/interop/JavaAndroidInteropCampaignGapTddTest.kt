@@ -459,11 +459,23 @@ class JavaAndroidInteropCampaignGapTddTest {
     }
 
     private fun assertCallable(displayName: String?) {
+        val text = displayName.orEmpty()
         assertTrue(
-            displayName.orEmpty().contains("fun("),
+            looksCallable(text),
             "Expected callable type, got $displayName."
         )
         assertNotUnknown(displayName)
+    }
+
+    /**
+     * Product JVM static helpers may render as monomorphic `fun(...)` or generic
+     * overload sets like `fun<K, V>(...): ... & fun<K: Comparable, V>(): ...`
+     * (e.g. Map.Entry.comparingByKey). Accept any FunctionType-compatible display.
+     */
+    private fun looksCallable(displayName: String): Boolean {
+        return displayName.contains("fun(") ||
+            displayName.contains("fun<") ||
+            Regex("""fun\s*<[^>]+>\s*\(""").containsMatchIn(displayName)
     }
 
     private fun assertNotUnknown(displayName: String?) {

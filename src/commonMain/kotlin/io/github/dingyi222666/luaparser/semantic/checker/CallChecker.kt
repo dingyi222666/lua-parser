@@ -263,8 +263,12 @@ class CallChecker(
     }
 
     private fun isArgumentAssignable(parameterType: Type, argumentType: Type): Boolean {
+        // TypeRelations already models Java array/List/Map container assignability for
+        // isAssignableFrom; keep the explicit container helper so call ranking and soft
+        // recovery share the same conservative table-conversion gate (TASK-658).
         return parameterType.isAssignableFrom(argumentType) ||
-            parameterType.isJavaListenerAssignableFrom(argumentType)
+            parameterType.isJavaListenerAssignableFrom(argumentType) ||
+            parameterType.isJavaContainerAssignableFrom(argumentType)
     }
 
     private data class Candidate(

@@ -34,7 +34,8 @@ import kotlin.test.assertTrue
  * - Logical `and` / `or` → [unionTypeOf] of both sides (conservative short-circuit;
  *   full ladder corpus lives in ExpressionAndOrShortCircuitTddTest / TASK-291).
  * - Nested homogeneous chains stay on the same result kind; intermediate
- *   BinaryExpressions remain evaluable without throw.
+ *   BinaryExpressions remain evaluable without throw. Concat chains use honest
+ *   Lua right-associativity (intermediate is root.right), matching power (^).
  * - Unknown / unbound identifiers on either side do not crash; arithmetic still
  *   yields number, concat string, relational boolean (operand types are evaluated
  *   but not required for the operator-kind result).
@@ -265,12 +266,15 @@ class ExpressionTypeEvaluatorBinaryOpsTddTest {
 
     @Test
     fun concatChainStaysStringAndIntermediatesEvaluate() {
+        // Lua concat is right-associative: "a" .. "b" .. "c" → "a" .. ("b" .. "c")
+        // Keep honest tree shape; intermediate BinaryExpression is the right child.
         val harness = evaluator("return \"a\" .. \"b\" .. \"c\"")
         val root = assertIs<BinaryExpression>(harness.returnExpression())
         assertEquals(ExpressionOperator.CONCAT, root.operator)
         assertStringish(harness.evaluator.evaluate(root), "a..b..c")
-        val left = assertIs<BinaryExpression>(root.left)
-        assertStringish(harness.evaluator.evaluate(left), "a..b intermediate")
+        val intermediate = assertIs<BinaryExpression>(root.right)
+        assertEquals(ExpressionOperator.CONCAT, intermediate.operator)
+        assertStringish(harness.evaluator.evaluate(intermediate), "b..c intermediate")
     }
 
     @Test

@@ -418,7 +418,9 @@ class ExpressionTypeEvaluator internal constructor(
     /**
      * Reflection-backed return typing for Java member/static chains when exact CallChecker
      * ranking fails closed. Only considers signatures already present on the callable surface
-     * (no invented overloads). Prefer soft-assignable arity matches; otherwise pure arity.
+     * (no invented overloads). Prefer soft-assignable arity matches; pure arity is a last
+     * resort for primitive/Object shells only and must not invent precise returns for rejected
+     * Lua table → Java array/List/Map conversions (TASK-658).
      */
     private fun javaChainedCallReturnType(
         callableType: Type,
@@ -450,7 +452,15 @@ class ExpressionTypeEvaluator internal constructor(
         val softCompatible = arityCompatible.filter { signature ->
             javaCallArgumentsSoftCompatible(signature, argumentTypes)
         }
-        val candidates = softCompatible.ifEmpty { arityCompatible }
+        val candidates = when {
+            softCompatible.isNotEmpty() -> softCompatible
+            // Table-shaped arguments must pass TypeRelations / isJavaContainerAssignableFrom.
+            // Pure arity recovery would invent the method return (e.g. number) for mixed/named
+            // tables → String[] and raw List<*> conversions that conservative assignability
+            // already rejected.
+            argumentTypes.any(::isLuaTableShapedArgument) -> return null
+            else -> arityCompatible
+        }
         // Prefer the first reflection-order signature whose return is known; when all agree,
         // that single type is the chain intermediate used by completion/hover.
         val knownReturns = candidates.map { it.returnType }.filter { it != UnknownType }
@@ -464,6 +474,16 @@ class ExpressionTypeEvaluator internal constructor(
             // Do not invent a union of unrelated overload returns without evidence which
             // overload applied; keep deterministic first known return from soft/arity rank.
             knownReturns.first()
+        }
+    }
+
+    /** True for Lua table / module / array literal shapes used as Java call arguments. */
+    private fun isLuaTableShapedArgument(type: Type): Boolean {
+        return when (type) {
+            is TableType, is ModuleType, is ArrayType -> true
+            is UnionType -> type.types.any(::isLuaTableShapedArgument)
+            is IntersectionType -> type.types.any(::isLuaTableShapedArgument)
+            else -> false
         }
     }
 
@@ -853,12 +873,13 @@ class ExpressionTypeEvaluator internal constructor(
     }
 
     /**
-     * TASK-246 / TASK-525 / TASK-592: LuaJava `newArray(class, dim1 [, dim2, ...])` typing.
+     * TASK-246 / TASK-525 / TASK-592 / TASK-588: LuaJava `newArray(class, dim1 [, dim2, ...])` typing.
      *
-     * Valid multi-dimensional allocations return a nested [JavaArrayType] rank equal to the
-     * dimension-argument count (`T[][]` for two dims), so index peeling yields intermediate
-     * array surfaces (`T[]`) before the component root. Invalid/missing dimensions still
-     * degrade to `unknown[]` without inventing a component class (TASK-525 diagnostics).
+     * Valid multi-dimensional allocations return nested single-rank [JavaArrayType] wrappers
+     * equal to the dimension-argument count (`T[][]` for two dims). Index peeling then yields
+     * intermediate array surfaces (`T[]`) before the component root. Display uses repeated
+     * "[]" only (never "[[]]"). Invalid/missing dimensions still degrade to `unknown[]`
+     * without inventing a component class (TASK-525 diagnostics).
      */
     private fun resolveLuaJavaNewArrayCall(node: CallExpression, context: Context): Type {
         // TASK-246 / TASK-525: Invalid/missing dimensions must not keep a known Class[]
@@ -878,14 +899,18 @@ class ExpressionTypeEvaluator internal constructor(
     }
 
     /**
-     * Build a nested [JavaArrayType] of [rank] dimensions around [componentType].
+     * Build nested single-rank [JavaArrayType] wrappers of [rank] around [componentType].
      * Nested ranks (rather than only `dimensions=N` on a flat component) keep
-     * [MemberResolver] index peeling working: each index returns the next inner array.
+     * [MemberResolver] index peeling working: each index returns the next inner array,
+     * and [JavaArrayType.displayName] stays `T` + `"[]".repeat(totalRank)` without "[[]]".
      */
     private fun nestedJavaArrayType(componentType: Type, rank: Int): Type {
         var current = componentType
+        // Always dimensions=1 wrappers so elementType is the previous rank surface.
+        // Flat multi-dim (dimensions=N) would also display as T[]...[] but would not peel
+        // intermediate arrays on index without extra MemberResolver logic.
         repeat(rank.coerceAtLeast(1)) {
-            current = JavaArrayType(elementType = current)
+            current = JavaArrayType(elementType = current, dimensions = 1)
         }
         return current
     }

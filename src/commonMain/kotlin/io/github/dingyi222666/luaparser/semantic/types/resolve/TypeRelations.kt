@@ -410,6 +410,11 @@ object TypeRelations {
             PrimitiveType.UNKNOWN, PrimitiveType.ANY, PrimitiveType.NEVER, PrimitiveType.ERROR -> false
             is TypeParameterType -> normalized.constraint?.let(::isKnownType) == true
             is UnionType -> normalized.types.isNotEmpty() && normalized.types.all(::isKnownType)
+            // Raw Object / wildcard upper-bound is not a precise container element type.
+            is JavaInstanceType ->
+                normalized.classType.javaName.binaryName != "java.lang.Object"
+            is JavaClassType ->
+                normalized.javaName.binaryName != "java.lang.Object"
             else -> true
         }
     }

@@ -88,7 +88,22 @@ class MemberResolver(
             is JavaInstanceType -> resolveJavaInstanceIndex(normalized, indexNode)
             is JavaArrayType -> {
                 if (PrimitiveType.NUMBER.isAssignableFrom(indexType)) {
-                    MemberResolution(type = normalized.elementType, accessKind = MemberAccessKind.INDEX, baseType = normalized)
+                    // Peel one rank: nested single-rank wrappers return elementType;
+                    // flat multi-dim (dimensions>1) reduces dimensions by one so hover
+                    // stays T[]...[] without inventing bare component early.
+                    val peeled = when {
+                        normalized.dimensions > 1 ->
+                            JavaArrayType(
+                                elementType = normalized.elementType,
+                                dimensions = normalized.dimensions - 1
+                            )
+                        else -> normalized.elementType
+                    }
+                    MemberResolution(
+                        type = peeled,
+                        accessKind = MemberAccessKind.INDEX,
+                        baseType = normalized
+                    )
                 } else {
                     MemberResolution(baseType = normalized, failureReason = MemberFailureReason.INVALID_INDEX_TYPE)
                 }

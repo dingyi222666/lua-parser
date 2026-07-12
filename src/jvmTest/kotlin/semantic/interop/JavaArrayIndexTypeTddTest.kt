@@ -171,10 +171,10 @@ class JavaArrayIndexTypeTddTest {
             """.trimIndent()
         )
 
-        // Rank modeling may collapse multi-dim to a single Java array surface, but
-        // a numeric index must still yield the modeled component type root.
-        assertHoverType(harness, "matrix", "java.util.Locale[]", occurrence = 2)
-        assertHoverType(harness, "first", "java.util.Locale", occurrence = 2)
+        // Nested JavaArrayType rank from newArray(Locale, 2, 3) is Locale[][]; one numeric
+        // index peels a single rank to intermediate Locale[] (not bare Locale / not [[]]).
+        assertHoverType(harness, "matrix", "java.util.Locale[][]", occurrence = 2)
+        assertHoverType(harness, "first", "java.util.Locale[]", occurrence = 2)
     }
 
     // ------------------------------------------------------------------
@@ -329,7 +329,8 @@ class JavaArrayIndexTypeTddTest {
             """.trimIndent()
         )
 
-        assertHoverType(harness, "first", "java.util.Locale", occurrence = 2)
+        // One index into rank-2 matrix peels to Locale[]; length stays number/int-like.
+        assertHoverType(harness, "first", "java.util.Locale[]", occurrence = 2)
         assertHoverType(harness, "count", "number", occurrence = 2)
         assertHoverType(harness, "length", "number")
     }

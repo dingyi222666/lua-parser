@@ -390,16 +390,19 @@ class TypeResolver(
             resolveDeclaration(parameter.id).declaredType?.let { resolvedParameterTypes[parameter.name] = it }
         }
 
-        // Leave bare undocumentated functions without a declaredType so expression evaluation
-        // can still infer ordinary Lua returns (table literals, etc.). Materializing
-        // `function(...): unknown` here previously suppressed local helper-shadow return inference.
+        // Bare undocumented GLOBAL function sites intentionally keep declaredType null so
+        // export-only inference is not suppressed (see undocumentedGlobalFunctionHasNoSyntheticFunctionType).
+        // Unannotated local FUNCTION declarations still expose FunctionType(return=UnknownType)
+        // with no invented multi-return slots (see unannotatedFunctionDeclaredReturnIsUnknown).
+        // ExpressionTypeEvaluator already derives local function value types from the body rather
+        // than short-circuiting on this declaredType, so bare local FunctionType is safe.
         val hasDocumentedShape =
             returnTypes.isNotEmpty() ||
                 typeParameters.isNotEmpty() ||
                 overloadTypes.isNotEmpty() ||
                 resolvedParameterTypes.isNotEmpty() ||
                 parameters.any { it.type != UnknownType }
-        if (!hasDocumentedShape) {
+        if (!hasDocumentedShape && declaration.kind != DeclarationKind.FUNCTION) {
             return declaration
         }
 
@@ -452,7 +455,8 @@ class TypeResolver(
      * GLOBAL may be either a non-local function declaration (`function f()`) or a plain
      * global value. Prefer the FUNCTION declaration path when the binder attached function
      * parameters/type-parameters or function doc tags; otherwise keep syntax-only value
-     * resolution (and the bare-function guard that avoids synthetic `function(...): unknown`).
+     * resolution. Bare undocumented GLOBAL functions still avoid synthetic
+     * `function(...): unknown` inside resolveFunctionDeclaration.
      */
     private fun resolveGlobalDeclaration(declaration: BinderDeclaration): BinderDeclaration {
         if (shouldResolveGlobalAsFunction(declaration)) {

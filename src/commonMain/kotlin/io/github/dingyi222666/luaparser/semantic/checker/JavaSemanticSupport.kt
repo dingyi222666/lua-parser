@@ -90,9 +90,10 @@ internal fun Type.isJavaListenerAssignableFrom(source: Type): Boolean {
 
 /**
  * Conservatively accepts Lua table / array argument shapes for Java array, List, and Map
- * parameters when element / key / value types are statically known. Dynamic or mixed tables
- * remain non-assignable so call checking degrades to diagnostics / unknown rather than
- * inventing precise conversions.
+ * parameters when element / key / value types are statically known. Named-key / mixed tables
+ * and raw/wildcard element types (List, Object) remain non-assignable so call checking and
+ * Java chain recovery degrade to diagnostics / unknown rather than inventing precise
+ * method returns (TASK-658).
  */
 internal fun Type.isJavaContainerAssignableFrom(source: Type): Boolean {
     return TypeRelations.isJavaContainerAssignable(this, source)
