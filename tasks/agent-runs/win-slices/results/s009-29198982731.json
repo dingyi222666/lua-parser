@@ -1,0 +1,34 @@
+{
+  "sliceId": "s009",
+  "runId": "29198982731",
+  "sha": "06bd15842143e96eb79d3b3cacda7b36714ee9fb",
+  "status": "failure",
+  "exitCode": 1,
+  "durationSec": 10,
+  "tests": 115,
+  "failures": 1,
+  "errors": 0,
+  "skipped": 0,
+  "failedTests": [
+    "parser.lua53.Lua53TableFunctionModuleTddTest#exposesAstStructureAndRangesForRepresentativeModuleForms[jvm]"
+  ],
+  "testsPatterns": [
+    "parser.lexer.LuaLexerOperatorBoundaryTddTest",
+    "parser.lexer.LuaLexerUtf8EscapeTddTest",
+    "parser.lexer.LuaLexerUtf8NumericCorpusTddTest",
+    "parser.lua53.Lua53BitOpChainShapeTddTest",
+    "parser.lua53.Lua53BitwiseOpsCorpusTddTest",
+    "parser.lua53.Lua53ExpressionPrecedenceTddTest",
+    "parser.lua53.Lua53FloorDivBitwisePrecedenceTddTest",
+    "parser.lua53.Lua53GotoForwardJumpShapeTddTest",
+    "parser.lua53.Lua53GotoLabelCorpusTddTest",
+    "parser.lua53.Lua53IntegerDivisionAndModShapeTddTest",
+    "parser.lua53.Lua53StatementGrammarTddTest",
+    "parser.lua53.Lua53TableCallShapeCorpusTddTest",
+    "parser.lua53.Lua53TableFunctionModuleTddTest",
+    "parser.lua54.Lua54LocalAttributeConstTddTest",
+    "parser.recovery.LuaParserRecoveryAndroluaLambdaTddTest"
+  ],
+  "gate": "must-green-to-advance",
+  "finishedAt": "2026-07-12T15:52:59Z"
+}

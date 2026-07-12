@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "updatedAt": "2026-07-12T15:33:16Z",
+  "updatedAt": "2026-07-12T15:52:59Z",
   "strategy": "must-green-to-advance",
   "chunkSize": 15,
   "cycle": 1,
@@ -134,21 +134,17 @@
       "status": "failure",
       "label": "parser.lexer..parser.recovery",
       "fileCount": 15,
-      "lastRunId": "29198381786",
-      "lastSha": "dfe27fff5f5d06caae66f21db90040347c385146",
+      "lastRunId": "29198982731",
+      "lastSha": "06bd15842143e96eb79d3b3cacda7b36714ee9fb",
       "tests": 115,
-      "failures": 5,
+      "failures": 1,
       "errors": 0,
       "failedTests": [
-        "parser.lua53.Lua53ExpressionPrecedenceTddTest#exposesRangesForRightAssociativeExpressionsAcrossLines[jvm]",
-        "parser.lua53.Lua53ExpressionPrecedenceTddTest#parsesResourceBackedComprehensiveExpressionPrecedenceFixture[jvm]",
-        "parser.lua53.Lua53ExpressionPrecedenceTddTest#exposesSourceRangesForRepresentativeExpressionNodes[jvm]",
-        "parser.lua53.Lua53ExpressionPrecedenceTddTest#coversLua53PrecedenceWithNamedShapeAssertions[jvm]",
         "parser.lua53.Lua53TableFunctionModuleTddTest#exposesAstStructureAndRangesForRepresentativeModuleForms[jvm]"
       ],
       "durationSec": 10,
-      "artifact": "results/s009-29198381786.json",
-      "updatedAt": "2026-07-12T15:33:16Z"
+      "artifact": "results/s009-29198982731.json",
+      "updatedAt": "2026-07-12T15:52:59Z"
     },
     "s010": {
       "status": "pending",
@@ -585,6 +581,15 @@
       "failures": 5,
       "durationSec": 10,
       "at": "2026-07-12T15:33:16Z"
+    },
+    {
+      "sliceId": "s009",
+      "runId": "29198982731",
+      "status": "failure",
+      "tests": 115,
+      "failures": 1,
+      "durationSec": 10,
+      "at": "2026-07-12T15:52:59Z"
     }
   ],
   "gate": {

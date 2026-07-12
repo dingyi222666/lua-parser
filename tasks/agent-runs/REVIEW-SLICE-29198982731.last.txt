@@ -1,0 +1,22 @@
+{
+  "runId": "29198982731",
+  "sliceId": "s009",
+  "status": "failure",
+  "tests": 115,
+  "failures": 1,
+  "failedTests": [
+    "parser.lua53.Lua53TableFunctionModuleTddTest#exposesAstStructureAndRangesForRepresentativeModuleForms[jvm]"
+  ],
+  "progressSummary": {
+    "total": 25,
+    "totalFiles": 367,
+    "pending": 16,
+    "success": 8,
+    "failure": 1,
+    "running": 0,
+    "filesDone": 120,
+    "activeSlice": "s009",
+    "updatedAt": "2026-07-12T15:52:59Z"
+  },
+  "notes": "Merged CI progress.json (updatedAt 2026-07-12T15:52:59Z) over local (15:33:16Z); copied results/s009-29198982731.json; rewrote PROGRESS.md. s009 still failure under must-green-to-advance (1/115). Failures reduced from 5 (run 29198381786) to 1 (run 29198982731). Parsed 15 TEST-*.xml under win-xml-29198982731."
+}

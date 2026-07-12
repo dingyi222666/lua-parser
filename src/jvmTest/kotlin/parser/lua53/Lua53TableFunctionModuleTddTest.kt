@@ -298,7 +298,9 @@ class Lua53TableFunctionModuleTddTest {
         assertEquals(3, chunk.body.statements.size)
         assertRangeLines(chunk.body.statements[0], 1, 1)
         assertRangeLines(chunk.body.statements[1], 2, 2)
-        assertRangeLines(chunk.body.statements[2], 3, 11)
+        // Exclusive end closes on the last consumed token (`end`), which is line 10.
+        // Line 11 is the following top-level `return` and must not be absorbed into the function.
+        assertRangeLines(chunk.body.statements[2], 3, 10)
         assertRangeLines(chunk.body.returnStatement!!, 11, 11)
 
         val moduleLocal = assertIs<LocalStatement>(chunk.body.statements[0])
