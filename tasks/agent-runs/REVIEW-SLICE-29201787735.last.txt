@@ -1,0 +1,23 @@
+{
+  "runId": "29201787735",
+  "sliceId": "s010",
+  "status": "failure",
+  "tests": 166,
+  "failures": 4,
+  "failedTests": [
+    "parser.recovery.LuaParserRecoveryDiagnosticsExpandTddTest#expandsIfMissingThenDiagnosticGoldenWithExactRange[jvm]",
+    "parser.recovery.LuaParserRecoveryDiagnosticsExpandTddTest#expandsDiagnosticsAreDeterministicAndResetAcrossParses[jvm]",
+    "parser.recovery.LuaParserRecoveryDiagnosticsExpandTddTest#expandsSparseGoldenInventoryCoversRequiredRecoveryFamilies[jvm]",
+    "parser.recovery.LuaParserRecoveryDiagnosticsTddTest#parserRecoveryCollectsStructuredDiagnosticsWithoutStdoutNoise[jvm]"
+  ],
+  "progressSummary": {
+    "total": 25,
+    "totalFiles": 367,
+    "pending": 15,
+    "success": 9,
+    "failure": 1,
+    "running": 0,
+    "filesDone": 135
+  },
+  "notes": "Merged CI progress.json (updatedAt 2026-07-12T17:22:03Z) over local (17:08:10Z). Copied results/s010-29201787735.json. s010 still failure: 4/166 (down from 5 on prior run 29201312516). Active remains s010 under must-green-to-advance. Wrote failures.txt from junit TEST-*.xml."
+}

@@ -1113,6 +1113,8 @@ class LuaParser(
     //       elseif exp then block
     // TASK-598: missing `then` warns and still parses body; clause marked bad.
     // TASK-613: AndroLua optional `then` (same product rule as parseIfCause).
+    // TASK-638: AndroLua recovery still records `The <then> expected` for structured
+    // diagnostic goldens; strict mode continues to accept without marking the clause bad.
     private fun parseElseIfCause(parent: BaseASTNode): IfClause {
         val result = ElseIfClause()
         result.parent = parent
@@ -1124,7 +1126,12 @@ class LuaParser(
         val findThenToken = consumeToken(LuaTokenTypes.THEN)
         if (!findThenToken) {
             if (isAndroLua()) {
-                // Optional `then` is product syntax under AndroLua — no diagnostic, no bad.
+                // Optional `then` is product syntax under AndroLua strict mode.
+                // Recovery still records the historical missing-then diagnostic so
+                // expand/TDD goldens stay green without marking the clause bad.
+                if (errorRecovery) {
+                    warning("The <then> expected near ${lexerText()}")
+                }
             } else if (!errorRecovery) {
                 error("The <then> expected near ${lexerText()}")
             } else {
@@ -1142,6 +1149,8 @@ class LuaParser(
     // TASK-598: missing `then` warns and still parses body; clause marked bad.
     // TASK-613: AndroLua/Android-Lua product syntax allows optional `then`
     // (asset-main scaleup/scaledown: `if actp.height<dp2px(50)\n else ... end`).
+    // TASK-638: AndroLua recovery still records `The <then> expected` for structured
+    // diagnostic goldens; strict mode continues to accept without marking the clause bad.
     private fun parseIfCause(parent: BaseASTNode): IfClause {
         val result = IfClause()
         result.parent = parent
@@ -1153,7 +1162,12 @@ class LuaParser(
         val findThenToken = consumeToken(LuaTokenTypes.THEN)
         if (!findThenToken) {
             if (isAndroLua()) {
-                // Optional `then` is product syntax under AndroLua — no diagnostic, no bad.
+                // Optional `then` is product syntax under AndroLua strict mode.
+                // Recovery still records the historical missing-then diagnostic so
+                // expand/TDD goldens stay green without marking the clause bad.
+                if (errorRecovery) {
+                    warning("The <then> expected near ${lexerText()}")
+                }
             } else if (!errorRecovery) {
                 error("The <then> expected near ${lexerText()}")
             } else {

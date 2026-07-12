@@ -1,0 +1,37 @@
+{
+  "sliceId": "s010",
+  "runId": "29201787735",
+  "sha": "351dae98a3995d5a518ca9dd4d6d2de14103d9f6",
+  "status": "failure",
+  "exitCode": 1,
+  "durationSec": 10,
+  "tests": 166,
+  "failures": 4,
+  "errors": 0,
+  "skipped": 0,
+  "failedTests": [
+    "parser.recovery.LuaParserRecoveryDiagnosticsExpandTddTest#expandsIfMissingThenDiagnosticGoldenWithExactRange[jvm]",
+    "parser.recovery.LuaParserRecoveryDiagnosticsExpandTddTest#expandsDiagnosticsAreDeterministicAndResetAcrossParses[jvm]",
+    "parser.recovery.LuaParserRecoveryDiagnosticsExpandTddTest#expandsSparseGoldenInventoryCoversRequiredRecoveryFamilies[jvm]",
+    "parser.recovery.LuaParserRecoveryDiagnosticsTddTest#parserRecoveryCollectsStructuredDiagnosticsWithoutStdoutNoise[jvm]"
+  ],
+  "testsPatterns": [
+    "parser.recovery.LuaParserRecoveryAndroluaSwitchWhenTddTest",
+    "parser.recovery.LuaParserRecoveryAttributeLocalTddTest",
+    "parser.recovery.LuaParserRecoveryBinaryIncompleteRhsOpsTddTest",
+    "parser.recovery.LuaParserRecoveryDiagnosticsExpandTddTest",
+    "parser.recovery.LuaParserRecoveryDiagnosticsTddTest",
+    "parser.recovery.LuaParserRecoveryForInDoTddTest",
+    "parser.recovery.LuaParserRecoveryForInMissingDoTddTest",
+    "parser.recovery.LuaParserRecoveryFunctionMissingEndTddTest",
+    "parser.recovery.LuaParserRecoveryGenericForTddTest",
+    "parser.recovery.LuaParserRecoveryGotoLabelTddTest",
+    "parser.recovery.LuaParserRecoveryIfChainTddTest",
+    "parser.recovery.LuaParserRecoveryIfElseifChainTddTest",
+    "parser.recovery.LuaParserRecoveryIncompleteTableFieldTddTest",
+    "parser.recovery.LuaParserRecoveryLayoutTableTddTest",
+    "parser.recovery.LuaParserRecoveryLocalAssignTddTest"
+  ],
+  "gate": "must-green-to-advance",
+  "finishedAt": "2026-07-12T17:22:03Z"
+}
