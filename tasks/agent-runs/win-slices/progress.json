@@ -1,15 +1,15 @@
 {
   "version": 2,
-  "updatedAt": "2026-07-12T14:52:53Z",
+  "updatedAt": "2026-07-12T15:05:38Z",
   "strategy": "must-green-to-advance",
   "chunkSize": 15,
   "cycle": 1,
   "summary": {
     "total": 25,
     "totalFiles": 367,
-    "pending": 18,
+    "pending": 17,
     "success": 7,
-    "failure": 0,
+    "failure": 1,
     "running": 0,
     "filesDone": 105
   },
@@ -117,18 +117,30 @@
       "note": "green on run 29197045304; 115 tests 0 failures"
     },
     "s008": {
-      "status": "pending",
+      "status": "failure",
       "label": "parser.ast..parser.lexer",
       "fileCount": 15,
-      "lastRunId": null,
-      "lastSha": null,
-      "tests": 0,
-      "failures": 0,
+      "lastRunId": "29197451642",
+      "lastSha": "3c976d6626357db57294298983783428a5802256",
+      "tests": 152,
+      "failures": 11,
       "errors": 0,
-      "failedTests": [],
-      "durationSec": null,
-      "artifact": null,
-      "updatedAt": null
+      "failedTests": [
+        "parser.lexer.LuaLexerLiteralCommentTddTest#parserKeepsLiteralTokenTextOnAstConstants[jvm]",
+        "parser.lexer.LuaLexerLongBracketCorpusTddTest#eofUnclosedFormsConsumeRestWithoutInventingFollowingTokens[jvm]",
+        "parser.lexer.LuaLexerLongCommentEdgeTddTest#unclosedLongCommentDoesNotHangOnLargeBody[jvm]",
+        "parser.lexer.LuaLexerLongCommentEdgeTddTest#unclosedLongCommentsRecoverWithoutHangAtLevels0Through4[jvm]",
+        "parser.lexer.LuaLexerLongCommentEdgeTddTest#levelMismatchAndPartialCloseRecoverWithoutHang[jvm]",
+        "parser.lexer.LuaLexerLongStringEdgeTddTest#unclosedLongStringsRecoverWithoutHangAtLevels0Through4[jvm]",
+        "parser.lexer.LuaLexerLongStringEdgeTddTest#unclosedLongStringDoesNotHangOnLargeBody[jvm]",
+        "parser.lexer.LuaLexerLongStringEdgeTddTest#levelMismatchAndPartialCloseRecoverWithoutHang[jvm]",
+        "parser.lexer.LuaLexerLongStringNestedEqualsTddTest#unclosedLongStringsRecoverWithoutHangAtLevels0Through4[jvm]",
+        "parser.lexer.LuaLexerLongStringNestedEqualsTddTest#unclosedLongStringDoesNotHangOnLargeBody[jvm]",
+        "parser.lexer.LuaLexerLongStringNestedEqualsTddTest#levelMismatchAndPartialCloseRecoverWithoutHang[jvm]"
+      ],
+      "durationSec": 10,
+      "artifact": "results/s008-29197451642.json",
+      "updatedAt": "2026-07-12T15:05:38Z"
     },
     "s009": {
       "status": "pending",
@@ -552,6 +564,15 @@
       "failures": 0,
       "durationSec": 5,
       "at": "2026-07-12T14:52:53Z"
+    },
+    {
+      "sliceId": "s008",
+      "runId": "29197451642",
+      "status": "failure",
+      "tests": 152,
+      "failures": 11,
+      "durationSec": 10,
+      "at": "2026-07-12T15:05:38Z"
     }
   ],
   "gate": {

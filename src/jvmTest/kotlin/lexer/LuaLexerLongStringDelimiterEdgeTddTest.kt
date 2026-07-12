@@ -22,10 +22,11 @@ import kotlin.test.fail
  * - Well-formed delimiter pairs stay a single LONG_STRING; incomplete / broken
  *   openers split into LBRACK + operators; EOF-unclosed recover as
  *   BAD_CHARACTER (or lexer exception) without hang.
- * - **Level-mismatch product lock (TASK-595 / TASK-619):** a wrong-level close
- *   ends the BAD_CHARACTER span at that close delimiter so trailing source
- *   stays lexable (does **not** eat the rest of the file). Complete lower
- *   closes inside an otherwise-unclosed body are the same mismatch anchors.
+ * - **Unclosed / level-mismatch product lock (TASK-633):** when no matching
+ *   same-level close exists, BAD_CHARACTER consumes through EOF so lower-level
+ *   close noise and trailing source are not re-lexed as RBRACK/EQ/NAME/print.
+ *   Pure level-mismatch forms (wrong-level close only) are the same remainder
+ *   contract. Hang-free large-body unclosed forms must still finish.
  * - Prefer product lexer recovery over empty dual-path.
  * - Verification deferred to review / TASK-043 (workers must not run Gradle).
  *
@@ -391,23 +392,11 @@ class LuaLexerLongStringDelimiterEdgeTddTest {
         assertEofMalformedConsumesAll("unclosed empty level-5 opener", "[=====[")
         assertEofMalformedConsumesAll("unclosed empty level-6 opener", "[======[")
         assertEofMalformedConsumesAll("unclosed level-0 body after opener", "[[unterminated")
-        // Complete lower-level closes are TASK-595 mismatch recovery anchors: BAD ends at
-        // the first full wrong-level close; remainder stays independently lexable.
-        assertTokenCases(
-            LexerCase(
-                "unclosed level-6 body with lower close noise ends BAD at first wrong close",
-                "[======[L6 ]=====] ]====] ]===] open",
-                token(LuaTokenTypes.BAD_CHARACTER, "[======[L6 ]=====]"),
-                token(LuaTokenTypes.RBRACK, "]"),
-                token(LuaTokenTypes.EQ, "=="),
-                token(LuaTokenTypes.EQ, "=="),
-                token(LuaTokenTypes.RBRACK, "]"),
-                token(LuaTokenTypes.RBRACK, "]"),
-                token(LuaTokenTypes.EQ, "=="),
-                token(LuaTokenTypes.ASSIGN, "="),
-                token(LuaTokenTypes.RBRACK, "]"),
-                token(LuaTokenTypes.NAME, "open")
-            )
+        // Complete lower-level closes inside an unclosed high-level body are not
+        // matching terminators: BAD_CHARACTER still consumes remainder to EOF.
+        assertEofMalformedConsumesAll(
+            "unclosed level-6 body with lower close noise consumes remainder",
+            "[======[L6 ]=====] ]====] ]===] open"
         )
         assertEofMalformedConsumesAll(
             "EOF mid level-6 close (missing final ])",
@@ -424,34 +413,22 @@ class LuaLexerLongStringDelimiterEdgeTddTest {
     }
 
     @Test
-    fun levelMismatchDelimitersRecoverWithoutEatingRestOfFile() {
-        // TASK-595 product lock: wrong-level close ends BAD_CHARACTER at that
-        // delimiter; trailing source must remain independently lexable.
+    fun levelMismatchDelimitersRecoverWithoutInventingFollowingTokens() {
+        // TASK-633 product lock: wrong-level close never matches the opener, so
+        // BAD_CHARACTER consumes through EOF (including trailing source).
+        assertEofMalformedConsumesAll(
+            "level-1 open closed by level-2 then trailing space+local",
+            "[=[mismatch]==] local x=1"
+        )
+        assertEofMalformedConsumesAll(
+            "level-6 open closed by level-5 then print call",
+            "[======[x]=====] print(1)"
+        )
+        assertEofMalformedConsumesAll(
+            "level-2 open closed by level-1 then name",
+            "[==[x]=]name"
+        )
         assertTokenCases(
-            LexerCase(
-                "level-1 open closed by level-2 then trailing space+local",
-                "[=[mismatch]==] local x=1",
-                token(LuaTokenTypes.BAD_CHARACTER, "[=[mismatch]==]"),
-                token(LuaTokenTypes.LOCAL, "local"),
-                token(LuaTokenTypes.NAME, "x"),
-                token(LuaTokenTypes.ASSIGN, "="),
-                token(LuaTokenTypes.NUMBER, "1")
-            ),
-            LexerCase(
-                "level-6 open closed by level-5 then print call",
-                "[======[x]=====] print(1)",
-                token(LuaTokenTypes.BAD_CHARACTER, "[======[x]=====]"),
-                token(LuaTokenTypes.NAME, "print"),
-                token(LuaTokenTypes.LPAREN, "("),
-                token(LuaTokenTypes.NUMBER, "1"),
-                token(LuaTokenTypes.RPAREN, ")")
-            ),
-            LexerCase(
-                "level-2 open closed by level-1 then name",
-                "[==[x]=]name",
-                token(LuaTokenTypes.BAD_CHARACTER, "[==[x]=]"),
-                token(LuaTokenTypes.NAME, "name")
-            ),
             LexerCase(
                 "level-1 open closed by level-2 only",
                 "[=[x]==]",

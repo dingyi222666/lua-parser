@@ -475,14 +475,13 @@ class LuaLexer @JvmOverloads constructor(
 
         var cursor = longBracketStart + equalsCount + 2
         var nestedDepth = 0
-        // First complete close delimiter whose equals level differs from [equalsCount].
-        // Used only when the matching close is never found: end the BAD span there so
-        // trailing source stays lexable (TASK-595 / TASK-619). Applies both to pure
-        // level-mismatch forms and to unclosed bodies that contain full lower/higher
-        // closes (e.g. [======[L6 ]=====] open). Must not early-exit on mismatch
-        // while scanning — a well-formed body may embed lower/higher closes before
-        // the true same-level terminator (e.g. [=[keep ]==] still]=]).
-        var firstMismatchEnd = -1
+        // Scan until the exact same-level close is found. Must not early-exit on a
+        // wrong-level close while scanning: a well-formed body may embed lower/higher
+        // closes before the true same-level terminator (e.g. [=[keep ]==] still]=]).
+        // When no matching close exists (true unclosed or pure level-mismatch), the
+        // BAD_CHARACTER span consumes through EOF so lower-level close noise and
+        // trailing source are not re-lexed as RBRACK/EQ/NAME/print(...) (TASK-633
+        // remainder-consume contract for parser.lexer long-bracket suites).
         while (cursor < bufferLen) {
             if (tokenType == LuaTokenTypes.BLOCK_COMMENT &&
                 longBracketEqualsCount(cursor) == equalsCount &&
@@ -504,18 +503,7 @@ class LuaLexer @JvmOverloads constructor(
                 return tokenType
             }
 
-            if (nestedDepth == 0 && firstMismatchEnd < 0) {
-                val mismatchCloseLength = anyLongBracketCloseLength(cursor)
-                if (mismatchCloseLength > 0) {
-                    firstMismatchEnd = cursor + mismatchCloseLength
-                }
-            }
             cursor++
-        }
-
-        if (firstMismatchEnd > offset) {
-            tokenLength = firstMismatchEnd - offset
-            return LuaTokenTypes.BAD_CHARACTER
         }
 
         tokenLength = bufferLen - offset
@@ -572,27 +560,6 @@ class LuaLexer @JvmOverloads constructor(
         }
 
         return if (cursor < bufferLen && source[cursor] == '[') equalsCount else -1
-    }
-
-    /**
-     * Length of a complete long-bracket close delimiter at [start] (`]` `=`* `]`),
-     * regardless of equals level. Returns -1 when [start] is not a full close.
-     * Used for level-mismatch recovery so a wrong-level close ends the bad span
-     * without consuming the remainder of the file (TASK-595).
-     */
-    private fun anyLongBracketCloseLength(start: Int): Int {
-        if (start >= bufferLen || source[start] != ']') {
-            return -1
-        }
-
-        var cursor = start + 1
-        var equalsCount = 0
-        while (cursor < bufferLen && source[cursor] == '=') {
-            cursor++
-            equalsCount++
-        }
-
-        return if (cursor < bufferLen && source[cursor] == ']') equalsCount + 2 else -1
     }
 
     private fun longBracketCloseLength(start: Int, equalsCount: Int): Int {

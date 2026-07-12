@@ -231,8 +231,17 @@ class LuaLexerLiteralCommentTddTest {
             LuaTokenTypes.SHORT_COMMENT,
             LuaTokenTypes.DOC_COMMENT,
             LuaTokenTypes.SHEBANG_CONTENT -> text.trimEnd('\r', '\n')
+            // Long-bracket spans keep embedded newlines in token text. Windows CRLF
+            // checkouts must still match LF-only goldens for LONG_STRING / BLOCK_COMMENT
+            // without changing product lexer preservation of explicit \r in inline sources.
+            LuaTokenTypes.LONG_STRING,
+            LuaTokenTypes.BLOCK_COMMENT -> normalizeLineEndings(text)
             else -> text
         }
+    }
+
+    private fun normalizeLineEndings(text: String): String {
+        return text.replace("\r\n", "\n").replace('\r', '\n')
     }
 
     private fun localConstantAt(chunk: io.github.dingyi222666.luaparser.parser.ast.node.ChunkNode, statementIndex: Int): ConstantNode {
@@ -241,9 +250,12 @@ class LuaLexerLiteralCommentTddTest {
 
     private fun loadLexerFixture(name: String): String {
         val path = "/parser/tdd/lexer/$name"
-        return checkNotNull(javaClass.getResourceAsStream(path)) {
+        val raw = checkNotNull(javaClass.getResourceAsStream(path)) {
             "Missing lexer TDD fixture: $path"
         }.bufferedReader().use { it.readText() }
+        // Windows checkouts / resource streams may deliver CRLF; normalize to LF so
+        // multiline long-string AST rawValue goldens stay stable (TASK-634).
+        return normalizeLineEndings(raw)
     }
 
     private class LexerCase(
