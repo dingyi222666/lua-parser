@@ -4,6 +4,7 @@ import io.github.dingyi222666.luaparser.interop.jvm.JvmClassModuleProvider
 import io.github.dingyi222666.luaparser.interop.jvm.JvmWorkspaceConfiguration
 import io.github.dingyi222666.luaparser.interop.jvm.JvmWorkspaceEngine
 import io.github.dingyi222666.luaparser.semantic.api.SymbolKind
+import org.junit.Assume
 import semantic.support.WorkspaceSemanticHarness
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -52,13 +53,33 @@ class JvmWorkspaceEngineTest {
 
     @Test
     fun androlua_import_metadata_resolves_nested_androlua_classes_via_underscore_aliases() {
-        // Nested View$OnClickListener alias via import prefix android.view.View + short name.
-        // Host android.jar only (never hard-require G:/); product provider also soft-falls back
-        // when explicit metadata jar path is missing but host SDK jar is present.
+        // Map$Entry-style underscore alias hard-lock always (JDK classpath; independent of
+        // android.jar). Binary / dotted / underscore forms must canonicalize to Map$Entry.
+        val mapEntryRequested = JvmClassModuleProvider().requestedClasses(
+            JvmWorkspaceConfiguration(
+                classes = linkedSetOf(
+                    "java.util.Map\$Entry",
+                    "java.util.Map.Entry",
+                    "java.util.Map_Entry"
+                )
+            )
+        )
+        assertTrue("java.util.Map\$Entry" in mapEntryRequested)
+        assertEquals(1, mapEntryRequested.size)
+
+        // Nested View$OnClickListener via import prefix android.view.View + short name.
+        // Host android.jar dual-path discovery only (never hardcode / hard-require G:/).
+        // When jar truly absent (Windows CI missing AppData android-35 and no other
+        // discoverable host jar), soft-skip — never hard-fail a missing AppData candidate alone.
         val androidJar = resolveHostAndroidJar()
+        requireHostAndroidJarOrSoftSkip(androidJar)
         assertTrue(
-            androidJar.isFile,
-            "Host android.jar required for nested AndroLua alias resolution at ${androidJar.path}"
+            androidJar.isFile && androidJar.length() > 0L,
+            "Host android.jar required for nested AndroLua alias hard-lock at ${androidJar.path}"
+        )
+        assertTrue(
+            !androidJar.path.replace('\\', '/').startsWith("G:/Android/Sdk", ignoreCase = true),
+            "Host resolution must not hardcode Windows G:/Android/Sdk; got ${androidJar.path}."
         )
         val harness = WorkspaceSemanticHarness.build(
             "main.lua" to "local OnClickListener = require(\"OnClickListener\")\nreturn OnClickListener",
@@ -647,29 +668,84 @@ class JvmWorkspaceEngineTest {
     }
 
     /**
-     * Host-local android.jar for nested AndroLua alias hard-locks.
-     * Prefer DEFAULT discovery, then macOS ~/Library/Android/sdk, then documented host path.
-     * Never hardcodes G:/Android/Sdk.
+     * Soft-skip nested AndroLua View$OnClickListener hard-lock when no host android.jar is
+     * discoverable. Never hard-requires a missing Windows AppData android-35 path alone,
+     * never G:/. Map$Entry alias assertions stay above this guard (JDK-only).
+     */
+    private fun requireHostAndroidJarOrSoftSkip(androidJar: File) {
+        if (!androidJar.isFile || androidJar.length() <= 0L) {
+            Assume.assumeTrue(missingHostAndroidJarSoftSkipReason(androidJar), false)
+        }
+    }
+
+    private fun missingHostAndroidJarSoftSkipReason(missing: File): String {
+        val productReason = JvmWorkspaceConfiguration.missingAndroidJarSoftSkipReason(taskId = "TASK-570")
+        return "TASK-570 soft-skip: android.jar not found at ${missing.path}. $productReason " +
+            "Install Android SDK Platform 35 under ANDROID_HOME / ANDROID_SDK_ROOT / " +
+            "%LOCALAPPDATA%/Android/Sdk (Windows) or ~/Library/Android/sdk (macOS) / ~/Android/Sdk " +
+            "(Linux), or set jvm.androidJar. Never invent presence; never hard-require a missing " +
+            "AppData android-35 path or G:/Android/Sdk alone; never require macOS-only " +
+            "/Users/dingyi/Library/Android/sdk/platforms/android-35/android.jar on Windows CI."
+    }
+
+    /**
+     * Host-local android.jar for nested AndroLua alias hard-locks (TASK-570 dual-path).
+     *
+     * Order:
+     * 1) [JvmWorkspaceConfiguration.discoverReflectiveAndroidJarPath]
+     * 2) [JvmWorkspaceConfiguration.DEFAULT_ANDROID_JAR_PATH]
+     * 3) ANDROID_HOME / ANDROID_SDK_ROOT platforms/android-35|34
+     * 4) well-known macOS / Windows LOCALAPPDATA / Linux SDK layouts
+     * 5) documented mac host path when present
+     *
+     * Never hardcodes or hard-requires Windows-only G:/Android/Sdk. When all candidates are
+     * missing, returns the preferred messaging candidate (may be absent); callers soft-skip
+     * via [requireHostAndroidJarOrSoftSkip].
      */
     private fun resolveHostAndroidJar(): File {
+        val candidates = linkedSetOf<File>()
+        JvmWorkspaceConfiguration.discoverReflectiveAndroidJarPath()
+            ?.let { candidates += File(it) }
+        candidates += File(JvmWorkspaceConfiguration.DEFAULT_ANDROID_JAR_PATH)
+
+        sequenceOf("ANDROID_HOME", "ANDROID_SDK_ROOT")
+            .mapNotNull { env -> System.getenv(env)?.trim()?.takeIf(String::isNotEmpty) }
+            .forEach { sdkRoot ->
+                candidates += File(sdkRoot, "platforms/android-35/android.jar")
+                candidates += File(sdkRoot, "platforms/android-34/android.jar")
+            }
+
         val home = System.getProperty("user.home").orEmpty()
-        val candidates = buildList {
-            add(File(JvmWorkspaceConfiguration.DEFAULT_ANDROID_JAR_PATH))
-            if (home.isNotBlank()) {
-                add(File(home, "Library/Android/sdk/platforms/android-35/android.jar"))
-                add(File(home, "Android/Sdk/platforms/android-35/android.jar"))
-            }
-            add(File("/Users/dingyi/Library/Android/sdk/platforms/android-35/android.jar"))
-            System.getenv("ANDROID_HOME")?.takeIf { it.isNotBlank() }?.let {
-                add(File(it, "platforms/android-35/android.jar"))
-            }
-            System.getenv("ANDROID_SDK_ROOT")?.takeIf { it.isNotBlank() }?.let {
-                add(File(it, "platforms/android-35/android.jar"))
-            }
+        val localAppData = System.getenv("LOCALAPPDATA")?.trim()?.takeIf(String::isNotEmpty)
+        if (!localAppData.isNullOrBlank()) {
+            candidates += File(localAppData, "Android/Sdk/platforms/android-35/android.jar")
+            candidates += File(localAppData, "Android/Sdk/platforms/android-34/android.jar")
         }
-        return candidates.firstOrNull { candidate ->
+        if (home.isNotBlank()) {
+            candidates += File(home, "AppData/Local/Android/Sdk/platforms/android-35/android.jar")
+            candidates += File(home, "AppData/Local/Android/Sdk/platforms/android-34/android.jar")
+            candidates += File(home, "Library/Android/sdk/platforms/android-35/android.jar")
+            candidates += File(home, "Library/Android/sdk/platforms/android-34/android.jar")
+            candidates += File(home, "Android/Sdk/platforms/android-35/android.jar")
+            candidates += File(home, "Android/sdk/platforms/android-35/android.jar")
+        }
+        // Documented mac host path (present on WAVE agents; never required on Windows).
+        candidates += File("/Users/dingyi/Library/Android/sdk/platforms/android-35/android.jar")
+
+        val resolved = candidates.firstOrNull { candidate ->
             candidate.isFile &&
                 !candidate.path.replace('\\', '/').startsWith("G:/Android/Sdk", ignoreCase = true)
         } ?: candidates.first()
+
+        val normalized = resolved.path.replace('\\', '/')
+        if (normalized.startsWith("G:/Android/Sdk", ignoreCase = true)) {
+            val nonG = candidates.firstOrNull {
+                it.isFile && !it.path.replace('\\', '/').startsWith("G:/Android/Sdk", ignoreCase = true)
+            }
+            if (nonG != null) {
+                return nonG
+            }
+        }
+        return resolved
     }
 }

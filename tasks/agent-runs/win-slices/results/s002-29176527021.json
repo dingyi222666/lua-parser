@@ -1,0 +1,37 @@
+{
+  "sliceId": "s002",
+  "runId": "29176527021",
+  "sha": "2a8cdf056eacde4033e44b9f1106d629269e69a4",
+  "status": "failure",
+  "exitCode": 1,
+  "durationSec": 35,
+  "tests": 307,
+  "failures": 4,
+  "errors": 0,
+  "skipped": 17,
+  "failedTests": [
+    "interop.jvm.JvmWorkspaceEngineTest#realiased_load_lib_helper_resolves_reflected_jvm_static_members[jvm]",
+    "interop.jvm.JvmWorkspaceEngineTest#androlua_import_metadata_resolves_nested_androlua_classes_via_underscore_aliases[jvm]",
+    "interop.jvm.JvmWorkspaceEngineTest#short_string_realiased_load_lib_helper_resolves_reflected_jvm_static_members[jvm]",
+    "interop.jvm.JvmWorkspaceEngineTest#unresolved_short_name_falls_back_to_android_lua_default_import_prefixes[jvm]"
+  ],
+  "testsPatterns": [
+    "interop.jvm.JvmPackageProviderEmptyRootTddTest",
+    "interop.jvm.JvmPackageProviderListingTddTest",
+    "interop.jvm.JvmPackageProviderNestedPackageTddTest",
+    "interop.jvm.JvmReflectionModelTddTest",
+    "interop.jvm.JvmReflectionWildcardTddTest",
+    "interop.jvm.JvmWorkspaceEngineTest",
+    "lexer.LuaLexerLongStringDelimiterEdgeTddTest",
+    "lexer.LuaLexerLongStringEdgeRefineTddTest",
+    "lexer.LuaLexerShebangBomEdgeTddTest",
+    "lexer.LuaLexerUtf8IdentifierEdgeTddTest",
+    "lsp.LspAndroidLuaE2eActivityStubTddTest",
+    "lsp.LspAndroidLuaE2eTddTest",
+    "lsp.LspCallHierarchyLocalFunctionTddTest",
+    "lsp.LspCallHierarchySafetyTddTest",
+    "lsp.LspCodeActionQuickFixSafetyTddTest"
+  ],
+  "gate": "must-green-to-advance",
+  "finishedAt": "2026-07-12T02:18:58Z"
+}

@@ -8,7 +8,7 @@ scope:
   - src/jvmMain/kotlin/io/github/dingyi222666/luaparser/interop/jvm/JvmWorkspaceEngine.kt
   - src/jvmTest/kotlin/interop/jvm/JvmWorkspaceEngineTest.kt
 acceptance_criteria:
-  - Clear Windows slice failures (evidence run 29175624965 / WINSLICE-29175624965 / slice s002):
+  - Clear Windows slice failures (evidence run 29176527021 / WINSLICE-29176527021 / slice s002):
     - interop.jvm.JvmWorkspaceEngineTest#realiased_load_lib_helper_resolves_reflected_jvm_static_members
     - interop.jvm.JvmWorkspaceEngineTest#short_string_realiased_load_lib_helper_resolves_reflected_jvm_static_members
   - realiased_load_lib_helper_resolves_reflected_jvm_static_members and short_string variant pass without CURRENTLY_ACCEPTS empty.
@@ -18,8 +18,8 @@ acceptance_criteria:
 required_tests:
   - Deferred to TASK-043 / windows-jvmtest slice s002: `./gradlew.bat jvmTest --tests interop.jvm.JvmWorkspaceEngineTest`
 notes:
-  - Windows slice s002 run 29175624965 still red for both load_lib re-alias methods.
-  - Reused ready product task; AC evidence updated to WINSLICE-29175624965.
+  - Windows slice s002 run 29176527021 still red for both load_lib re-alias methods (4/307).
+  - Reused ready product task; AC evidence updated to WINSLICE-29176527021.
   - Workers must not run Gradle/tests/compile; verification review-owned serial (TASK-043).
   - Host android.jar paths only: dual-path discovery — never G:/.
   - One task one agent. No docs.
@@ -31,3 +31,5 @@ related_commits: []
 progress:
   - 2026-07-11T19:06:13Z worker-GOAL-PATH-M100-20260712-B2-TASK-569 blocked: file locks held by live TASK-570 (JvmWorkspaceEngine.kt + JvmWorkspaceEngineTest.kt). Did not steal. Left ready for requeue.
   - 2026-07-12T materialize WINSLICE-29175624965: reused ready; AC evidence updated to run 29175624965 (load_lib re-alias + short_string still red on s002).
+  - 2026-07-12T materialize WINSLICE-29176527021: reused ready; AC evidence updated to run 29176527021 (s002 still failure 4/307; load_lib re-alias pair still red).
+  - 2026-07-12T07:02:39Z worker-WINSLICE-29176527021-TASK-569 blocked: file locks held by live TASK-570 (JvmWorkspaceEngine.kt + JvmWorkspaceEngineTest.kt). Did not steal. Left ready for requeue.

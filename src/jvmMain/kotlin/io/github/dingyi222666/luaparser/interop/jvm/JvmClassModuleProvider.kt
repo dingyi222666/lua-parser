@@ -404,8 +404,35 @@ class JvmClassModuleProvider(
             }
             return emptyList()
         }
+        // Short AndroLua names under import prefixes:
+        // - OnClickListener / Entry / BindServiceFlags with enclosing-type prefix
+        //   (android.view.View + OnClickListener → View$OnClickListener)
+        // - View_OnClickListener / Map_Entry style underscore aliases with package prefix
+        //   (android.view + View_OnClickListener → android.view.View$OnClickListener via
+        //   candidateClassNames underscore→$ rewrite)
+        // Prefer binary `$` join first so host android.jar nested types resolve before
+        // non-loadable pure-dotted Class.forName attempts.
         return importPrefixes.firstNotNullOfOrNull { prefix ->
-            candidateClassNames("$prefix.$target").firstNotNullOfOrNull { candidate ->
+            val trimmedPrefix = prefix.trim()
+            if (trimmedPrefix.isEmpty()) {
+                return@firstNotNullOfOrNull null
+            }
+            val shortNameCandidates = buildList {
+                // Nested short names are UpperCamel (OnClickListener / View_OnClickListener).
+                // Prefer `$` join, then underscore join, then dotted candidate expansion.
+                if (target.isNotEmpty() && target.first().isUpperCase()) {
+                    add("$trimmedPrefix\$$target")
+                    add("${trimmedPrefix}_$target")
+                    // Underscore-alias short names already encode Outer_Inner; rewrite under
+                    // the package prefix as Outer$Inner before pure dotted Class.forName.
+                    if ('_' in target) {
+                        add("$trimmedPrefix.${target.replace('_', '$')}")
+                        add("$trimmedPrefix\$${target.replace('_', '$')}")
+                    }
+                }
+                addAll(candidateClassNames("$trimmedPrefix.$target"))
+            }.distinct()
+            shortNameCandidates.firstNotNullOfOrNull { candidate ->
                 runCatching { Class.forName(candidate, false, targetClassLoader) }
                     .getOrNull()
                     ?.name

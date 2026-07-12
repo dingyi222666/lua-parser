@@ -33,7 +33,13 @@ class JvmWorkspaceEngine(
         // packageProvidersFor (packages/ paths only). Shallow class providers for package
         // members come from packageMemberClassProvidersFor (classes/ paths) so package-list
         // keys never mix __jvm__/classes prefixes.
-        val sourceDiscoveredClasses = collectSourceDiscoveredClasses(documentFacts, resolvedConfiguration, astImportTargets)
+        val freeClassNames = collectFreeClassLikeNames(input)
+        val sourceDiscoveredClasses = collectSourceDiscoveredClasses(
+            documentFacts,
+            resolvedConfiguration,
+            astImportTargets,
+            freeClassNames
+        )
         val packageTargets = collectWildcardImportTargets(baseConfiguration, documentFacts, astImportTargets)
             .mapNotNull(::normalizePackageProviderTarget)
             .toCollection(linkedSetOf())
@@ -82,10 +88,16 @@ class JvmWorkspaceEngine(
             currentFacts?.let { mapOf(path to it) }.orEmpty(),
             currentAstImportTargets
         )
+        val freeClassNames = currentSource?.let { source ->
+            val names = linkedSetOf<String>()
+            collectFreeClassLikeNamesFromNode(parseWorkspaceSource(source), names)
+            names
+        }.orEmpty()
         val sourceImports = collectSourceImports(
             currentFacts,
             resolvedConfiguration,
-            currentAstImportTargets
+            currentAstImportTargets,
+            freeClassNames
         )
         val activeImports = linkedMapOf<String, WorkspaceImportedSymbol>().apply {
             putAll(configuredImports)
@@ -164,7 +176,8 @@ class JvmWorkspaceEngine(
     private fun collectSourceImports(
         facts: DocumentFacts?,
         configuration: JvmWorkspaceConfiguration,
-        astImportTargets: Collection<String> = emptyList()
+        astImportTargets: Collection<String> = emptyList(),
+        freeClassNames: Collection<String> = emptyList()
     ): Map<String, WorkspaceImportedSymbol> {
         val imported = linkedMapOf<String, WorkspaceImportedSymbol>()
         fun activate(target: String) {
@@ -185,13 +198,21 @@ class JvmWorkspaceEngine(
         // AST-derived table import targets keep path-scoped activation even when
         // DocumentFacts sequence-key filtering drops import({ "A", "B" }) entries.
         astImportTargets.forEach(::activate)
+        // Free UpperCamel identifiers (Locale / TextView) fall back through default Android-Lua
+        // import prefixes when not bound by an explicit import/loadLib/bindClass target.
+        freeClassNames.forEach { name ->
+            if (name !in imported) {
+                activate(name)
+            }
+        }
         return imported
     }
 
     private fun collectSourceDiscoveredClasses(
         documentFacts: Map<VirtualPath, DocumentFacts>,
         configuration: JvmWorkspaceConfiguration,
-        astImportTargets: Collection<String> = emptyList()
+        astImportTargets: Collection<String> = emptyList(),
+        freeClassNames: Collection<String> = emptyList()
     ): Set<String> {
         return buildSet {
             fun addExplicitClassTarget(target: String) {
@@ -222,7 +243,154 @@ class JvmWorkspaceEngine(
                 }
             }
             astImportTargets.forEach(::addExplicitClassTarget)
+            // Free short names resolve through DEFAULT_IMPORT_PREFIXES (java.util.Locale, …).
+            freeClassNames.forEach(::addExplicitClassTarget)
         }
+    }
+
+    /**
+     * Collect free UpperCamel identifiers used as class-like roots across workspace sources.
+     * Used only to mount reflective providers for Android-Lua default import-prefix fallback
+     * (Locale / File / TextView without an explicit import). Never invents non-loadable names;
+     * [JvmClassModuleProvider.importedClassName] still has to resolve each candidate.
+     */
+    private fun collectFreeClassLikeNames(input: LuaWorkspaceInput): Set<String> {
+        val names = linkedSetOf<String>()
+        input.files.values.forEach { source ->
+            collectFreeClassLikeNamesFromNode(parseWorkspaceSource(source), names)
+        }
+        return names
+    }
+
+    private fun collectFreeClassLikeNamesFromNode(
+        node: io.github.dingyi222666.luaparser.parser.ast.node.BaseASTNode,
+        names: MutableSet<String>
+    ) {
+        when (node) {
+            is io.github.dingyi222666.luaparser.parser.ast.node.Identifier -> {
+                if (isClassLikeSimpleName(node.name)) {
+                    names += node.name
+                }
+            }
+            is io.github.dingyi222666.luaparser.parser.ast.node.MemberExpression -> {
+                collectFreeClassLikeNamesFromNode(node.base, names)
+            }
+            is io.github.dingyi222666.luaparser.parser.ast.node.IndexExpression -> {
+                collectFreeClassLikeNamesFromNode(node.base, names)
+                collectFreeClassLikeNamesFromNode(node.index, names)
+            }
+            is io.github.dingyi222666.luaparser.parser.ast.node.CallExpression -> {
+                collectFreeClassLikeNamesFromNode(node.base, names)
+                node.arguments.forEach { collectFreeClassLikeNamesFromNode(it, names) }
+            }
+            is io.github.dingyi222666.luaparser.parser.ast.node.StringCallExpression -> {
+                collectFreeClassLikeNamesFromNode(node.base, names)
+                node.arguments.forEach { collectFreeClassLikeNamesFromNode(it, names) }
+            }
+            is io.github.dingyi222666.luaparser.parser.ast.node.TableCallExpression -> {
+                collectFreeClassLikeNamesFromNode(node.base, names)
+                node.arguments.forEach { collectFreeClassLikeNamesFromNode(it, names) }
+            }
+            is io.github.dingyi222666.luaparser.parser.ast.node.UnaryExpression -> {
+                collectFreeClassLikeNamesFromNode(node.arg, names)
+            }
+            is io.github.dingyi222666.luaparser.parser.ast.node.BinaryExpression -> {
+                node.left?.let { collectFreeClassLikeNamesFromNode(it, names) }
+                node.right?.let { collectFreeClassLikeNamesFromNode(it, names) }
+            }
+            is io.github.dingyi222666.luaparser.parser.ast.node.FunctionDeclaration -> {
+                node.identifier?.let { collectFreeClassLikeNamesFromNode(it, names) }
+                node.body?.let { collectFreeClassLikeNamesFromNode(it, names) }
+            }
+            is io.github.dingyi222666.luaparser.parser.ast.node.LocalStatement -> {
+                node.init.forEach { collectFreeClassLikeNamesFromNode(it, names) }
+                node.variables.forEach { collectFreeClassLikeNamesFromNode(it, names) }
+            }
+            is io.github.dingyi222666.luaparser.parser.ast.node.AssignmentStatement -> {
+                node.init.forEach { collectFreeClassLikeNamesFromNode(it, names) }
+                node.variables.forEach { collectFreeClassLikeNamesFromNode(it, names) }
+            }
+            is io.github.dingyi222666.luaparser.parser.ast.node.ReturnStatement -> {
+                node.arguments.forEach { collectFreeClassLikeNamesFromNode(it, names) }
+            }
+            is io.github.dingyi222666.luaparser.parser.ast.node.IfClause,
+            is io.github.dingyi222666.luaparser.parser.ast.node.ElseifClause -> {
+                // Walk children generically below via statement containers.
+            }
+            else -> Unit
+        }
+        // Generic child walk for statement/block containers and remaining AST shapes.
+        when (node) {
+            is io.github.dingyi222666.luaparser.parser.ast.node.ChunkNode -> {
+                collectFreeClassLikeNamesFromNode(node.body, names)
+            }
+            is io.github.dingyi222666.luaparser.parser.ast.node.BlockNode -> {
+                node.statements.forEach { collectFreeClassLikeNamesFromNode(it, names) }
+                node.returnStatement?.let { collectFreeClassLikeNamesFromNode(it, names) }
+            }
+            is io.github.dingyi222666.luaparser.parser.ast.node.DoStatement -> {
+                collectFreeClassLikeNamesFromNode(node.body, names)
+            }
+            is io.github.dingyi222666.luaparser.parser.ast.node.WhileStatement -> {
+                collectFreeClassLikeNamesFromNode(node.condition, names)
+                collectFreeClassLikeNamesFromNode(node.body, names)
+            }
+            is io.github.dingyi222666.luaparser.parser.ast.node.RepeatStatement -> {
+                collectFreeClassLikeNamesFromNode(node.body, names)
+                collectFreeClassLikeNamesFromNode(node.condition, names)
+            }
+            is io.github.dingyi222666.luaparser.parser.ast.node.IfStatement -> {
+                node.clauses.forEach { clause ->
+                    when (clause) {
+                        is io.github.dingyi222666.luaparser.parser.ast.node.IfClause -> {
+                            collectFreeClassLikeNamesFromNode(clause.condition, names)
+                            collectFreeClassLikeNamesFromNode(clause.body, names)
+                        }
+                        is io.github.dingyi222666.luaparser.parser.ast.node.ElseifClause -> {
+                            collectFreeClassLikeNamesFromNode(clause.condition, names)
+                            collectFreeClassLikeNamesFromNode(clause.body, names)
+                        }
+                        is io.github.dingyi222666.luaparser.parser.ast.node.ElseClause -> {
+                            collectFreeClassLikeNamesFromNode(clause.body, names)
+                        }
+                    }
+                }
+            }
+            is io.github.dingyi222666.luaparser.parser.ast.node.ForNumericStatement -> {
+                collectFreeClassLikeNamesFromNode(node.start, names)
+                collectFreeClassLikeNamesFromNode(node.end, names)
+                node.step?.let { collectFreeClassLikeNamesFromNode(it, names) }
+                collectFreeClassLikeNamesFromNode(node.body, names)
+            }
+            is io.github.dingyi222666.luaparser.parser.ast.node.ForGenericStatement -> {
+                node.iterators.forEach { collectFreeClassLikeNamesFromNode(it, names) }
+                collectFreeClassLikeNamesFromNode(node.body, names)
+            }
+            is io.github.dingyi222666.luaparser.parser.ast.node.TableConstructorExpression -> {
+                node.fields.forEach { field ->
+                    collectFreeClassLikeNamesFromNode(field.key, names)
+                    collectFreeClassLikeNamesFromNode(field.value, names)
+                }
+            }
+            is io.github.dingyi222666.luaparser.parser.ast.node.ArrayConstructorExpression -> {
+                node.values.forEach { collectFreeClassLikeNamesFromNode(it, names) }
+            }
+            is io.github.dingyi222666.luaparser.parser.ast.node.ExpressionStatement -> {
+                collectFreeClassLikeNamesFromNode(node.expression, names)
+            }
+            else -> Unit
+        }
+    }
+
+    private fun isClassLikeSimpleName(name: String): Boolean {
+        if (name.isEmpty() || name in NON_CLASS_FREE_IDENTIFIERS) {
+            return false
+        }
+        val first = name.first()
+        if (!first.isUpperCase() || !first.isLetter()) {
+            return false
+        }
+        return name.all { ch -> ch.isLetterOrDigit() || ch == '_' }
     }
 
     private fun isWildcardOrPackageTarget(importText: String): Boolean {

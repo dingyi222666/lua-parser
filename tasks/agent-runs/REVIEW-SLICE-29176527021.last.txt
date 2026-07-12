@@ -1,0 +1,24 @@
+{
+  "runId": "29176527021",
+  "sliceId": "s002",
+  "status": "failure",
+  "tests": 307,
+  "failures": 4,
+  "failedTests": [
+    "interop.jvm.JvmWorkspaceEngineTest#realiased_load_lib_helper_resolves_reflected_jvm_static_members[jvm]",
+    "interop.jvm.JvmWorkspaceEngineTest#androlua_import_metadata_resolves_nested_androlua_classes_via_underscore_aliases[jvm]",
+    "interop.jvm.JvmWorkspaceEngineTest#short_string_realiased_load_lib_helper_resolves_reflected_jvm_static_members[jvm]",
+    "interop.jvm.JvmWorkspaceEngineTest#unresolved_short_name_falls_back_to_android_lua_default_import_prefixes[jvm]"
+  ],
+  "progressSummary": {
+    "total": 25,
+    "totalFiles": 367,
+    "pending": 23,
+    "success": 1,
+    "failure": 1,
+    "running": 0,
+    "filesDone": 15,
+    "activeSlice": "s002"
+  },
+  "notes": "Merged CI artifact progress for run 29176527021 into win-slices. s002 remains failure (4/307). Gate: must-green-to-advance; stay on s002 until green. failures.txt rewritten from TEST-*.xml. results/s002-29176527021.json synced."
+}

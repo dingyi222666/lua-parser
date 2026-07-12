@@ -225,12 +225,12 @@ internal class WorkspaceModuleResolver(
         facts.sourceImports.forEach { fact ->
             targets += normalizeImportTarget(fact.target)
         }
-        facts.jvmClassLoads
-            .asSequence()
-            .filter { it.kind == DocumentFacts.JvmClassLoadKind.IMPORT_CALL }
-            .forEach { fact ->
-                targets += normalizeImportTarget(fact.target)
-            }
+        // LuaJava class-load helpers (bindClass / loadLib / createProxy / newInstance /
+        // createArray) and import() all mount class modules that must resolve as path-scoped
+        // imported MODULE aliases (System after loadLib("java.lang.System", ...)).
+        facts.jvmClassLoads.forEach { fact ->
+            targets += normalizeImportTarget(fact.target)
+        }
         return targets
     }
 
