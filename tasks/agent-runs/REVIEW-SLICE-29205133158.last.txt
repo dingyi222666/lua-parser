@@ -1,0 +1,21 @@
+{
+  "runId": "29205133158",
+  "sliceId": "s013",
+  "status": "failure",
+  "tests": 198,
+  "failures": 2,
+  "failedTests": [
+    "semantic.binder.BinderMultiAssignRangeTddTest#unbalancedAssignmentMultiLhs_stillDoesNotDeclare[jvm]",
+    "semantic.binder.BinderMultiAssignRangeTddTest#multiAssignWithoutLocal_doesNotCreateDeclarationsForLhsNames[jvm]"
+  ],
+  "progressSummary": {
+    "total": 25,
+    "totalFiles": 367,
+    "pending": 12,
+    "success": 12,
+    "failure": 1,
+    "running": 0,
+    "filesDone": 180
+  },
+  "notes": "Merged CI slice-progress for run 29205133158 into win-slices; s013 failure with 2 failed tests; activeSlice remains s013 under must-green-to-advance."
+}

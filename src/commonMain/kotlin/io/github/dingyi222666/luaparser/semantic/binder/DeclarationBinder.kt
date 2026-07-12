@@ -81,11 +81,18 @@ internal class DeclarationBinder(
 
     override fun visitAssignmentStatement(node: AssignmentStatement, value: Unit) {
         // AST quirk: AssignmentStatement.init = LHS targets, .variables = RHS expressions.
-        // First bare free-name write invents an AST GLOBAL with identifier-only range;
-        // later writes / shadowed locals / member-index LHS stay non-declarative.
+        // Only a *single* bare free-name LHS invents an AST GLOBAL (identifier-only range).
+        // Multi-LHS bare names are write/use targets only: never invent DeclarationIndex
+        // entries for names introduced solely via assignment multi-LHS without `local`.
+        // Later writes / shadowed locals / member-index LHS stay non-declarative.
+        val inventSingleBareGlobal = node.init.size == 1 && node.init.single() is Identifier
         node.init.forEach { target ->
             when (target) {
-                is Identifier -> bindBareGlobalAssignmentTarget(target)
+                is Identifier -> {
+                    if (inventSingleBareGlobal) {
+                        bindBareGlobalAssignmentTarget(target)
+                    }
+                }
                 else -> visitExpressionNode(target, value)
             }
         }
@@ -226,9 +233,10 @@ internal class DeclarationBinder(
     }
 
     /**
-     * First bare free-name assignment introduces a chunk-level AST GLOBAL whose range is
-     * the identifier token only. Visible locals / parameters / prior VALUE decls (including
-     * builtins and prior free-global invents) suppress inventing a peer declaration.
+     * First *single* bare free-name assignment introduces a chunk-level AST GLOBAL whose
+     * range is the identifier token only. Multi-LHS bare targets never call this path.
+     * Visible locals / parameters / prior VALUE decls (including builtins and prior
+     * free-global invents) suppress inventing a peer declaration.
      */
     private fun bindBareGlobalAssignmentTarget(identifier: Identifier) {
         val existing = builder.findVisibleValueDeclaration(identifier.name)

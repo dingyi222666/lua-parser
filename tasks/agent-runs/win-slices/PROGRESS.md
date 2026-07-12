@@ -1,9 +1,9 @@
 # Windows slice progress (must-green-to-advance)
 
-Updated: 2026-07-12T19:02:34Z
+Updated: 2026-07-12T19:06:26Z
 Strategy: must-green-to-advance
-Active/HEAD: s012 success
-Summary: success=12 failure=0 pending=13 total=25 filesDone=180
+Active/HEAD: s013 failure
+Summary: success=12 failure=1 pending=12 total=25 filesDone=180
 
 Checkbox: [x]=success [F]=failure [ ]=pending [~]=running
 
@@ -21,7 +21,7 @@ Checkbox: [x]=success [F]=failure [ ]=pending [~]=running
 | s010 | [x] success | 15 | green on run 29202132162; 166 tests 0 failures |
 | s011 | [x] success | 15 | green on run 29203714569; 131 tests 0 failures |
 | s012 | [x] success | 15 | green on run 29204945941; 250 tests 0 failures |
-| s013 | [ ] pending | 15 |  |
+| s013 | [F] failure | 15 | fail on run 29205133158; 198 tests 2 failures; semantic.binder.BinderMultiAssignRangeTddTest#unbalancedAssignmentMultiLhs_stillDoesNotDeclare[jvm], semantic.binder.BinderMultiAssignRangeTddTest#multiAssignWithoutLocal_doesNotCreateDeclarationsForLhsNames[jvm] |
 | s014 | [ ] pending | 15 |  |
 | s015 | [ ] pending | 15 |  |
 | s016 | [ ] pending | 15 |  |

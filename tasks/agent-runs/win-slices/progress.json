@@ -1,15 +1,15 @@
 {
   "version": 2,
-  "updatedAt": "2026-07-12T19:02:34Z",
+  "updatedAt": "2026-07-12T19:06:26Z",
   "strategy": "must-green-to-advance",
   "chunkSize": 15,
   "cycle": 1,
   "summary": {
     "total": 25,
     "totalFiles": 367,
-    "pending": 13,
+    "pending": 12,
     "success": 12,
-    "failure": 0,
+    "failure": 1,
     "running": 0,
     "filesDone": 180
   },
@@ -187,18 +187,21 @@
       "updatedAt": "2026-07-12T19:02:34Z"
     },
     "s013": {
-      "status": "pending",
+      "status": "failure",
       "label": "semantic.api..semantic.binder",
       "fileCount": 15,
-      "lastRunId": null,
-      "lastSha": null,
-      "tests": 0,
-      "failures": 0,
+      "lastRunId": "29205133158",
+      "lastSha": "6c808721f0d83f002d06807e446880508f95635c",
+      "tests": 198,
+      "failures": 2,
       "errors": 0,
-      "failedTests": [],
-      "durationSec": null,
-      "artifact": null,
-      "updatedAt": null
+      "failedTests": [
+        "semantic.binder.BinderMultiAssignRangeTddTest#unbalancedAssignmentMultiLhs_stillDoesNotDeclare[jvm]",
+        "semantic.binder.BinderMultiAssignRangeTddTest#multiAssignWithoutLocal_doesNotCreateDeclarationsForLhsNames[jvm]"
+      ],
+      "durationSec": 10,
+      "artifact": "results/s013-29205133158.json",
+      "updatedAt": "2026-07-12T19:06:26Z"
     },
     "s014": {
       "status": "pending",
@@ -687,6 +690,15 @@
       "failures": 0,
       "durationSec": 30,
       "at": "2026-07-12T19:02:34Z"
+    },
+    {
+      "sliceId": "s013",
+      "runId": "29205133158",
+      "status": "failure",
+      "tests": 198,
+      "failures": 2,
+      "durationSec": 10,
+      "at": "2026-07-12T19:06:26Z"
     }
   ],
   "gate": {
@@ -694,5 +706,5 @@
     "advanceOnlyIfSuccess": true,
     "workersPerSliceMax": 30
   },
-  "activeSlice": "s012"
+  "activeSlice": "s013"
 }
