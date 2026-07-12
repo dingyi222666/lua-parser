@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "updatedAt": "2026-07-12T19:16:57Z",
+  "updatedAt": "2026-07-12T19:28:28Z",
   "strategy": "must-green-to-advance",
   "chunkSize": 15,
   "cycle": 1,
@@ -8,10 +8,10 @@
     "total": 25,
     "totalFiles": 367,
     "pending": 12,
-    "success": 12,
-    "failure": 1,
+    "success": 13,
+    "failure": 0,
     "running": 0,
-    "filesDone": 180
+    "filesDone": 195
   },
   "slices": {
     "s001": {
@@ -187,25 +187,18 @@
       "updatedAt": "2026-07-12T19:02:34Z"
     },
     "s013": {
-      "status": "failure",
+      "status": "success",
       "label": "semantic.api..semantic.binder",
       "fileCount": 15,
-      "lastRunId": "29205436079",
-      "lastSha": "52eee0db5bec21ef716f800f0c8685448d679185",
+      "lastRunId": "29205780117",
+      "lastSha": "0f2826717c2af880bdd418eddaf5302785a40914",
       "tests": 198,
-      "failures": 6,
+      "failures": 0,
       "errors": 0,
-      "failedTests": [
-        "semantic.binder.BinderGlobalAssignmentDeclarationTddTest#multiLhsBareAssignment_createsGlobalPerBareIdentifier[jvm]",
-        "semantic.binder.BinderGlobalAssignmentDeclarationTddTest#unbalancedMultiLhsBareAssignment_stillCreatesGlobalsPerName[jvm]",
-        "semantic.binder.BinderGlobalAssignmentRangeTddTest#multiLineMultiLhsBareAssignment_eachNameDisjointCommaNotARange[jvm]",
-        "semantic.binder.BinderGlobalAssignmentRangeTddTest#unbalancedMultiLhsBareAssignment_eachNameHasDeclarationRange[jvm]",
-        "semantic.binder.BinderGlobalAssignmentRangeTddTest#multiLhsBareAssignment_eachNameHasDisjointIdentifierRange[jvm]",
-        "semantic.binder.BinderGlobalAssignmentRangeTddTest#multiLhsBareAssignment_usesDisjointIdentifierRanges[jvm]"
-      ],
-      "durationSec": 10,
-      "artifact": "results/s013-29205436079.json",
-      "updatedAt": "2026-07-12T19:16:57Z"
+      "failedTests": [],
+      "durationSec": 15,
+      "artifact": "results/s013-29205780117.json",
+      "updatedAt": "2026-07-12T19:28:28Z"
     },
     "s014": {
       "status": "pending",
@@ -712,6 +705,15 @@
       "failures": 6,
       "durationSec": 10,
       "at": "2026-07-12T19:16:57Z"
+    },
+    {
+      "sliceId": "s013",
+      "runId": "29205780117",
+      "status": "success",
+      "tests": 198,
+      "failures": 0,
+      "durationSec": 15,
+      "at": "2026-07-12T19:28:28Z"
     }
   ],
   "gate": {
