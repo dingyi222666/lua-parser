@@ -29,6 +29,8 @@ import parser.firstStatement
 import parser.parse
 import parser.renderShape
 import parser.returnExpression
+import io.github.dingyi222666.luaparser.parser.ast.node.IfStatement
+import io.github.dingyi222666.luaparser.parser.ast.node.AssignmentStatement
 
 class AndroLuaSyntaxTddTest {
 
@@ -200,6 +202,68 @@ class AndroLuaSyntaxTddTest {
         // Strict mode still rejects missing do when next token is not case/default/end
         assertParseFails(LuaVersion.ANDROLUA_5_3, "switch s then case 1 print(1) end")
     }
+
+    @Test
+    fun acceptsAndroLuaOptionalThenAndParenthesizedCallFunctionBodies() {
+        // asset-main.lua scaleup/scaledown: optional `then` before else / body.
+        val emptyThen = parse(
+            LuaVersion.ANDROLUA_5_3,
+            """
+            if actp.height<dp2px(50)
+             else
+              actp.height = actp.height - 1
+            end
+            """.trimIndent()
+        )
+        val emptyIf = assertIs<IfStatement>(emptyThen.body.statements.single())
+        assertEquals(2, emptyIf.causes.size)
+        assertTrue(emptyIf.causes[0].body.statements.isEmpty(), "empty then-branch before else")
+        assertFalse(emptyIf.bad, "AndroLua optional then must not mark IfStatement bad")
+        assertFalse(emptyIf.causes[0].bad, "AndroLua optional then must not mark IfClause bad")
+
+        val bodyWithoutThen = parse(
+            LuaVersion.ANDROLUA_5_3,
+            """
+            if actp.height>actheight
+              stop=true
+             else
+              actp.height = actp.height + 1
+            end
+            """.trimIndent()
+        )
+        val bodyIf = assertIs<IfStatement>(bodyWithoutThen.body.statements.single())
+        assertEquals(2, bodyIf.causes.size)
+        assertTrue(
+            renderShape(bodyIf).contains("Assign(Id(stop)=Const(true))"),
+            "body without then must parse assignment: ${renderShape(bodyIf)}"
+        )
+        assertFalse(bodyIf.bad)
+        assertFalse(bodyIf.causes[0].bad)
+
+        // loadlayout.lua: compact anonymous function whose body is a parenthesized call.
+        val loadlayoutLike = parse(
+            LuaVersion.ANDROLUA_5_3,
+            "listener=OnClickListener{onClick=function(a)(root[v] or _G[v])(a)end}"
+        )
+        val assign = assertIs<AssignmentStatement>(loadlayoutLike.body.statements.single())
+        val shape = renderShape(assign)
+        assertTrue(
+            shape.contains("Function(null,Block[CallStmt(Call(Binary(or,"),
+            "expected parenthesized call statement in function body, got $shape"
+        )
+        assertTrue(
+            shape.contains("Index(Id(root)[Id(v)])") && shape.contains("Index(Id(_G)[Id(v)])"),
+            "expected root[v]/_G[v] shape, got $shape"
+        )
+
+        // Plain Lua 5.3 still requires `then` in strict mode.
+        assertParseFails(
+            LuaVersion.LUA_5_3,
+            "if ready\n  work()\nend",
+            recovery = false
+        )
+    }
+
 
     @Test
     fun parsesAndroLuaOnlyStatementShapes() {

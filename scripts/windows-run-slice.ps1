@@ -225,9 +225,23 @@ $progress.summary = [ordered]@{
   running = $runn
   filesDone = $filesDone
 }
-if (-not $progress.history) { $progress.history = @() }
-$hist = [ordered]@{ sliceId=$sliceId; runId="$runId"; status=$status; tests=$tests; failures=($failures+$errors); durationSec=[int]$sw.Elapsed.TotalSeconds; at=$resultObj.finishedAt }
-$progress.history = @($progress.history + $hist) | Select-Object -Last 50
+# history: ConvertFrom-Json may yield a single PSObject (no op_Addition) — always list-append
+$hist = [pscustomobject]@{
+  sliceId = $sliceId
+  runId = "$runId"
+  status = $status
+  tests = $tests
+  failures = ($failures + $errors)
+  durationSec = [int]$sw.Elapsed.TotalSeconds
+  at = $resultObj.finishedAt
+}
+$histList = New-Object System.Collections.Generic.List[object]
+if ($null -ne $progress.history) {
+  foreach ($item in @($progress.history)) { [void]$histList.Add($item) }
+}
+[void]$histList.Add($hist)
+while ($histList.Count -gt 50) { $histList.RemoveAt(0) }
+$progress.history = $histList.ToArray()
 ($progress | ConvertTo-Json -Depth 12) | Set-Content -Path $ProgressPath -Encoding UTF8
 
 Write-Host ("PROGRESS_BAR {0}/{1} success={2} failure={3} pending={4} current={5}:{6}" -f ($succ), $progress.summary.total, $succ, $fail, $pend, $sliceId, $status)

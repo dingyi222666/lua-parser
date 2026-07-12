@@ -383,6 +383,9 @@ class LuaParser(
             LuaTokenTypes.DOUBLE_COLON,
             LuaTokenTypes.DO,
             LuaTokenTypes.NAME,
+            // Parenthesized call statements: (f)(), (function() end)(), and
+            // compact Android-Lua bodies like function(a)(root[v] or _G[v])(a) end
+            LuaTokenTypes.LPAREN,
             LuaTokenTypes.RETURN -> true
 
             else -> false
@@ -786,6 +789,10 @@ class LuaParser(
                     }
                 }
 
+                // Parenthesized prefix expressions used as call statements
+                // (standard Lua + AndroLua loadlayout-style `function(a)(...)(a)end`).
+                peekToken(LuaTokenTypes.LPAREN) -> parseExpStatement(blockNode)
+
                 consumeToken(LuaTokenTypes.RETURN) -> {
                     markLocation()
                     parseReturnStatement(blockNode)
@@ -1080,6 +1087,7 @@ class LuaParser(
 
     //       elseif exp then block
     // TASK-598: missing `then` warns and still parses body; clause marked bad.
+    // TASK-613: AndroLua optional `then` (same product rule as parseIfCause).
     private fun parseElseIfCause(parent: BaseASTNode): IfClause {
         val result = ElseIfClause()
         result.parent = parent
@@ -1090,11 +1098,14 @@ class LuaParser(
 
         val findThenToken = consumeToken(LuaTokenTypes.THEN)
         if (!findThenToken) {
-            if (!errorRecovery) {
+            if (isAndroLua()) {
+                // Optional `then` is product syntax under AndroLua — no diagnostic, no bad.
+            } else if (!errorRecovery) {
                 error("The <then> expected near ${lexerText()}")
+            } else {
+                warning("The <then> expected near ${lexerText()}")
+                result.bad = true
             }
-            warning("The <then> expected near ${lexerText()}")
-            result.bad = true
         }
 
         result.body = parseBlockNode(result)
@@ -1104,6 +1115,8 @@ class LuaParser(
 
     //       if exp then block
     // TASK-598: missing `then` warns and still parses body; clause marked bad.
+    // TASK-613: AndroLua/Android-Lua product syntax allows optional `then`
+    // (asset-main scaleup/scaledown: `if actp.height<dp2px(50)\n else ... end`).
     private fun parseIfCause(parent: BaseASTNode): IfClause {
         val result = IfClause()
         result.parent = parent
@@ -1114,11 +1127,14 @@ class LuaParser(
 
         val findThenToken = consumeToken(LuaTokenTypes.THEN)
         if (!findThenToken) {
-            if (!errorRecovery) {
+            if (isAndroLua()) {
+                // Optional `then` is product syntax under AndroLua — no diagnostic, no bad.
+            } else if (!errorRecovery) {
                 error("The <then> expected near ${lexerText()}")
+            } else {
+                warning("The <then> expected near ${lexerText()}")
+                result.bad = true
             }
-            warning("The <then> expected near ${lexerText()}")
-            result.bad = true
         }
 
         result.body = parseBlockNode(result)

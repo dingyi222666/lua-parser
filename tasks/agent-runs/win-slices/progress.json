@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "updatedAt": "2026-07-11T23:21:22Z",
+  "updatedAt": "2026-07-11T23:54:45Z",
   "strategy": "must-green-to-advance",
   "chunkSize": 15,
   "cycle": 1,
@@ -18,10 +18,10 @@
       "status": "failure",
       "label": "integration..interop.jvm",
       "fileCount": 15,
-      "lastRunId": "29171889166",
-      "lastSha": "f797e964a3608d02d5613a528b075cd8b7de0b92",
+      "lastRunId": "29172806487",
+      "lastSha": "088b9965218d381b9fbbb104a5139ad478e15945",
       "tests": 246,
-      "failures": 11,
+      "failures": 37,
       "errors": 0,
       "failedTests": [
         "integration.AndroidLuaCorpusSemanticVerificationTest#lsp_queries_external_android_lua_sources_with_android_metadata[jvm]",
@@ -29,16 +29,42 @@
         "integration.AndroidLuaCorpusSemanticVerificationTest#host_dual_path_root_and_android_jar_joint_green_lock[jvm]",
         "integration.AndroidLuaCorpusSemanticVerificationTest#semantic_workspace_full_tree_external_paths_resolve_require_import_and_helpers[jvm]",
         "integration.AndroidLuaCorpusSemanticVerificationTest#parser_accepts_strict_rows_and_recovers_marked_rows_without_crashing[jvm]",
-        "interop.jvm.AndroidJarDefaultPathDiscoveryTddTest#file_constructed_from_default_android_jar_path_is_skip_safe_when_absent[jvm]",
-        "interop.jvm.AndroidJarDefaultPathDiscoveryTddTest#resolve_default_does_not_invent_missing_jar_file[jvm]",
-        "interop.jvm.AndroidJarDefaultPathDiscoveryTddTest#missing_android_jar_soft_skip_reason_is_explicit[jvm]",
+        "interop.jvm.AndroidJarReflectionTddTest#android_activity_provider_exposes_instance_methods_from_android_jar_class_type[jvm]",
+        "interop.jvm.AndroidJarReflectionTddTest#jvm_android_jar_metadata_can_load_android_view_explicit_class[jvm]",
+        "interop.jvm.AndroidJarReflectionTddTest#android_app_wildcard_provider_enumerates_activity_from_android_jar[jvm]",
+        "interop.jvm.AndroidJarReflectionTddTest#jvm_android_jar_metadata_can_load_android_activity_explicit_class[jvm]",
+        "interop.jvm.AndroidJarReflectionTddTest#android_text_view_inner_buffer_type_resolves_by_dotted_name_candidate[jvm]",
+        "interop.jvm.AndroidJarReflectionTddTest#android_context_provider_exposes_instance_methods_from_android_jar_class_type[jvm]",
+        "interop.jvm.AndroidJarReflectionTddTest#android_view_provider_exposes_static_methods_from_android_jar[jvm]",
+        "interop.jvm.AndroidJarReflectionTddTest#android_content_wildcard_provider_enumerates_context_from_android_jar[jvm]",
+        "interop.jvm.AndroidJarReflectionTddTest#android_text_view_inner_buffer_type_resolves_by_underscore_alias[jvm]",
+        "interop.jvm.AndroidJarReflectionTddTest#android_activity_provider_exposes_static_result_constants_from_android_jar[jvm]",
+        "interop.jvm.AndroidJarReflectionTddTest#android_wildcard_provider_skips_inner_classes_from_package_enumeration[jvm]",
+        "interop.jvm.AndroidJarReflectionTddTest#android_view_wildcard_provider_enumerates_view_from_android_jar[jvm]",
+        "interop.jvm.AndroidJarReflectionTddTest#android_view_inner_on_click_listener_resolves_by_short_import_prefix[jvm]",
+        "interop.jvm.AndroidJarReflectionTddTest#android_view_provider_exposes_instance_members_from_android_jar_class_type[jvm]",
+        "interop.jvm.AndroidJarReflectionTddTest#android_text_view_provider_exposes_instance_methods_from_android_jar_class_type[jvm]",
+        "interop.jvm.AndroidJarReflectionTddTest#jvm_android_jar_metadata_appends_android_jar_to_effective_classpath[jvm]",
+        "interop.jvm.AndroidJarReflectionTddTest#android_context_inner_bind_service_flags_resolves_by_dotted_name_candidate[jvm]",
+        "interop.jvm.AndroidJarReflectionTddTest#android_view_inner_measure_spec_resolves_by_dotted_name_candidate[jvm]",
+        "interop.jvm.AndroidJarReflectionTddTest#host_android_jar_four_package_wildcards_product_lock_enumerates_fixture_classes[jvm]",
+        "interop.jvm.AndroidJarReflectionTddTest#android_widget_wildcard_provider_enumerates_text_view_from_android_jar[jvm]",
+        "interop.jvm.AndroidJarReflectionTddTest#android_activity_inner_screen_capture_callback_resolves_by_dotted_name_candidate[jvm]",
+        "interop.jvm.AndroidJarReflectionTddTest#android_view_provider_exposes_static_constants_from_android_jar[jvm]",
+        "interop.jvm.AndroidJarReflectionTddTest#jvm_android_jar_metadata_can_load_android_context_explicit_class[jvm]",
+        "interop.jvm.AndroidJarReflectionTddTest#jvm_android_jar_metadata_can_load_android_text_view_explicit_class[jvm]",
+        "interop.jvm.AndroidJarReflectionTddTest#jvm_classpath_metadata_can_load_android_context_when_android_jar_is_on_configurable_classpath[jvm]",
         "interop.jvm.AndroidJarReflectionTddTest#android_jar_path_is_available_for_task_019_reflection_tests[jvm]",
-        "interop.jvm.JvmClassloaderConfigurationTddTest#missing_android_sdk_environment_reports_configuration_note_without_classpath_fallback[jvm]",
+        "interop.jvm.AndroidJarReflectionTddTest#android_text_view_inner_buffer_type_resolves_by_binary_name[jvm]",
+        "interop.jvm.AndroidJarReflectionTddTest#android_text_view_provider_exposes_static_fields_from_android_jar[jvm]",
+        "interop.jvm.AndroidJarReflectionTddTest#android_context_provider_exposes_static_service_constants_from_android_jar[jvm]",
+        "interop.jvm.JvmClassloaderConfigurationTddTest#separate_classpath_configurations_are_isolated_for_same_binary_name[jvm]",
+        "interop.jvm.JvmClassloaderConfigurationTddTest#configured_android_jar_resolves_nested_framework_classes_by_binary_and_dotted_names[jvm]",
         "interop.jvm.JvmClassloaderConfigurationTddTest#configured_android_jar_loads_framework_classes_from_expected_sdk_path[jvm]"
       ],
-      "durationSec": 191,
-      "artifact": "results/s001-29171889166.json",
-      "updatedAt": "2026-07-11T23:21:22Z"
+      "durationSec": 25,
+      "artifact": "results/s001-29172806487.json",
+      "updatedAt": "2026-07-11T23:54:45Z"
     },
     "s002": {
       "status": "pending",
@@ -377,15 +403,17 @@
       "updatedAt": null
     }
   },
-  "history": {
-    "sliceId": "s001",
-    "runId": "29171889166",
-    "status": "failure",
-    "tests": 246,
-    "failures": 11,
-    "durationSec": 191,
-    "at": "2026-07-11T23:21:22Z"
-  },
+  "history": [
+    {
+      "sliceId": "s001",
+      "runId": "29172806487",
+      "status": "failure",
+      "tests": 246,
+      "failures": 37,
+      "durationSec": 25,
+      "at": "2026-07-11T23:54:45Z"
+    }
+  ],
   "gate": {
     "rule": "A slice may advance to the next only when its status is success. Failure/pending/running must re-run the same slice until green.",
     "advanceOnlyIfSuccess": true,

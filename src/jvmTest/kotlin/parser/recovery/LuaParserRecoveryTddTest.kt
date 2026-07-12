@@ -52,7 +52,7 @@ class LuaParserRecoveryTddTest {
 
     @Test
     fun recoversMissingEndThenDoAndUntilWhileKeepingStatementsReachable() {
-        assertEquals(16, missingDelimiterCases.size)
+        assertEquals(18, missingDelimiterCases.size)
 
         missingDelimiterCases.forEach(::assertSupportedRecoveryCase)
     }
@@ -73,7 +73,7 @@ class LuaParserRecoveryTddTest {
 
     @Test
     fun recoversFunctionTableLiteralAndCurrentlySupportedIncompleteCallForms() {
-        assertEquals(20, functionTableLiteralAndMixedCallCases.size)
+        assertEquals(21, functionTableLiteralAndMixedCallCases.size)
 
         functionTableLiteralAndMixedCallCases.forEach(::assertSupportedRecoveryCase)
     }
@@ -118,7 +118,7 @@ class LuaParserRecoveryTddTest {
             .filter { it.strictParseExpectation == StrictParseExpectation.CURRENTLY_ACCEPTS_MISSING_RHS }
             .map { it.name }
 
-        assertEquals(63, requiredRecoveryCases().size)
+        assertEquals(66, requiredRecoveryCases().size)
         assertContentEquals(
             listOf(
                 "assignment missing rhs expression should keep later print",
@@ -381,6 +381,25 @@ class LuaParserRecoveryTddTest {
                 "If(Clause(Id(ready):Block[Local(Id(value)=Const(1));CallStmt(Call(Id(print):Id(value)))])"
             ),
             warningFragments = listOf("The <then> expected")
+        ),
+        RecoveryCase(
+            // TASK-613: AndroLua optional `then` (asset-main scaleup/scaledown).
+            name = "AndroLua optional if then accepts empty then-branch before else",
+            version = LuaVersion.ANDROLUA_5_3,
+            source = "if actp.height<dp2px(50)\n else\n  actp.height = actp.height - 1\n end",
+            requiredShapeFragments = listOf(
+                "If(Clause(Binary(<,Member(Id(actp).height),Call(Id(dp2px):Const(50))):Block[]),Else(Block[Assign(Member(Id(actp).height)=Binary(-,Member(Id(actp).height),Const(1)))]))"
+            ),
+            strictParseExpectation = StrictParseExpectation.CURRENTLY_ACCEPTS
+        ),
+        RecoveryCase(
+            name = "AndroLua optional if then accepts body without then keyword",
+            version = LuaVersion.ANDROLUA_5_3,
+            source = "if actp.height>actheight\n  stop=true\n else\n  actp.height = actp.height + 1\n end",
+            requiredShapeFragments = listOf(
+                "If(Clause(Binary(>,Member(Id(actp).height),Id(actheight)):Block[Assign(Id(stop)=Const(true))]),Else(Block[Assign(Member(Id(actp).height)=Binary(+,Member(Id(actp).height),Const(1)))]))"
+            ),
+            strictParseExpectation = StrictParseExpectation.CURRENTLY_ACCEPTS
         ),
         RecoveryCase(
             name = "missing elseif then keeps elseif and else branches",
@@ -699,6 +718,17 @@ class LuaParserRecoveryTddTest {
             source = "function broken(a) return a",
             requiredShapeFragments = listOf("Function(Id(broken),Block[Return(Id(a))])"),
             warningFragments = listOf("<end> expected")
+        ),
+        RecoveryCase(
+            // TASK-613: loadlayout.lua OnClickListener compact body
+            // `function(a)(root[v] or _G[v])(a)end` — parenthesized call statement.
+            name = "anonymous function body parenthesized call statement is strict accepted",
+            version = LuaVersion.ANDROLUA_5_3,
+            source = "return function(a)(root[v] or _G[v])(a)end",
+            requiredShapeFragments = listOf(
+                "Function(null,Block[CallStmt(Call(Binary(or,Index(Id(root)[Id(v)]),Index(Id(_G)[Id(v)])):Id(a)))])"
+            ),
+            strictParseExpectation = StrictParseExpectation.CURRENTLY_ACCEPTS
         ),
         RecoveryCase(
             name = "local function missing name should keep following call",

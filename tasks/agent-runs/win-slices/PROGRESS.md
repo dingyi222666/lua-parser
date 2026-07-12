@@ -1,29 +1,35 @@
-# Windows slice progress  cycle=1  chunk=15  files=367  slices=25
-# updated 2026-07-11T23:21:22Z
-# summary success=0 failure=1 pending=24 running=0 total=25 filesDone=0
+# Windows slice progress (must-green-to-advance)
 
-[F] s001  15 files  integration..interop.jvm
-[ ] s002  15 files  interop.jvm..lsp
-[ ] s003  15 files  lsp
-[ ] s004  15 files  lsp
-[ ] s005  15 files  lsp
-[ ] s006  15 files  lsp..parser
-[ ] s007  15 files  parser..parser.ast
-[ ] s008  15 files  parser.ast..parser.lexer
-[ ] s009  15 files  parser.lexer..parser.recovery
-[ ] s010  15 files  parser.recovery
-[ ] s011  15 files  parser.recovery..semantic
-[ ] s012  15 files  semantic..semantic.androidlua
-[ ] s013  15 files  semantic.api..semantic.binder
-[ ] s014  15 files  semantic.binder..semantic.checker
-[ ] s015  15 files  semantic.checker
-[ ] s016  15 files  semantic.checker..semantic.comments
-[ ] s017  15 files  semantic.comments..semantic.interop
-[ ] s018  15 files  semantic.interop
-[ ] s019  15 files  semantic.interop..semantic.model
-[ ] s020  15 files  semantic.model..semantic.types.resolve
-[ ] s021  15 files  semantic.types.resolve..semantic.workspace
-[ ] s022  15 files  semantic.workspace
-[ ] s023  15 files  semantic.workspace
-[ ] s024  15 files  semantic.workspace..source
-[ ] s025   7 files  source..testinventory
+Updated: 2026-07-11T23:54:45Z
+Strategy: must-green-to-advance
+Active/HEAD: s001 failure
+Summary: success=0 failure=1 pending=24 total=25 filesDone=0
+
+| Slice | Status | Files | Notes |
+| --- | --- | --- | --- |
+| s001 | [F] failure | 15 | run 29172806487 failures=37 |
+| s002 | [ ] pending | 15 |  |
+| s003 | [ ] pending | 15 |  |
+| s004 | [ ] pending | 15 |  |
+| s005 | [ ] pending | 15 |  |
+| s006 | [ ] pending | 15 |  |
+| s007 | [ ] pending | 15 |  |
+| s008 | [ ] pending | 15 |  |
+| s009 | [ ] pending | 15 |  |
+| s010 | [ ] pending | 15 |  |
+| s011 | [ ] pending | 15 |  |
+| s012 | [ ] pending | 15 |  |
+| s013 | [ ] pending | 15 |  |
+| s014 | [ ] pending | 15 |  |
+| s015 | [ ] pending | 15 |  |
+| s016 | [ ] pending | 15 |  |
+| s017 | [ ] pending | 15 |  |
+| s018 | [ ] pending | 15 |  |
+| s019 | [ ] pending | 15 |  |
+| s020 | [ ] pending | 15 |  |
+| s021 | [ ] pending | 15 |  |
+| s022 | [ ] pending | 15 |  |
+| s023 | [ ] pending | 15 |  |
+| s024 | [ ] pending | 15 |  |
+| s025 | [ ] pending | 7 |  |
+

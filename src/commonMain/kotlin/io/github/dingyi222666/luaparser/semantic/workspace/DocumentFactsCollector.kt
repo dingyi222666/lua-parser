@@ -385,24 +385,39 @@ object DocumentFactsCollector {
         }
 
         private fun collectLocalAliases(statement: LocalStatement) {
-            val kinds = statement.init.mapIndexed { index, _ ->
-                val value = statement.variables.getOrNull(index)
-                value?.let(::jvmClassLoadKindForAliasExpression)
-            }
+            // LocalStatement: .init = names/LHS, .variables = RHS (AST quirk).
             statement.init.forEachIndexed { index, identifier ->
-                declareLocalAlias(identifier.name, kinds.getOrNull(index))
+                val value = statement.variables.getOrNull(index)
+                // Android-Lua helpers (loadlayout/loadmenu) capture globals with identity
+                // rebinds such as `local luajava = luajava` then `local bindClass = luajava.bindClass`.
+                // Registering a null-kind shadow for that identity would blank every `luajava.*`
+                // helper via isAliasDeclared and yield empty jvmClassLoads (ViewGroup got []).
+                if (isIdentityAliasRebind(identifier.name, value)) {
+                    return@forEachIndexed
+                }
+                declareLocalAlias(identifier.name, value?.let(::jvmClassLoadKindForAliasExpression))
             }
         }
 
         private fun collectAssignmentAliases(statement: AssignmentStatement) {
-            val kinds = statement.init.mapIndexed { index, _ ->
-                val value = statement.variables.getOrNull(index)
-                value?.let(::jvmClassLoadKindForAliasExpression)
-            }
+            // AssignmentStatement: .init = LHS, .variables = RHS (AST quirk).
             statement.init.forEachIndexed { index, target ->
                 val identifier = target as? Identifier ?: return@forEachIndexed
-                assignAlias(identifier.name, kinds.getOrNull(index))
+                val value = statement.variables.getOrNull(index)
+                if (isIdentityAliasRebind(identifier.name, value)) {
+                    return@forEachIndexed
+                }
+                assignAlias(identifier.name, value?.let(::jvmClassLoadKindForAliasExpression))
             }
+        }
+
+        /**
+         * True for `local x = x` / `x = x` identity captures of the outer binding.
+         * These must not register a null-kind local shadow for LuaJava helper resolution.
+         */
+        private fun isIdentityAliasRebind(aliasName: String, value: ExpressionNode?): Boolean {
+            val identifier = value as? Identifier ?: return false
+            return identifier.name == aliasName
         }
 
         private fun collectFunctionAliasShadow(function: FunctionDeclaration) {
