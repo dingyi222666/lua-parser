@@ -1,17 +1,17 @@
 {
   "version": 2,
-  "updatedAt": "2026-07-12T13:16:10Z",
+  "updatedAt": "2026-07-12T13:25:52Z",
   "strategy": "must-green-to-advance",
   "chunkSize": 15,
   "cycle": 1,
   "summary": {
     "total": 25,
     "totalFiles": 367,
-    "pending": 21,
-    "success": 4,
+    "pending": 20,
+    "success": 5,
     "failure": 0,
     "running": 0,
-    "filesDone": 60
+    "filesDone": 75
   },
   "slices": {
     "s001": {
@@ -74,18 +74,18 @@
       "updatedAt": "2026-07-12T13:16:10Z"
     },
     "s005": {
-      "status": "pending",
+      "status": "success",
       "label": "lsp",
       "fileCount": 15,
-      "lastRunId": null,
-      "lastSha": null,
-      "tests": 0,
+      "lastRunId": "29194327730",
+      "lastSha": "65973f258442bdd94fcb2e1359caea351bcf59f1",
+      "tests": 327,
       "failures": 0,
       "errors": 0,
       "failedTests": [],
-      "durationSec": null,
-      "artifact": null,
-      "updatedAt": null
+      "durationSec": 70,
+      "artifact": "results/s005-29194327730.json",
+      "updatedAt": "2026-07-12T13:25:52Z"
     },
     "s006": {
       "status": "pending",
@@ -505,6 +505,15 @@
       "failures": 0,
       "durationSec": 55,
       "at": "2026-07-12T13:16:10Z"
+    },
+    {
+      "sliceId": "s005",
+      "runId": "29194327730",
+      "status": "success",
+      "tests": 327,
+      "failures": 0,
+      "durationSec": 70,
+      "at": "2026-07-12T13:25:52Z"
     }
   ],
   "gate": {
@@ -512,5 +521,5 @@
     "advanceOnlyIfSuccess": true,
     "workersPerSliceMax": 30
   },
-  "activeSlice": "s005"
+  "activeSlice": "s006"
 }

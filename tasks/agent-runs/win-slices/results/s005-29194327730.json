@@ -1,0 +1,32 @@
+{
+  "sliceId": "s005",
+  "runId": "29194327730",
+  "sha": "65973f258442bdd94fcb2e1359caea351bcf59f1",
+  "status": "success",
+  "exitCode": 0,
+  "durationSec": 70,
+  "tests": 327,
+  "failures": 0,
+  "errors": 0,
+  "skipped": 3,
+  "failedTests": [],
+  "testsPatterns": [
+    "lsp.LspLinkedEditingRangeLocalTddTest",
+    "lsp.LspModernWorkspaceSymbolTddTest",
+    "lsp.LspMonikerSafetyTddTest",
+    "lsp.LspNavigationSymbolsTddTest",
+    "lsp.LspOnTypeFormattingEndKeywordTddTest",
+    "lsp.LspPrepareCallHierarchySafetyTddTest",
+    "lsp.LspPrepareRenameSafetyTddTest",
+    "lsp.LspRangeFormattingTableBodyTddTest",
+    "lsp.LspReferencesIncludeDeclarationTddTest",
+    "lsp.LspRenamePrepareDualPathTddTest",
+    "lsp.LspRenamePrepareMultiFileTddTest",
+    "lsp.LspRenameSafetyTddTest",
+    "lsp.LspSelectionRangeNestedBlockTddTest",
+    "lsp.LspSelectionRangeSafetyTddTest",
+    "lsp.LspSemanticTokensBasicTddTest"
+  ],
+  "gate": "must-green-to-advance",
+  "finishedAt": "2026-07-12T13:25:52Z"
+}
