@@ -1,0 +1,28 @@
+{
+  "runId": "29212217687",
+  "sliceId": "s017",
+  "status": "failure",
+  "tests": 574,
+  "failures": 6,
+  "failedTests": [
+    "semantic.workspace.BuiltinOverlayLoaderTest#lua53_builtin_generic_returns_reach_completion_and_signature_help[jvm]",
+    "semantic.workspace.LuaWorkspaceQueryFacadeTest#signature_help_preserves_generic_type_parameter_labels_after_type_resolution[jvm]",
+    "semantic.workspace.LuaWorkspaceQueryFacadeTest#resolve_require_only_reports_modules_for_real_builtin_call_sites[jvm]",
+    "semantic.workspace.LuaWorkspaceQueryFacadeTest#nested_require_alias_exports_flow_through_workspace_definition_and_references[jvm]",
+    "semantic.workspace.ModuleExportCollectorTest#direct_return_table_literal_is_collected[jvm]",
+    "semantic.workspace.SemanticWorkspaceCampaignGapTddTest#androlua_socket_url_overlay_keeps_dotted_module_resolution_and_parse_method[jvm]"
+  ],
+  "progressSummary": {
+    "success": 16,
+    "failure": 1,
+    "pending": 1,
+    "running": 0,
+    "total": 18,
+    "filesDone": 300,
+    "totalFiles": 367,
+    "activeSlice": "s017",
+    "chunkSize": 45,
+    "updatedAt": "2026-07-12T22:50:21Z"
+  },
+  "notes": "Merged CI progress (updatedAt=2026-07-12T22:50:21Z) over local; s017 run 29212217687 status=failure tests=574 failures=6; copied results ['s017-29212217687.json']; wrote failures.txt (6 tests); PROGRESS.md rewritten; gate remains must-green-to-advance on s017."
+}

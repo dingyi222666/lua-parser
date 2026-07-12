@@ -1467,8 +1467,12 @@ object BuiltinOverlayLoader {
         val vararg: Boolean
     )
 
-    private fun overlayModulePath(versionSegment: String, moduleName: String): VirtualPath =
-        VirtualPath.of("__lua_std__/$versionSegment/$moduleName.lua")
+    private fun overlayModulePath(versionSegment: String, moduleName: String): VirtualPath {
+        // Keep dotted module names (socket.url) as a single path segment so providers stay
+        // at __lua_std__/<ver>/socket.url.lua rather than a nested socket/url.lua tree.
+        val safeName = moduleName.replace('\\', '/').trim('/')
+        return VirtualPath.of("__lua_std__/$versionSegment/$safeName.lua")
+    }
 
     private fun overlayGlobalsPath(versionSegment: String): VirtualPath =
         VirtualPath.of("__lua_std__/$versionSegment/_G.lua")

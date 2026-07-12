@@ -3,7 +3,9 @@ package io.github.dingyi222666.luaparser.semantic.workspace
 import io.github.dingyi222666.luaparser.parser.ast.node.BaseASTNode
 import io.github.dingyi222666.luaparser.parser.ast.node.CallExpression
 import io.github.dingyi222666.luaparser.parser.ast.node.ConstantNode
+import io.github.dingyi222666.luaparser.parser.ast.node.ExpressionNode
 import io.github.dingyi222666.luaparser.parser.ast.node.Identifier
+import io.github.dingyi222666.luaparser.parser.ast.node.IndexExpression
 import io.github.dingyi222666.luaparser.parser.ast.node.LocalStatement
 import io.github.dingyi222666.luaparser.parser.ast.node.MemberExpression
 import io.github.dingyi222666.luaparser.parser.ast.node.Position
@@ -43,6 +45,13 @@ class LuaWorkspaceQueryFacade(
     }
 
     fun resolveRequire(path: VirtualPath, moduleName: String): WorkspaceModuleLookupResult {
+        // Only report a provider when this consumer actually has a real builtin
+        // require("moduleName") call site. Free-form module discovery stays on lookupModule;
+        // name-only resolve must not invent providers for files that never required them
+        // (or only call a shadowed local require).
+        if (!hasBuiltinRequireCallSite(path, moduleName)) {
+            return WorkspaceModuleLookupResult(moduleName, provider = null, exportSurface = null)
+        }
         val resolved = resolver.resolveRequire(path, moduleName)
         return WorkspaceModuleLookupResult(moduleName, resolved?.provider, resolved?.surface)
     }
@@ -52,6 +61,9 @@ class LuaWorkspaceQueryFacade(
         if (callSite != null) {
             return workspaceModuleLookup(path, callSite.moduleName)
         }
+        // Position-based resolve is also restricted to real builtin require form:
+        // require-backed locals only count when their initializer is an unshadowed
+        // builtin require("...") call (requiredModuleNameForDeclaration / builtinRequireModuleName).
         return requireBackedModuleNameAtPosition(path, position)?.let { workspaceModuleLookup(path, it) }
     }
 
@@ -160,6 +172,14 @@ class LuaWorkspaceQueryFacade(
             }
             if (requireBackedLocalDefinition != null) {
                 return listOf(requireBackedLocalDefinition)
+            }
+            // Locals initialized from require-backed exports (`local parse = url.parse`) must
+            // navigate to the provider export, not the local binding site (TASK-674).
+            val requireBackedMemberLocalDefinition = semanticFile?.let {
+                requireBackedMemberLocalDefinition(it, path, node, symbol)
+            }
+            if (requireBackedMemberLocalDefinition != null) {
+                return listOf(requireBackedMemberLocalDefinition)
             }
         }
         // Local AST declarations win for true locals (including shadowing of imported modules).
@@ -875,6 +895,51 @@ class LuaWorkspaceQueryFacade(
         return WorkspaceLocation(providerPath, syntheticModuleRange(moduleName))
     }
 
+    /**
+     * Resolve `local parse = url.parse` (and usages of that local) to the require-backed export
+     * member on the provider module (e.g. AndroLua socket.url overlay path).
+     */
+    private fun requireBackedMemberLocalDefinition(
+        semanticFile: WorkspaceSemanticFile,
+        path: VirtualPath,
+        node: BaseASTNode?,
+        symbol: io.github.dingyi222666.luaparser.semantic.api.Symbol?
+    ): WorkspaceLocation? {
+        val identifier = node as? Identifier ?: return null
+        val parent = runCatching { identifier.parent }.getOrNull()
+        if (parent is MemberExpression && parent.identifier === identifier) {
+            return null
+        }
+        val declaration = localDeclarationForSymbol(semanticFile, symbol?.symbolId)
+            ?: exactLocalDeclarationForIdentifier(semanticFile, identifier)
+            ?: visibleLocalValueDeclaration(semanticFile, identifier.name, identifier.range.start)
+            ?: return null
+        if (declaration.kind != DeclarationKind.LOCAL || declaration.anchorNode !is Identifier) {
+            return null
+        }
+        val memberInitializer = memberInitializerForLocal(declaration) ?: return null
+        val exportPath = requireBackedExportPath(semanticFile, path, memberInitializer) ?: return null
+        if (exportPath.isEmpty()) {
+            return null
+        }
+        val resolved = resolvedRequireForExportPathRoot(semanticFile, path, memberInitializer)
+            ?: return null
+        val export = resolver.exportedMember(resolved.provider.path, exportPath) ?: return null
+        return exportLocation(export)
+    }
+
+    private fun memberInitializerForLocal(declaration: BinderDeclaration): MemberExpression? {
+        if (declaration.kind != DeclarationKind.LOCAL || declaration.anchorNode !is Identifier) {
+            return null
+        }
+        val localStatement = declaration.anchorNode.parent as? LocalStatement ?: return null
+        val localIndex = localStatement.init.indexOf(declaration.anchorNode)
+        if (localIndex < 0) {
+            return null
+        }
+        return localStatement.variables.getOrNull(localIndex) as? MemberExpression
+    }
+
     private fun requireBackedModuleNames(
         semanticFile: WorkspaceSemanticFile,
         node: BaseASTNode?,
@@ -914,9 +979,7 @@ class LuaWorkspaceQueryFacade(
         val memberExpression = memberAccessAt(node, position)
             ?: semanticFile.memberExpressions.lastOrNull { rangeContains(it.identifier.range, position) }
             ?: return null
-        val memberName = memberExpression.identifier.name.takeIf { it.isNotBlank() } ?: return null
-        val resolved = resolvedRequireForNavigationReceiver(semanticFile, path, memberExpression.base) ?: return null
-        return resolver.exportedMember(resolved.provider.path, memberName)
+        return exportedMemberForExpression(semanticFile, path, memberExpression)
     }
 
     private fun resolvedRequireForNavigationReceiver(
@@ -924,6 +987,13 @@ class LuaWorkspaceQueryFacade(
         path: VirtualPath,
         receiver: BaseASTNode
     ): WorkspaceModuleResolver.ResolvedRequire? {
+        // Nested require-alias receivers (second after local second = first.nested) still count as
+        // require-backed for missing-export empty policy and navigation.
+        if (receiver is ExpressionNode) {
+            requireBackedExportPath(semanticFile, path, receiver)?.let {
+                return resolvedRequireForExportPathRootFromExpression(semanticFile, path, receiver)
+            }
+        }
         if (receiver is Identifier) {
             val receiverSymbol = semanticFile.model.getSymbolAt(receiver.range.start)
             resolveRequiredModuleNameForVisibleLocal(semanticFile, receiverSymbol?.symbolId, receiver)
@@ -931,6 +1001,45 @@ class LuaWorkspaceQueryFacade(
                 ?.let { return it }
         }
         return resolvedRequireForReceiver(semanticFile, path, receiver)
+    }
+
+    private fun resolvedRequireForExportPathRootFromExpression(
+        semanticFile: WorkspaceSemanticFile,
+        path: VirtualPath,
+        expression: ExpressionNode
+    ): WorkspaceModuleResolver.ResolvedRequire? {
+        return when (expression) {
+            is MemberExpression -> resolvedRequireForExportPathRoot(semanticFile, path, expression)
+            is IndexExpression -> {
+                // Reuse member-expression walker by synthesizing path via base + require resolution.
+                var current: ExpressionNode = expression
+                val seen = linkedSetOf<String>()
+                while (true) {
+                    when (current) {
+                        is MemberExpression -> current = current.base
+                        is IndexExpression -> current = current.base
+                        is Identifier -> {
+                            val key = "${current.range.start.line}:${current.range.start.column}:${current.name}"
+                            if (!seen.add(key)) {
+                                return null
+                            }
+                            resolvedRequireForWorkspaceMemberReceiver(semanticFile, path, current)?.let { return it }
+                            val symbol = semanticFile.model.getSymbolAt(current.range.start)
+                            val declaration = localDeclarationForSymbol(semanticFile, symbol?.symbolId)
+                                ?: exactLocalDeclarationForIdentifier(semanticFile, current)
+                                ?: visibleLocalValueDeclaration(semanticFile, current.name, current.range.start)
+                                ?: return null
+                            val initializer = localInitializerExpression(declaration) ?: return null
+                            current = initializer
+                        }
+                        is CallExpression -> return resolvedRequireForReceiver(semanticFile, path, current)
+                        else -> return null
+                    }
+                }
+            }
+            is Identifier, is CallExpression -> resolvedRequireForWorkspaceMemberReceiver(semanticFile, path, expression)
+            else -> null
+        }
     }
 
     private fun resolveRequiredModuleNameForVisibleLocal(
@@ -970,9 +1079,13 @@ class LuaWorkspaceQueryFacade(
 
     private fun requiredModuleNameForDeclaration(
         semanticFile: WorkspaceSemanticFile,
-        declaration: BinderDeclaration
+        declaration: BinderDeclaration,
+        visited: MutableSet<DeclarationId> = linkedSetOf()
     ): String? {
         if (declaration.kind != DeclarationKind.LOCAL || declaration.anchorNode !is Identifier) {
+            return null
+        }
+        if (!visited.add(declaration.id)) {
             return null
         }
         val localStatement = declaration.anchorNode.parent as? LocalStatement ?: return null
@@ -980,8 +1093,20 @@ class LuaWorkspaceQueryFacade(
         if (localIndex < 0) {
             return null
         }
-        val initializer = localStatement.variables.getOrNull(localIndex) as? CallExpression ?: return null
-        return builtinRequireModuleName(semanticFile, initializer)
+        return when (val initializer = localStatement.variables.getOrNull(localIndex)) {
+            is CallExpression -> builtinRequireModuleName(semanticFile, initializer)
+            // local first = dep where dep = require("dep")
+            is Identifier -> {
+                val target = exactLocalDeclarationForIdentifier(semanticFile, initializer)
+                    ?: visibleLocalValueDeclaration(
+                        semanticFile,
+                        initializer.name,
+                        initializer.range.start
+                    )
+                target?.let { requiredModuleNameForDeclaration(semanticFile, it, visited) }
+            }
+            else -> null
+        }
     }
 
     private fun localDeclarationForSymbol(
@@ -1422,8 +1547,116 @@ class LuaWorkspaceQueryFacade(
         memberExpression: MemberExpression
     ): WorkspaceModuleResolver.ResolvedExportMember? {
         val memberName = memberExpression.identifier.name.takeIf { it.isNotBlank() } ?: return null
-        val resolved = resolvedRequireForWorkspaceMemberReceiver(semanticFile, path, memberExpression.base) ?: return null
-        return resolver.exportedMember(resolved.provider.path, memberName)
+        // Nested require-alias chains (local second = first.nested; second.value) need the full
+        // export path under the provider surface, not only the leaf segment.
+        val exportPath = requireBackedExportPath(semanticFile, path, memberExpression) ?: return null
+        val resolved = resolvedRequireForExportPathRoot(semanticFile, path, memberExpression) ?: return null
+        return resolver.exportedMember(resolved.provider.path, exportPath)
+            ?: resolver.exportedMember(resolved.provider.path, memberName).takeIf { exportPath.size == 1 }
+    }
+
+    /**
+     * Resolve require("mod")-backed export path for a member expression, following local rebinding
+     * chains such as `local first = dep; local second = first.nested; second.value`.
+     */
+    private fun requireBackedExportPath(
+        semanticFile: WorkspaceSemanticFile,
+        path: VirtualPath,
+        expression: ExpressionNode,
+        visited: MutableSet<String> = linkedSetOf()
+    ): List<String>? {
+        return when (expression) {
+            is MemberExpression -> {
+                val memberName = expression.identifier.name.takeIf { it.isNotBlank() } ?: return null
+                val basePath = requireBackedExportPath(semanticFile, path, expression.base, visited)
+                    ?: return null
+                basePath + memberName
+            }
+            is IndexExpression -> {
+                val key = (expression.index as? ConstantNode)
+                    ?.takeIf { it.constantType == ConstantNode.TYPE.STRING }
+                    ?.stringOf()
+                    ?.takeIf { it.isNotBlank() }
+                    ?: return null
+                val basePath = requireBackedExportPath(semanticFile, path, expression.base, visited)
+                    ?: return null
+                basePath + key
+            }
+            is Identifier -> {
+                val key = "${expression.range.start.line}:${expression.range.start.column}:${expression.name}"
+                if (!visited.add(key)) {
+                    return null
+                }
+                val symbol = semanticFile.model.getSymbolAt(expression.range.start)
+                val declaration = localDeclarationForSymbol(semanticFile, symbol?.symbolId)
+                    ?: exactLocalDeclarationForIdentifier(semanticFile, expression)
+                    ?: visibleLocalValueDeclaration(semanticFile, expression.name, expression.range.start)
+                if (declaration != null) {
+                    requiredModuleNameForDeclaration(semanticFile, declaration)?.let {
+                        // Root require-backed local: export path is empty before the member segment.
+                        return emptyList()
+                    }
+                    val initializer = localInitializerExpression(declaration)
+                    if (initializer != null) {
+                        requireBackedExportPath(semanticFile, path, initializer, visited)?.let { return it }
+                    }
+                }
+                // Direct require module name typing on the identifier (no local declaration path).
+                resolveRequiredModuleNameForVisibleLocal(semanticFile, symbol?.symbolId, expression)
+                    ?.let { return emptyList() }
+                null
+            }
+            is CallExpression -> {
+                builtinRequireModuleName(semanticFile, expression)?.let { emptyList() }
+            }
+            else -> null
+        }
+    }
+
+    private fun resolvedRequireForExportPathRoot(
+        semanticFile: WorkspaceSemanticFile,
+        path: VirtualPath,
+        memberExpression: MemberExpression
+    ): WorkspaceModuleResolver.ResolvedRequire? {
+        // Walk the nested access / alias chain until a require-backed module root is found.
+        var current: ExpressionNode = memberExpression
+        val seen = linkedSetOf<String>()
+        while (true) {
+            when (current) {
+                is MemberExpression -> current = current.base
+                is IndexExpression -> current = current.base
+                is Identifier -> {
+                    val key = "${current.range.start.line}:${current.range.start.column}:${current.name}"
+                    if (!seen.add(key)) {
+                        return null
+                    }
+                    resolvedRequireForWorkspaceMemberReceiver(semanticFile, path, current)?.let { return it }
+                    val symbol = semanticFile.model.getSymbolAt(current.range.start)
+                    val declaration = localDeclarationForSymbol(semanticFile, symbol?.symbolId)
+                        ?: exactLocalDeclarationForIdentifier(semanticFile, current)
+                        ?: visibleLocalValueDeclaration(semanticFile, current.name, current.range.start)
+                        ?: return null
+                    val initializer = localInitializerExpression(declaration) ?: return null
+                    current = initializer
+                }
+                is CallExpression -> {
+                    return resolvedRequireForReceiver(semanticFile, path, current)
+                }
+                else -> return null
+            }
+        }
+    }
+
+    private fun localInitializerExpression(declaration: BinderDeclaration): ExpressionNode? {
+        if (declaration.kind != DeclarationKind.LOCAL || declaration.anchorNode !is Identifier) {
+            return null
+        }
+        val localStatement = declaration.anchorNode.parent as? LocalStatement ?: return null
+        val localIndex = localStatement.init.indexOf(declaration.anchorNode)
+        if (localIndex < 0) {
+            return null
+        }
+        return localStatement.variables.getOrNull(localIndex)
     }
 
     private fun resolvedRequireForWorkspaceMemberReceiver(
@@ -1435,9 +1668,27 @@ class LuaWorkspaceQueryFacade(
             val receiverSymbol = semanticFile.model.getSymbolAt(receiver.range.start)
             val declaration = localDeclarationForSymbol(semanticFile, receiverSymbol?.symbolId)
                 ?: visibleLocalValueDeclaration(semanticFile, receiver.name, receiver.range.start)
+            // Direct require("mod") initializer.
             declaration
                 ?.let { requireInitializerForLocal(it) }
                 ?.let { builtinRequireModuleName(semanticFile, it) }
+                ?.let { moduleName -> resolveWorkspaceRequire(path, moduleName) }
+                ?.let { return it }
+            // Follow local rebinding / nested require-alias chains:
+            // local first = dep; local second = first.nested
+            declaration
+                ?.let { localInitializerExpression(it) }
+                ?.let { initializer ->
+                    when (initializer) {
+                        is Identifier ->
+                            resolvedRequireForWorkspaceMemberReceiver(semanticFile, path, initializer)
+                        is MemberExpression, is IndexExpression, is CallExpression ->
+                            resolvedRequireForExportPathRootFromExpression(semanticFile, path, initializer)
+                        else -> null
+                    }
+                }
+                ?.let { return it }
+            resolveRequiredModuleNameForVisibleLocal(semanticFile, receiverSymbol?.symbolId, receiver)
                 ?.let { moduleName -> resolveWorkspaceRequire(path, moduleName) }
                 ?.let { return it }
         }
@@ -2140,28 +2391,58 @@ class LuaWorkspaceQueryFacade(
         return comparePositions(range.start, position) <= 0 && comparePositions(position, range.end) <= 0
     }
 
+    private fun hasBuiltinRequireCallSite(path: VirtualPath, moduleName: String): Boolean {
+        if (moduleName.isBlank()) {
+            return false
+        }
+        val semanticFile = snapshot.files[path]?.semanticFile ?: return false
+        var found = false
+        val visitor = object : io.github.dingyi222666.luaparser.parser.ast.visitor.ASTVisitor<Unit> {
+            override fun visitCallExpression(node: CallExpression, value: Unit) {
+                if (!found && builtinRequireModuleName(semanticFile, node) == moduleName) {
+                    found = true
+                    return
+                }
+                if (!found) {
+                    super.visitCallExpression(node, value)
+                }
+            }
+
+            override fun visitStringCallExpression(
+                node: io.github.dingyi222666.luaparser.parser.ast.node.StringCallExpression,
+                value: Unit
+            ) {
+                if (!found && builtinRequireModuleName(semanticFile, node) == moduleName) {
+                    found = true
+                    return
+                }
+                if (!found) {
+                    super.visitStringCallExpression(node, value)
+                }
+            }
+
+            override fun visitIdentifier(node: Identifier, value: Unit) = Unit
+            override fun visitAttributeIdentifier(
+                identifier: io.github.dingyi222666.luaparser.parser.ast.node.AttributeIdentifier,
+                value: Unit
+            ) = Unit
+            override fun visitCommentStatement(
+                commentStatement: io.github.dingyi222666.luaparser.parser.ast.node.CommentStatement,
+                value: Unit
+            ) = Unit
+        }
+        visitor.visitChunkNode(semanticFile.chunk, Unit)
+        return found
+    }
+
     private fun requireCallSite(path: VirtualPath, position: Position): RequireCallSite? {
         val semanticFile = snapshot.files[path]?.semanticFile ?: return null
-        val call = enclosingCallExpression(semanticFile.nodeAt(position)) ?: return null
-        val callee = effectiveCallBase(call) as? Identifier ?: return null
-        if (callee.name != "require") {
-            return null
-        }
-        val declaration = visibleLocalValueDeclaration(
-            semanticFile,
-            callee.name,
-            callee.range.start,
-            localInitializerDeclarationIds(semanticFile, call)
-        )
-        if (declaration != null &&
-            (declaration.origin != DeclarationOrigin.BUILTIN || declaration.name != "require")
-        ) {
-            return null
-        }
-        val moduleName = (callArguments(call).singleOrNull() as? ConstantNode)
-            ?.takeIf { it.constantType == ConstantNode.TYPE.STRING }
-            ?.stringOf()
+        val node = semanticFile.nodeAt(position)
+        // Prefer parent-linked call, then recover string-call shape when ConstantNode.parent is unset.
+        val call = enclosingCallExpression(node)
+            ?: (node as? ConstantNode)?.let { importStringCallContaining(semanticFile, it) }
             ?: return null
+        val moduleName = builtinRequireModuleName(semanticFile, call) ?: return null
         return RequireCallSite(moduleName)
     }
 

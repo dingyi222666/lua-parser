@@ -31,6 +31,7 @@ import io.github.dingyi222666.luaparser.semantic.checker.MemberResolver
 import io.github.dingyi222666.luaparser.semantic.checker.ValueSequence
 import io.github.dingyi222666.luaparser.semantic.checker.isColonMethodDeclaration
 import io.github.dingyi222666.luaparser.semantic.checker.resolveOwningFunctionDeclaration
+import io.github.dingyi222666.luaparser.semantic.comments.GenericTagSyntax
 import io.github.dingyi222666.luaparser.semantic.comments.ParamTagSyntax
 import io.github.dingyi222666.luaparser.semantic.types.model.CallableType
 import io.github.dingyi222666.luaparser.semantic.types.model.CustomType
@@ -94,15 +95,24 @@ internal class SignatureHelpProvider(
         // fun<T>(...): R. That form does not contain the literal "fun(" substring and also
         // omits the Java method name, so LSP hard-locks for Arrays.asList / similar static
         // members fail. Prefer labels that include the call-site member name when present.
+        //
+        // TASK-670: body inference / CallChecker ranking may still surface FunctionType values
+        // whose typeParameters list is empty (or whose cached name omitted fun<T>) even when
+        // the binder/doc still owns @generic labels. Re-attach and rebuild labels here so
+        // workspace signature help stays fun<T>(value: T): T, not fun(value: T): T.
         val methodName = callableMethodName(callableBase, declaration)
-        val signatures = resolutionSignatures.map { toSignatureInformation(it, methodName) }
+        val labelTypeParameters = recoverTypeParameters(declaration, callableType, resolutionSignatures)
+        val labeledSignatures = resolutionSignatures.map { signature ->
+            ensureGenericTypeParameterLabels(signature, labelTypeParameters)
+        }
+        val signatures = labeledSignatures.map { toSignatureInformation(it, methodName) }
         val activeParameter = activeParameterIndex(call, position)
-        val activeSignature = selectActiveSignatureIndex(resolutionSignatures, callResolution)
+        val activeSignature = selectActiveSignatureIndex(labeledSignatures, callResolution)
             .coerceIn(0, signatures.lastIndex)
         return SignatureHelp(
             signatures = signatures,
             activeSignature = activeSignature,
-            activeParameter = clampActiveParameter(resolutionSignatures.getOrNull(activeSignature), activeParameter)
+            activeParameter = clampActiveParameter(labeledSignatures.getOrNull(activeSignature), activeParameter)
         )
     }
 
@@ -180,8 +190,18 @@ internal class SignatureHelpProvider(
      * prefix the member name so signature help remains discoverable.
      */
     private fun signatureHelpLabel(signature: FunctionType, methodName: String?): String {
-        val display = signature.displayName
-        if (display.contains("fun(")) {
+        // Prefer a freshly built generic label when typeParameters are present. FunctionType.copy
+        // can leave a stale name like fun(...) even after typeParameters were restored.
+        val display = if (signature.typeParameters.isNotEmpty()) {
+            FunctionType(
+                parameters = signature.parameters,
+                returnType = signature.returnType,
+                typeParameters = signature.typeParameters
+            ).displayName
+        } else {
+            signature.displayName
+        }
+        if (display.contains("fun(") || display.contains("fun<")) {
             return display
         }
         val trimmedName = methodName?.trim().orEmpty()
@@ -289,7 +309,7 @@ internal class SignatureHelpProvider(
         if (inferredType is CallableType || resolved.isSuccess) {
             // Body inference / merge often drops @generic type-parameter labels even when the
             // declaration still carries fun<T>(...): R. Restore those labels for signature help.
-            return preserveGenericTypeParameterLabels(inferredType, declarationCallableType)
+            return preserveGenericTypeParameterLabels(inferredType, declarationCallableType, declaration)
         }
 
         if (declarationCallableType != null) {
@@ -316,14 +336,22 @@ internal class SignatureHelpProvider(
      * Expression evaluation may rebuild FunctionType without typeParameters even though the
      * binder/TypeResolver declaration still owns @generic TYPE_PARAMETER children.
      */
-    private fun preserveGenericTypeParameterLabels(type: Type, declared: CallableType?): Type {
-        if (declared == null || type !is CallableType) {
+    private fun preserveGenericTypeParameterLabels(
+        type: Type,
+        declared: CallableType?,
+        declaration: BinderDeclaration? = null
+    ): Type {
+        if (type !is CallableType) {
             return type
         }
-        if (!hasGenericTypeParameterLabels(declared) || hasGenericTypeParameterLabels(type)) {
+        if (hasGenericTypeParameterLabels(type)) {
+            return rebuildCallableDisplayNames(type)
+        }
+        val recovered = recoverTypeParameters(declaration, declared, type.callSignatures)
+        if (recovered.isEmpty()) {
             return type
         }
-        return enrichCallableWithTypeParameters(type, declared)
+        return enrichCallableWithTypeParameters(type, recovered)
     }
 
     private fun hasGenericTypeParameterLabels(callable: CallableType): Boolean {
@@ -332,36 +360,100 @@ internal class SignatureHelpProvider(
 
     private fun enrichCallableWithTypeParameters(
         inferred: CallableType,
-        declared: CallableType
+        typeParameters: List<TypeParameterType>
     ): CallableType {
-        val declaredSignatures = declared.callSignatures
-        val fallbackTypeParameters = declaredSignatures
-            .firstOrNull { it.typeParameters.isNotEmpty() }
-            ?.typeParameters
-            .orEmpty()
-        val enriched = inferred.callSignatures.mapIndexed { index, signature ->
-            if (signature.typeParameters.isNotEmpty()) {
-                signature
-            } else {
-                val typeParameters = declaredSignatures.getOrNull(index)?.typeParameters
-                    ?.takeIf { it.isNotEmpty() }
-                    ?: fallbackTypeParameters
-                if (typeParameters.isEmpty()) {
-                    signature
-                } else {
-                    FunctionType(
-                        parameters = signature.parameters,
-                        returnType = signature.returnType,
-                        typeParameters = typeParameters
-                    )
-                }
-            }
+        if (typeParameters.isEmpty()) {
+            return inferred
+        }
+        val enriched = inferred.callSignatures.map { signature ->
+            ensureGenericTypeParameterLabels(signature, typeParameters)
         }
         return when (enriched.size) {
             0 -> inferred
             1 -> enriched.single()
             else -> OverloadedFunctionType(enriched)
         }
+    }
+
+    private fun rebuildCallableDisplayNames(callable: CallableType): CallableType {
+        val rebuilt = callable.callSignatures.map { signature ->
+            ensureGenericTypeParameterLabels(signature, signature.typeParameters)
+        }
+        return when (rebuilt.size) {
+            0 -> callable
+            1 -> rebuilt.single()
+            else -> OverloadedFunctionType(rebuilt)
+        }
+    }
+
+    private fun ensureGenericTypeParameterLabels(
+        signature: FunctionType,
+        fallbackTypeParameters: List<TypeParameterType>
+    ): FunctionType {
+        val typeParameters = signature.typeParameters.ifEmpty { fallbackTypeParameters }
+        if (typeParameters.isEmpty()) {
+            return signature
+        }
+        // Always rebuild so stale FunctionType.name cannot suppress fun<T> labels.
+        return FunctionType(
+            parameters = signature.parameters,
+            returnType = signature.returnType,
+            typeParameters = typeParameters
+        )
+    }
+
+    /**
+     * Recover @generic type-parameter labels from declaration declaredType, owned
+     * TYPE_PARAMETER children, doc tags, or any already-generic signature in the set.
+     */
+    private fun recoverTypeParameters(
+        declaration: BinderDeclaration?,
+        callableType: Type? = null,
+        signatures: List<FunctionType> = emptyList()
+    ): List<TypeParameterType> {
+        signatures.firstOrNull { it.typeParameters.isNotEmpty() }?.typeParameters
+            ?.takeIf { it.isNotEmpty() }
+            ?.let { return it }
+
+        val fromCallable = (callableType as? CallableType)
+            ?.callSignatures
+            ?.firstOrNull { it.typeParameters.isNotEmpty() }
+            ?.typeParameters
+            .orEmpty()
+        if (fromCallable.isNotEmpty()) {
+            return fromCallable
+        }
+
+        if (declaration == null) {
+            return emptyList()
+        }
+
+        val fromDeclared = (declaration.declaredType as? CallableType)
+            ?.callSignatures
+            ?.firstOrNull { it.typeParameters.isNotEmpty() }
+            ?.typeParameters
+            .orEmpty()
+        if (fromDeclared.isNotEmpty()) {
+            return fromDeclared
+        }
+
+        val owned = ownedTypeParametersForDeclaration(declaration)
+        if (owned.isNotEmpty()) {
+            return owned
+        }
+
+        return documentationGenericTypeParameters(declaration)
+    }
+
+    private fun documentationGenericTypeParameters(declaration: BinderDeclaration): List<TypeParameterType> {
+        return declaration.documentation?.docComment?.tags
+            .orEmpty()
+            .filterIsInstance<GenericTagSyntax>()
+            .flatMap { tag -> tag.parameters }
+            .mapNotNull { parameter ->
+                parameter.name.trim().takeIf { it.isNotEmpty() }?.let { TypeParameterType(name = it) }
+            }
+            .distinctBy { it.name }
     }
 
     /**
@@ -515,15 +607,20 @@ internal class SignatureHelpProvider(
     private fun callableTypeForDeclaration(declaration: BinderDeclaration): CallableType? {
         val declared = declaration.declaredType as? CallableType
         if (declared != null && declared.callSignatures.any { it.returnType != UnknownType }) {
-            return declared
+            // Prefer declared shape, but re-attach @generic labels when resolution dropped them.
+            return preserveGenericTypeParameterLabels(declared, declared, declaration) as? CallableType
+                ?: declared
         }
-        return inferFunctionCallableType(declaration) ?: declared
+        return inferFunctionCallableType(declaration) ?: declared?.let {
+            preserveGenericTypeParameterLabels(it, it, declaration) as? CallableType ?: it
+        }
     }
 
     private fun inferFunctionCallableType(declaration: BinderDeclaration): CallableType? {
         declaration.declaredType?.let { declared ->
             if (declared is CallableType && declared.callSignatures.any { it.returnType != UnknownType }) {
-                return enrichMethodCallableType(declaration, declared)
+                val withGenerics = preserveGenericTypeParameterLabels(declared, declared, declaration)
+                return enrichMethodCallableType(declaration, withGenerics as? CallableType ?: declared)
             }
         }
 
@@ -574,6 +671,7 @@ internal class SignatureHelpProvider(
         }
         val typeParameters = ownedTypeParametersForDeclaration(declaration)
             .ifEmpty { declaredSignature?.typeParameters.orEmpty() }
+            .ifEmpty { documentationGenericTypeParameters(declaration) }
         return FunctionType(
             parameters = parameters,
             returnType = returnType,

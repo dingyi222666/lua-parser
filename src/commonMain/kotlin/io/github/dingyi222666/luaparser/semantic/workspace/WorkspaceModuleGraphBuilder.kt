@@ -69,6 +69,7 @@ object WorkspaceModuleGraphBuilder {
                 // workspace `.aly` path match so layout requires still form graph edges even if
                 // a claim was lost to an overlay/extra conflict.
                 val provider = activeProviders[requireFact.moduleName]
+                    ?: findOverlayProvider(requireFact.moduleName, builtinOverlay)
                     ?: findAlyLayoutProvider(requireFact.moduleName, graphFiles)
                 if (provider == null) {
                     unresolved += WorkspaceModuleGraph.UnresolvedRequire(
@@ -183,10 +184,42 @@ object WorkspaceModuleGraphBuilder {
     }
 
     /**
-     * Recover a workspace `.aly` layout provider for [moduleName] from [graphFiles] when the
-     * active-provider index missed the path-derived claim. Only real `.aly` paths are returned —
-     * never fabricated `.lua` / JVM / stdlib providers.
+     * Recover a STANDARD_LIBRARY_OVERLAY provider for dotted module names such as socket.url
+     * when activeProviders missed the claim. Uses the mounted builtin overlay snapshot only.
      */
+    private fun findOverlayProvider(
+        moduleName: String,
+        builtinOverlay: BuiltinOverlaySnapshot
+    ): WorkspaceModuleGraph.ModuleProvider? {
+        if (moduleName.isBlank()) {
+            return null
+        }
+        // Prefer exact dotted moduleName claim (socket.url stays dotted).
+        builtinOverlay.providerModules.entries.firstOrNull { (_, provider) ->
+            provider.moduleName == moduleName
+        }?.let { (path, provider) ->
+            return WorkspaceModuleGraph.ModuleProvider(
+                moduleName = provider.moduleName,
+                path = path,
+                source = WorkspaceModuleGraph.ProviderSource.STANDARD_LIBRARY_OVERLAY
+            )
+        }
+        val suffix = "/$moduleName.lua"
+        val bare = "$moduleName.lua"
+        builtinOverlay.providerModules.entries.firstOrNull { (path, provider) ->
+            val value = path.value
+            (value.endsWith(suffix) || value == bare) &&
+                (provider.moduleName == moduleName || provider.moduleName.replace('/', '.') == moduleName)
+        }?.let { (path, _) ->
+            return WorkspaceModuleGraph.ModuleProvider(
+                moduleName = moduleName,
+                path = path,
+                source = WorkspaceModuleGraph.ProviderSource.STANDARD_LIBRARY_OVERLAY
+            )
+        }
+        return null
+    }
+
     private fun findAlyLayoutProvider(
         moduleName: String,
         graphFiles: Map<VirtualPath, WorkspaceSnapshot.FileSnapshot>

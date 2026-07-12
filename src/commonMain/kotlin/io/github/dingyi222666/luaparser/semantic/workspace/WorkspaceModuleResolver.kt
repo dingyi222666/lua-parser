@@ -12,7 +12,13 @@ internal class WorkspaceModuleResolver(
     private val snapshot: WorkspaceSnapshot
 ) {
     fun activeProvider(moduleName: String): WorkspaceModuleGraph.ModuleProvider? {
+        if (moduleName.isBlank()) {
+            return null
+        }
         snapshot.graph.activeProviders[moduleName]?.let { return it }
+        // Dotted stdlib overlay recovery (e.g. AndroLua socket.url): keep dotted module names
+        // even when graph activeProviders missed or only recorded a slash alias.
+        findOverlayProvider(moduleName)?.let { return it }
         // Extra JVM providers are claimed by moduleName during graph build; if a claim was lost
         // (duplicate simple names), still recover the exact class/package provider path.
         return findExtraClassProviderByAlias(moduleName)
@@ -361,6 +367,47 @@ internal class WorkspaceModuleResolver(
             path = match.key,
             source = WorkspaceModuleGraph.ProviderSource.EXTRA_WORKSPACE_PROVIDER
         )
+    }
+
+    /**
+     * Recover a STANDARD_LIBRARY_OVERLAY provider for dotted module names such as socket.url.
+     * Prefer graph claims, then the mounted builtin overlay snapshot (path + moduleName).
+     */
+    private fun findOverlayProvider(moduleName: String): WorkspaceModuleGraph.ModuleProvider? {
+        if (moduleName.isBlank()) {
+            return null
+        }
+        val graphMatch = snapshot.graph.providersByModuleName[moduleName]
+            .orEmpty()
+            .firstOrNull { it.source == WorkspaceModuleGraph.ProviderSource.STANDARD_LIBRARY_OVERLAY }
+        if (graphMatch != null) {
+            return graphMatch
+        }
+        // Match by explicit overlay moduleName first (keeps dotted names like socket.url).
+        snapshot.builtinOverlay.providerModules.entries.firstOrNull { (_, provider) ->
+            provider.moduleName == moduleName
+        }?.let { (path, provider) ->
+            return WorkspaceModuleGraph.ModuleProvider(
+                moduleName = provider.moduleName,
+                path = path,
+                source = WorkspaceModuleGraph.ProviderSource.STANDARD_LIBRARY_OVERLAY
+            )
+        }
+        // Path-suffix recovery: __lua_std__/<ver>/socket.url.lua for module "socket.url".
+        val suffix = "/$moduleName.lua"
+        val bare = "$moduleName.lua"
+        snapshot.builtinOverlay.providerModules.entries.firstOrNull { (path, provider) ->
+            val value = path.value
+            (value.endsWith(suffix) || value == bare || value.endsWith(bare)) &&
+                (provider.moduleName == moduleName || provider.moduleName.replace('/', '.') == moduleName)
+        }?.let { (path, provider) ->
+            return WorkspaceModuleGraph.ModuleProvider(
+                moduleName = moduleName,
+                path = path,
+                source = WorkspaceModuleGraph.ProviderSource.STANDARD_LIBRARY_OVERLAY
+            )
+        }
+        return null
     }
 
     /**

@@ -1929,7 +1929,24 @@ class ExpressionTypeEvaluator internal constructor(
         } else {
             inferredReturnType
         }
-        return FunctionType(parameters = parameters, returnType = returnType)
+        // Prefer declared/owned @generic type parameters so value types keep fun<T> labels
+        // even when body inference only rebuilds parameters/return (TASK-670).
+        val typeParameters = declaredSignature?.typeParameters.orEmpty().ifEmpty {
+            ownedDeclaration?.let { declaration ->
+                binder.declarationIndex
+                    .getOwnedDeclarations(DeclarationOwner.Declaration(declaration.id))
+                    .filter { it.kind == DeclarationKind.TYPE_PARAMETER }
+                    .map { parameterDeclaration ->
+                        (parameterDeclaration.declaredType as? TypeParameterType)
+                            ?: TypeParameterType(name = parameterDeclaration.name)
+                    }
+            }.orEmpty()
+        }
+        return FunctionType(
+            parameters = parameters,
+            returnType = returnType,
+            typeParameters = typeParameters
+        )
     }
 
     private fun evaluateLambdaDeclaration(node: LambdaDeclaration, context: Context): Type {
@@ -2790,14 +2807,21 @@ class ExpressionTypeEvaluator internal constructor(
             inferredSignature.returnType != UnknownType -> inferredSignature.returnType
             else -> declaredSignature.returnType
         }
-        val mergedSignature = inferredSignature.copy(
+        // TASK-670: body inference builds FunctionType without typeParameters; keep declared
+        // @generic labels (fun<T>) when merging declared+inferred callables for value types.
+        val typeParameters = declaredSignature.typeParameters.ifEmpty {
+            inferredSignature.typeParameters
+        }
+        val rebuiltName = FunctionType(
             parameters = mergedParameters,
             returnType = returnType,
-            name = io.github.dingyi222666.luaparser.semantic.types.model.FunctionType(
-                parameters = mergedParameters,
-                returnType = returnType,
-                typeParameters = inferredSignature.typeParameters
-            ).name
+            typeParameters = typeParameters
+        ).name
+        val mergedSignature = FunctionType(
+            parameters = mergedParameters,
+            returnType = returnType,
+            typeParameters = typeParameters,
+            name = rebuiltName
         )
         return if (declaration.kind == DeclarationKind.METHOD) {
             enrichMethodCallableType(declaration, mergedSignature)
