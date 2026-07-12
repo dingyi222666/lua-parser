@@ -1,15 +1,15 @@
 {
   "version": 2,
-  "updatedAt": "2026-07-12T14:25:22Z",
+  "updatedAt": "2026-07-12T14:36:13Z",
   "strategy": "must-green-to-advance",
   "chunkSize": 15,
   "cycle": 1,
   "summary": {
     "total": 25,
     "totalFiles": 367,
-    "pending": 19,
+    "pending": 18,
     "success": 6,
-    "failure": 0,
+    "failure": 1,
     "running": 0,
     "filesDone": 90
   },
@@ -102,18 +102,23 @@
       "updatedAt": "2026-07-12T14:25:22Z"
     },
     "s007": {
-      "status": "pending",
+      "status": "failure",
       "label": "parser..parser.ast",
       "fileCount": 15,
-      "lastRunId": null,
-      "lastSha": null,
-      "tests": 0,
-      "failures": 0,
+      "lastRunId": "29196531532",
+      "lastSha": "631e0e4cd31678ffaad8bd38196b68858e45292c",
+      "tests": 115,
+      "failures": 3,
       "errors": 0,
-      "failedTests": [],
-      "durationSec": null,
-      "artifact": null,
-      "updatedAt": null
+      "failedTests": [
+        "parser.androidlua.AndroidLuaAssetCorpusParseTddTest#parsesRepresentativeAndroidLuaAssetCorpus[jvm]",
+        "parser.ast.AstShapeTddTest#statementFixtureExposesStableStatementShapesParentsAndRanges[jvm]",
+        "parser.ast.AstShapeTddTest#tableFunctionAndCommentFixtureExposesStableAstShapesParentsAndRanges[jvm]"
+      ],
+      "durationSec": 10,
+      "artifact": "results/s007-29196531532.json",
+      "updatedAt": "2026-07-12T14:36:13Z",
+      "note": "red on run 29196531532; 115 tests 3 failures \u2014 re-run same slice"
     },
     "s008": {
       "status": "pending",
@@ -532,6 +537,16 @@
       "failures": 0,
       "durationSec": 45,
       "at": "2026-07-12T14:25:22Z"
+    },
+    {
+      "sliceId": "s007",
+      "runId": "29196531532",
+      "status": "failure",
+      "tests": 115,
+      "failures": 3,
+      "durationSec": 10,
+      "at": "2026-07-12T14:36:13Z",
+      "note": "CI slice-progress artifact upload failed (ECONNRESET); reconstructed from junit + run logs"
     }
   ],
   "gate": {

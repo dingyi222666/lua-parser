@@ -579,8 +579,11 @@ class AstShapeTddTest {
     }
 
     private fun rangeOf(source: String, text: String, occurrence: Int): Range {
-        val startOffset = nthIndexOf(source, text, occurrence)
-        return Range(positionAt(source, startOffset), positionAt(source, startOffset + text.length))
+        // Needles in this suite are written with LF; fixtures are normalized on load so
+        // Windows CRLF checkouts still match multi-line spans.
+        val needle = normalizeLineEndings(text)
+        val startOffset = nthIndexOf(source, needle, occurrence)
+        return Range(positionAt(source, startOffset), positionAt(source, startOffset + needle.length))
     }
 
     private fun nthIndexOf(source: String, text: String, occurrence: Int): Int {
@@ -600,15 +603,29 @@ class AstShapeTddTest {
     private fun positionAt(source: String, offset: Int): Position {
         var line = 1
         var column = 1
-        for (index in 0 until offset) {
-            if (source[index] == '\n') {
+        var index = 0
+        while (index < offset) {
+            val ch = source[index]
+            if (ch == '\r') {
+                // Treat CR and CRLF as a single logical newline (matches lexer NEW_LINE).
+                if (index + 1 < source.length && source[index + 1] == '\n') {
+                    index++
+                }
+                line += 1
+                column = 1
+            } else if (ch == '\n') {
                 line += 1
                 column = 1
             } else {
                 column += 1
             }
+            index++
         }
         return Position(line, column)
+    }
+
+    private fun normalizeLineEndings(text: String): String {
+        return text.replace("\r\n", "\n").replace('\r', '\n')
     }
 
     private fun shape(node: BaseASTNode): String {
@@ -652,8 +669,11 @@ class AstShapeTddTest {
 
     private fun loadAstShapeFixture(name: String): String {
         val path = "/parser/tdd/ast-shapes/$name"
-        return checkNotNull(javaClass.getResourceAsStream(path)) {
+        val raw = checkNotNull(javaClass.getResourceAsStream(path)) {
             "Missing AST shape fixture: $path"
         }.bufferedReader().use { it.readText() }
+        // Windows checkouts / resource streams may deliver CRLF; normalize to LF so
+        // multi-line assertRangeText needles and parser line/column goldens stay stable.
+        return normalizeLineEndings(raw)
     }
 }

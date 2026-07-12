@@ -858,7 +858,7 @@ layout12={
 asset: main13.lua
 kind: lua
 lines: 51-64
-behavior: recovery
+behavior: strict
 minNodes: 10
 expected: SwitchStatement,CaseCause,AssignmentStatement
 ---
@@ -1358,7 +1358,7 @@ return {
 asset: ThomeLua.lua
 kind: lua
 lines: 112-116
-behavior: recovery
+behavior: strict
 minNodes: 8
 expected: FunctionDeclaration,SwitchStatement,CaseCause,CallStatement
 ---
@@ -1460,3 +1460,15 @@ function upAnimation(id)
   translate.setFillAfter(true)
   id.startAnimation(translate)
 end
+
+### switch-missing-end-recovery
+asset: synthetic-androidlua-switch-recovery
+kind: lua
+lines: 1-4
+behavior: recovery
+minNodes: 4
+expected: SwitchStatement,CaseCause,CallStatement
+---
+switch mode
+ case 1
+  handle(mode)
