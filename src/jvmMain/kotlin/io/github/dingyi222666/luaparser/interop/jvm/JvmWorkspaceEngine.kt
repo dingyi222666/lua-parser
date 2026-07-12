@@ -29,12 +29,19 @@ class JvmWorkspaceEngine(
             documentFacts,
             astImportTargets
         )
-        // Explicit / bindClass / simple import targets only. Wildcard package members are mounted
-        // by packageProvidersFor (package module + shallow class providers) so android.jar wildcards
-        // never force full deep reflection of every package class into configuration.classes.
+        // Explicit / bindClass / simple import targets only. Wildcard package modules list under
+        // packageProvidersFor (packages/ paths only). Shallow class providers for package
+        // members come from packageMemberClassProvidersFor (classes/ paths) so package-list
+        // keys never mix __jvm__/classes prefixes.
         val sourceDiscoveredClasses = collectSourceDiscoveredClasses(documentFacts, resolvedConfiguration, astImportTargets)
         val packageTargets = collectWildcardImportTargets(baseConfiguration, documentFacts, astImportTargets)
+            .mapNotNull(::normalizePackageProviderTarget)
+            .toCollection(linkedSetOf())
         val packageProviders = classModuleProvider.packageProvidersFor(
+            packageTargets,
+            resolvedConfiguration
+        )
+        val packageMemberClassProviders = classModuleProvider.packageMemberClassProvidersFor(
             packageTargets,
             resolvedConfiguration
         )
@@ -46,9 +53,9 @@ class JvmWorkspaceEngine(
                     .toCollection(linkedSetOf())
             )
         }
-        // Package shallow class providers first; explicit/full providers win on path collision
-        // so bindClass / configured classes keep deep reflection surfaces.
-        return packageProviders + classModuleProvider.providersFor(providerConfiguration)
+        // Package modules + shallow class providers first; explicit/full providers win on
+        // path collision so bindClass / configured classes keep deep reflection surfaces.
+        return packageProviders + packageMemberClassProviders + classModuleProvider.providersFor(providerConfiguration)
     }
 
     internal override fun workspaceContext(input: LuaWorkspaceInput, path: io.github.dingyi222666.luaparser.semantic.workspace.VirtualPath, snapshot: WorkspaceSnapshot): SemanticWorkspaceContext {
@@ -189,7 +196,8 @@ class JvmWorkspaceEngine(
         return buildSet {
             fun addExplicitClassTarget(target: String) {
                 // Never expand wildcards/package aliases into full package class lists here.
-                // packageProvidersFor mounts package modules + shallow class providers instead.
+                // packageProvidersFor + packageMemberClassProvidersFor mount package modules
+                // and shallow class providers instead.
                 if (isWildcardOrPackageTarget(target)) {
                     return
                 }
@@ -499,6 +507,17 @@ class JvmWorkspaceEngine(
             return null
         }
         return normalized.substringAfter(':', normalized).removeSuffix(".*").takeIf(String::isNotBlank)
+    }
+
+    /**
+     * Normalize package-list targets to wildcard form (`pkg.*`).
+     * [JvmClassModuleProvider.packageProvidersFor] is wildcard-only so package-name aliases
+     * such as `android.widget` are rewritten to `android.widget.*` before mount.
+     */
+    private fun normalizePackageProviderTarget(importText: String): String? {
+        wildcardImportPrefix(importText)?.let { return "$it.*" }
+        packageNameAliasPrefix(importText)?.let { return "$it.*" }
+        return null
     }
 
     private fun collectDocumentFacts(input: LuaWorkspaceInput): Map<VirtualPath, DocumentFacts> {

@@ -22,9 +22,10 @@ import kotlin.test.fail
  * - Well-formed delimiter pairs stay a single LONG_STRING; incomplete / broken
  *   openers split into LBRACK + operators; EOF-unclosed recover as
  *   BAD_CHARACTER (or lexer exception) without hang.
- * - **Level-mismatch product lock (TASK-595):** a wrong-level close ends the
- *   BAD_CHARACTER span at that close delimiter so trailing source stays
- *   lexable (does **not** eat the rest of the file).
+ * - **Level-mismatch product lock (TASK-595 / TASK-619):** a wrong-level close
+ *   ends the BAD_CHARACTER span at that close delimiter so trailing source
+ *   stays lexable (does **not** eat the rest of the file). Complete lower
+ *   closes inside an otherwise-unclosed body are the same mismatch anchors.
  * - Prefer product lexer recovery over empty dual-path.
  * - Verification deferred to review / TASK-043 (workers must not run Gradle).
  *
@@ -390,9 +391,23 @@ class LuaLexerLongStringDelimiterEdgeTddTest {
         assertEofMalformedConsumesAll("unclosed empty level-5 opener", "[=====[")
         assertEofMalformedConsumesAll("unclosed empty level-6 opener", "[======[")
         assertEofMalformedConsumesAll("unclosed level-0 body after opener", "[[unterminated")
-        assertEofMalformedConsumesAll(
-            "unclosed level-6 body with lower close noise",
-            "[======[L6 ]=====] ]====] ]===] open"
+        // Complete lower-level closes are TASK-595 mismatch recovery anchors: BAD ends at
+        // the first full wrong-level close; remainder stays independently lexable.
+        assertTokenCases(
+            LexerCase(
+                "unclosed level-6 body with lower close noise ends BAD at first wrong close",
+                "[======[L6 ]=====] ]====] ]===] open",
+                token(LuaTokenTypes.BAD_CHARACTER, "[======[L6 ]=====]"),
+                token(LuaTokenTypes.RBRACK, "]"),
+                token(LuaTokenTypes.EQ, "=="),
+                token(LuaTokenTypes.EQ, "=="),
+                token(LuaTokenTypes.RBRACK, "]"),
+                token(LuaTokenTypes.RBRACK, "]"),
+                token(LuaTokenTypes.EQ, "=="),
+                token(LuaTokenTypes.ASSIGN, "="),
+                token(LuaTokenTypes.RBRACK, "]"),
+                token(LuaTokenTypes.NAME, "open")
+            )
         )
         assertEofMalformedConsumesAll(
             "EOF mid level-6 close (missing final ])",

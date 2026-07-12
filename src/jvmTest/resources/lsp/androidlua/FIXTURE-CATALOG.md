@@ -5,13 +5,12 @@ Android-Lua source tree is required.
 
 Provider-surface cases are powered by reflective JVM class providers under
 `__jvm__/classes/...` when a host `android.jar` is present (resolved via
-`/Users/dingyi/Library/Android/sdk/platforms/android-35/android.jar`,
-`/Users/dingyi/Downloads/android.jar`,
-`JvmWorkspaceConfiguration.DEFAULT_ANDROID_JAR_PATH`, or
-`ANDROID_HOME` / `ANDROID_SDK_ROOT`). Pure-Lua parser, symbol, and semantic-
+`JvmWorkspaceConfiguration.DEFAULT_ANDROID_JAR_PATH` dual-path discovery:
+ANDROID_HOME / ANDROID_SDK_ROOT, then well-known host SDK roots, with optional
+explicit `jvm.androidJar` metadata). Pure-Lua parser, symbol, and semantic-
 boundary cases run without that jar. When the jar is missing, provider cases
 skip with an explicit TASK-170/TASK-521 reason rather than claiming green
-navigation against non-existent surfaces. Never hardcode `G:/`.
+navigation against non-existent surfaces. Never invent drive-letter SDK roots.
 
 Framework models under `android-framework/` still seed overlay types for
 View/TextView members when reflection is not mounted; provider *definition*
@@ -98,4 +97,4 @@ TextView, Context, and OnClickListener).
 - Do not treat missing loadlayout id-member completion as a passing product claim.
 - Do not empty `workspaceFolders` or drop the `workspace/` path prefix (WAVE34
   multi-doc collapse pitfall).
-- Do not depend on machine-local Android-Lua checkouts or `G:/` paths.
+- Do not depend on machine-local Android-Lua checkouts or inventing drive-letter SDK roots.

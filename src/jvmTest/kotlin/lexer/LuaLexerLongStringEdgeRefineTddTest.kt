@@ -15,7 +15,11 @@ import kotlin.test.fail
  *   CR/LF) without rewriting sibling corpora under parser.lexer.
  * - Nested-equals levels, EOF mid-close / unclosed recovery, and CR/LF mixes
  *   lock stable LONG_STRING / BAD_CHARACTER surfaces without hang.
- * - No production edits; verification deferred to review / TASK-043.
+ * - TASK-619 aligns mismatch/unclosed recovery with scanLongBracket product
+ *   (TASK-595): complete wrong-level closes end BAD early; trailing source
+ *   stays lexable. True EOF-unclosed forms (no full close) still consume to
+ *   EOF as a single BAD_CHARACTER.
+ * - Verification deferred to review / TASK-043.
  *
  * Complements:
  * - [parser.lexer.LuaLexerLongStringEdgeTddTest]
@@ -128,18 +132,38 @@ class LuaLexerLongStringEdgeRefineTddTest {
         assertEofMalformedConsumesAll("EOF mid level-2 close (]== missing final])", "[==[body]==")
         assertEofMalformedConsumesAll("EOF mid level-3 close (]=== missing final])", "[===[body]===")
         assertEofMalformedConsumesAll("EOF mid level-4 close after CR body", "[====[\rbody]===")
+        // Incomplete same-level close fragments (no final `]`) are not full closes: BAD to EOF.
         assertEofMalformedConsumesAll("EOF mid level-5 close (]===== missing final])", "[=====[body]=====")
-        assertEofMalformedConsumesAll(
-            "EOF mid level-2 close after nested lower noise",
-            "[==[keep ]=] ]] still]=="
-        )
-        assertEofMalformedConsumesAll(
-            "EOF unclosed level-3 with CRLF and lower closes",
-            "[===[\r\nx ]=] ]==] still open"
-        )
-        assertEofMalformedConsumesAll(
-            "EOF unclosed level-5 with embedded lower opens/closes",
-            "[=====[L5 [====[a]====] [===[b]===] open"
+        // Complete lower-level closes act as TASK-595 mismatch anchors (BAD ends there).
+        assertTokenCases(
+            LexerCase(
+                "EOF mid level-2 close after nested lower noise ends BAD at first wrong close",
+                "[==[keep ]=] ]] still]==",
+                token(LuaTokenTypes.BAD_CHARACTER, "[==[keep ]=]"),
+                token(LuaTokenTypes.RBRACK, "]"),
+                token(LuaTokenTypes.RBRACK, "]"),
+                token(LuaTokenTypes.NAME, "still"),
+                token(LuaTokenTypes.RBRACK, "]"),
+                token(LuaTokenTypes.EQ, "==")
+            ),
+            LexerCase(
+                "EOF unclosed level-3 with CRLF and lower closes ends BAD at first wrong close",
+                "[===[\r\nx ]=] ]==] still open",
+                token(LuaTokenTypes.BAD_CHARACTER, "[===[\r\nx ]=]"),
+                token(LuaTokenTypes.RBRACK, "]"),
+                token(LuaTokenTypes.EQ, "=="),
+                token(LuaTokenTypes.RBRACK, "]"),
+                token(LuaTokenTypes.NAME, "still"),
+                token(LuaTokenTypes.NAME, "open")
+            ),
+            LexerCase(
+                "EOF unclosed level-5 with embedded lower opens/closes ends BAD at first wrong close",
+                "[=====[L5 [====[a]====] [===[b]===] open",
+                token(LuaTokenTypes.BAD_CHARACTER, "[=====[L5 [====[a]====]"),
+                // Remainder after mismatch close re-lexes independently (well-formed level-3).
+                token(LuaTokenTypes.LONG_STRING, "[===[b]===]"),
+                token(LuaTokenTypes.NAME, "open")
+            )
         )
     }
 
@@ -160,13 +184,32 @@ class LuaLexerLongStringEdgeRefineTddTest {
                 "[==[\r\na\nb]=]"
             )
         )
-        assertEofMalformedConsumesAll(
-            "level-5 mismatch with trailing tokens consumes remainder",
-            "[=====[x]====] print(1)"
-        )
-        assertEofMalformedConsumesAll(
-            "level-3 mismatch after CRLF with trailing name",
-            "[===[\r\nmismatch]==]name"
+        // TASK-595 / TASK-619: wrong-level close ends BAD; trailing source stays lexable.
+        assertTokenCases(
+            LexerCase(
+                "level-5 mismatch with trailing tokens does not eat remainder",
+                "[=====[x]====] print(1)",
+                token(LuaTokenTypes.BAD_CHARACTER, "[=====[x]====]"),
+                token(LuaTokenTypes.NAME, "print"),
+                token(LuaTokenTypes.LPAREN, "("),
+                token(LuaTokenTypes.NUMBER, "1"),
+                token(LuaTokenTypes.RPAREN, ")")
+            ),
+            LexerCase(
+                "level-3 mismatch after CRLF with trailing name does not eat remainder",
+                "[===[\r\nmismatch]==]name",
+                token(LuaTokenTypes.BAD_CHARACTER, "[===[\r\nmismatch]==]"),
+                token(LuaTokenTypes.NAME, "name")
+            ),
+            LexerCase(
+                "level mismatch with trailing code after CR body does not eat remainder",
+                "[=[\rmismatch]==] local x=1",
+                token(LuaTokenTypes.BAD_CHARACTER, "[=[\rmismatch]==]"),
+                token(LuaTokenTypes.LOCAL, "local"),
+                token(LuaTokenTypes.NAME, "x"),
+                token(LuaTokenTypes.ASSIGN, "="),
+                token(LuaTokenTypes.NUMBER, "1")
+            )
         )
     }
 
@@ -209,20 +252,33 @@ class LuaLexerLongStringEdgeRefineTddTest {
             "unclosed level-1 after leading CRLF only",
             "[=[\r\n"
         )
-        assertEofMalformedConsumesAll(
-            "unclosed level-4 after leading LF and lower close noise",
-            "[====[\n]=] ]==] ]]"
+        // Complete lower-level closes are mismatch anchors (TASK-595): BAD ends at first.
+        assertTokenCases(
+            LexerCase(
+                "unclosed level-4 after leading LF and lower close noise ends BAD at first wrong close",
+                "[====[\n]=] ]==] ]]",
+                token(LuaTokenTypes.BAD_CHARACTER, "[====[\n]=]"),
+                token(LuaTokenTypes.RBRACK, "]"),
+                token(LuaTokenTypes.EQ, "=="),
+                token(LuaTokenTypes.RBRACK, "]"),
+                token(LuaTokenTypes.RBRACK, "]"),
+                token(LuaTokenTypes.RBRACK, "]")
+            )
         )
     }
 
     @Test
     fun unclosedNestedEqualsLargeCrLfBodyDoesNotHang() {
+        // True unclosed form: lower-level noise is incomplete (no full `]`…`]` close),
+        // so BAD_CHARACTER still spans to EOF. Hang-freedom is the primary lock.
+        // Complete lower closes would end BAD early under TASK-595 mismatch recovery.
         val body = buildString {
             append("[=====[")
             repeat(6_000) { i ->
                 append("refine-")
                 append(i)
-                append(" ]====] ]===] ]==] ]=] ]] \r\n")
+                // incomplete fragments only — missing final `]` so not a full close
+                append(" ]==== ]=== ]== ]= ] \r\n")
             }
             // deliberately no matching ]=====]
         }

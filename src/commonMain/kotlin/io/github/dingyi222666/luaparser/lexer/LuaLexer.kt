@@ -477,7 +477,9 @@ class LuaLexer @JvmOverloads constructor(
         var nestedDepth = 0
         // First complete close delimiter whose equals level differs from [equalsCount].
         // Used only when the matching close is never found: end the BAD span there so
-        // trailing source stays lexable (TASK-595). Must not early-exit on mismatch
+        // trailing source stays lexable (TASK-595 / TASK-619). Applies both to pure
+        // level-mismatch forms and to unclosed bodies that contain full lower/higher
+        // closes (e.g. [======[L6 ]=====] open). Must not early-exit on mismatch
         // while scanning — a well-formed body may embed lower/higher closes before
         // the true same-level terminator (e.g. [=[keep ]==] still]=]).
         var firstMismatchEnd = -1

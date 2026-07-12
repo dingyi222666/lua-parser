@@ -88,6 +88,16 @@ class JvmClassModuleProvider(
         }.associate { it.first to it.second }
     }
 
+    /**
+     * Package-list surface for wildcard targets only (`pkg.*`).
+     *
+     * Keys are stable package virtual paths under `__jvm__/packages/<segments>.lua`.
+     * Class modules (`__jvm__/classes/...`) are never package-list keys — they are mounted
+     * by [packageMemberClassProvidersFor] / [providersFor] on class-resolution surfaces.
+     *
+     * Non-wildcard package-name aliases, FQCN class targets, and blank/malformed inputs
+     * yield no package-list entries (and never throw).
+     */
     internal fun packageProvidersFor(
         importTargets: Collection<String>,
         configuration: JvmWorkspaceConfiguration
@@ -100,14 +110,42 @@ class JvmClassModuleProvider(
         val providers = linkedMapOf<VirtualPath, WorkspaceSnapshot.FileSnapshot>()
         val visitedPackages = linkedSetOf<String>()
         importTargets.forEach { importText ->
-            val packageName = packageNameFromImport(importText, normalized, classLoader) ?: return@forEach
+            // Wildcard-only listing: `android.widget.*` / `java.util.concurrent.*`.
+            // Package-name aliases and class FQCNs stay off the package-list key set.
+            val packageName = wildcardPackageName(importText) ?: return@forEach
             if (!visitedPackages.add(packageName)) {
                 return@forEach
             }
             val packageProvider = packageProviderFor(packageName, normalized, classLoader) ?: return@forEach
             providers[packageProvider.first] = packageProvider.second
-            // Mount shallow class providers for package members so wildcard imports can resolve
-            // identifiers (TextView/File) without deep hierarchy expand of every framework type.
+        }
+        return providers
+    }
+
+    /**
+     * Shallow class providers for members of wildcard package targets.
+     *
+     * Used by [JvmWorkspaceEngine] so wildcard imports can resolve identifiers
+     * (TextView/File) without deep hierarchy expand of every framework type.
+     * Paths are always `__jvm__/classes/...` — never mixed into package-list keys.
+     */
+    internal fun packageMemberClassProvidersFor(
+        importTargets: Collection<String>,
+        configuration: JvmWorkspaceConfiguration
+    ): Map<VirtualPath, WorkspaceSnapshot.FileSnapshot> {
+        val normalized = configuration.normalized(defaultImportPrefixes)
+        val classLoader = classLoaderForPackageEnumeration(normalized)
+        val providers = linkedMapOf<VirtualPath, WorkspaceSnapshot.FileSnapshot>()
+        val visitedPackages = linkedSetOf<String>()
+        importTargets.forEach { importText ->
+            // Accept both `pkg.*` wildcards and package-name aliases so engine-normalized
+            // targets and raw alias forms both mount shallow class modules.
+            val packageName = wildcardPackageName(importText)
+                ?: packageNameFromImport(importText, normalized, classLoader)
+                ?: return@forEach
+            if (!visitedPackages.add(packageName)) {
+                return@forEach
+            }
             resolvedPackageClasses(packageName, classLoader, normalized).forEach { clazz ->
                 val (path, snapshot) = shallowProviderForClass(clazz)
                 providers.putIfAbsent(path, snapshot)
@@ -148,7 +186,7 @@ class JvmClassModuleProvider(
         val classLoader = normalized.classLoader ?: classLoaderFor(normalized)
         // Heap bound: never expand wildcard/package targets into full class lists for
         // configuration.classes / source discovery. Package members are mounted via
-        // packageProvidersFor (shallow) instead.
+        // packageProvidersFor (package paths) + packageMemberClassProvidersFor (class paths).
         val parsed = parseImportTarget(importText)?.className ?: return emptyList()
         if (parsed.endsWith(".*")) {
             return emptyList()
@@ -1291,8 +1329,14 @@ class JvmClassModuleProvider(
     ): JavaClassType {
         // Bound deep hierarchy expand for multi-file android.jar workspaces (TASK-611).
         // Explicit class providers keep declared members + a short super/interface chain.
-        if (clazz.name in hierarchyStack || hierarchyDepth >= MAX_DEEP_HIERARCHY_EXPAND_DEPTH) {
+        // Past the member-expand depth, still hydrate a lightweight super/interface skeleton so
+        // assignability can see transitive interfaces (ArrayList -> List -> Collection -> Iterable)
+        // without re-expanding every inherited member surface.
+        if (clazz.name in hierarchyStack) {
             return typeReferenceForJavaClass(clazz)
+        }
+        if (hierarchyDepth >= MAX_DEEP_HIERARCHY_EXPAND_DEPTH) {
+            return hierarchySkeletonForJavaClass(clazz, hierarchyStack, hierarchyDepth)
         }
         val nextHierarchyStack = hierarchyStack + clazz.name
         val javaName = javaTypeNameFor(clazz)
@@ -1349,6 +1393,30 @@ class JvmClassModuleProvider(
                 ?.let { javaClassTypeFor(it, nextHierarchyStack, hierarchyDepth + 1) },
             interfaces = clazz.interfaces.map { javaClassTypeFor(it, nextHierarchyStack, hierarchyDepth + 1) },
             typeParameters = clazz.typeParameters.map(::javaTypeParameterFor)
+        )
+    }
+
+    /**
+     * Lightweight super/interface chain for assignability after the member-expand depth cap.
+     * Keeps names + type parameters + transitive hierarchy edges only (no members/constructors).
+     */
+    private fun hierarchySkeletonForJavaClass(
+        clazz: Class<*>,
+        hierarchyStack: Set<String>,
+        hierarchyDepth: Int
+    ): JavaClassType {
+        if (clazz.name in hierarchyStack || hierarchyDepth >= MAX_HIERARCHY_SKELETON_DEPTH) {
+            return typeReferenceForJavaClass(clazz)
+        }
+        val nextHierarchyStack = hierarchyStack + clazz.name
+        return JavaClassType(
+            javaName = javaTypeNameFor(clazz),
+            typeParameters = clazz.typeParameters.map(::javaTypeParameterFor),
+            superClass = clazz.superclass
+                ?.let { hierarchySkeletonForJavaClass(it, nextHierarchyStack, hierarchyDepth + 1) },
+            interfaces = clazz.interfaces.map {
+                hierarchySkeletonForJavaClass(it, nextHierarchyStack, hierarchyDepth + 1)
+            }
         )
     }
 
@@ -1730,8 +1798,12 @@ class JvmClassModuleProvider(
 
     companion object {
         private const val MAX_REFLECTED_INNER_CLASS_DEPTH = 1
-        // Cycle guard + practical super/interface expand depth for deep class providers.
+        // Cycle guard + practical member expand depth for deep class providers.
         private const val MAX_DEEP_HIERARCHY_EXPAND_DEPTH = 2
+        // Lightweight hierarchy skeleton depth for assignability (transitive supers/interfaces).
+        // Bounded well below the test maxHierarchyDepth guard (33) while covering JDK chains
+        // such as ArrayList -> List -> Collection -> Iterable and AbstractList -> Object.
+        private const val MAX_HIERARCHY_SKELETON_DEPTH = 16
         const val UNSUPPORTED_PREFIXED_IMPORT_CODE = "jvm.import.prefixed.unsupported"
 
         const val CLASSES_METADATA_KEY = "jvm.classes"
