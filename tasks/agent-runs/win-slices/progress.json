@@ -2,13 +2,13 @@
   "version": 2,
   "strategy": "must-green-to-advance",
   "activeSlice": "s015",
-  "updatedAt": "2026-07-12T19:48:38Z",
+  "updatedAt": "2026-07-12T19:50:55Z",
   "summary": {
     "total": 18,
     "totalFiles": 367,
-    "pending": 4,
+    "pending": 3,
     "success": 14,
-    "failure": 0,
+    "failure": 1,
     "running": 0,
     "filesDone": 210
   },
@@ -214,9 +214,19 @@
       "updatedAt": "2026-07-12T19:42:56Z"
     },
     "s015": {
-      "status": "pending",
+      "status": "failure",
       "label": "semantic.checker..semantic.interop",
-      "fileCount": 45
+      "fileCount": 45,
+      "lastRunId": "29206545189",
+      "lastSha": "cf5f2818dfcea59f2f8c5f02b91bb795aa003d5b",
+      "tests": 0,
+      "failures": 0,
+      "errors": 0,
+      "failedTests": [],
+      "durationSec": null,
+      "artifact": "results/s015-29206545189.json",
+      "updatedAt": "2026-07-12T19:50:55Z",
+      "note": "windows-run-slice.ps1 crashed before jvmTest: cannot set lastRunId on pending s015 PSCustomObject (PropertyNotFound). No TEST-*.xml produced. Gate retains s015."
     },
     "s016": {
       "status": "pending",
@@ -597,6 +607,16 @@
       "failures": 0,
       "durationSec": 10,
       "at": "2026-07-12T19:42:56Z"
+    },
+    {
+      "sliceId": "s015",
+      "runId": "29206545189",
+      "status": "failure",
+      "tests": 0,
+      "failures": 0,
+      "durationSec": null,
+      "at": "2026-07-12T19:50:55Z",
+      "note": "windows-run-slice.ps1 lastRunId set failed on pending s015; no junit xml"
     }
   ]
 }

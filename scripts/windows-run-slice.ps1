@@ -45,6 +45,30 @@ function Get-SliceStatus($progress, $id) {
   try { return [string]$progress.slices.$id.status } catch { return "pending" }
 }
 
+# ConvertFrom-Json yields PSCustomObjects that reject new property assignment in PS 5.1
+# (PropertyNotFound). Pending slices only have status/label/fileCount — set lastRunId
+# etc. via Add-Member -Force so first-run slices do not crash before gradle.
+function Set-NoteProp($obj, [string]$name, $value) {
+  if ($null -eq $obj) { return }
+  if ($obj.PSObject.Properties.Name -contains $name) {
+    $obj.$name = $value
+  } else {
+    $obj | Add-Member -NotePropertyName $name -NotePropertyValue $value -Force
+  }
+}
+
+function Ensure-SliceObject($progress, [string]$id) {
+  if (-not ($progress.slices.PSObject.Properties.Name -contains $id)) {
+    $progress.slices | Add-Member -NotePropertyName $id -NotePropertyValue ([pscustomobject]@{}) -Force
+  }
+  $sliceObj = $progress.slices.$id
+  if ($null -eq $sliceObj) {
+    $sliceObj = [pscustomobject]@{}
+    $progress.slices | Add-Member -NotePropertyName $id -NotePropertyValue $sliceObj -Force
+  }
+  return $sliceObj
+}
+
 if (-not (Test-Path $SlicesPath)) { Write-Error "missing $SlicesPath"; exit 1 }
 if (-not (Test-Path $ProgressPath)) { Write-Error "missing $ProgressPath"; exit 1 }
 
@@ -101,17 +125,16 @@ if ($prev -eq "failure") {
   Write-Host "GATE_RERUN same red slice until green — will not advance"
 }
 
-# mark running
-if (-not $progress.slices.PSObject.Properties.Name.Contains($sliceId)) {
-  $progress.slices | Add-Member -NotePropertyName $sliceId -NotePropertyValue ([pscustomobject]@{})
-}
-$progress.slices.$sliceId.status = "running"
-$progress.slices.$sliceId.lastRunId = "$runId"
-$progress.slices.$sliceId.lastSha = "$sha"
-$progress.slices.$sliceId.updatedAt = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+# mark running (Add-Member for first-run pending slices that lack lastRunId/etc.)
+$sliceObj = Ensure-SliceObject $progress $sliceId
+$nowMark = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+Set-NoteProp $sliceObj "status" "running"
+Set-NoteProp $sliceObj "lastRunId" "$runId"
+Set-NoteProp $sliceObj "lastSha" "$sha"
+Set-NoteProp $sliceObj "updatedAt" $nowMark
 $progress.activeSlice = $sliceId
 $progress.strategy = "must-green-to-advance"
-$progress.updatedAt = $progress.slices.$sliceId.updatedAt
+$progress.updatedAt = $nowMark
 ($progress | ConvertTo-Json -Depth 12) | Set-Content -Path $ProgressPath -Encoding UTF8
 
 # Build gradle args — one FQCN per --tests
@@ -192,16 +215,17 @@ $resultObj = [ordered]@{
 
 # Update progress
 $progress = Get-Content -Raw -Path $ProgressPath | ConvertFrom-Json
-$progress.slices.$sliceId.status = $status
-$progress.slices.$sliceId.lastRunId = "$runId"
-$progress.slices.$sliceId.lastSha = "$sha"
-$progress.slices.$sliceId.tests = $tests
-$progress.slices.$sliceId.failures = $failures + $errors
-$progress.slices.$sliceId.errors = $errors
-$progress.slices.$sliceId.failedTests = @($failed | Select-Object -Unique)
-$progress.slices.$sliceId.durationSec = [int]$sw.Elapsed.TotalSeconds
-$progress.slices.$sliceId.artifact = "results/$(Split-Path $resultPath -Leaf)"
-$progress.slices.$sliceId.updatedAt = $resultObj.finishedAt
+$sliceObj = Ensure-SliceObject $progress $sliceId
+Set-NoteProp $sliceObj "status" $status
+Set-NoteProp $sliceObj "lastRunId" "$runId"
+Set-NoteProp $sliceObj "lastSha" "$sha"
+Set-NoteProp $sliceObj "tests" $tests
+Set-NoteProp $sliceObj "failures" ($failures + $errors)
+Set-NoteProp $sliceObj "errors" $errors
+Set-NoteProp $sliceObj "failedTests" @($failed | Select-Object -Unique)
+Set-NoteProp $sliceObj "durationSec" ([int]$sw.Elapsed.TotalSeconds)
+Set-NoteProp $sliceObj "artifact" ("results/$(Split-Path $resultPath -Leaf)")
+Set-NoteProp $sliceObj "updatedAt" $resultObj.finishedAt
 $progress.activeSlice = $sliceId
 $progress.strategy = "must-green-to-advance"
 $progress.updatedAt = $resultObj.finishedAt
