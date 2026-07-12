@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "updatedAt": "2026-07-12T12:55:02Z",
+  "updatedAt": "2026-07-12T13:16:10Z",
   "strategy": "must-green-to-advance",
   "chunkSize": 15,
   "cycle": 1,
@@ -8,10 +8,10 @@
     "total": 25,
     "totalFiles": 367,
     "pending": 21,
-    "success": 3,
-    "failure": 1,
+    "success": 4,
+    "failure": 0,
     "running": 0,
-    "filesDone": 45
+    "filesDone": 60
   },
   "slices": {
     "s001": {
@@ -60,26 +60,18 @@
       "note": "green on run 29192803870; 208 tests 0 failures"
     },
     "s004": {
-      "status": "failure",
+      "status": "success",
       "label": "lsp",
       "fileCount": 15,
-      "lastRunId": "29193414885",
-      "lastSha": "7e09d9928bf7e4bcb2e30e555d46e1cc7bd577d7",
+      "lastRunId": "29193985587",
+      "lastSha": "9bf3d7445a2f311ba308266aceba7198e7a6d757",
       "tests": 277,
-      "failures": 7,
+      "failures": 0,
       "errors": 0,
-      "failedTests": [
-        "lsp.LspJavaAndroidFeatureTddTest#text_document_and_workspace_services_wrap_android_java_feature_queries_after_configuration[jvm]",
-        "lsp.LspJavaAndroidFeatureTddTest#android_wildcard_layout_lsp_features_cover_ids_listener_and_cross_file_symbols[jvm]",
-        "lsp.LspJavaAndroidFeatureTddTest#android_import_table_lsp_features_resolve_class_static_field_and_member_methods[jvm]",
-        "lsp.LspJavaAndroidFeatureTddTest#java_static_member_lsp_features_resolve_from_configured_jvm_provider[jvm]",
-        "lsp.LspJvmProviderDefinitionTddTest#definition_and_hover_on_luajava_bind_class_alias_land_on_provider_virtual_path[jvm]",
-        "lsp.LspJvmProviderDefinitionTddTest#without_mounts_require_class_definition_and_hover_degrade_gracefully[jvm]",
-        "lsp.LspJvmProviderDefinitionTddTest#without_mounts_empty_metadata_keeps_unknown_short_name_unresolved_while_mounted_peer_still_works[jvm]"
-      ],
-      "durationSec": 45,
-      "artifact": "results/s004-29193414885.json",
-      "updatedAt": "2026-07-12T12:55:02Z"
+      "failedTests": [],
+      "durationSec": 55,
+      "artifact": "results/s004-29193985587.json",
+      "updatedAt": "2026-07-12T13:16:10Z"
     },
     "s005": {
       "status": "pending",
@@ -504,6 +496,15 @@
       "failures": 7,
       "durationSec": 45,
       "at": "2026-07-12T12:55:02Z"
+    },
+    {
+      "sliceId": "s004",
+      "runId": "29193985587",
+      "status": "success",
+      "tests": 277,
+      "failures": 0,
+      "durationSec": 55,
+      "at": "2026-07-12T13:16:10Z"
     }
   ],
   "gate": {
@@ -511,5 +512,5 @@
     "advanceOnlyIfSuccess": true,
     "workersPerSliceMax": 30
   },
-  "activeSlice": "s004"
+  "activeSlice": "s005"
 }

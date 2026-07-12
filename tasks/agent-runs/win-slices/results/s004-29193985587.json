@@ -1,0 +1,32 @@
+{
+  "sliceId": "s004",
+  "runId": "29193985587",
+  "sha": "9bf3d7445a2f311ba308266aceba7198e7a6d757",
+  "status": "success",
+  "exitCode": 0,
+  "durationSec": 55,
+  "tests": 277,
+  "failures": 0,
+  "errors": 0,
+  "skipped": 3,
+  "failedTests": [],
+  "testsPatterns": [
+    "lsp.LspDocumentLinkSafetyTddTest",
+    "lsp.LspFoldingRangeSafetyTddTest",
+    "lsp.LspFoldingRangesTddTest",
+    "lsp.LspFormattingFullDocumentSafetyTddTest",
+    "lsp.LspFormattingSafetyTddTest",
+    "lsp.LspHierarchicalDocumentSymbolTddTest",
+    "lsp.LspHoverDocCommentSurfaceTddTest",
+    "lsp.LspHoverLocalAnnotationTddTest",
+    "lsp.LspHoverMarkupContentTddTest",
+    "lsp.LspIncrementalWorkspaceUpdateTddTest",
+    "lsp.LspInlayHintsParamNameTddTest",
+    "lsp.LspInlayHintsSafetyTddTest",
+    "lsp.LspJavaAndroidFeatureTddTest",
+    "lsp.LspJvmProviderDefinitionTddTest",
+    "lsp.LspLifecycleDiagnosticsTddTest"
+  ],
+  "gate": "must-green-to-advance",
+  "finishedAt": "2026-07-12T13:16:10Z"
+}
