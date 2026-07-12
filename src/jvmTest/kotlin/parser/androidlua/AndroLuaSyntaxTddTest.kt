@@ -264,6 +264,62 @@ class AndroLuaSyntaxTddTest {
         )
     }
 
+    /**
+     * TASK-614: Windows corpus asset-main2-editor fails on C-style `!=`
+     * (`if (ts(... ) != ts(...)) then`). asset-file uses C-style `&&`.
+     * Lexer maps `!=`/`&&`/`||` onto NE/AND/OR; parser accepts spellings.
+     */
+    @Test
+    fun acceptsAndroidLuaCStyleInequalityAndLogicalOperators() {
+        val inequality = parse(
+            LuaVersion.ANDROLUA_5_3,
+            """
+            if (ts(path.getParentFile()) != ts(projectName)) then
+              mark(path)
+            end
+            """.trimIndent()
+        )
+        val ineqIf = assertIs<IfStatement>(inequality.body.statements.single())
+        assertTrue(
+            renderShape(ineqIf).contains("Binary(~=,") || renderShape(ineqIf).contains("Binary(!=,"),
+            "expected inequality binary from !=, got ${renderShape(ineqIf)}"
+        )
+        assertFalse(ineqIf.bad)
+
+        val logicalAnd = parse(
+            LuaVersion.ANDROLUA_5_3,
+            """
+            if (tostring(uri):find(uri1) && requestCode == 11 && uri ~= nil) then
+              open(uri)
+            end
+            """.trimIndent()
+        )
+        val andIf = assertIs<IfStatement>(logicalAnd.body.statements.single())
+        val andShape = renderShape(andIf)
+        assertTrue(
+            andShape.contains("Binary(and,") ,
+            "expected logical and from &&, got $andShape"
+        )
+        assertFalse(andIf.bad)
+
+        val logicalOr = parse(
+            LuaVersion.ANDROLUA_5_3,
+            "return a || b"
+        )
+        assertTrue(
+            renderShape(logicalOr.returnExpression()).contains("Binary(or,Id(a),Id(b))"),
+            "expected logical or from ||, got ${renderShape(logicalOr.returnExpression())}"
+        )
+
+        // Bare `!` remains unary not (not glued to next name).
+        val unaryNot = parse(LuaVersion.ANDROLUA_5_3, "return !ready")
+        assertTrue(
+            renderShape(unaryNot.returnExpression()).contains("Unary(not,Id(ready))") ||
+                renderShape(unaryNot.returnExpression()).contains("Unary(!,Id(ready))"),
+            "expected unary not from !, got ${renderShape(unaryNot.returnExpression())}"
+        )
+    }
+
 
     @Test
     fun parsesAndroLuaOnlyStatementShapes() {

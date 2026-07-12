@@ -402,6 +402,26 @@ class LuaParserRecoveryTddTest {
             strictParseExpectation = StrictParseExpectation.CURRENTLY_ACCEPTS
         ),
         RecoveryCase(
+            // TASK-614: asset-main2-editor C-style inequality (`!=`).
+            name = "AndroLua C-style != inequality is strict accepted",
+            version = LuaVersion.ANDROLUA_5_3,
+            source = "if (ts(parent) != ts(name)) then mark() end",
+            requiredShapeFragments = listOf(
+                "Binary(~=,Call(Id(ts):Id(parent)),Call(Id(ts):Id(name)))"
+            ),
+            strictParseExpectation = StrictParseExpectation.CURRENTLY_ACCEPTS
+        ),
+        RecoveryCase(
+            // TASK-614: asset-file C-style logical and (`&&`).
+            name = "AndroLua C-style && logical and is strict accepted",
+            version = LuaVersion.ANDROLUA_5_3,
+            source = "if (find(uri) && code == 11 && uri ~= nil) then open() end",
+            requiredShapeFragments = listOf(
+                "Binary(and,"
+            ),
+            strictParseExpectation = StrictParseExpectation.CURRENTLY_ACCEPTS
+        ),
+        RecoveryCase(
             name = "missing elseif then keeps elseif and else branches",
             source = "if first then one() elseif second two() else three() end",
             requiredShapeFragments = listOf(

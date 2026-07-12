@@ -3,13 +3,13 @@ package interop.jvm
 import io.github.dingyi222666.luaparser.interop.jvm.JvmClassModuleProvider
 import io.github.dingyi222666.luaparser.interop.jvm.JvmWorkspaceConfiguration
 import io.github.dingyi222666.luaparser.interop.jvm.JvmWorkspaceEngine
-import io.github.dingyi222666.luaparser.semantic.api.SymbolKind
 import io.github.dingyi222666.luaparser.semantic.types.model.JavaClassType
 import io.github.dingyi222666.luaparser.semantic.types.model.JavaInstanceType
 import io.github.dingyi222666.luaparser.semantic.types.model.ModuleType
 import io.github.dingyi222666.luaparser.semantic.workspace.VirtualPath
 import io.github.dingyi222666.luaparser.semantic.workspace.WorkspaceSnapshot
 import java.io.File
+import org.junit.Assume
 import semantic.support.WorkspaceSemanticHarness
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -19,13 +19,19 @@ import kotlin.test.assertTrue
 /**
  * Android platform jar reflection surface for AndroLua-style JVM class modules.
  *
- * Host android.jar resolution (never hardcodes Windows-only `G:/Android/Sdk`):
- * 1) [JvmWorkspaceConfiguration.DEFAULT_ANDROID_JAR_PATH] / ANDROID_HOME / ANDROID_SDK_ROOT
- * 2) well-known macOS `$HOME/Library/Android/sdk/platforms/android-35/android.jar`
- * 3) explicit host path `/Users/dingyi/Library/Android/sdk/platforms/android-35/android.jar`
+ * Host android.jar dual-path discovery (never hardcodes Windows-only G:/Android/Sdk):
+ * 1) [JvmWorkspaceConfiguration.discoverReflectiveAndroidJarPath] / DEFAULT_ANDROID_JAR_PATH
+ * 2) ANDROID_HOME / ANDROID_SDK_ROOT platforms/android-35|34
+ * 3) well-known host roots: macOS ~/Library/Android/sdk, Windows %LOCALAPPDATA%/Android/Sdk
+ *    and user-home AppData layouts, Linux ~/Android/Sdk
+ * 4) documented mac host path when present
  *
- * TASK-584 product lock: package wildcards for android.app/content/view/widget must
- * enumerate Activity/Context/View/TextView, skip inners, and stay empty when jar absent.
+ * When a real jar is present, reflection member/wildcard surfaces load. When truly
+ * absent, tests soft-skip with an explicit reason (never invent presence, never
+ * hard-require a missing AppData android-35 path alone).
+ *
+ * TASK-584 / TASK-607 product lock: package wildcards for android.app/content/view/widget
+ * must enumerate Activity/Context/View/TextView, skip inners, and stay empty when jar absent.
  *
  * Verification is review-owned (TASK-043):
  * `jvmTest --tests interop.jvm.AndroidJarReflectionTddTest`
@@ -35,7 +41,7 @@ class AndroidJarReflectionTddTest {
 
     @Test
     fun android_jar_path_is_available_for_task_019_reflection_tests() {
-        assertAndroidJarPresent()
+        requireAndroidJarOrSkip()
         assertTrue(
             androidJar.length() > 0,
             "Expected non-empty Android platform jar at ${androidJar.path}."
@@ -44,11 +50,16 @@ class AndroidJarReflectionTddTest {
             !androidJar.path.replace('\\', '/').startsWith("G:/Android/Sdk", ignoreCase = true),
             "Host resolution must not hardcode Windows G:/Android/Sdk; got ${androidJar.path}."
         )
+        assertTrue(
+            androidJar.path.replace('\\', '/').contains("/platforms/android-") &&
+                androidJar.name.equals("android.jar", ignoreCase = true),
+            "Expected host jar under platforms/android-*; got ${androidJar.path}."
+        )
     }
 
     @Test
     fun jvm_android_jar_metadata_appends_android_jar_to_effective_classpath() {
-        assertAndroidJarPresent()
+        requireAndroidJarOrSkip()
         val configuration = androidConfiguration()
 
         assertEquals(listOf(androidJar.path), configuration.effectiveClasspathEntries())
@@ -56,7 +67,7 @@ class AndroidJarReflectionTddTest {
 
     @Test
     fun jvm_classpath_metadata_can_load_android_context_when_android_jar_is_on_configurable_classpath() {
-        assertAndroidJarPresent()
+        requireAndroidJarOrSkip()
         val requested = provider().requestedClasses(
             mapOf(
                 JvmWorkspaceConfiguration.CLASSPATH_METADATA_KEY to androidJar.path,
@@ -315,7 +326,7 @@ class AndroidJarReflectionTddTest {
 
     @Test
     fun host_android_jar_four_package_wildcards_product_lock_enumerates_fixture_classes() {
-        assertAndroidJarPresent()
+        requireAndroidJarOrSkip()
         val targets = listOf(
             "android.app.*" to "Activity",
             "android.content.*" to "Context",
@@ -335,7 +346,7 @@ class AndroidJarReflectionTddTest {
         vararg files: Pair<String, String>,
         metadata: Map<String, String>
     ): WorkspaceSemanticHarness {
-        assertAndroidJarPresent()
+        requireAndroidJarOrSkip()
         return WorkspaceSemanticHarness.build(
             *files,
             metadata = metadata,
@@ -344,7 +355,7 @@ class AndroidJarReflectionTddTest {
     }
 
     private fun provider(): JvmClassModuleProvider {
-        assertAndroidJarPresent()
+        requireAndroidJarOrSkip()
         return JvmClassModuleProvider()
     }
 
@@ -354,7 +365,7 @@ class AndroidJarReflectionTddTest {
         importPrefixes: List<String> = emptyList(),
         classpathEntries: List<String> = emptyList()
     ): JvmWorkspaceConfiguration {
-        assertAndroidJarPresent()
+        requireAndroidJarOrSkip()
         return JvmWorkspaceConfiguration(
             classpathEntries = classpathEntries,
             androidJar = androidJar.path,
@@ -412,43 +423,89 @@ class AndroidJarReflectionTddTest {
             ?: error("Expected __class on reflected module $moduleName to be JavaInstanceType, was ${type.displayName}.")
     }
 
-    private fun assertAndroidJarPresent() {
+    private fun requireAndroidJarOrSkip() {
+        if (!androidJar.isFile) {
+            Assume.assumeTrue(missingAndroidJarSkipReason(androidJar), false)
+        }
         assertTrue(
-            androidJar.isFile,
-            "Android platform jar required at host SDK path ${androidJar.path}. " +
-                "Install Android SDK Platform 35 under ANDROID_HOME/ANDROID_SDK_ROOT or " +
-                "~/Library/Android/sdk (macOS) before running Android reflection TDD tests. " +
-                "Never hardcode G:/Android/Sdk."
+            androidJar.length() > 0,
+            "Expected non-empty Android platform jar at ${androidJar.path}."
+        )
+        assertTrue(
+            !androidJar.path.replace('\\', '/').startsWith("G:/Android/Sdk", ignoreCase = true),
+            "Host resolution must not hardcode Windows G:/Android/Sdk; got ${androidJar.path}."
         )
     }
 
     companion object {
         /**
-         * Host-local android.jar for reflection TDD.
+         * Host-local android.jar for reflection TDD (TASK-607 dual-path).
          *
-         * Prefer [JvmWorkspaceConfiguration.DEFAULT_ANDROID_JAR_PATH] discovery, then well-known
-         * macOS SDK roots and the documented host path. Never hardcodes `G:/Android/Sdk`.
+         * Order:
+         * 1) [JvmWorkspaceConfiguration.discoverReflectiveAndroidJarPath]
+         * 2) [JvmWorkspaceConfiguration.DEFAULT_ANDROID_JAR_PATH]
+         * 3) ANDROID_HOME / ANDROID_SDK_ROOT platforms/android-35|34
+         * 4) well-known macOS / Windows LOCALAPPDATA / Linux SDK layouts
+         * 5) documented mac host path when present
+         *
+         * Never hardcodes or hard-requires Windows-only G:/Android/Sdk. When all
+         * candidates are missing, returns the preferred messaging candidate (may be
+         * absent); callers soft-skip via [missingAndroidJarSkipReason].
          */
         private fun resolveHostAndroidJar(): File {
+            val candidates = linkedSetOf<File>()
+            JvmWorkspaceConfiguration.discoverReflectiveAndroidJarPath()
+                ?.let { candidates += File(it) }
+            candidates += File(JvmWorkspaceConfiguration.DEFAULT_ANDROID_JAR_PATH)
+
+            sequenceOf("ANDROID_HOME", "ANDROID_SDK_ROOT")
+                .mapNotNull { env -> System.getenv(env)?.trim()?.takeIf(String::isNotEmpty) }
+                .forEach { sdkRoot ->
+                    candidates += File(sdkRoot, "platforms/android-35/android.jar")
+                    candidates += File(sdkRoot, "platforms/android-34/android.jar")
+                }
+
             val home = System.getProperty("user.home").orEmpty()
-            val candidates = buildList {
-                add(File(JvmWorkspaceConfiguration.DEFAULT_ANDROID_JAR_PATH))
-                if (home.isNotBlank()) {
-                    add(File(home, "Library/Android/sdk/platforms/android-35/android.jar"))
-                    add(File(home, "Android/Sdk/platforms/android-35/android.jar"))
-                }
-                add(File("/Users/dingyi/Library/Android/sdk/platforms/android-35/android.jar"))
-                System.getenv("ANDROID_HOME")?.takeIf { it.isNotBlank() }?.let {
-                    add(File(it, "platforms/android-35/android.jar"))
-                }
-                System.getenv("ANDROID_SDK_ROOT")?.takeIf { it.isNotBlank() }?.let {
-                    add(File(it, "platforms/android-35/android.jar"))
-                }
+            val localAppData = System.getenv("LOCALAPPDATA")?.trim()?.takeIf(String::isNotEmpty)
+            if (!localAppData.isNullOrBlank()) {
+                candidates += File(localAppData, "Android/Sdk/platforms/android-35/android.jar")
+                candidates += File(localAppData, "Android/Sdk/platforms/android-34/android.jar")
             }
-            return candidates.firstOrNull { candidate ->
+            if (home.isNotBlank()) {
+                candidates += File(home, "AppData/Local/Android/Sdk/platforms/android-35/android.jar")
+                candidates += File(home, "AppData/Local/Android/Sdk/platforms/android-34/android.jar")
+                candidates += File(home, "Library/Android/sdk/platforms/android-35/android.jar")
+                candidates += File(home, "Library/Android/sdk/platforms/android-34/android.jar")
+                candidates += File(home, "Android/Sdk/platforms/android-35/android.jar")
+                candidates += File(home, "Android/sdk/platforms/android-35/android.jar")
+            }
+            // Documented mac host path (present on WAVE agents; never required on Windows).
+            candidates += File("/Users/dingyi/Library/Android/sdk/platforms/android-35/android.jar")
+
+            val resolved = candidates.firstOrNull { candidate ->
                 candidate.isFile &&
                     !candidate.path.replace('\\', '/').startsWith("G:/Android/Sdk", ignoreCase = true)
             } ?: candidates.first()
+
+            // Drop accidental G:/ invent when another real host jar exists.
+            val normalized = resolved.path.replace('\\', '/')
+            if (normalized.startsWith("G:/Android/Sdk", ignoreCase = true)) {
+                val nonWindows = candidates.firstOrNull {
+                    it.isFile && !it.path.replace('\\', '/').startsWith("G:/Android/Sdk", ignoreCase = true)
+                }
+                if (nonWindows != null) {
+                    return nonWindows
+                }
+            }
+            return resolved
+        }
+
+        internal fun missingAndroidJarSkipReason(androidJar: File): String {
+            val productReason = JvmWorkspaceConfiguration.missingAndroidJarSoftSkipReason(taskId = "TASK-607")
+            return "TASK-607 soft-skip: android.jar not found at ${androidJar.path}. $productReason " +
+                "Install Android SDK Platform 35 (or set ANDROID_HOME / ANDROID_SDK_ROOT / jvm.androidJar) " +
+                "before running Android reflection TDD. Never invent framework members; never hard-require " +
+                "a missing AppData android-35 path or G:/Android/Sdk alone."
         }
     }
 }

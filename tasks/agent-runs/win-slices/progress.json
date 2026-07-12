@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "updatedAt": "2026-07-11T23:54:45Z",
+  "updatedAt": "2026-07-12T00:13:23Z",
   "strategy": "must-green-to-advance",
   "chunkSize": 15,
   "cycle": 1,
@@ -18,16 +18,13 @@
       "status": "failure",
       "label": "integration..interop.jvm",
       "fileCount": 15,
-      "lastRunId": "29172806487",
-      "lastSha": "088b9965218d381b9fbbb104a5139ad478e15945",
+      "lastRunId": "29173315891",
+      "lastSha": "bc53bf28164cbeda76770a4e71e491520fa954aa",
       "tests": 246,
-      "failures": 37,
+      "failures": 34,
       "errors": 0,
       "failedTests": [
-        "integration.AndroidLuaCorpusSemanticVerificationTest#lsp_queries_external_android_lua_sources_with_android_metadata[jvm]",
-        "integration.AndroidLuaCorpusSemanticVerificationTest#semantic_workspace_analyzes_representative_external_sources_with_android_java_metadata[jvm]",
         "integration.AndroidLuaCorpusSemanticVerificationTest#host_dual_path_root_and_android_jar_joint_green_lock[jvm]",
-        "integration.AndroidLuaCorpusSemanticVerificationTest#semantic_workspace_full_tree_external_paths_resolve_require_import_and_helpers[jvm]",
         "integration.AndroidLuaCorpusSemanticVerificationTest#parser_accepts_strict_rows_and_recovers_marked_rows_without_crashing[jvm]",
         "interop.jvm.AndroidJarReflectionTddTest#android_activity_provider_exposes_instance_methods_from_android_jar_class_type[jvm]",
         "interop.jvm.AndroidJarReflectionTddTest#jvm_android_jar_metadata_can_load_android_view_explicit_class[jvm]",
@@ -63,8 +60,8 @@
         "interop.jvm.JvmClassloaderConfigurationTddTest#configured_android_jar_loads_framework_classes_from_expected_sdk_path[jvm]"
       ],
       "durationSec": 25,
-      "artifact": "results/s001-29172806487.json",
-      "updatedAt": "2026-07-11T23:54:45Z"
+      "artifact": "results/s001-29173315891.json",
+      "updatedAt": "2026-07-12T00:13:23Z"
     },
     "s002": {
       "status": "pending",
@@ -412,6 +409,15 @@
       "failures": 37,
       "durationSec": 25,
       "at": "2026-07-11T23:54:45Z"
+    },
+    {
+      "sliceId": "s001",
+      "runId": "29173315891",
+      "status": "failure",
+      "tests": 246,
+      "failures": 34,
+      "durationSec": 25,
+      "at": "2026-07-12T00:13:23Z"
     }
   ],
   "gate": {

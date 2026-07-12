@@ -192,7 +192,8 @@ data class JvmWorkspaceConfiguration(
          * %LOCALAPPDATA%/Android/Sdk and user-home AppData layouts). When a real jar is
          * present it returns that absolute path; otherwise it returns a host-preferred
          * candidate under platforms/android-35 that may not exist (callers must check
-         * File.isFile and skip when absent).
+         * File.isFile and soft-skip when absent). Never hard-requires a missing Windows
+         * AppData android-35 path alone when another present host jar can be discovered.
          *
          * Downloads jars and other non-SDK copies are never auto-selected; pass them via
          * ANDROID_JAR_METADATA_KEY / androidJar only. Absolute drive-letter roots such as
@@ -390,12 +391,23 @@ data class JvmWorkspaceConfiguration(
         }
 
         private fun preferredDefaultAndroidJarCandidate(userHome: File, localAppData: String?): File {
-            // Prefer first non-forbidden well-known root; never invent absolute G: candidates.
-            // Host dual-path hard-lock prefers platforms/android-35 under macOS Library/Android/sdk
-            // or Windows %LOCALAPPDATA%/Android/Sdk / user-home AppData layouts.
-            val preferredRoot = wellKnownSdkRoots(userHome, localAppData)
-                .firstOrNull { root -> !isForbiddenAutoSdkRoot(root) }
+            // Prefer an existing non-forbidden well-known SDK root for messaging/skip paths.
+            // Never invent absolute G: candidates. Host dual-path hard-lock prefers
+            // platforms/android-35 under macOS Library/Android/sdk or Windows
+            // %LOCALAPPDATA%/Android/Sdk / user-home AppData layouts when those roots exist.
+            // If LOCALAPPDATA is set but empty, fall through to other present roots instead
+            // of hard-locking the missing AppData android-35 path alone.
+            val roots = wellKnownSdkRoots(userHome, localAppData)
+                .filterNot { isForbiddenAutoSdkRoot(it) }
+            val preferredRoot = roots.firstOrNull { root ->
+                root.isDirectory && preferredAndroidPlatformJar(root) != null
+            }
+                ?: roots.firstOrNull { it.isDirectory }
+                ?: roots.firstOrNull()
                 ?: File(userHome, "Android/Sdk")
+            // If the chosen root already has a real jar, surface that path (preferred API
+            // first). Otherwise keep the platforms/android-35 messaging candidate.
+            preferredAndroidPlatformJar(preferredRoot)?.let { return it.file }
             return File(preferredRoot, "platforms/android-$PREFERRED_PLATFORM_API/android.jar")
         }
 
@@ -411,11 +423,14 @@ data class JvmWorkspaceConfiguration(
                     ordered += File(userHome, "AppData/Local/Android/Sdk")
                 }
                 osName.contains("win") -> {
+                    // Windows dual-path: LOCALAPPDATA first, then user-home AppData, then
+                    // portable layouts. Do not sole-hardcode G: or mac-only absolute paths.
                     localAppData?.takeIf { it.isNotBlank() }?.let { ordered += File(it, "Android/Sdk") }
                     ordered += File(userHome, "AppData/Local/Android/Sdk")
-                    ordered += File(userHome, "Library/Android/sdk")
+                    ordered += File(userHome, "AppData/Local/Android/sdk")
                     ordered += File(userHome, "Android/Sdk")
                     ordered += File(userHome, "Android/sdk")
+                    ordered += File(userHome, "Library/Android/sdk")
                 }
                 else -> {
                     ordered += File(userHome, "Android/Sdk")

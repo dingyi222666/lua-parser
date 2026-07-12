@@ -135,7 +135,12 @@ class LuaLexer @JvmOverloads constructor(
             ch == '{' -> LuaTokenTypes.LCURLY
             ch == '}' -> LuaTokenTypes.RCURLY
             ch == ',' -> LuaTokenTypes.COMMA
-            ch == '!' -> LuaTokenTypes.NOT
+            // AndroLua / Android-Lua accept C-style `!=` as inequality (main2.lua).
+            // Bare `!` remains unary NOT (shebang mid-file splits, C-style not).
+            ch == '!' -> scanTwoOperator(
+                LuaTokenTypes.NOT,
+                LuaTokenTypes.NE, '='
+            )
             ch == '+' -> scanTwoOperator(
                 LuaTokenTypes.PLUS,
                 LuaTokenTypes.ADD_ASSIGN, '='
@@ -158,8 +163,18 @@ class LuaLexer @JvmOverloads constructor(
                 LuaTokenTypes.BIT_TILDE,
                 LuaTokenTypes.NE, '='
             )
-            ch == '&' -> LuaTokenTypes.BIT_AND
-            ch == '|' -> LuaTokenTypes.BIT_OR
+            // AndroLua / Android-Lua accept C-style `&&` as logical and (file.lua).
+            // Bare `&` remains bitwise AND.
+            ch == '&' -> scanTwoOperator(
+                LuaTokenTypes.BIT_AND,
+                LuaTokenTypes.AND, '&'
+            )
+            // AndroLua / Android-Lua accept C-style `||` as logical or.
+            // Bare `|` remains bitwise OR.
+            ch == '|' -> scanTwoOperator(
+                LuaTokenTypes.BIT_OR,
+                LuaTokenTypes.OR, '|'
+            )
             ch == '>' -> scanAngleOperator(
                 single = LuaTokenTypes.GT,
                 assign = LuaTokenTypes.GE,

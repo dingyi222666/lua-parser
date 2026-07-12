@@ -253,13 +253,25 @@ class JvmClassModuleProvider(
         configuration: JvmWorkspaceConfiguration,
         classLoader: ClassLoader
     ): Pair<VirtualPath, WorkspaceSnapshot.FileSnapshot>? {
-        packageProviderCache[packageName]?.let { return it }
+        // Include reflective classpath + loader identity so package modules from distinct
+        // classpath configurations never share a name-only cache entry.
+        val cacheKey = buildString {
+            append(packageName)
+            append('#')
+            append(System.identityHashCode(classLoader))
+            append('#')
+            reflectiveClasspathFiles(configuration).forEach { entry ->
+                append(entry.absolutePath)
+                append(';')
+            }
+        }
+        packageProviderCache[cacheKey]?.let { return it }
         val classes = resolvedPackageClasses(packageName, classLoader, configuration)
         if (classes.isEmpty()) {
             return null
         }
         val provider = providerForPackage(packageName, packageModuleTypeFor(packageName, classes))
-        packageProviderCache[packageName] = provider
+        packageProviderCache[cacheKey] = provider
         return provider
     }
 
@@ -848,13 +860,14 @@ class JvmClassModuleProvider(
      * Existing reflective classpath files for ClassLoader + package enumeration.
      *
      * Uses [JvmWorkspaceConfiguration.reflectionClasspathEntries] first. When an explicit
-     * `jvm.androidJar` metadata path is missing on disk (common with Windows-only `G:/...`
-     * fixtures on macOS hosts), soft-falls back to host SDK discovery via
+     * jvm.androidJar metadata path is missing on disk (common with Windows-only G: fixtures
+     * on macOS hosts, or macOS Library/Android/sdk absolute paths on Windows CI), soft-falls
+     * back to host SDK discovery via
      * [JvmWorkspaceConfiguration.discoverReflectiveAndroidJarPath] so nested AndroLua
-     * aliases (`View$OnClickListener`, `Map$Entry`) still resolve when the host jar is present.
+     * aliases (View$OnClickListener, Map$Entry) still resolve when the host jar is present.
      *
      * Never invents framework classes: only existing directories/jars are returned.
-     * Never hard-requires `G:/`.
+     * Never hard-requires G: or a macOS-only absolute path.
      */
     private fun reflectiveClasspathFiles(configuration: JvmWorkspaceConfiguration): List<File> {
         val entries = configuration.reflectionClasspathEntries()
@@ -887,9 +900,18 @@ class JvmClassModuleProvider(
             // defensive host mount if discovery returned nothing earlier.
             return true
         }
+        if (File(configuredJar).isFile) {
+            return false
+        }
         val normalized = configuredJar.replace('\\', '/')
+        // Soft-fallback only for known foreign host fixtures that cannot exist on this OS:
+        // - documented Windows G: inventing root on non-G hosts
+        // - macOS Library/Android/sdk absolute path when missing on Windows/Linux CI
+        // Never invent jars for arbitrary missing paths (isolation tests must stay empty).
         val isWindowsDocumentedSdkPath = normalized.startsWith("G:/Android/Sdk", ignoreCase = true)
-        return isWindowsDocumentedSdkPath && !File(configuredJar).isFile
+        val isMacLibrarySdkPath = normalized.contains("/Library/Android/sdk/", ignoreCase = true) ||
+            normalized.contains("/Library/Android/sdk", ignoreCase = true)
+        return isWindowsDocumentedSdkPath || isMacLibrarySdkPath
     }
 
     /**
@@ -947,21 +969,25 @@ class JvmClassModuleProvider(
     }
 
     private fun providerForClass(clazz: Class<*>): Pair<VirtualPath, WorkspaceSnapshot.FileSnapshot> {
-        fullClassProviderCache[clazz.name]?.let { return it }
+        // Cache by defining ClassLoader + binary name so separate classpath configs that
+        // load the same binary name (PluginMarker from alpha.jar vs beta.jar) stay isolated.
+        val cacheKey = reflectedClassCacheKey(clazz)
+        fullClassProviderCache[cacheKey]?.let { return it }
         val moduleType = moduleTypeFor(clazz)
         val provider = classProviderSnapshot(clazz, moduleType)
-        fullClassProviderCache[clazz.name] = provider
-        // Full providers supersede shallow ones for the same path.
-        shallowClassProviderCache[clazz.name] = provider
+        fullClassProviderCache[cacheKey] = provider
+        // Full providers supersede shallow ones for the same reflected class identity.
+        shallowClassProviderCache[cacheKey] = provider
         return provider
     }
 
     private fun shallowProviderForClass(clazz: Class<*>): Pair<VirtualPath, WorkspaceSnapshot.FileSnapshot> {
-        fullClassProviderCache[clazz.name]?.let { return it }
-        shallowClassProviderCache[clazz.name]?.let { return it }
+        val cacheKey = reflectedClassCacheKey(clazz)
+        fullClassProviderCache[cacheKey]?.let { return it }
+        shallowClassProviderCache[cacheKey]?.let { return it }
         val moduleType = shallowModuleTypeFor(clazz)
         val provider = classProviderSnapshot(clazz, moduleType)
-        shallowClassProviderCache[clazz.name] = provider
+        shallowClassProviderCache[cacheKey] = provider
         return provider
     }
 
@@ -1030,8 +1056,9 @@ class JvmClassModuleProvider(
     }
 
     private fun moduleTypeFor(clazz: Class<*>): ModuleType {
-        moduleTypeCache[clazz.name]?.let { return it }
-        return moduleTypeFor(clazz, emptySet(), 0).also { moduleTypeCache[clazz.name] = it }
+        val cacheKey = reflectedClassCacheKey(clazz)
+        moduleTypeCache[cacheKey]?.let { return it }
+        return moduleTypeFor(clazz, emptySet(), 0).also { moduleTypeCache[cacheKey] = it }
     }
 
     /**
@@ -1039,7 +1066,8 @@ class JvmClassModuleProvider(
      * Avoids deep super/interface expansion that OOMs multi-file android.jar wildcards.
      */
     private fun shallowModuleTypeFor(clazz: Class<*>): ModuleType {
-        shallowModuleTypeCache[clazz.name]?.let { return it }
+        val cacheKey = reflectedClassCacheKey(clazz)
+        shallowModuleTypeCache[cacheKey]?.let { return it }
         val classType = shallowJavaClassTypeFor(clazz)
         val instanceType = JavaInstanceType(classType)
         val fields = linkedMapOf<String, Type>("__class" to instanceType)
@@ -1071,7 +1099,24 @@ class JvmClassModuleProvider(
             moduleName = clazz.simpleName,
             fields = fields,
             methods = methods
-        ).also { shallowModuleTypeCache[clazz.name] = it }
+        ).also { shallowModuleTypeCache[cacheKey] = it }
+    }
+
+    /**
+     * Cache identity for reflected class modules/providers.
+     *
+     * Binary name alone is insufficient: two URLClassLoaders can both define
+     * fixture.dupe.PluginMarker with different static fields. Keying only by name
+     * would leak ALPHA_ONLY into a BETA_ONLY classpath configuration.
+     */
+    private fun reflectedClassCacheKey(clazz: Class<*>): String {
+        return buildString {
+            append(System.identityHashCode(clazz.classLoader))
+            append('#')
+            append(clazz.name)
+            append('#')
+            append(System.identityHashCode(clazz))
+        }
     }
 
     private fun shallowJavaClassTypeFor(clazz: Class<*>): JavaClassType {

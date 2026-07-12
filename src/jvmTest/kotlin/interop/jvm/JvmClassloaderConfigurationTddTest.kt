@@ -28,10 +28,11 @@ import semantic.support.WorkspaceSemanticHarness
 
 class JvmClassloaderConfigurationTddTest {
     /**
-     * Host android-35 jar hard-lock for TASK-568.
+     * Host android-35 jar hard-lock for TASK-568 / TASK-608.
      *
-     * Prefer the WAVE worker path, then multi-OS discovery, then ANDROID_HOME /
-     * ANDROID_SDK_ROOT. Never hard-require Windows-only `G:/Android/Sdk`.
+     * Prefer multi-OS discovery (DEFAULT_ANDROID_JAR_PATH / ANDROID_HOME /
+     * ANDROID_SDK_ROOT / LOCALAPPDATA well-known roots), then WAVE mac path.
+     * Never hard-require Windows-only G:/Android/Sdk or a macOS-only absolute path.
      */
     private val androidJar: File = resolveHostAndroidJar()
     private val provider = JvmClassModuleProvider()
@@ -542,43 +543,78 @@ class JvmClassloaderConfigurationTddTest {
         const val CONFIGURED_THING_CLASS = "fixture.config.ConfiguredThing"
         const val PLUGIN_MARKER_CLASS = "fixture.dupe.PluginMarker"
 
-        /** WAVE / host hard-lock path for android-35 (never G:/). */
+        /** WAVE / host hard-lock path for android-35 on mac agents (never G:/). */
         const val HOST_ANDROID_35_JAR =
             "/Users/dingyi/Library/Android/sdk/platforms/android-35/android.jar"
 
         /**
-         * Host-resolution order for TASK-568:
-         * 1) mac SDK path used by WAVE workers
-         * 2) [JvmWorkspaceConfiguration.DEFAULT_ANDROID_JAR_PATH] multi-OS discovery
-         * 3) ANDROID_HOME / ANDROID_SDK_ROOT platforms/android-35|34/android.jar
+         * Dual-path host android.jar discovery for TASK-568 / TASK-608:
+         * 1) [JvmWorkspaceConfiguration.DEFAULT_ANDROID_JAR_PATH] multi-OS discovery
+         * 2) ANDROID_HOME / ANDROID_SDK_ROOT platforms/android-35|34/android.jar
+         * 3) well-known roots: macOS Library/Android/sdk, Linux Android/Sdk,
+         *    Windows %LOCALAPPDATA%/Android/Sdk and user-home AppData layouts
+         * 4) WAVE mac absolute path last (present only on mac agents)
          *
-         * Never hard-requires Windows-only G:/Android/Sdk.
+         * Prefers any present non-G jar. Never hard-requires Windows-only G:/Android/Sdk
+         * or a macOS-only absolute path on Windows CI.
          */
         private fun resolveHostAndroidJar(): File {
+            val home = System.getProperty("user.home").orEmpty()
+            val localAppData = System.getenv("LOCALAPPDATA")
+                ?: System.getenv("LocalAppData")
+                ?: home.takeIf { it.isNotBlank() }?.let { "$it${File.separator}AppData${File.separator}Local" }
             val candidates = linkedSetOf<File>()
-            candidates += File(HOST_ANDROID_35_JAR)
-            candidates += File(JvmWorkspaceConfiguration.DEFAULT_ANDROID_JAR_PATH)
+
+            // Multi-OS product discovery first (env + well-known roots, never invents G:).
+            runCatching { JvmWorkspaceConfiguration.DEFAULT_ANDROID_JAR_PATH }
+                .getOrNull()
+                ?.takeIf { it.isNotBlank() }
+                ?.let { candidates += File(it) }
+            runCatching {
+                JvmWorkspaceConfiguration.discoverReflectiveAndroidJarPath()
+            }.getOrNull()?.let { candidates += File(it) }
+
             sequenceOf("ANDROID_HOME", "ANDROID_SDK_ROOT")
-                .mapNotNull { env -> System.getenv(env)?.trim()?.takeIf(String::isNotEmpty) }
+                .mapNotNull { env ->
+                    System.getenv(env)?.trim()?.takeIf(String::isNotEmpty)
+                        ?: System.getenv().entries.firstOrNull { it.key.equals(env, ignoreCase = true) }?.value
+                            ?.trim()
+                            ?.takeIf(String::isNotEmpty)
+                }
                 .forEach { sdkRoot ->
                     candidates += File(sdkRoot, "platforms/android-35/android.jar")
                     candidates += File(sdkRoot, "platforms/android-34/android.jar")
                 }
-            val resolved = candidates.firstOrNull { it.isFile } ?: candidates.first()
-            // Drop any accidental G:/ hardcode when a real host jar exists among candidates.
-            if (!resolved.isFile) {
-                return resolved
+
+            // Explicit well-known dual-path roots for Windows CI / mac / Linux hosts.
+            if (!localAppData.isNullOrBlank()) {
+                candidates += File(localAppData, "Android/Sdk/platforms/android-35/android.jar")
+                candidates += File(localAppData, "Android/Sdk/platforms/android-34/android.jar")
             }
-            val normalized = resolved.path.replace('\\', '/')
-            if (normalized.startsWith("G:/Android/Sdk", ignoreCase = true)) {
-                val nonWindows = candidates.firstOrNull {
-                    it.isFile && !it.path.replace('\\', '/').startsWith("G:/Android/Sdk", ignoreCase = true)
-                }
-                if (nonWindows != null) {
-                    return nonWindows
-                }
+            if (home.isNotBlank()) {
+                candidates += File(home, "Library/Android/sdk/platforms/android-35/android.jar")
+                candidates += File(home, "Library/Android/sdk/platforms/android-34/android.jar")
+                candidates += File(home, "Android/Sdk/platforms/android-35/android.jar")
+                candidates += File(home, "Android/Sdk/platforms/android-34/android.jar")
+                candidates += File(home, "AppData/Local/Android/Sdk/platforms/android-35/android.jar")
+                candidates += File(home, "AppData/Local/Android/Sdk/platforms/android-34/android.jar")
             }
-            return resolved
+            candidates += File(HOST_ANDROID_35_JAR)
+
+            fun isForbiddenGPath(file: File): Boolean {
+                return file.path.replace('\\', '/').startsWith("G:/Android/Sdk", ignoreCase = true)
+            }
+
+            val presentNonG = candidates.firstOrNull { it.isFile && !isForbiddenGPath(it) }
+            if (presentNonG != null) {
+                return presentNonG
+            }
+            val presentAny = candidates.firstOrNull { it.isFile }
+            if (presentAny != null) {
+                return presentAny
+            }
+            // Messaging candidate: prefer multi-OS discovery path over mac-only absolute.
+            return candidates.firstOrNull { !isForbiddenGPath(it) } ?: candidates.first()
         }
     }
 }

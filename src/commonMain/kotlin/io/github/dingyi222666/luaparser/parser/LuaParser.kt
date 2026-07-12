@@ -1653,8 +1653,15 @@ class LuaParser(
 
 
     private fun findExpressionOperator(text: CharSequence): ExpressionOperator? {
-        return ExpressionOperator.entries.find {
-            it.value == text
+        // Canonical operator spellings live on ExpressionOperator; Android-Lua also
+        // uses C-style spellings that the lexer emits as the same token kinds
+        // (`!=` as NE, `&&` as AND, `||` as OR, bare `!` as unary NOT).
+        return when (text.toString()) {
+            "!=", "~=" -> ExpressionOperator.NE
+            "&&", "and" -> ExpressionOperator.AND
+            "||", "or" -> ExpressionOperator.OR
+            "!", "not" -> ExpressionOperator.NOT
+            else -> ExpressionOperator.entries.find { it.value == text.toString() }
         }
     }
 
