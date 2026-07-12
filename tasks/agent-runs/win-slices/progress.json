@@ -1,15 +1,15 @@
 {
   "version": 2,
-  "updatedAt": "2026-07-12T18:23:15Z",
+  "updatedAt": "2026-07-12T18:31:10Z",
   "strategy": "must-green-to-advance",
   "chunkSize": 15,
   "cycle": 1,
   "summary": {
     "total": 25,
     "totalFiles": 367,
-    "pending": 14,
+    "pending": 13,
     "success": 11,
-    "failure": 0,
+    "failure": 1,
     "running": 0,
     "filesDone": 165
   },
@@ -173,18 +173,23 @@
       "updatedAt": "2026-07-12T18:23:15Z"
     },
     "s012": {
-      "status": "pending",
+      "status": "failure",
       "label": "semantic..semantic.androidlua",
       "fileCount": 15,
-      "lastRunId": null,
-      "lastSha": null,
-      "tests": 0,
-      "failures": 0,
+      "lastRunId": "29203984725",
+      "lastSha": "6495e05f3c0a4466b75199c866b8b2ef8170fb5b",
+      "tests": 250,
+      "failures": 4,
       "errors": 0,
-      "failedTests": [],
-      "durationSec": null,
-      "artifact": null,
-      "updatedAt": null
+      "failedTests": [
+        "semantic.androidlua.AndroidLuaLibraryStubsTddTest#this_and_context_globals_share_android_lua_context_surface[jvm]",
+        "semantic.androidlua.LoadbitmapReturnSurfaceTddTest#host_android_jar_resolves_to_allowed_macos_paths_only[jvm]",
+        "semantic.androidlua.LoadlayoutIdFieldSurfaceTddTest#host_android_jar_resolves_to_allowed_macos_paths_only[jvm]",
+        "semantic.androidlua.LoadmenuTableSpecSurfaceTddTest#host_android_jar_resolves_to_allowed_macos_paths_only[jvm]"
+      ],
+      "durationSec": 30,
+      "artifact": "results/s012-29203984725.json",
+      "updatedAt": "2026-07-12T18:31:10Z"
     },
     "s013": {
       "status": "pending",
@@ -669,6 +674,15 @@
       "failures": 0,
       "durationSec": 10,
       "at": "2026-07-12T18:23:15Z"
+    },
+    {
+      "sliceId": "s012",
+      "runId": "29203984725",
+      "status": "failure",
+      "tests": 250,
+      "failures": 4,
+      "durationSec": 30,
+      "at": "2026-07-12T18:31:10Z"
     }
   ],
   "gate": {

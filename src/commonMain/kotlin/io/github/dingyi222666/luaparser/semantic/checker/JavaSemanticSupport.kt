@@ -11,6 +11,7 @@ import io.github.dingyi222666.luaparser.semantic.types.model.IntersectionType
 import io.github.dingyi222666.luaparser.semantic.types.model.JavaArrayType
 import io.github.dingyi222666.luaparser.semantic.types.model.JavaClassType
 import io.github.dingyi222666.luaparser.semantic.types.model.JavaConstructorType
+import io.github.dingyi222666.luaparser.semantic.types.model.JavaInstanceMemberType
 import io.github.dingyi222666.luaparser.semantic.types.model.JavaInstanceType
 import io.github.dingyi222666.luaparser.semantic.types.model.JavaMemberKind
 import io.github.dingyi222666.luaparser.semantic.types.model.JavaMemberType
@@ -423,8 +424,13 @@ private fun ClassType.hydrateJavaClassType(resolveImportTarget: JavaImportResolv
         return this
     }
 
-    val imported = resolveImportTarget?.invoke(name) ?: return this
-    return imported.moduleType.javaInstanceSurface() ?: this
+    val imported = resolveImportTarget?.invoke(name)
+    imported?.moduleType?.javaInstanceSurface()?.let { surface ->
+        return ensureAndroidContentContextMembers(surface, name)
+    }
+    // TASK-651: empty ClassType FQCN shells (context global) must keep getSystemService
+    // when host android.jar is missing instead of collapsing to a memberless type.
+    return documentedAndroidContentContextShell(name) ?: this
 }
 
 /**
@@ -442,9 +448,12 @@ private fun CustomType.hydrateCustomJavaProviderType(resolveImportTarget: JavaIm
         val imported = resolveImportTarget?.invoke(candidate) ?: continue
         imported.moduleType.javaInstanceSurface()
             ?.hydrateJavaProviderType(resolveImportTarget)
-            ?.let { return it }
+            ?.let { surface -> return ensureAndroidContentContextMembers(surface, candidate) }
     }
-    return this
+    // TASK-651: jar-independent android.content.Context surface for AndroLua `context`.
+    return documentedAndroidContentContextShell(name)
+        ?: candidates.asSequence().mapNotNull(::documentedAndroidContentContextShell).firstOrNull()
+        ?: this
 }
 
 private fun androidLuaCustomTypeImportCandidates(name: String): List<String> {
@@ -458,8 +467,67 @@ private fun androidLuaCustomTypeImportCandidates(name: String): List<String> {
             "android.graphics.Drawable",
             "Drawable"
         )
+        "android.content.Context", "Context" -> listOf("android.content.Context", "Context")
         else -> if (name.contains('.')) listOf(name) else emptyList()
     }
+}
+
+/**
+ * Prefer reflected members when present; otherwise seed the compact AndroLua Context
+ * surface so context.getSystemService stays METHOD/fun without host android.jar.
+ */
+private fun ensureAndroidContentContextMembers(surface: Type, typeName: String): Type {
+    if (!isAndroidContentContextName(typeName)) {
+        return surface
+    }
+    val instance = surface as? JavaInstanceType ?: return surface
+    if (instance.allInstanceMembers().containsKey("getSystemService")) {
+        return instance
+    }
+    return documentedAndroidContentContextShell("android.content.Context") ?: surface
+}
+
+private fun isAndroidContentContextName(name: String): Boolean {
+    return name == "android.content.Context" ||
+        name == "Context" ||
+        name.endsWith(".Context") && name.contains("android.content")
+}
+
+/**
+ * Compact jar-independent android.content.Context instance shell (TASK-651).
+ * Members are plain FunctionType values so hover displayName contains "fun".
+ */
+private fun documentedAndroidContentContextShell(typeName: String): JavaInstanceType? {
+    if (!isAndroidContentContextName(typeName)) {
+        return null
+    }
+    val javaName = JavaTypeName(packageName = "android.content", simpleNames = listOf("Context"))
+    fun method(name: String, returnType: Type = PrimitiveType.ANY): Pair<String, JavaInstanceMemberType> {
+        return name to JavaInstanceMemberType(
+            owner = javaName,
+            memberName = name,
+            valueType = FunctionType(
+                parameters = emptyList(),
+                returnType = returnType
+            ),
+            memberKind = JavaMemberKind.METHOD
+        )
+    }
+    return JavaInstanceType(
+        classType = JavaClassType(
+            javaName = javaName,
+            instanceMembers = linkedMapOf(
+                method("getSystemService"),
+                method("getResources"),
+                method("getAssets"),
+                method("getPackageName", PrimitiveType.STRING),
+                method("getPackageManager"),
+                method("startActivity", PrimitiveType.NIL),
+                method("startService", PrimitiveType.BOOLEAN),
+                method("getSharedPreferences")
+            )
+        )
+    )
 }
 
 private fun JavaClassType.hydrateJavaClassReference(resolveImportTarget: JavaImportResolver): JavaClassType {

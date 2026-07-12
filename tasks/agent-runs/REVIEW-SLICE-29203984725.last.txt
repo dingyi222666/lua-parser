@@ -1,0 +1,24 @@
+{
+  "runId": "29203984725",
+  "sliceId": "s012",
+  "status": "failure",
+  "tests": 250,
+  "failures": 4,
+  "failedTests": [
+    "semantic.androidlua.AndroidLuaLibraryStubsTddTest#this_and_context_globals_share_android_lua_context_surface[jvm]",
+    "semantic.androidlua.LoadbitmapReturnSurfaceTddTest#host_android_jar_resolves_to_allowed_macos_paths_only[jvm]",
+    "semantic.androidlua.LoadlayoutIdFieldSurfaceTddTest#host_android_jar_resolves_to_allowed_macos_paths_only[jvm]",
+    "semantic.androidlua.LoadmenuTableSpecSurfaceTddTest#host_android_jar_resolves_to_allowed_macos_paths_only[jvm]"
+  ],
+  "progressSummary": {
+    "success": 11,
+    "failure": 1,
+    "pending": 13,
+    "running": 0,
+    "total": 25,
+    "filesDone": 165,
+    "activeSlice": "s012",
+    "updatedAt": "2026-07-12T18:31:10Z"
+  },
+  "notes": "Merged CI progress for run 29203984725 into win-slices; s012 status=failure tests=250 failures=4; copied results/s012-29203984725.json; wrote failures.txt with 4 entries."
+}

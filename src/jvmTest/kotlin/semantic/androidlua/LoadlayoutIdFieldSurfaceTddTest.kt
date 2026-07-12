@@ -5,6 +5,7 @@ import io.github.dingyi222666.luaparser.interop.jvm.JvmWorkspaceEngine
 import io.github.dingyi222666.luaparser.semantic.api.CompletionItemKind
 import io.github.dingyi222666.luaparser.semantic.api.SymbolKind
 import io.github.dingyi222666.luaparser.semantic.workspace.WorkspaceHoverResult
+import org.junit.Assume
 import java.io.File
 import semantic.support.WorkspaceSemanticHarness
 import kotlin.test.Test
@@ -1188,25 +1189,53 @@ class LoadlayoutIdFieldSurfaceTddTest {
     // Host android.jar contract
     // ------------------------------------------------------------------
 
+    /**
+     * Dual-path host android.jar contract (TASK-652):
+     * - When a present jar is discovered, assert path is allowed (never G:/ invent defaults).
+     * - When no present jar, soft-skip via [JvmWorkspaceConfiguration.missingAndroidJarSoftSkipReason]
+     *   instead of hard-failing File.isFile on the preferred messaging candidate.
+     * Present-jar feature goldens in this suite remain hard-locks.
+     */
     @Test
     fun host_android_jar_resolves_to_allowed_macos_paths_only() {
+        if (!androidJar.isFile) {
+            Assume.assumeTrue(missingAndroidJarSkipReason(androidJar), false)
+        }
         assertTrue(
             androidJar.isFile,
             "android.jar must exist for loadlayout id surface corpus; path=${androidJar.path}"
         )
         val path = androidJar.path
+        val normalized = path.replace('\\', '/')
         val allowed =
             path == "/Users/dingyi/Downloads/android.jar" ||
                 path == JvmWorkspaceConfiguration.DEFAULT_ANDROID_JAR_PATH ||
-                path.endsWith("/Library/Android/sdk/platforms/android-35/android.jar") ||
-                path.endsWith("/platforms/android-35/android.jar") ||
-                path.endsWith("/platforms/android-34/android.jar")
+                normalized.endsWith("/Library/Android/sdk/platforms/android-35/android.jar") ||
+                normalized.endsWith("/platforms/android-35/android.jar") ||
+                normalized.endsWith("/platforms/android-34/android.jar") ||
+                normalized.contains("/Android/Sdk/platforms/android-35/android.jar") ||
+                normalized.contains("/Android/Sdk/platforms/android-34/android.jar") ||
+                normalized.contains("/Android/sdk/platforms/android-35/android.jar") ||
+                normalized.contains("/Android/sdk/platforms/android-34/android.jar")
         assertTrue(allowed, "android.jar must be Downloads/SDK host path (never G:/); got $path")
-        assertTrue(!path.startsWith("G:/") && !path.startsWith("G:\\"), "Must never hardcode G:/ android.jar")
+        assertTrue(
+            !normalized.startsWith("G:/") && !path.startsWith("G:\\"),
+            "Must never hardcode G:/ android.jar"
+        )
         assertTrue(
             path.contains("android.jar"),
             "Resolved path must point at android.jar; got $path"
         )
+    }
+
+    private fun missingAndroidJarSkipReason(missing: File): String {
+        val productReason =
+            JvmWorkspaceConfiguration.missingAndroidJarSoftSkipReason(taskId = "TASK-652")
+        return "TASK-652 soft-skip: android.jar not found at ${missing.path}. $productReason " +
+            "Install Android SDK Platform 35 under ANDROID_HOME / ANDROID_SDK_ROOT / " +
+            "%LOCALAPPDATA%/Android/Sdk (Windows) or ~/Library/Android/sdk (macOS) / ~/Android/Sdk " +
+            "(Linux), or set jvm.androidJar. Never invent presence; never hard-require a missing " +
+            "AppData android-35 path or G:/Android/Sdk alone."
     }
 
     // ------------------------------------------------------------------
@@ -1416,20 +1445,76 @@ class LoadlayoutIdFieldSurfaceTddTest {
             "View"
         )
 
+        /**
+         * Dual-path host android.jar discovery for TASK-652:
+         * 1) Downloads override (explicit host copy)
+         * 2) [JvmWorkspaceConfiguration.discoverReflectiveAndroidJarPath] (env + well-known)
+         * 3) [JvmWorkspaceConfiguration.DEFAULT_ANDROID_JAR_PATH] multi-OS candidate
+         * 4) ANDROID_HOME / ANDROID_SDK_ROOT platforms/android-35|34
+         * 5) well-known roots: Windows %LOCALAPPDATA%/Android/Sdk and user-home AppData,
+         *    macOS Library/Android/sdk, Linux Android/Sdk
+         *
+         * Prefers any present non-G jar. Never hard-requires a missing Windows AppData
+         * android-35 path alone or invents G:/. When all candidates are absent, returns a
+         * multi-OS messaging candidate for soft-skip via missingAndroidJarSkipReason.
+         */
         fun resolveAndroidJar(): File {
-            val home = System.getProperty("user.home")
-            val candidates = sequenceOf(
-                File("/Users/dingyi/Downloads/android.jar"),
-                File(JvmWorkspaceConfiguration.DEFAULT_ANDROID_JAR_PATH),
-                File("/Users/dingyi/Library/Android/sdk/platforms/android-35/android.jar"),
-                File("$home/Library/Android/sdk/platforms/android-35/android.jar"),
-                File("$home/Library/Android/sdk/platforms/android-34/android.jar"),
-                System.getenv("ANDROID_HOME")?.let { File("$it/platforms/android-35/android.jar") },
-                System.getenv("ANDROID_SDK_ROOT")?.let { File("$it/platforms/android-35/android.jar") },
-                System.getenv("ANDROID_HOME")?.let { File("$it/platforms/android-34/android.jar") },
-                System.getenv("ANDROID_SDK_ROOT")?.let { File("$it/platforms/android-34/android.jar") },
-            ).filterNotNull()
-            return candidates.firstOrNull { it.isFile }
+            val home = System.getProperty("user.home").orEmpty()
+            val localAppData = System.getenv("LOCALAPPDATA")
+                ?: System.getenv("LocalAppData")
+                ?: home.takeIf { it.isNotBlank() }?.let {
+                    "$it${File.separator}AppData${File.separator}Local"
+                }
+            val candidates = linkedSetOf<File>()
+
+            candidates += File("/Users/dingyi/Downloads/android.jar")
+            runCatching {
+                JvmWorkspaceConfiguration.discoverReflectiveAndroidJarPath()
+            }.getOrNull()?.let { candidates += File(it) }
+            runCatching { JvmWorkspaceConfiguration.DEFAULT_ANDROID_JAR_PATH }
+                .getOrNull()
+                ?.takeIf { it.isNotBlank() }
+                ?.let { candidates += File(it) }
+
+            sequenceOf("ANDROID_HOME", "ANDROID_SDK_ROOT")
+                .mapNotNull { env ->
+                    System.getenv(env)?.trim()?.takeIf(String::isNotEmpty)
+                        ?: System.getenv().entries.firstOrNull { it.key.equals(env, ignoreCase = true) }?.value
+                            ?.trim()
+                            ?.takeIf(String::isNotEmpty)
+                }
+                .forEach { sdkRoot ->
+                    candidates += File(sdkRoot, "platforms/android-35/android.jar")
+                    candidates += File(sdkRoot, "platforms/android-34/android.jar")
+                }
+
+            if (!localAppData.isNullOrBlank()) {
+                candidates += File(localAppData, "Android/Sdk/platforms/android-35/android.jar")
+                candidates += File(localAppData, "Android/Sdk/platforms/android-34/android.jar")
+            }
+            if (home.isNotBlank()) {
+                candidates += File(home, "AppData/Local/Android/Sdk/platforms/android-35/android.jar")
+                candidates += File(home, "AppData/Local/Android/Sdk/platforms/android-34/android.jar")
+                candidates += File(home, "Library/Android/sdk/platforms/android-35/android.jar")
+                candidates += File(home, "Library/Android/sdk/platforms/android-34/android.jar")
+                candidates += File(home, "Android/Sdk/platforms/android-35/android.jar")
+                candidates += File(home, "Android/Sdk/platforms/android-34/android.jar")
+            }
+
+            fun isForbiddenGPath(file: File): Boolean {
+                return file.path.replace('\\', '/').startsWith("G:/Android/Sdk", ignoreCase = true)
+            }
+
+            val presentNonG = candidates.firstOrNull { it.isFile && !isForbiddenGPath(it) }
+            if (presentNonG != null) {
+                return presentNonG
+            }
+            val presentAny = candidates.firstOrNull { it.isFile }
+            if (presentAny != null) {
+                return presentAny
+            }
+            return candidates.firstOrNull { !isForbiddenGPath(it) }
+                ?: candidates.firstOrNull()
                 ?: File(JvmWorkspaceConfiguration.DEFAULT_ANDROID_JAR_PATH)
         }
     }

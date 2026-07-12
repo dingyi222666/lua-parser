@@ -1,0 +1,12 @@
+task: TASK-651
+wave: WINSLICE-29203984725
+owner: worker-WINSLICE-29203984725-TASK-651
+finalStatus: review
+timestamp: 2026-07-12T18:54:38Z
+summary: Restored jar-independent context.getSystemService METHOD surface for AndroidLuaLibraryStubsTddTest.this_and_context_globals_share_android_lua_context_surface. Documented android.content.Context ClassType with getSystemService in AndroLua _G overlays/fallback sources and hydrate empty FQCN shells to a compact JavaInstanceType when host android.jar is absent.
+filesChanged:
+- src/commonMain/kotlin/io/github/dingyi222666/luaparser/semantic/workspace/std/AndroidLua53LuaJavaBuiltinOverlaySources.kt
+- src/commonMain/resources/io/github/dingyi222666/luaparser/semantic/workspace/std/androlua53-luajava/_G.lua
+- src/commonMain/resources/io/github/dingyi222666/luaparser/semantic/workspace/androidlua/androlua5.3/_G.lua
+- src/commonMain/kotlin/io/github/dingyi222666/luaparser/semantic/checker/JavaSemanticSupport.kt
+blockedReason: null

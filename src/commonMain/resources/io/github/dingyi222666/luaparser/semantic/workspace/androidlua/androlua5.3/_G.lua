@@ -79,6 +79,20 @@ local Bitmap = {}
 ---@field getSystemService fun(name: string): any
 local AndroidLuaContext = {}
 
+-- Jar-independent android.content.Context surface for the AndroLua `context`
+-- global (TASK-651). Keep FQCN displayName while exposing getSystemService as a
+-- modeled method even when host android.jar is absent or empty.
+---@class android.content.Context
+---@field getSystemService fun(name: string): any
+---@field getResources fun(): any
+---@field getAssets fun(): any
+---@field getPackageName fun(): string
+---@field getPackageManager fun(): any
+---@field startActivity fun(intent: any)
+---@field startService fun(intent: any): boolean
+---@field getSharedPreferences fun(name: string, mode: integer): any
+local AndroidContentContext = {}
+
 ---@class LuaActivity: AndroidLuaContext
 local LuaActivity = {}
 
