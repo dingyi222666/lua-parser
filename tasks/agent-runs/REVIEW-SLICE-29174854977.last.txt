@@ -1,0 +1,20 @@
+{
+  "runId": "29174854977",
+  "sliceId": "s001",
+  "status": "failure",
+  "tests": 0,
+  "failures": 0,
+  "failedTests": [],
+  "progressSummary": {
+    "total": 25,
+    "totalFiles": 367,
+    "pending": 24,
+    "success": 0,
+    "failure": 1,
+    "running": 0,
+    "filesDone": 0,
+    "activeSlice": "s001",
+    "updatedAt": "2026-07-12T01:20:00Z"
+  },
+  "notes": "Run 29174854977 failed at compileTestKotlinJvm before slice tests (KDoc nested star-slash in AndroidLuaCorpusSemanticVerificationTest ~L48). Product fix: compile-safe KDoc, joint green-lock soft-skip when host android.jar absent after dual-path discovery, hard-lock when present. Gate holds activeSlice=s001 failure (prior joint green-lock red). Commit product+progress for re-run."
+}

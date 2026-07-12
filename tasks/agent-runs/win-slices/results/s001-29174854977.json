@@ -1,0 +1,17 @@
+{
+  "sliceId": "s001",
+  "runId": "29174854977",
+  "sha": null,
+  "status": "failure",
+  "exitCode": 1,
+  "durationSec": null,
+  "tests": 0,
+  "failures": 0,
+  "errors": 0,
+  "skipped": 0,
+  "failedTests": [],
+  "compileFailure": true,
+  "compileNotes": "compileTestKotlinJvm failed: syntax errors in integration/AndroidLuaCorpusSemanticVerificationTest.kt ~L48+ (KDoc nested star-slash). No TEST-*.xml produced. Gate retains s001 failure (prior joint green-lock red from 29174621894).",
+  "gate": "must-green-to-advance",
+  "finishedAt": "2026-07-12T01:20:00Z"
+}

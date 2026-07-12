@@ -45,11 +45,12 @@ class AndroidLuaCorpusSemanticVerificationTest {
      * and JvmWorkspaceConfiguration jar discovery. Host-present clone is always required.
      * Host android.jar is hard-locked only when dual-path discovery finds a real file;
      * when the jar is truly absent (common Windows CI: ANDROID_HOME / LOCALAPPDATA SDK
-     * without platforms/android-*/android.jar), soft-skip with an explicit reason —
-     * consistent with TASK-607/608/615 isolation. Never invent presence; never sole-hardcode G:.
+     * without a platforms android.jar), soft-skip with an explicit reason - consistent
+     * with TASK-607/608/615 isolation. Never invent presence; never sole-hardcode G:.
      *
-     * Windows evidence (run 29174621894): root hybrid cleared; remaining red was
-     * assertAndroidJarExists hard-lock at missing AppData android-35. Soft-skip that path.
+     * Windows evidence (run 29174621894 / 29174854977): root hybrid cleared; remaining
+     * red was assertAndroidJarExists hard-lock at missing AppData android-35 (or
+     * compileTestKotlinJvm KDoc syntax around this method). Soft-skip when jar absent.
      */
     @Test
     fun host_dual_path_root_and_android_jar_joint_green_lock() {
@@ -166,7 +167,7 @@ class AndroidLuaCorpusSemanticVerificationTest {
         if (hostMacJar.isFile) {
             assertTrue(
                 jarPath.contains("/platforms/android-") && effectiveJar.name.equals("android.jar", ignoreCase = true),
-                "Expected platforms/android-*/android.jar discovery; got ${effectiveJar.path}."
+                "Expected platforms/android-NN/android.jar discovery; got ${effectiveJar.path}."
             )
             assertTrue(
                 sameResolvedFile(effectiveJar, hostMacJar) ||

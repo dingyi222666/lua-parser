@@ -4,6 +4,9 @@ Prepared by TASK-054 on 2026-06-08.
 Host dual-path external root policy refreshed by TASK-562 on 2026-07-12.
 Joint green-lock (root dual-path + android-35 jar metadata) coordinated by TASK-605 on 2026-07-12.
 Windows dual-path present-clone preference (no macOS hybrid assert) by TASK-609 on 2026-07-12.
+Joint green-lock soft-skip when host android.jar is absent after dual-path discovery
+(Windows CI without platforms android.jar) also by TASK-609; KDoc must stay compile-safe
+(no nested star-slash sequences such as android-star-slash inside block comments).
 
 External source root, read-only (do not vendor Android-Lua sources into this repo):
 

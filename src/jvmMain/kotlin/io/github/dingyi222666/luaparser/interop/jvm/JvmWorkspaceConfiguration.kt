@@ -289,11 +289,13 @@ data class JvmWorkspaceConfiguration(
         /**
          * Explicit soft-skip reason when no reflective android.jar is available.
          *
-         * Used by Android-Lua workspace/import suites when ANDROID_JAR_METADATA_KEY is unset
-         * and env + well-known SDK discovery both miss. Never invents a jar; Downloads paths
-         * remain metadata-only. Absolute G: roots are never auto-selected, so isolation tests
-         * with empty env/userHome do not claim presence solely because a G: android-36 jar
-         * exists on the agent.
+         * Used by Android-Lua workspace/import suites and the joint green-lock
+         * (TASK-609) when ANDROID_JAR_METADATA_KEY is unset and env + well-known SDK
+         * discovery both miss a real platforms android.jar. Never invents a jar;
+         * Downloads paths remain metadata-only. Absolute G: roots are never
+         * auto-selected, so isolation tests with empty env/userHome do not claim
+         * presence solely because a G: platform jar exists on the agent. When a jar
+         * is present, the reason reports presence so hard-locks stay armed.
          */
         fun missingAndroidJarSoftSkipReason(
             environment: Map<String, String> = System.getenv(),
