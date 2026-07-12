@@ -1,0 +1,32 @@
+{
+  "sliceId": "s002",
+  "runId": "29184841092",
+  "sha": "17863cc15d8cd662441d9f36d4c9cead4524e80e",
+  "status": "success",
+  "exitCode": 0,
+  "durationSec": 35,
+  "tests": 307,
+  "failures": 0,
+  "errors": 0,
+  "skipped": 18,
+  "failedTests": [],
+  "testsPatterns": [
+    "interop.jvm.JvmPackageProviderEmptyRootTddTest",
+    "interop.jvm.JvmPackageProviderListingTddTest",
+    "interop.jvm.JvmPackageProviderNestedPackageTddTest",
+    "interop.jvm.JvmReflectionModelTddTest",
+    "interop.jvm.JvmReflectionWildcardTddTest",
+    "interop.jvm.JvmWorkspaceEngineTest",
+    "lexer.LuaLexerLongStringDelimiterEdgeTddTest",
+    "lexer.LuaLexerLongStringEdgeRefineTddTest",
+    "lexer.LuaLexerShebangBomEdgeTddTest",
+    "lexer.LuaLexerUtf8IdentifierEdgeTddTest",
+    "lsp.LspAndroidLuaE2eActivityStubTddTest",
+    "lsp.LspAndroidLuaE2eTddTest",
+    "lsp.LspCallHierarchyLocalFunctionTddTest",
+    "lsp.LspCallHierarchySafetyTddTest",
+    "lsp.LspCodeActionQuickFixSafetyTddTest"
+  ],
+  "gate": "must-green-to-advance",
+  "finishedAt": "2026-07-12T07:51:56Z"
+}
