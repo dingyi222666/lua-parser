@@ -52,7 +52,10 @@ class LuaParserRecoveryTddTest {
 
     @Test
     fun recoversMissingEndThenDoAndUntilWhileKeepingStatementsReachable() {
-        assertEquals(18, missingDelimiterCases.size)
+        // TASK-648 / WINSLICE-29202408385: inventory is 20 after intentional AndroLua
+        // optional-then (TASK-613) and C-style != / && (TASK-614) CURRENTLY_ACCEPTS cases
+        // joined the missing end/then/do/until recovery inventory. Hard-lock matches product.
+        assertEquals(20, missingDelimiterCases.size)
 
         missingDelimiterCases.forEach(::assertSupportedRecoveryCase)
     }
@@ -118,11 +121,17 @@ class LuaParserRecoveryTddTest {
             .filter { it.strictParseExpectation == StrictParseExpectation.CURRENTLY_ACCEPTS_MISSING_RHS }
             .map { it.name }
 
-        assertEquals(66, requiredRecoveryCases().size)
+        // TASK-646 / WINSLICE-29202408385: required inventory is 68 after intentional AndroLua
+        // optional-then (TASK-613) and C-style != / && (TASK-614) CURRENTLY_ACCEPTS cases joined
+        // missingDelimiterCases (TASK-648 hard-locked that list at 20). Sum:
+        // 20 + 15 + 7 + 21 + 5 + 0 production-blocked = 68. Hard-lock matches product.
+        assertEquals(68, requiredRecoveryCases().size)
+        // Only CURRENTLY_ACCEPTS_MISSING_RHS is a documented strict-accept gap of this kind.
+        // "assignment missing trailing rhs after comma" is CURRENTLY_ACCEPTS (valid multi-RHS
+        // absorbs call-shaped print; TASK-546 later-term policy), not MISSING_RHS.
         assertContentEquals(
             listOf(
-                "assignment missing rhs expression should keep later print",
-                "assignment missing trailing rhs after comma should keep later print"
+                "assignment missing rhs expression should keep later print"
             ),
             strictParseGaps
         )

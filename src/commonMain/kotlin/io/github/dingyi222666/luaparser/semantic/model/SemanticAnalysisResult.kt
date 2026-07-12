@@ -13,6 +13,9 @@ data class SemanticAnalysisResult(
 
 /**
  * Lightweight aggregate of pipeline diagnostics.
+ *
+ * Counts must stay aligned with [SemanticModel.getDiagnostics] for the same analyze
+ * result (including clean-analyze filtering applied upstream in CheckerPass).
  */
 data class SemanticAnalysisSummary(
     val diagnosticCount: Int = 0,
@@ -24,6 +27,10 @@ data class SemanticAnalysisSummary(
         get() = errorCount > 0
 
     companion object {
+        /**
+         * Builds a summary from the public diagnostic list already exposed on the model.
+         * Callers must pass the same list returned by [SemanticModel.getDiagnostics].
+         */
         fun from(diagnostics: List<Diagnostic>): SemanticAnalysisSummary {
             return SemanticAnalysisSummary(
                 diagnosticCount = diagnostics.size,

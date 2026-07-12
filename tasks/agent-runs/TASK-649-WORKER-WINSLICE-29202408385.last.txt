@@ -1,0 +1,7 @@
+task=TASK-649
+wave=WINSLICE-29202408385
+owner=worker-WINSLICE-29202408385-TASK-649
+finalStatus=review
+completed_at=2026-07-12T17:53:03Z
+summary=Fixed assignment missing-equals recovery: after varlist comma, bare NAME not continued by =/,/./:/[ is left unconsumed with ExpressionNodeSupport placeholder on Assign LHS so a, b\nprint(a) yields Assign(Id(a),ExpressionNodeSupport=) + Call(Id(b):) + print sibling.
+filesChanged=src/commonMain/kotlin/io/github/dingyi222666/luaparser/parser/LuaParser.kt

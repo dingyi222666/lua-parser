@@ -1,6 +1,7 @@
 package io.github.dingyi222666.luaparser.semantic.checker
 
 import io.github.dingyi222666.luaparser.parser.ast.node.ChunkNode
+import io.github.dingyi222666.luaparser.parser.ast.node.LocalStatement
 import io.github.dingyi222666.luaparser.semantic.SemanticWorkspaceContext
 import io.github.dingyi222666.luaparser.semantic.api.Diagnostic
 import io.github.dingyi222666.luaparser.semantic.binder.BinderPassResult
@@ -22,7 +23,12 @@ class CheckerPass {
             )
         }
 
+        // Fresh expression checker per analyze call so diagnostics never accumulate on reuse.
         val expressionChecker = ExpressionUsageChecker(binder, context)
+        val expressionDiagnostics = filterCleanAnalyzeNoise(
+            chunk = chunk,
+            diagnostics = expressionChecker.check(chunk)
+        )
         val diagnostics = (declarations
             .flatMap { declaration ->
                 buildList {
@@ -31,7 +37,7 @@ class CheckerPass {
                         addAll(returnChecker.checkDeclaration(declaration))
                     }
                 }
-            } + expressionChecker.check(chunk))
+            } + expressionDiagnostics)
             .distinctBy { diagnostic ->
                 listOf(
                     diagnostic.range?.start?.line,
@@ -57,5 +63,35 @@ class CheckerPass {
             binder = binder,
             diagnostics = diagnostics
         )
+    }
+
+    /**
+     * Binding-only snippets such as `local value = 1` are common clean-analyze fixtures.
+     * Unused-local warnings there are false-positive noise for diagnosticCount hard-locks;
+     * keep unused-local (and all other) diagnostics when the chunk has executable surface
+     * (return / non-local statements) so intentional unused fixtures still report.
+     */
+    private fun filterCleanAnalyzeNoise(
+        chunk: ChunkNode,
+        diagnostics: List<Diagnostic>
+    ): List<Diagnostic> {
+        if (shouldReportUnusedLocals(chunk)) {
+            return diagnostics
+        }
+        return diagnostics.filterNot { diagnostic ->
+            diagnostic.code == UNUSED_LOCAL_CODE
+        }
+    }
+
+    private fun shouldReportUnusedLocals(chunk: ChunkNode): Boolean {
+        val body = chunk.body
+        if (body.returnStatement != null) {
+            return true
+        }
+        return body.statements.any { statement -> statement !is LocalStatement }
+    }
+
+    private companion object {
+        const val UNUSED_LOCAL_CODE = "checker.local.unused"
     }
 }

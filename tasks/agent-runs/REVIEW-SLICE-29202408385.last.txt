@@ -1,0 +1,27 @@
+{
+  "runId": "29202408385",
+  "sliceId": "s011",
+  "status": "failure",
+  "tests": 131,
+  "failures": 8,
+  "failedTests": [
+    "parser.recovery.LuaParserRecoveryMissingEndFunctionTddTest#recoversMissingEndWithResidualControlFlowBodies[jvm]",
+    "parser.recovery.LuaParserRecoveryTddTest#rejectsOutOfScopeRecoveryBoundariesEvenWithRecoveryEnabled[jvm]",
+    "parser.recovery.LuaParserRecoveryTddTest#documentsRequiredRecoveryInventoryAndStrictParseGaps[jvm]",
+    "parser.recovery.LuaParserRecoveryTddTest#recoversFunctionTableLiteralAndCurrentlySupportedIncompleteCallForms[jvm]",
+    "parser.recovery.LuaParserRecoveryTddTest#recoversMissingEndThenDoAndUntilWhileKeepingStatementsReachable[jvm]",
+    "parser.recovery.LuaParserRecoveryTddTest#recoversLocalDeclarationsAndAssignmentsWithMissingPieces[jvm]",
+    "semantic.SemanticPipelinePublicFacadeTddTest#analyzeFacadeIsCallableRepeatedlyOnSamePipelineInstance[jvm]",
+    "semantic.SemanticPipelineTest#analyze_returnsSemanticAnalysisResultBackedByRealPipeline[jvm]"
+  ],
+  "progressSummary": {
+    "success": 10,
+    "failure": 1,
+    "pending": 14,
+    "running": 0,
+    "total": 25,
+    "filesDone": 150,
+    "activeSlice": "s011"
+  },
+  "notes": "Merged CI slice-progress (updatedAt 2026-07-12T17:40:30Z) over local progress; copied results/s011-29202408385.json; wrote failures.txt from 15 TEST-*.xml (8 failed methods). Gate must-green-to-advance: re-run s011 until green."
+}

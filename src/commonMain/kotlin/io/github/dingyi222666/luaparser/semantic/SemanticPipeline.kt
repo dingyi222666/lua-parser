@@ -33,6 +33,9 @@ class SemanticPipeline(
     private val checkerPass = CheckerPass()
     /**
      * Runs the semantic pipeline and returns the public semantic result model.
+     *
+     * Each call is independent: checker/model diagnostics are rebuilt from the
+     * supplied chunk and never accumulated across analyzes on the same instance.
      */
     fun analyze(chunk: ChunkNode): SemanticAnalysisResult {
         return analyzeSnapshot(chunk).result
@@ -40,6 +43,9 @@ class SemanticPipeline(
 
     /**
      * Internal pipeline snapshot used by compatibility adapters and focused tests.
+     *
+     * Well-formed binding-only locals with no type/call/unused surface report
+     * diagnosticCount 0; intentional error fixtures still surface real diagnostics.
      */
     internal fun analyzeSnapshot(
         chunk: ChunkNode,
@@ -49,11 +55,15 @@ class SemanticPipeline(
         val comments = commentAttachPass.attach(chunk)
         val bound = binderPass.bind(chunk, comments, effectiveContext.overlayGlobals)
         val resolvedBinder = typeResolver.resolve(bound)
+        // CheckerPass is re-entered per call with a fresh expression checker; no pipeline-owned
+        // diagnostic buffer is retained between analyzes.
         val checker = checkerPass.check(chunk, resolvedBinder, effectiveContext)
         val model = semanticModelBuilder.build(chunk, checker.binder, checker.diagnostics, effectiveContext)
+        val publicDiagnostics = model.getDiagnostics()
         val result = SemanticAnalysisResult(
             model = model,
-            summary = SemanticAnalysisSummary.from(model.getDiagnostics())
+            // Summary always mirrors model diagnostics (including clean-analyze noise filtering).
+            summary = SemanticAnalysisSummary.from(publicDiagnostics)
         )
 
         return SemanticPipelineSnapshot(

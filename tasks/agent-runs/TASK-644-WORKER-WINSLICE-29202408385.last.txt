@@ -1,0 +1,26 @@
+TASK-644 WORKER WINSLICE-29202408385 → review
+
+Owner was: worker-WINSLICE-29202408385-TASK-644
+Time: 2026-07-12T17:48:21Z
+
+Root cause:
+- Windows s011 red recoversMissingEndWithResidualControlFlowBodies was a golden
+  bracket mismatch, not missing residual nesting.
+- Actual product shape already was:
+  Chunk(Block[Function(Id(guard),Block[If(Clause(Id(x):Block[CallStmt(Call(Id(use):Id(x)))]))])])
+- Hard-lock expected extra ] after If(...) (unbalanced vs renderShape).
+
+Fix:
+- Corrected if and if/else requiredShapeFragments in
+  LuaParserRecoveryMissingEndFunctionTddTest to match renderShape:
+  Function(...,Block[If(...)] ) closing order.
+- No LuaParser.kt product change required: parseFunctionBody + parseIfStatement
+  already keep residual control-flow bodies inside the function block and emit
+  <end> expected for the missing function end.
+
+FilesChanged:
+- src/jvmTest/kotlin/parser/recovery/LuaParserRecoveryMissingEndFunctionTddTest.kt
+- tasks/TASK-644.md
+
+Gradle: forbidden for workers; deferred to TASK-043 / windows-jvmtest s011.
+Status → review owner=unassigned

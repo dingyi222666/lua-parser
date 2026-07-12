@@ -1,0 +1,17 @@
+TASK-647 WORKER WINSLICE-29202408385 blocked → ready
+
+Owner: worker-WINSLICE-29202408385-TASK-647
+Time: 2026-07-12T17:46:50Z
+
+Blocked (NO product edit, NO Gradle):
+- Exclusive product path locks/files/src__commonMain__kotlin__io__github__dingyi222666__luaparser__parser__LuaParser.kt.lock
+  and recovery test lock were already held by live TASK-648
+  (owner=worker-WINSLICE-29202408385-TASK-648, acquired=2026-07-12T17:46:32Z).
+- Contract: if locked by live other task, STOP leave ready.
+- Restored those exclusive file locks to TASK-648; released TASK-647 task lock.
+- TASK-647 remains status=ready, owner=unassigned for re-dispatch after TASK-648 releases LuaParser exclusive claim.
+- Target failure still open: recoversFunctionTableLiteralAndCurrentlySupportedIncompleteCallForms
+  mixed Android-Lua incomplete call trailing comma keeps later setContentView as sibling CallStmt.
+
+FilesChanged: none (product)
+Status → ready (blocked serialize)

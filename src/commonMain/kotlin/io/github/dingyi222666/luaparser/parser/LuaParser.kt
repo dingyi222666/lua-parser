@@ -1482,6 +1482,15 @@ class LuaParser(
     // inserts ExpressionNodeSupport and keeps print as a sibling CallStmt.
     // Later multi-RHS terms still use the shared TASK-546 later-term policy
     // (keyword-only recovery after comma) and are not poisoned by first-RHS recovery.
+    //
+    // TASK-649 missing-`=` varlist residual (s011):
+    //   a, b
+    //   print(a)
+    // After a comma, a bare NAME that is not continued as another target
+    // (no `,` / `=` / `.` / `:` / `[` after it) is left unconsumed so the outer
+    // block recovers it as CallStmt(Call(Id(b):)). The assignment keeps
+    // ExpressionNodeSupport on the LHS and is marked bad — do not absorb the
+    // following NAME as a second init target when `=` is missing.
     private fun parseAssignmentStatement(parent: BaseASTNode, base: ExpressionNode): AssignmentStatement {
         val initList = mutableListOf<ExpressionNode>()
         val result = AssignmentStatement()
@@ -1493,6 +1502,10 @@ class LuaParser(
             // ,
             advance()
             if (errorRecovery && peek() == LuaTokenTypes.ASSIGN) {
+                initList.add(missingExpression(result))
+                break
+            }
+            if (shouldRecoverResidualBareNameAfterAssignmentComma()) {
                 initList.add(missingExpression(result))
                 break
             }
@@ -1513,6 +1526,36 @@ class LuaParser(
             )
         )
         return result
+    }
+
+    /**
+     * After `var,` under recovery, detect a bare NAME that cannot continue the
+     * assignment varlist (not followed by `=` / `,` / member or index suffix).
+     * Leave that NAME for outer statement recovery instead of absorbing it as
+     * another LHS target when `=` is missing (`a, b\nprint(a)` →
+     * Assign(Id(a),ExpressionNodeSupport=) + Call(Id(b):)).
+     */
+    private fun shouldRecoverResidualBareNameAfterAssignmentComma(): Boolean {
+        if (!errorRecovery) {
+            return false
+        }
+        if (peek() != LuaTokenTypes.NAME) {
+            return false
+        }
+        val afterName = peekN(2)
+        if (equalsMore(afterName, LuaTokenTypes.ASSIGN, LuaTokenTypes.COMMA)) {
+            return false
+        }
+        if (equalsMore(
+                afterName,
+                LuaTokenTypes.DOT,
+                LuaTokenTypes.COLON,
+                LuaTokenTypes.LBRACK
+            )
+        ) {
+            return false
+        }
+        return true
     }
 
     // do block end |

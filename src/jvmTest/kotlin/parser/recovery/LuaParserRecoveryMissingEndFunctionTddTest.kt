@@ -71,7 +71,9 @@ class LuaParserRecoveryMissingEndFunctionTddTest {
                 name = "global missing end keeps if body residual",
                 source = "function guard(x) if x then use(x) end",
                 requiredShapeFragments = listOf(
-                    "Function(Id(guard),Block[If(Clause(Id(x):Block[CallStmt(Call(Id(use):Id(x)))])])])"
+                    // Product already nests residual if under the function block; golden must
+                    // match renderShape brackets: Function(...,Block[If(Clause(...:Block[...]))])
+                    "Function(Id(guard),Block[If(Clause(Id(x):Block[CallStmt(Call(Id(use):Id(x)))]))])"
                 ),
                 warningFragments = listOf("<end> expected")
             ),
@@ -103,7 +105,8 @@ class LuaParserRecoveryMissingEndFunctionTddTest {
                 name = "local missing end keeps if-else residual",
                 source = "local function choose(f) if f then a() else b() end",
                 requiredShapeFragments = listOf(
-                    "Function(Id(choose),Block[If(Clause(Id(f):Block[CallStmt(Call(Id(a):))]),Else(Block[CallStmt(Call(Id(b):))])])])"
+                    // Same bracket golden as renderShape: If(...)/Else(...) close with ) then Block]
+                    "Function(Id(choose),Block[If(Clause(Id(f):Block[CallStmt(Call(Id(a):))]),Else(Block[CallStmt(Call(Id(b):))]))])"
                 ),
                 warningFragments = listOf("<end> expected")
             )

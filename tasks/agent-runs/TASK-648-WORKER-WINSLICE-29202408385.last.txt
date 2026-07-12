@@ -1,0 +1,22 @@
+wave: WINSLICE-29202408385
+task: TASK-648
+owner: worker-WINSLICE-29202408385-TASK-648
+finalStatus: review
+utc: 2026-07-12T17:52:10Z
+summary: >
+  Cleared recoversMissingEndThenDoAndUntilWhileKeepingStatementsReachable expected 18 vs actual 20
+  by honest inventory hard-lock update to 20 (already present in tree from prior same-wave claim).
+  Extra cases are intentional AndroLua CURRENTLY_ACCEPTS: optional if-then (TASK-613, 2 cases) and
+  C-style != / && (TASK-614, 2 cases) inside missingDelimiterCases. Counted list size=20 matches
+  assertEquals(20). Prefer product only when recovery wrong; here product intentionally accepts and
+  inventory lagged. Did not edit LuaParser.kt (serialize exclusive claim vs TASK-644). Did not
+  own requiredRecoveryCases total (TASK-646). No gradle.
+filesChanged:
+  - src/jvmTest/kotlin/parser/recovery/LuaParserRecoveryTddTest.kt
+  - tasks/TASK-648.md
+verification:
+  - missingDelimiterCases name count = 20
+  - assertEquals(20, missingDelimiterCases.size) present in recoversMissingEndThenDoAndUntilWhileKeepingStatementsReachable
+locks:
+  - claimed then released TASK-648 task/test locks for this worker
+  - no exclusive LuaParser.kt lock held
