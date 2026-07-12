@@ -54,6 +54,7 @@ import io.github.dingyi222666.luaparser.semantic.types.model.UnknownType
 import io.github.dingyi222666.luaparser.semantic.types.resolve.TypeExpansion
 import io.github.dingyi222666.luaparser.semantic.types.resolve.intersectionTypeOf
 import io.github.dingyi222666.luaparser.semantic.types.resolve.unionTypeOf
+import io.github.dingyi222666.luaparser.semantic.workspace.ModuleExportIdentity
 
 internal class ReferenceQueries(
     private val binder: BinderPassResult,
@@ -556,22 +557,32 @@ internal class ReferenceQueries(
         // nested interface static helpers (Map$Entry.comparingByKey) still lands on the binary provider.
         // For createProxy instance methods (Runnable.run), prefer the same imported: handle so
         // gotoDefinition resolves to __jvm__/classes/.../Runnable.lua even when export lookup is thin.
+        // Multi-interface createProxy: prefer the owning-branch imported/fallback handle over a
+        // workspace export from a non-owning intersection arm when both are present.
         val surfaceHandle = collectMemberSurface(normalizedBase, lexicalScopeId)[expression.identifier.name]
             ?.syntheticHandle
-        val fallbackSymbolId = workspaceMember?.handle
+        val owningImportedHandle = javaMemberFallbackSymbolId(normalizedBase, expression.identifier.name)
             ?: surfaceHandle?.takeIf { it.startsWith("imported:") }
-            ?: javaMemberFallbackSymbolId(normalizedBase, expression.identifier.name)
+        val preferredWorkspaceHandle = workspaceMember?.handle?.takeIf { handle ->
+            owningImportedHandle == null ||
+                handle == owningImportedHandle ||
+                ModuleExportIdentity.parse(handle)?.providerPath?.value ==
+                    importedProviderPathValue(owningImportedHandle)
+        }
+        val fallbackSymbolId = preferredWorkspaceHandle
+            ?: owningImportedHandle
             ?: surfaceHandle
+            ?: workspaceMember?.handle
         return declaration?.let { adapters.toDeclarationSymbol(it, resolvedType, resolvedType) }
-            ?: workspaceMember?.let {
+            ?: preferredWorkspaceHandle?.let { handle ->
                 adapters.syntheticMemberSymbol(
                     name = expression.identifier.name,
                     kind = resolution.accessKind ?: MemberAccessKind.FIELD,
                     type = resolvedType,
                     declaredType = resolvedType,
-                    handleSeed = it.handle,
-                    symbolId = it.handle,
-                    range = it.member.range
+                    handleSeed = handle,
+                    symbolId = handle,
+                    range = workspaceMember?.member?.range
                 )
             }
             ?: adapters.syntheticMemberSymbol(
@@ -619,8 +630,9 @@ internal class ReferenceQueries(
             return null
         }
         val member = collectMemberSurface(normalizedBase, lexicalScopeId)[expression.identifier.name] ?: return null
-        val fallbackSymbolId = javaMemberFallbackSymbolId(normalizedBase, expression.identifier.name)
-            ?: member.syntheticHandle
+        val owningImportedHandle = javaMemberFallbackSymbolId(normalizedBase, expression.identifier.name)
+            ?: member.syntheticHandle?.takeIf { it.startsWith("imported:") }
+        val fallbackSymbolId = owningImportedHandle ?: member.syntheticHandle
         return adapters.syntheticMemberSymbol(
             name = expression.identifier.name,
             kind = member.accessKind,
@@ -1413,19 +1425,30 @@ internal class ReferenceQueries(
                         merged.getOrPut(entry.name) { mutableListOf() } += entry
                     }
                 }
-                merged.mapValues { (_, entries) ->
+                merged.mapValues { (memberName, entries) ->
                     val declaration = entries.mapNotNull(MemberSurface::declaration).distinct().singleOrNull()
                     // Preserve the owning-branch syntheticHandle so multi-interface createProxy
                     // members (run vs compare) still goto the interface provider that declared them.
+                    val owningImported = javaMemberFallbackSymbolId(normalized, memberName)
                     val preferredHandle = entries
                         .mapNotNull(MemberSurface::syntheticHandle)
-                        .firstOrNull { it.startsWith("imported:") }
+                        .firstOrNull { handle ->
+                            owningImported != null &&
+                                (handle == owningImported ||
+                                    ModuleExportIdentity.parse(handle)?.providerPath?.value ==
+                                        importedProviderPathValue(owningImported))
+                        }
+                        ?: entries.mapNotNull(MemberSurface::syntheticHandle)
+                            .firstOrNull { it.startsWith("imported:") }
+                        ?: owningImported
                         ?: entries.mapNotNull(MemberSurface::syntheticHandle).distinct().singleOrNull()
                         ?: entries.mapNotNull(MemberSurface::syntheticHandle).firstOrNull()
                     val preferredRange = entries
-                        .mapNotNull(MemberSurface::syntheticRange)
-                        .distinct()
-                        .singleOrNull()
+                        .firstOrNull { it.syntheticHandle == preferredHandle }
+                        ?.syntheticRange
+                        ?: entries.mapNotNull(MemberSurface::syntheticRange)
+                            .distinct()
+                            .singleOrNull()
                         ?: entries.mapNotNull(MemberSurface::syntheticRange).firstOrNull()
                     MemberSurface(
                         name = entries.first().name,
@@ -1831,6 +1854,18 @@ internal class ReferenceQueries(
 
     private fun importedSymbolHandle(imported: WorkspaceImportedSymbol): String {
         return "imported:${imported.providerPath.value}:${imported.alias}"
+    }
+
+    private fun importedProviderPathValue(handle: String?): String? {
+        if (handle == null || !handle.startsWith("imported:")) {
+            return null
+        }
+        val body = handle.removePrefix("imported:")
+        val separator = body.lastIndexOf(':')
+        if (separator <= 0 || separator >= body.lastIndex) {
+            return null
+        }
+        return body.substring(0, separator)
     }
 
     private fun rangeSpan(range: io.github.dingyi222666.luaparser.parser.ast.node.Range): Int {

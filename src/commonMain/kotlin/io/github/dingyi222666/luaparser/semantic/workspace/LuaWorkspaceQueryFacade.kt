@@ -215,6 +215,15 @@ class LuaWorkspaceQueryFacade(
             return listOf(localDeclaration)
         }
 
+        // Prefer member-owning createProxy / bindClass provider over weak imported handles so
+        // multi-interface proxy.compare lands on Comparator rather than the first interface arm.
+        val bindClassLocalDeclaration = semanticFile?.let {
+            bindClassLocalDefinition(it, path, node, symbol)
+        }
+        if (bindClassLocalDeclaration != null) {
+            return listOf(bindClassLocalDeclaration)
+        }
+
         val importDeclaration = symbol?.symbolId?.let(::importedSymbolLocation)
             ?: semanticFile?.let { importedSymbolAt(path, position, node, it) }?.let {
                 WorkspaceLocation(it.providerPath, syntheticModuleRange(it.alias))
@@ -1499,12 +1508,21 @@ class LuaWorkspaceQueryFacade(
             else -> localDeclarationForSymbol(semanticFile, symbol?.symbolId)
         }
         // Member receiver path: Identifier base of MemberExpression.
+        val memberAccess = when (node) {
+            is MemberExpression -> node
+            is Identifier -> runCatching { node.parent }.getOrNull() as? MemberExpression
+            else -> null
+        }
+        val accessedMemberName = memberAccess
+            ?.takeIf { member ->
+                val focus = node as? Identifier
+                focus == null || member.identifier === focus
+            }
+            ?.identifier
+            ?.name
+            ?.takeIf { it.isNotBlank() }
         val receiverDeclaration = declaration ?: run {
-            val member = when (node) {
-                is MemberExpression -> node
-                is Identifier -> runCatching { node.parent }.getOrNull() as? MemberExpression
-                else -> null
-            } ?: return null
+            val member = memberAccess ?: return null
             val receiver = member.base as? Identifier ?: return null
             val receiverSymbol = semanticFile.model.getSymbolAt(receiver.range.start)
             localDeclarationForSymbol(semanticFile, receiverSymbol?.symbolId)
@@ -1512,7 +1530,12 @@ class LuaWorkspaceQueryFacade(
                 ?: visibleLocalValueDeclaration(semanticFile, receiver.name, receiver.range.start)
                 ?: return null
         }
-        val moduleName = bindClassTargetModuleName(semanticFile, path, receiverDeclaration)
+        val moduleName = bindClassTargetModuleName(
+            semanticFile = semanticFile,
+            path = path,
+            declaration = receiverDeclaration,
+            preferredMemberName = accessedMemberName
+        )
             ?: symbol?.type?.moduleName?.takeIf { it.isNotBlank() }
             ?: return null
         val provider = resolver.activeProvider(moduleName)
@@ -1530,13 +1553,14 @@ class LuaWorkspaceQueryFacade(
     private fun bindClassTargetModuleName(
         semanticFile: WorkspaceSemanticFile,
         path: VirtualPath,
-        declaration: BinderDeclaration
+        declaration: BinderDeclaration,
+        preferredMemberName: String? = null
     ): String? {
         if (declaration.kind != DeclarationKind.LOCAL || declaration.anchorNode !is Identifier) {
             return null
         }
         val initializer = requireInitializerForLocal(declaration) ?: return null
-        val target = luaJavaClassLoadTarget(semanticFile, initializer) ?: return null
+        val target = luaJavaClassLoadTarget(semanticFile, initializer, preferredMemberName) ?: return null
         val imported = resolver.importTargetSymbolFor(path, target)
             ?: resolver.importTargetSymbol(target)
             ?: return null
@@ -1546,12 +1570,96 @@ class LuaWorkspaceQueryFacade(
 
     private fun luaJavaClassLoadTarget(
         semanticFile: WorkspaceSemanticFile,
-        call: CallExpression
+        call: CallExpression,
+        preferredMemberName: String? = null
     ): String? {
         if (!isLuaJavaClassLoadCallee(semanticFile, effectiveCallBase(call))) {
             return null
         }
-        return importCallStringTargets(call).firstOrNull()?.takeIf { it.isNotBlank() }
+        val targets = luaJavaClassLoadTargets(semanticFile, call)
+        if (targets.isEmpty()) {
+            return null
+        }
+        // Multi-interface createProxy: prefer the interface branch that actually declares the
+        // accessed member (proxy.compare -> Comparator, not the first Runnable arm).
+        if (!preferredMemberName.isNullOrBlank() && isCreateProxyCallBase(semanticFile, effectiveCallBase(call))) {
+            targets.firstOrNull { target ->
+                javaProviderExposesMember(target, preferredMemberName)
+            }?.let { return it }
+        }
+        return targets.firstOrNull()
+    }
+
+    private fun luaJavaClassLoadTargets(
+        semanticFile: WorkspaceSemanticFile,
+        call: CallExpression
+    ): List<String> {
+        if (!isLuaJavaClassLoadCallee(semanticFile, effectiveCallBase(call))) {
+            return emptyList()
+        }
+        return if (isCreateProxyCallBase(semanticFile, effectiveCallBase(call))) {
+            createProxyInterfaceTargets(call)
+        } else {
+            importCallStringTargets(call)
+                .map(String::trim)
+                .filter(String::isNotEmpty)
+        }
+    }
+
+    private fun createProxyInterfaceTargets(call: CallExpression): List<String> {
+        val targets = mutableListOf<String>()
+        for (argument in callArguments(call)) {
+            val constant = argument as? ConstantNode ?: break
+            if (constant.constantType != ConstantNode.TYPE.STRING) {
+                break
+            }
+            targets += constant.stringOf()
+                .split(',')
+                .map(String::trim)
+                .filter(String::isNotEmpty)
+        }
+        return targets
+    }
+
+    private fun isCreateProxyCallBase(
+        semanticFile: WorkspaceSemanticFile,
+        expression: io.github.dingyi222666.luaparser.parser.ast.node.ExpressionNode
+    ): Boolean {
+        return when (expression) {
+            is MemberExpression ->
+                expression.identifier.name == "createProxy" && isLuaJavaOwnerIdentifier(expression.base)
+            is Identifier -> {
+                if (expression.name != "createProxy") {
+                    return false
+                }
+                val declaration = visibleLocalValueDeclaration(
+                    semanticFile,
+                    expression.name,
+                    expression.range.start
+                )
+                declaration == null ||
+                    declaration.origin == DeclarationOrigin.BUILTIN ||
+                    declarationResolvesToLuaJavaHelper(semanticFile, declaration, "createProxy")
+            }
+            else -> false
+        }
+    }
+
+    private fun javaProviderExposesMember(target: String, memberName: String): Boolean {
+        val imported = resolver.importTargetSymbol(target) ?: return false
+        val moduleType = imported.moduleType
+        if (memberName in moduleType.fields || memberName in moduleType.methods) {
+            return true
+        }
+        return when (val classSurface = moduleType.fields["__class"]) {
+            is io.github.dingyi222666.luaparser.semantic.types.model.JavaClassType ->
+                memberName in classSurface.allInstanceMembers() ||
+                    memberName in classSurface.allStaticMembers()
+            is io.github.dingyi222666.luaparser.semantic.types.model.JavaInstanceType ->
+                memberName in classSurface.allInstanceMembers() ||
+                    memberName in classSurface.classType.allStaticMembers()
+            else -> false
+        }
     }
 
     private fun isLuaJavaClassLoadCallee(

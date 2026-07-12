@@ -1,7 +1,10 @@
 package io.github.dingyi222666.luaparser.semantic.model
 
+import io.github.dingyi222666.luaparser.parser.ast.node.AssignmentStatement
 import io.github.dingyi222666.luaparser.parser.ast.node.BaseASTNode
+import io.github.dingyi222666.luaparser.parser.ast.node.BlockNode
 import io.github.dingyi222666.luaparser.parser.ast.node.CallExpression
+import io.github.dingyi222666.luaparser.parser.ast.node.CallStatement
 import io.github.dingyi222666.luaparser.parser.ast.node.ExpressionNode
 import io.github.dingyi222666.luaparser.parser.ast.node.FunctionDeclaration
 import io.github.dingyi222666.luaparser.parser.ast.node.Identifier
@@ -9,6 +12,7 @@ import io.github.dingyi222666.luaparser.parser.ast.node.LocalStatement
 import io.github.dingyi222666.luaparser.parser.ast.node.MemberExpression
 import io.github.dingyi222666.luaparser.parser.ast.node.Position
 import io.github.dingyi222666.luaparser.parser.ast.node.Range
+import io.github.dingyi222666.luaparser.parser.ast.node.ReturnStatement
 import io.github.dingyi222666.luaparser.parser.ast.node.StringCallExpression
 import io.github.dingyi222666.luaparser.semantic.api.ParameterInformation
 import io.github.dingyi222666.luaparser.semantic.api.SignatureHelp
@@ -761,20 +765,131 @@ internal class SignatureHelpProvider(
     }
 
     private fun enclosingCallExpression(position: Position): CallExpression? {
-        val enclosing = nodePositionIndex.findEnclosing(position)
+        // Prefer the most-specific enclosing call from the half-open node index.
+        findCallInEnclosingNodes(position, position)?.let { return it }
+
+        // NodePositionIndex is half-open [start, end): the exact call.range.end cursor
+        // (immediately after `)`) is outside the call node. Probe the previous column so
+        // end-inclusive argument-region help can still resolve the call.
+        if (position.column > 1) {
+            val probe = Position(line = position.line, column = position.column - 1)
+            findCallInEnclosingNodes(probe, position)?.let { return it }
+        }
+
+        // Parser-tight call ranges (and historical next-token finishNode inflation) leave
+        // the following significant statement token outside the call node while product
+        // policy still treats that token as inside the argument region. Scan preceding
+        // siblings under the enclosing block for a covering call.
+        return findCallCoveringFromEnclosingContext(position)
+    }
+
+    private fun findCallInEnclosingNodes(indexPosition: Position, argumentPosition: Position): CallExpression? {
+        val enclosing = nodePositionIndex.findEnclosing(indexPosition)
         return enclosing
             .filterIsInstance<CallExpression>()
-            .firstOrNull { isWithinCallArguments(it, position) }
+            .firstOrNull { isWithinCallArguments(it, argumentPosition) }
             ?: enclosing
                 .filterIsInstance<StringCallExpression>()
-                .firstOrNull { isWithinCallArguments(it, position) }
+                .firstOrNull { isWithinCallArguments(it, argumentPosition) }
+    }
+
+    private fun findCallCoveringFromEnclosingContext(position: Position): CallExpression? {
+        val seeds = nodePositionIndex.findEnclosing(position)
+        if (seeds.isEmpty()) {
+            return null
+        }
+        val candidates = LinkedHashSet<CallExpression>()
+        for (seed in seeds) {
+            collectCallExpressions(seed, candidates)
+            var current: BaseASTNode = seed
+            while (true) {
+                val parent = runCatching { current.parent }.getOrNull() ?: break
+                if (parent is BlockNode) {
+                    val statements = parent.statements
+                    val idx = statements.indexOf(current)
+                    if (idx > 0) {
+                        // Walk nearest preceding statements first (typical next-token inflation).
+                        for (i in (idx - 1) downTo 0) {
+                            collectCallExpressions(statements[i], candidates)
+                        }
+                    }
+                    if (parent.returnStatement === current) {
+                        for (statement in statements) {
+                            collectCallExpressions(statement, candidates)
+                        }
+                    }
+                }
+                collectCallExpressions(parent, candidates)
+                current = parent
+            }
+        }
+        return candidates
+            .filter { isWithinCallArguments(it, position) }
+            .minWithOrNull(compareBy({ argumentRegionSpan(it) }, { it.range.start.line }, { it.range.start.column }))
+    }
+
+    private fun collectCallExpressions(node: BaseASTNode, out: MutableSet<CallExpression>) {
+        when (node) {
+            is CallExpression -> {
+                out += node
+                collectCallExpressions(node.base, out)
+                for (argument in node.arguments) {
+                    collectCallExpressions(argument, out)
+                }
+            }
+            is LocalStatement -> {
+                for (value in node.variables) {
+                    collectCallExpressions(value, out)
+                }
+            }
+            is AssignmentStatement -> {
+                // AssignmentStatement: init = LHS, variables = RHS.
+                for (value in node.variables) {
+                    collectCallExpressions(value, out)
+                }
+                for (target in node.init) {
+                    collectCallExpressions(target, out)
+                }
+            }
+            is ReturnStatement -> {
+                for (argument in node.arguments) {
+                    collectCallExpressions(argument, out)
+                }
+            }
+            is CallStatement -> {
+                runCatching { node.expression }.getOrNull()?.let { collectCallExpressions(it, out) }
+            }
+            is MemberExpression -> {
+                collectCallExpressions(node.base, out)
+            }
+            is BlockNode -> {
+                for (statement in node.statements) {
+                    collectCallExpressions(statement, out)
+                }
+                node.returnStatement?.let { collectCallExpressions(it, out) }
+            }
+            else -> Unit
+        }
+    }
+
+    private fun argumentRegionSpan(call: CallExpression): Int {
+        val start = call.base.range.end
+        val end = effectiveArgumentRegionEnd(call)
+        val lineDelta = (end.line - start.line).coerceAtLeast(0)
+        val columnDelta = end.column - start.column
+        return lineDelta * 1_000_000 + columnDelta
     }
 
     private fun isWithinCallArguments(call: CallExpression, position: Position): Boolean {
         val arguments = callArguments(call)
+        val regionEnd = effectiveArgumentRegionEnd(call)
         if (arguments.isEmpty()) {
-            val argumentRegion = argumentRegion(call) ?: return false
-            return contains(argumentRegion, position)
+            val start = call.base.range.end
+            if (compare(start, regionEnd) >= 0) {
+                return false
+            }
+            // End-inclusive argument region (empty `f()` and inflated next-token end).
+            return compare(position, start) >= 0 && compare(position, regionEnd) <= 0
         }
 
         val firstArgumentStart = arguments.first().range.start
@@ -793,12 +908,94 @@ internal class SignatureHelpProvider(
             }
         }
 
-        return compare(position, arguments.last().range.end) >= 0 && compare(position, call.range.end) <= 0
+        // From the last argument through call.range.end (inclusive) and, when product policy
+        // inflates past a tight `)`, through the next significant statement token start.
+        return compare(position, arguments.last().range.end) >= 0 && compare(position, regionEnd) <= 0
+    }
+
+    /**
+     * Inclusive end of the call argument region used for signature help.
+     *
+     * Always at least [CallExpression.range].end so the exact post-`)` cursor stays inside.
+     * When the next sibling statement / return begins after that end, inflate to that token
+     * start so help remains available on the historical finishNode next-token end (e.g. the
+     * following `local` / `return`) while positions past it (e.g. `sentinel`) stay outside.
+     */
+    private fun effectiveArgumentRegionEnd(call: CallExpression): Position {
+        val callEnd = call.range.end
+        val inflated = nextSiblingStatementStart(call) ?: return callEnd
+        return if (compare(inflated, callEnd) > 0) inflated else callEnd
+    }
+
+    private fun nextSiblingStatementStart(call: CallExpression): Position? {
+        var current: BaseASTNode = call
+        while (true) {
+            val parent = runCatching { current.parent }.getOrNull() ?: return null
+            when (parent) {
+                is CallExpression -> {
+                    val args = callArguments(parent)
+                    val idx = args.indexOf(current)
+                    if (idx >= 0 && idx + 1 < args.size) {
+                        // Nested call followed by another argument: do not inflate into the
+                        // outer call's later args (outer call owns that region).
+                        return null
+                    }
+                    current = parent
+                }
+                is LocalStatement -> {
+                    val idx = parent.variables.indexOf(current)
+                    if (idx >= 0 && idx + 1 < parent.variables.size) {
+                        return null
+                    }
+                    current = parent
+                }
+                is AssignmentStatement -> {
+                    val idx = parent.variables.indexOf(current)
+                    if (idx >= 0 && idx + 1 < parent.variables.size) {
+                        return null
+                    }
+                    current = parent
+                }
+                is ReturnStatement -> {
+                    val idx = parent.arguments.indexOf(current)
+                    if (idx >= 0 && idx + 1 < parent.arguments.size) {
+                        return null
+                    }
+                    current = parent
+                }
+                is CallStatement -> {
+                    current = parent
+                }
+                is MemberExpression -> {
+                    current = parent
+                }
+                is BlockNode -> {
+                    val statements = parent.statements
+                    val idx = statements.indexOf(current)
+                    if (idx >= 0) {
+                        if (idx + 1 < statements.size) {
+                            return statements[idx + 1].range.start
+                        }
+                        return parent.returnStatement?.range?.start
+                    }
+                    if (parent.returnStatement === current) {
+                        return null
+                    }
+                    current = parent
+                }
+                is FunctionDeclaration -> {
+                    current = parent
+                }
+                else -> {
+                    current = parent
+                }
+            }
+        }
     }
 
     private fun argumentRegion(call: CallExpression): Range? {
         val start = call.base.range.end
-        val end = call.range.end
+        val end = effectiveArgumentRegionEnd(call)
         return if (compare(start, end) < 0) Range(start, end) else null
     }
 

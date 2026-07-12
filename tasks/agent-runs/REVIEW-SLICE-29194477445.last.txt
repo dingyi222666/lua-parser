@@ -1,0 +1,22 @@
+{
+  "runId": "29194477445",
+  "sliceId": "s006",
+  "status": "failure",
+  "tests": 205,
+  "failures": 3,
+  "failedTests": [
+    "lsp.LspSignatureHelpActiveParameterTddTest#outside_call_context_returns_null_without_crash[jvm]",
+    "lsp.LspSignatureHelpActiveParamTddTest#outside_call_context_returns_null_without_crash[jvm]",
+    "lsp.LuaLanguageServiceTest#language_service_resolves_multi_interface_create_proxy_helpers[jvm]"
+  ],
+  "progressSummary": {
+    "success": 5,
+    "failure": 1,
+    "pending": 19,
+    "running": 0,
+    "total": 25,
+    "filesDone": 75,
+    "activeSlice": "s006"
+  },
+  "notes": "Merged CI progress.json (updatedAt 2026-07-12T13:30:48Z) over local; copied results/s006-29194477445.json; rewrote PROGRESS.md checkbox bar; parsed 15 TEST-*.xml under junit (3 failures, 0 errors). Gate: must-green-to-advance — re-run s006 until green."
+}

@@ -1,0 +1,36 @@
+{
+  "sliceId": "s006",
+  "runId": "29194477445",
+  "sha": "21d33f83eca75fe1261bc4b37081dde843974443",
+  "status": "failure",
+  "exitCode": 1,
+  "durationSec": 50,
+  "tests": 205,
+  "failures": 3,
+  "errors": 0,
+  "skipped": 0,
+  "failedTests": [
+    "lsp.LspSignatureHelpActiveParameterTddTest#outside_call_context_returns_null_without_crash[jvm]",
+    "lsp.LspSignatureHelpActiveParamTddTest#outside_call_context_returns_null_without_crash[jvm]",
+    "lsp.LuaLanguageServiceTest#language_service_resolves_multi_interface_create_proxy_helpers[jvm]"
+  ],
+  "testsPatterns": [
+    "lsp.LspSemanticTokensSafetyTddTest",
+    "lsp.LspServiceStateConcurrencyTddTest",
+    "lsp.LspShutdownBehaviorTddTest",
+    "lsp.LspShutdownExitIdempotencyTddTest",
+    "lsp.LspSignatureHelpActiveParamTddTest",
+    "lsp.LspSignatureHelpActiveParameterTddTest",
+    "lsp.LspSignatureHelpOverloadTddTest",
+    "lsp.LspTypeHierarchyDocClassTddTest",
+    "lsp.LspTypeHierarchySafetyTddTest",
+    "lsp.LspUriHandlingTddTest",
+    "lsp.LspWatchedFilesTddTest",
+    "lsp.LspWorkspaceFoldersTddTest",
+    "lsp.LspWorkspaceSymbolPrefixTddTest",
+    "lsp.LuaLanguageServiceTest",
+    "parser.AndroLuaSyntaxRegressionTest"
+  ],
+  "gate": "must-green-to-advance",
+  "finishedAt": "2026-07-12T13:30:48Z"
+}

@@ -1,15 +1,15 @@
 {
   "version": 2,
-  "updatedAt": "2026-07-12T13:25:52Z",
+  "updatedAt": "2026-07-12T13:30:48Z",
   "strategy": "must-green-to-advance",
   "chunkSize": 15,
   "cycle": 1,
   "summary": {
     "total": 25,
     "totalFiles": 367,
-    "pending": 20,
+    "pending": 19,
     "success": 5,
-    "failure": 0,
+    "failure": 1,
     "running": 0,
     "filesDone": 75
   },
@@ -88,18 +88,22 @@
       "updatedAt": "2026-07-12T13:25:52Z"
     },
     "s006": {
-      "status": "pending",
+      "status": "failure",
       "label": "lsp..parser",
       "fileCount": 15,
-      "lastRunId": null,
-      "lastSha": null,
-      "tests": 0,
-      "failures": 0,
+      "lastRunId": "29194477445",
+      "lastSha": "21d33f83eca75fe1261bc4b37081dde843974443",
+      "tests": 205,
+      "failures": 3,
       "errors": 0,
-      "failedTests": [],
-      "durationSec": null,
-      "artifact": null,
-      "updatedAt": null
+      "failedTests": [
+        "lsp.LspSignatureHelpActiveParameterTddTest#outside_call_context_returns_null_without_crash[jvm]",
+        "lsp.LspSignatureHelpActiveParamTddTest#outside_call_context_returns_null_without_crash[jvm]",
+        "lsp.LuaLanguageServiceTest#language_service_resolves_multi_interface_create_proxy_helpers[jvm]"
+      ],
+      "durationSec": 50,
+      "artifact": "results/s006-29194477445.json",
+      "updatedAt": "2026-07-12T13:30:48Z"
     },
     "s007": {
       "status": "pending",
@@ -514,6 +518,15 @@
       "failures": 0,
       "durationSec": 70,
       "at": "2026-07-12T13:25:52Z"
+    },
+    {
+      "sliceId": "s006",
+      "runId": "29194477445",
+      "status": "failure",
+      "tests": 205,
+      "failures": 3,
+      "durationSec": 50,
+      "at": "2026-07-12T13:30:48Z"
     }
   ],
   "gate": {
