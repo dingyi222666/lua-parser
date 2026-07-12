@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "updatedAt": "2026-07-12T13:30:48Z",
+  "updatedAt": "2026-07-12T14:25:22Z",
   "strategy": "must-green-to-advance",
   "chunkSize": 15,
   "cycle": 1,
@@ -8,10 +8,10 @@
     "total": 25,
     "totalFiles": 367,
     "pending": 19,
-    "success": 5,
-    "failure": 1,
+    "success": 6,
+    "failure": 0,
     "running": 0,
-    "filesDone": 75
+    "filesDone": 90
   },
   "slices": {
     "s001": {
@@ -88,22 +88,18 @@
       "updatedAt": "2026-07-12T13:25:52Z"
     },
     "s006": {
-      "status": "failure",
+      "status": "success",
       "label": "lsp..parser",
       "fileCount": 15,
-      "lastRunId": "29194477445",
-      "lastSha": "21d33f83eca75fe1261bc4b37081dde843974443",
+      "lastRunId": "29196132727",
+      "lastSha": "ecddda59ea07e558504da4a53160ac70d0721b9e",
       "tests": 205,
-      "failures": 3,
+      "failures": 0,
       "errors": 0,
-      "failedTests": [
-        "lsp.LspSignatureHelpActiveParameterTddTest#outside_call_context_returns_null_without_crash[jvm]",
-        "lsp.LspSignatureHelpActiveParamTddTest#outside_call_context_returns_null_without_crash[jvm]",
-        "lsp.LuaLanguageServiceTest#language_service_resolves_multi_interface_create_proxy_helpers[jvm]"
-      ],
-      "durationSec": 50,
-      "artifact": "results/s006-29194477445.json",
-      "updatedAt": "2026-07-12T13:30:48Z"
+      "failedTests": [],
+      "durationSec": 45,
+      "artifact": "results/s006-29196132727.json",
+      "updatedAt": "2026-07-12T14:25:22Z"
     },
     "s007": {
       "status": "pending",
@@ -527,6 +523,15 @@
       "failures": 3,
       "durationSec": 50,
       "at": "2026-07-12T13:30:48Z"
+    },
+    {
+      "sliceId": "s006",
+      "runId": "29196132727",
+      "status": "success",
+      "tests": 205,
+      "failures": 0,
+      "durationSec": 45,
+      "at": "2026-07-12T14:25:22Z"
     }
   ],
   "gate": {
@@ -534,5 +539,5 @@
     "advanceOnlyIfSuccess": true,
     "workersPerSliceMax": 30
   },
-  "activeSlice": "s006"
+  "activeSlice": "s007"
 }
