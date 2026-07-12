@@ -1,0 +1,32 @@
+{
+  "sliceId": "s010",
+  "runId": "29202132162",
+  "sha": "153133f89967c45c77cc5e2d9f44dc50421a871f",
+  "status": "success",
+  "exitCode": 0,
+  "durationSec": 10,
+  "tests": 166,
+  "failures": 0,
+  "errors": 0,
+  "skipped": 0,
+  "failedTests": [],
+  "testsPatterns": [
+    "parser.recovery.LuaParserRecoveryAndroluaSwitchWhenTddTest",
+    "parser.recovery.LuaParserRecoveryAttributeLocalTddTest",
+    "parser.recovery.LuaParserRecoveryBinaryIncompleteRhsOpsTddTest",
+    "parser.recovery.LuaParserRecoveryDiagnosticsExpandTddTest",
+    "parser.recovery.LuaParserRecoveryDiagnosticsTddTest",
+    "parser.recovery.LuaParserRecoveryForInDoTddTest",
+    "parser.recovery.LuaParserRecoveryForInMissingDoTddTest",
+    "parser.recovery.LuaParserRecoveryFunctionMissingEndTddTest",
+    "parser.recovery.LuaParserRecoveryGenericForTddTest",
+    "parser.recovery.LuaParserRecoveryGotoLabelTddTest",
+    "parser.recovery.LuaParserRecoveryIfChainTddTest",
+    "parser.recovery.LuaParserRecoveryIfElseifChainTddTest",
+    "parser.recovery.LuaParserRecoveryIncompleteTableFieldTddTest",
+    "parser.recovery.LuaParserRecoveryLayoutTableTddTest",
+    "parser.recovery.LuaParserRecoveryLocalAssignTddTest"
+  ],
+  "gate": "must-green-to-advance",
+  "finishedAt": "2026-07-12T17:32:54Z"
+}

@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "updatedAt": "2026-07-12T17:22:03Z",
+  "updatedAt": "2026-07-12T17:32:54Z",
   "strategy": "must-green-to-advance",
   "chunkSize": 15,
   "cycle": 1,
@@ -8,10 +8,10 @@
     "total": 25,
     "totalFiles": 367,
     "pending": 15,
-    "success": 9,
-    "failure": 1,
+    "success": 10,
+    "failure": 0,
     "running": 0,
-    "filesDone": 135
+    "filesDone": 150
   },
   "slices": {
     "s001": {
@@ -145,23 +145,18 @@
       "updatedAt": "2026-07-12T16:04:20Z"
     },
     "s010": {
-      "status": "failure",
+      "status": "success",
       "label": "parser.recovery",
       "fileCount": 15,
-      "lastRunId": "29201787735",
-      "lastSha": "351dae98a3995d5a518ca9dd4d6d2de14103d9f6",
+      "lastRunId": "29202132162",
+      "lastSha": "153133f89967c45c77cc5e2d9f44dc50421a871f",
       "tests": 166,
-      "failures": 4,
+      "failures": 0,
       "errors": 0,
-      "failedTests": [
-        "parser.recovery.LuaParserRecoveryDiagnosticsExpandTddTest#expandsIfMissingThenDiagnosticGoldenWithExactRange[jvm]",
-        "parser.recovery.LuaParserRecoveryDiagnosticsExpandTddTest#expandsDiagnosticsAreDeterministicAndResetAcrossParses[jvm]",
-        "parser.recovery.LuaParserRecoveryDiagnosticsExpandTddTest#expandsSparseGoldenInventoryCoversRequiredRecoveryFamilies[jvm]",
-        "parser.recovery.LuaParserRecoveryDiagnosticsTddTest#parserRecoveryCollectsStructuredDiagnosticsWithoutStdoutNoise[jvm]"
-      ],
+      "failedTests": [],
       "durationSec": 10,
-      "artifact": "results/s010-29201787735.json",
-      "updatedAt": "2026-07-12T17:22:03Z"
+      "artifact": "results/s010-29202132162.json",
+      "updatedAt": "2026-07-12T17:32:54Z"
     },
     "s011": {
       "status": "pending",
@@ -629,6 +624,15 @@
       "failures": 4,
       "durationSec": 10,
       "at": "2026-07-12T17:22:03Z"
+    },
+    {
+      "sliceId": "s010",
+      "runId": "29202132162",
+      "status": "success",
+      "tests": 166,
+      "failures": 0,
+      "durationSec": 10,
+      "at": "2026-07-12T17:32:54Z"
     }
   ],
   "gate": {
@@ -636,5 +640,5 @@
     "advanceOnlyIfSuccess": true,
     "workersPerSliceMax": 30
   },
-  "activeSlice": "s010"
+  "activeSlice": "s011"
 }
