@@ -2,15 +2,15 @@
   "version": 2,
   "strategy": "must-green-to-advance",
   "activeSlice": "s016",
-  "updatedAt": "2026-07-12T20:56:57Z",
+  "updatedAt": "2026-07-12T21:26:19Z",
   "summary": {
     "total": 18,
     "totalFiles": 367,
     "pending": 2,
-    "success": 15,
-    "failure": 1,
+    "success": 16,
+    "failure": 0,
     "running": 0,
-    "filesDone": 255
+    "filesDone": 300
   },
   "slices": {
     "s001": {
@@ -229,30 +229,18 @@
       "note": "green on run 29208492285; 853 tests 0 failures"
     },
     "s016": {
-      "status": "failure",
+      "status": "success",
       "label": "semantic.interop..semantic.types.resolve",
       "fileCount": 45,
-      "lastRunId": "29208645359",
-      "lastSha": "5221878ef82e46a6af319123a0e61a2b1fcecc21",
-      "updatedAt": "2026-07-12T20:56:57Z",
+      "lastRunId": "29209549075",
+      "lastSha": "03f4fa9dc3c52897740e92a08e1b5de883f0d19b",
+      "updatedAt": "2026-07-12T21:26:19Z",
       "tests": 852,
-      "failures": 11,
+      "failures": 0,
       "errors": 0,
-      "failedTests": [
-        "semantic.interop.LuaJavaBindClassArrayComponentTddTest#missing_android_jar_skip_documents_array_component_surface[jvm]",
-        "semantic.interop.LuaJavaCodingMethodSurfaceTddTest#missing_android_jar_skip_documents_coding_method_surface[jvm]",
-        "semantic.interop.LuaJavaCodingMethodSurfaceTddTest#create_array_coding_surface_dual_path[jvm]",
-        "semantic.interop.LuaJavaCodingMethodSurfaceTddTest#local_luajava_table_shadow_does_not_gain_coding_method_surfaces[jvm]",
-        "semantic.interop.LuaJavaNewArrayElementTypeTddTest#missing_android_jar_skip_documents_new_array_element_type_surface[jvm]",
-        "semantic.interop.LuaJavaNewArrayElementTypeTddTest#multi_index_reads_share_same_element_type[jvm]",
-        "semantic.interop.LuaJavaNewArrayTypingTddTest#multi_dimension_new_array_still_propagates_component_element_type[jvm]",
-        "semantic.interop.LuaJavaNewInstanceOverloadSurfaceTddTest#host_android_jar_present_or_skipped_with_explicit_reason_surface[jvm]",
-        "semantic.model.ReferenceQueriesCrossModuleTddTest#missing_export_member_definition_stays_empty[jvm]",
-        "semantic.model.ReferenceQueriesCrossModuleTddTest#known_export_still_resolves_when_sibling_missing_export_present[jvm]",
-        "semantic.model.ReferenceQueriesCrossModuleTddTest#two_file_require_local_definition_resolves_to_provider_module[jvm]"
-      ],
-      "durationSec": 60,
-      "artifact": "results/s016-29208645359.json"
+      "failedTests": [],
+      "durationSec": 50,
+      "artifact": "results/s016-29209549075.json"
     },
     "s017": {
       "status": "pending",
@@ -674,6 +662,15 @@
       "failures": 11,
       "durationSec": 60,
       "at": "2026-07-12T20:56:57Z"
+    },
+    {
+      "sliceId": "s016",
+      "runId": "29209549075",
+      "status": "success",
+      "tests": 852,
+      "failures": 0,
+      "durationSec": 50,
+      "at": "2026-07-12T21:26:19Z"
     }
   ]
 }
