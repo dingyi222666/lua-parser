@@ -1,9 +1,9 @@
 # Windows slice progress (must-green-to-advance)
 
-Updated: 2026-07-12T15:52:59Z
+Updated: 2026-07-12T16:04:20Z
 Strategy: must-green-to-advance
-Active/HEAD: s009 failure (must re-run until green; do not advance)
-Summary: success=8 failure=1 pending=16 total=25 filesDone=120
+Active/HEAD: s009 success → next s010 pending
+Summary: success=9 failure=0 pending=16 total=25 filesDone=135
 
 Checkbox: [x]=success [F]=failure [ ]=pending [~]=running
 
@@ -17,7 +17,7 @@ Checkbox: [x]=success [F]=failure [ ]=pending [~]=running
 | s006 | [x] success | 15 | green 29196132727 |
 | s007 | [x] success | 15 | green 29197045304 |
 | s008 | [x] success | 15 | green 29198171827 |
-| s009 | [F] failure | 15 | fail 29198982731 (1 failure) |
+| s009 | [x] success | 15 | green 29199340139 |
 | s010 | [ ] pending | 15 |  |
 | s011 | [ ] pending | 15 |  |
 | s012 | [ ] pending | 15 |  |

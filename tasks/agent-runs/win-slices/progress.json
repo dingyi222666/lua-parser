@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "updatedAt": "2026-07-12T15:52:59Z",
+  "updatedAt": "2026-07-12T16:04:20Z",
   "strategy": "must-green-to-advance",
   "chunkSize": 15,
   "cycle": 1,
@@ -8,10 +8,10 @@
     "total": 25,
     "totalFiles": 367,
     "pending": 16,
-    "success": 8,
-    "failure": 1,
+    "success": 9,
+    "failure": 0,
     "running": 0,
-    "filesDone": 120
+    "filesDone": 135
   },
   "slices": {
     "s001": {
@@ -131,20 +131,18 @@
       "updatedAt": "2026-07-12T15:28:46Z"
     },
     "s009": {
-      "status": "failure",
+      "status": "success",
       "label": "parser.lexer..parser.recovery",
       "fileCount": 15,
-      "lastRunId": "29198982731",
-      "lastSha": "06bd15842143e96eb79d3b3cacda7b36714ee9fb",
+      "lastRunId": "29199340139",
+      "lastSha": "04295eef23ba002970f8e43efc63b3fbc18345c0",
       "tests": 115,
-      "failures": 1,
+      "failures": 0,
       "errors": 0,
-      "failedTests": [
-        "parser.lua53.Lua53TableFunctionModuleTddTest#exposesAstStructureAndRangesForRepresentativeModuleForms[jvm]"
-      ],
+      "failedTests": [],
       "durationSec": 10,
-      "artifact": "results/s009-29198982731.json",
-      "updatedAt": "2026-07-12T15:52:59Z"
+      "artifact": "results/s009-29199340139.json",
+      "updatedAt": "2026-07-12T16:04:20Z"
     },
     "s010": {
       "status": "pending",
@@ -590,6 +588,15 @@
       "failures": 1,
       "durationSec": 10,
       "at": "2026-07-12T15:52:59Z"
+    },
+    {
+      "sliceId": "s009",
+      "runId": "29199340139",
+      "status": "success",
+      "tests": 115,
+      "failures": 0,
+      "durationSec": 10,
+      "at": "2026-07-12T16:04:20Z"
     }
   ],
   "gate": {
