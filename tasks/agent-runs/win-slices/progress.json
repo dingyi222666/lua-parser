@@ -2,7 +2,7 @@
   "version": 2,
   "strategy": "must-green-to-advance",
   "activeSlice": "s015",
-  "updatedAt": "2026-07-12T20:10:53Z",
+  "updatedAt": "2026-07-12T20:38:13Z",
   "summary": {
     "total": 18,
     "totalFiles": 367,
@@ -217,24 +217,17 @@
       "status": "failure",
       "label": "semantic.checker..semantic.interop",
       "fileCount": 45,
-      "lastRunId": "29206739850",
-      "lastSha": "1e7c8fddcdb0278e03e837036e8240327cdf0e10",
+      "lastRunId": "29208029511",
+      "lastSha": "318b329950674a2c109227532e34ef0f2053e797",
       "tests": 853,
-      "failures": 8,
+      "failures": 1,
       "errors": 0,
       "failedTests": [
-        "semantic.checker.ExpressionTypeEvaluatorBinaryOpsTddTest#concatChainStaysStringAndIntermediatesEvaluate[jvm]",
-        "semantic.checker.ReturnMultiValueCorpusTddTest#unannotatedFunctionDeclaredReturnIsUnknown[jvm]",
-        "semantic.interop.JavaAndroidInteropCampaignGapTddTest#bind_class_inner_map_entry_static_method_is_callable[jvm]",
-        "semantic.interop.JavaArrayIndexTypeTddTest#multi_dimension_new_array_still_exposes_length_with_index_component[jvm]",
-        "semantic.interop.JavaArrayIndexTypeTddTest#multi_dimension_new_array_index_still_reports_component_type[jvm]",
-        "semantic.interop.JavaChainedCallTddTest#string_array_parameter_rejects_mixed_or_incompatible_lua_table_literal[jvm]",
-        "semantic.interop.JavaChainedCallTddTest#raw_object_list_parameter_does_not_claim_precise_table_conversion[jvm]",
         "semantic.interop.JavaChainedCallTddTest#non_listener_interface_setter_callback_remains_unknown[jvm]"
       ],
-      "durationSec": 40,
-      "artifact": "results/s015-29206739850.json",
-      "updatedAt": "2026-07-12T20:10:53Z",
+      "durationSec": 35,
+      "artifact": "results/s015-29208029511.json",
+      "updatedAt": "2026-07-12T20:38:13Z",
       "note": "8 failures on run 29206739850; 853 tests"
     },
     "s016": {
@@ -635,6 +628,15 @@
       "failures": 8,
       "durationSec": 40,
       "at": "2026-07-12T20:10:53Z"
+    },
+    {
+      "sliceId": "s015",
+      "runId": "29208029511",
+      "status": "failure",
+      "tests": 853,
+      "failures": 1,
+      "durationSec": 35,
+      "at": "2026-07-12T20:38:13Z"
     }
   ]
 }

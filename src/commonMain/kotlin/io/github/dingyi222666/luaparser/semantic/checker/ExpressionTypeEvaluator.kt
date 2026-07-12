@@ -420,7 +420,8 @@ class ExpressionTypeEvaluator internal constructor(
      * ranking fails closed. Only considers signatures already present on the callable surface
      * (no invented overloads). Prefer soft-assignable arity matches; pure arity is a last
      * resort for primitive/Object shells only and must not invent precise returns for rejected
-     * Lua table → Java array/List/Map conversions (TASK-658).
+     * Lua table → Java array/List/Map conversions (TASK-658) or non-Listener/non-Callback
+     * interface setter callbacks (TASK-659).
      */
     private fun javaChainedCallReturnType(
         callableType: Type,
@@ -459,6 +460,11 @@ class ExpressionTypeEvaluator internal constructor(
             // tables → String[] and raw List<*> conversions that conservative assignability
             // already rejected.
             argumentTypes.any(::isLuaTableShapedArgument) -> return null
+            // Lua function / callable callbacks only recover when soft assignability accepts
+            // them (Listener/Callback interface policy via isJavaListenerAssignableFrom).
+            // Pure arity would invent void/nil for setters like setAction(Action) where Action
+            // is a plain interface (TASK-659).
+            argumentTypes.any(::isLuaCallableShapedArgument) -> return null
             else -> arityCompatible
         }
         // Prefer the first reflection-order signature whose return is known; when all agree,
@@ -483,6 +489,19 @@ class ExpressionTypeEvaluator internal constructor(
             is TableType, is ModuleType, is ArrayType -> true
             is UnionType -> type.types.any(::isLuaTableShapedArgument)
             is IntersectionType -> type.types.any(::isLuaTableShapedArgument)
+            else -> false
+        }
+    }
+
+    /**
+     * True for Lua function / callable argument shapes. Used to refuse pure-arity Java chain
+     * recovery when soft listener/callback assignability did not accept the argument.
+     */
+    private fun isLuaCallableShapedArgument(type: Type): Boolean {
+        return when (type) {
+            is CallableType -> true
+            is UnionType -> type.types.any(::isLuaCallableShapedArgument)
+            is IntersectionType -> type.types.any(::isLuaCallableShapedArgument)
             else -> false
         }
     }
