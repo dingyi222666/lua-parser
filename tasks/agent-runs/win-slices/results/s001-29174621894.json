@@ -1,0 +1,34 @@
+{
+  "sliceId": "s001",
+  "runId": "29174621894",
+  "sha": "02fd9561441845187a4b668f80c35389a109ec7f",
+  "status": "failure",
+  "exitCode": 1,
+  "durationSec": 25,
+  "tests": 246,
+  "failures": 1,
+  "errors": 0,
+  "skipped": 102,
+  "failedTests": [
+    "integration.AndroidLuaCorpusSemanticVerificationTest#host_dual_path_root_and_android_jar_joint_green_lock[jvm]"
+  ],
+  "testsPatterns": [
+    "integration.AndroidLuaCorpusSemanticVerificationTest",
+    "integration.AndroidLuaMixedLuajavaIntegrationTddTest",
+    "integration.LuaJavaBindClassHoverIntegrationTddTest",
+    "integration.RequireChainCompletionIntegrationTddTest",
+    "interop.jvm.AndroidJarActivityMemberSurfaceTddTest",
+    "interop.jvm.AndroidJarContextMemberSurfaceTddTest",
+    "interop.jvm.AndroidJarDefaultPathDiscoveryTddTest",
+    "interop.jvm.AndroidJarIntentMemberSurfaceTddTest",
+    "interop.jvm.AndroidJarPackageEnumerationTddTest",
+    "interop.jvm.AndroidJarReflectionTddTest",
+    "interop.jvm.JvmClassProviderArrayClassTddTest",
+    "interop.jvm.JvmClassProviderInnerClassTddTest",
+    "interop.jvm.JvmClassloaderConfigurationTddTest",
+    "interop.jvm.JvmClassloaderIsolationPolicyTddTest",
+    "interop.jvm.JvmClassloaderParentChildPolicyTddTest"
+  ],
+  "gate": "must-green-to-advance",
+  "finishedAt": "2026-07-12T01:03:13Z"
+}

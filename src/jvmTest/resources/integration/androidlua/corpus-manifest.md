@@ -31,14 +31,24 @@ Missing root fails with a message that lists tried paths and the override knobs 
 Joint green-lock asserts the present host clone, not a macOS-only absolute path on Windows CI.
 External tree remains read-only.
 
-Host android.jar dual-path (TASK-605 joint green-lock with root dual-path):
+Host android.jar dual-path (TASK-605/609 joint green-lock with root dual-path):
 
 1. explicit workspace metadata `jvm.androidJar` when set
-2. `ANDROID_HOME` / `ANDROID_SDK_ROOT` platforms/android-*/android.jar (highest API)
-3. well-known host SDK roots (macOS `~/Library/Android/sdk` preferred; Windows `G:/Android/Sdk` last-resort only)
-4. preferred WAVE path when present: `/Users/dingyi/Library/Android/sdk/platforms/android-35/android.jar`
+2. `ANDROID_HOME` / `ANDROID_SDK_ROOT` platforms/android-*/android.jar (highest API under each env root)
+3. well-known host SDK roots when present:
+   - macOS: `~/Library/Android/sdk` preferred
+   - Windows: `%LOCALAPPDATA%/Android/Sdk` then user-home `AppData/Local/Android/Sdk` layouts
+   - Linux: `~/Android/Sdk`
+   - never auto-select absolute inventing roots such as `G:/Android/Sdk`
+4. preferred WAVE messaging path when present on macOS hosts:
+   `/Users/dingyi/Library/Android/sdk/platforms/android-35/android.jar`
 
-Never hard-requires `G:/`. Downloads jars are metadata-only (never auto-selected).
+When dual-path discovery finds a real jar, joint green-lock hard-asserts it (non-G: platform jar).
+When the jar is truly absent after honest discovery (common Windows CI: ANDROID_HOME / LOCALAPPDATA
+SDK without platforms/android-*/android.jar), joint green-lock soft-skips with
+`JvmWorkspaceConfiguration.missingAndroidJarSoftSkipReason` — never invents presence, never
+sole-hard-requires missing AppData android-35 or G:/. Downloads jars are metadata-only
+(never auto-selected). Root dual-path + manifest integrity remain hard-asserted either way.
 
 Observed external repository:
 

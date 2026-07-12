@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "updatedAt": "2026-07-12T00:42:14Z",
+  "updatedAt": "2026-07-12T01:03:13Z",
   "strategy": "must-green-to-advance",
   "chunkSize": 15,
   "cycle": 1,
@@ -18,19 +18,17 @@
       "status": "failure",
       "label": "integration..interop.jvm",
       "fileCount": 15,
-      "lastRunId": "29173639103",
-      "lastSha": "1bf0f1f0270c06aaff6ba5965de773e541e43099",
+      "lastRunId": "29174621894",
+      "lastSha": "02fd9561441845187a4b668f80c35389a109ec7f",
       "tests": 246,
-      "failures": 3,
+      "failures": 1,
       "errors": 0,
       "failedTests": [
-        "integration.AndroidLuaCorpusSemanticVerificationTest#host_dual_path_root_and_android_jar_joint_green_lock[jvm]",
-        "interop.jvm.JvmClassloaderConfigurationTddTest#configured_android_jar_resolves_nested_framework_classes_by_binary_and_dotted_names[jvm]",
-        "interop.jvm.JvmClassloaderConfigurationTddTest#configured_android_jar_loads_framework_classes_from_expected_sdk_path[jvm]"
+        "integration.AndroidLuaCorpusSemanticVerificationTest#host_dual_path_root_and_android_jar_joint_green_lock[jvm]"
       ],
       "durationSec": 25,
-      "artifact": "results/s001-29173639103.json",
-      "updatedAt": "2026-07-12T00:42:14Z"
+      "artifact": "results/s001-29174621894.json",
+      "updatedAt": "2026-07-12T01:03:13Z"
     },
     "s002": {
       "status": "pending",
@@ -396,6 +394,15 @@
       "failures": 3,
       "durationSec": 25,
       "at": "2026-07-12T00:42:14Z"
+    },
+    {
+      "sliceId": "s001",
+      "runId": "29174621894",
+      "status": "failure",
+      "tests": 246,
+      "failures": 1,
+      "durationSec": 25,
+      "at": "2026-07-12T01:03:13Z"
     }
   ],
   "gate": {
