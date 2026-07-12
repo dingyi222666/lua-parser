@@ -394,10 +394,12 @@ internal class ReferenceQueries(
                         declaration.kind.namespace == DeclarationNamespace.VALUE &&
                         isVisibleAt(declaration, position)
                     ) {
-                        val existing = seenByName[declaration.name]
-                        if (existing == null || isPreferredVisibleDeclaration(declaration, existing.declaration)) {
-                            val visible = VisibleDeclaration(declaration, lexicalDepth)
-                            seenByName[declaration.name] = visible
+                        // Innermost-first lexical shadowing: once a name is bound in an
+                        // inner (or same) scope, outer scopes must not override it. Kind
+                        // ranks (e.g. PARAMETER > LOCAL) only apply when merging ambient
+                        // root builtins / imports after the parent-chain walk.
+                        if (declaration.name !in seenByName) {
+                            seenByName[declaration.name] = VisibleDeclaration(declaration, lexicalDepth)
                         }
                     }
                 }
@@ -1763,8 +1765,10 @@ internal class ReferenceQueries(
                         declaration.kind.namespace == DeclarationNamespace.VALUE &&
                         isVisibleAt(declaration, position)
                     ) {
-                        val existing = seenByName[declaration.name]
-                        if (existing == null || isPreferredVisibleDeclaration(declaration, existing)) {
+                        // Same policy as visibleValueDeclarations: first (innermost /
+                        // later-in-scope) VALUE binding wins; do not let outer PARAMETER
+                        // kind-rank beat a nested block LOCAL of the same name.
+                        if (declaration.name !in seenByName) {
                             seenByName[declaration.name] = declaration
                         }
                     }
