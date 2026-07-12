@@ -70,13 +70,16 @@ import parser.renderShape
  * - Strict mode currently absorbs a following `print(...)` as the binary right
  *   operand for every operator (CURRENTLY_ACCEPTS), while `local` after a line
  *   break / `end` terminator cannot be absorbed → strict REJECTS.
+ * - Multi-rhs second-slot incomplete binary (`a, b = x, value //\nprint(a)`) is the
+ *   same dual-path footgun and is also CURRENTLY_ACCEPTS; honest print-sibling accept
+ *   inventory is BINARY_OPS.size + 1 (not BINARY_OPS.size alone).
  * - Right-associative ops (`..`, `^`) share the same incomplete-RHS recovery path.
  * - Binary `~` (BIT_TILDE) is distinct from unary bitwise-not; after a left operand
  *   it is always binary XOR.
  *
  * AST quirk: AssignmentStatement/LocalStatement `.init` = names/LHS, `.variables` = RHS.
- * Test-only; no production LuaParser edits unless review re-scopes.
- * Keep [StrictParseExpectation] flags honest against current product.
+ * Inventory honesty under WINSLICE s010 (TASK-637): accept-flag hard-locks must match
+ * product dual-path behavior end-to-end; do not hide multi-rhs by weakening counts.
  * Host android.jar: SDK android-35 PRESENT; Downloads ABSENT; never G:/.
  */
 class LuaParserRecoveryBinaryIncompleteRhsOpsTddTest {
@@ -225,8 +228,30 @@ class LuaParserRecoveryBinaryIncompleteRhsOpsTddTest {
             it.strictParseExpectation == StrictParseExpectation.CURRENTLY_ACCEPTS
         }
         assertTrue(accepts.isNotEmpty())
-        // Every print-sibling operator case is CURRENTLY_ACCEPTS (print absorbed as RHS).
-        assertEquals(BINARY_OPS.size, accepts.count { it.name.contains("print sibling") })
+        // Honest CURRENTLY_ACCEPTS print-sibling inventory (strict absorbs next-line print as
+        // a valid call expression RHS; recovery still inserts ExpressionNodeSupport + sibling):
+        // - all 21 assignment operator-matrix print-sibling cases
+        // - multi-rhs second-slot incomplete `//` print-sibling sample
+        // Do not collapse this to BINARY_OPS.size alone — that silently drifts past the
+        // multi-rhs dual-path footgun (Windows s010: expected 21 but was 22).
+        val printSiblingAccepts = accepts.filter { it.name.contains("print sibling") }
+        assertEquals(
+            BINARY_OPS.size + 1,
+            printSiblingAccepts.size,
+            "print-sibling CURRENTLY_ACCEPTS must be 21 ops + multi-rhs sample; names=${printSiblingAccepts.map { it.name }}"
+        )
+        assertEquals(
+            BINARY_OPS.size,
+            printSiblingAccepts.count {
+                it.name.contains("assignment binary incomplete rhs op")
+            },
+            "operator-matrix assignment print-sibling accepts must cover every binary op"
+        )
+        assertEquals(
+            1,
+            printSiblingAccepts.count { it.name.contains("multi-rhs") },
+            "multi-rhs second-slot print-sibling must remain CURRENTLY_ACCEPTS"
+        )
         accepts.forEach(::assertStrictParseCurrentlyAccepts)
     }
 
@@ -536,6 +561,8 @@ class LuaParserRecoveryBinaryIncompleteRhsOpsTddTest {
     // Assignment: incomplete binary RHS with line-break + statement-start print.
     // Recovery: Binary(op,Id(value),ExpressionNodeSupport) + sibling CallStmt(print).
     // Strict: currently absorbs print as the binary right → CURRENTLY_ACCEPTS.
+    // These 21 cases are the operator-matrix half of the print-sibling accept inventory;
+    // multi-rhs second-slot incomplete `//` below is the additional +1 dual-path sample.
     private val assignmentPrintSiblingCases: List<RecoveryCase> = BINARY_OPS.map { op ->
         RecoveryCase(
             name = "assignment binary incomplete rhs op `${op.token}` leaves print sibling",

@@ -123,6 +123,7 @@ class LuaParser(
         reset()
         this.lexer = WrapperLuaLexer(lexer, supportAndroLuaKeywords = isAndroLua())
         val chunk = parseChunk()
+        // parseChunk always consumes EOF (strict or recovery drain); close after.
         this.lexer.close()
         return chunk
     }
@@ -632,8 +633,19 @@ class LuaParser(
         var chunkNode = ChunkNode()
         chunkNode.body = parseBlockNode(chunkNode)
         chunkNode = finishNode(chunkNode)
-        expectToken(LuaTokenTypes.EOF) {
-            "unexpected ${lexerText()} near '<eof>"
+        // Strict: hard-error on residual tokens. Recovery: record diagnostics and drain
+        // so incomplete blocks (e.g. statements after retstat that were not attached)
+        // never throw from parseWithDiagnostics / parseRecovering paths.
+        if (!consumeToken(LuaTokenTypes.EOF)) {
+            if (!errorRecovery) {
+                // Keep historical message shape (closing quote omitted after <eof>).
+                error("unexpected ${lexerText()} near '<eof>")
+            }
+            while (peek() != LuaTokenTypes.EOF) {
+                warning("unexpected ${lexerText()} near '<eof>")
+                advance()
+            }
+            consumeToken(LuaTokenTypes.EOF)
         }
         return chunkNode
     }
@@ -849,7 +861,19 @@ class LuaParser(
                 // Trailing end-of-line comments after `return` are trivia before
                 // `end`/`else`/`until`/EOF — not a following statement (json.lua style).
                 skipCommentTokens()
-                break
+                if (!errorRecovery) {
+                    break
+                }
+                // Recovery (TASK-641): keep residual following statement-starts as
+                // siblings so incomplete return values / table fields do not leave
+                // tokens for parseChunk EOF hard-errors
+                // (e.g. `return { a = }\nprint(a)` → CallStmt sibling + diagnostics).
+                // Block terminators still end the block so nested `end`/`else`/`until`
+                // remain owned by the outer construct.
+                val afterReturn = peek()
+                if (isBlockTerminator(afterReturn)) {
+                    break
+                }
             }
         }
 
@@ -1236,7 +1260,42 @@ class LuaParser(
         result.parent = parent
         result.identifier = parseStatementNameOrMissing(result)
 
+        // Recovery residual (TASK-639 / GotoLabel suite): when a real NAME is absorbed as
+        // the goto target, same-line leftover funcargs (e.g. `goto\nprint(1)` leaving `(1)`)
+        // must not re-enter the statement loop as a sibling CallStmt. Strict mode leaves
+        // those tokens so `goto\nprint(1)` still rejects. Empty/bad residual names keep
+        // following tokens reachable as siblings.
+        if (errorRecovery &&
+            result.identifier.name.isNotEmpty() &&
+            !result.identifier.bad
+        ) {
+            drainSameLineLeftoverFuncargsAfterGotoTarget()
+        }
+
         return result
+    }
+
+    /**
+     * Drain same-line call suffixes after an absorbed goto NAME so residual shapes stay
+     * `Goto(Id(name))` without a sibling CallStmt for leftover `(...)` / `{...}` / string.
+     */
+    private fun drainSameLineLeftoverFuncargsAfterGotoTarget() {
+        while (!hasLineBreakBeforeNextSignificantToken()) {
+            when (peek()) {
+                LuaTokenTypes.LPAREN,
+                LuaTokenTypes.LCURLY,
+                LuaTokenTypes.STRING,
+                LuaTokenTypes.LONG_STRING -> {
+                    // Throwaway base: parseCallExpression reparents its base; do not pass
+                    // the real goto Identifier or its parent link is stolen.
+                    val dummy = Identifier()
+                    val discarded = parseCallExpression(dummy, dummy)
+                    finishNodeSpanning(discarded, dummy.range.start)
+                }
+
+                else -> return
+            }
+        }
     }
 
 
@@ -2166,9 +2225,23 @@ class LuaParser(
         }
 
         if (isExpressionStart(nextAfterLeftParen)) {
-            // Call-arg recovery is stricter than assignment multi-RHS (TASK-551):
-            // trailing comma + next-line statement-start must not absorb print/setContentView.
-            result.arguments.addAll(parseCallArgumentList(result))
+            // Assignment/local RHS incomplete call (TASK-643 / LocalAssign REVIEW36B):
+            // `a = factory(seed\nprint(a)` must not absorb bare `seed` as the call arg.
+            // Leave that NAME unconsumed so the block recovers it as CallStmt(Call(Id(seed):))
+            // and insert ExpressionNodeSupport for the missing arg list. Top-level /
+            // statement call forms (`foo(a\nprint(a)`) keep the bare NAME arg (TASK-551).
+            if (errorRecovery &&
+                (parent is AssignmentStatement || parent is LocalStatement) &&
+                nextAfterLeftParen == LuaTokenTypes.NAME &&
+                shouldLeaveBareNameAsSiblingInsteadOfCallArg()
+            ) {
+                result.arguments.add(missingExpression(result))
+                result.bad = true
+            } else {
+                // Call-arg recovery is stricter than assignment multi-RHS (TASK-551):
+                // trailing comma + next-line statement-start must not absorb print/setContentView.
+                result.arguments.addAll(parseCallArgumentList(result))
+            }
         }
 
         if (!recoverToken(LuaTokenTypes.RPAREN) { "')' expected near ${lexerText()}" }) {
@@ -2178,6 +2251,74 @@ class LuaParser(
         }
 
         return result
+    }
+
+    /**
+     * After `(`, when the next significant token is a bare NAME that should not become a
+     * call argument under assignment/local RHS recovery (TASK-643): there is a line break
+     * after that NAME and the following token is a statement start (keyword or call-shaped
+     * NAME). Leaves the NAME unconsumed for the outer block.
+     *
+     * Walks the lexer temporarily and restores with [WrapperLuaLexer.back].
+     */
+    private fun shouldLeaveBareNameAsSiblingInsteadOfCallArg(): Boolean {
+        var backSize = 0
+        var significant = 0
+        var afterNameIsStatementStart = false
+
+        while (significant < 2) {
+            val token = lexer.advance()
+            backSize++
+            if (token == LuaTokenTypes.EOF) {
+                lexer.back(backSize)
+                return false
+            }
+            if (ignoreToken(token)) {
+                continue
+            }
+            significant++
+            if (significant == 1) {
+                if (token != LuaTokenTypes.NAME) {
+                    lexer.back(backSize)
+                    return false
+                }
+                // Line break must sit between the bare NAME and the following statement so
+                // well-formed same-line calls (and multi-line multi-arg forms) stay intact.
+                if (!lexer.hasLineBreakBeforeNextSignificantToken()) {
+                    lexer.back(backSize)
+                    return false
+                }
+            } else {
+                // significant == 2: first significant token after the bare NAME.
+                if (isKeywordStatementStart(token)) {
+                    afterNameIsStatementStart = true
+                } else if (token == LuaTokenTypes.NAME) {
+                    var nextAfterName = LuaTokenTypes.EOF
+                    while (true) {
+                        val n = lexer.advance()
+                        backSize++
+                        if (n == LuaTokenTypes.EOF) {
+                            break
+                        }
+                        if (ignoreToken(n)) {
+                            continue
+                        }
+                        nextAfterName = n
+                        break
+                    }
+                    afterNameIsStatementStart = equalsMore(
+                        nextAfterName,
+                        LuaTokenTypes.LPAREN,
+                        LuaTokenTypes.LCURLY,
+                        LuaTokenTypes.STRING,
+                        LuaTokenTypes.LONG_STRING
+                    )
+                }
+            }
+        }
+
+        lexer.back(backSize)
+        return afterNameIsStatementStart
     }
 
     /**

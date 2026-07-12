@@ -78,6 +78,8 @@ import parser.renderShape
  * - Honest strict flags: incomplete binary RHS / condition after line-break may still
  *   CURRENTLY_ACCEPT under recovery=false (next statement absorbed as expression RHS);
  *   recovery=true keeps later statements as siblings via ExpressionNodeSupport.
+ * - Compact AndroLua optional-do switch with matching end is legal under strict
+ *   (TASK-610 / TASK-636); only true gaps (missing end, incomplete conditions) REJECT.
  */
 class LuaParserRecoveryAndroluaSwitchWhenTddTest {
 
@@ -556,6 +558,9 @@ class LuaParserRecoveryAndroluaSwitchWhenTddTest {
     )
 
     // Missing both do/end and incomplete switch conditions.
+    // True recovery gaps (missing end, incomplete conditions) stay REJECTS under strict.
+    // Compact optional-do only (with matching end) is legal under AndroLua strict (TASK-610)
+    // and must be CURRENTLY_ACCEPTS so inventory stays honest (TASK-636 / WINSLICE s010).
     private val missingDoEndAndConditionCases = listOf(
         RecoveryCase(
             name = "missing do and end still keeps first case body",
@@ -594,7 +599,9 @@ class LuaParserRecoveryAndroluaSwitchWhenTddTest {
             badShapeFragments = listOf("ExpressionNodeSupport")
         ),
         RecoveryCase(
-            name = "nested switch missing inner do keeps outer end and trailing print",
+            // Outer switch is compact optional-do with matching end (legal under strict);
+            // recovery still emits historical `The <do> expected`. Inner switch is well-formed.
+            name = "nested compact outer switch missing do keeps outer end and trailing print",
             source = """
                 do
                   switch outer case 1 then
@@ -608,7 +615,8 @@ class LuaParserRecoveryAndroluaSwitchWhenTddTest {
                 "Switch(Id(inner):Case(Const(2):Block[CallStmt(Call(Id(two):))]))",
                 "CallStmt(Call(Id(print):Id(outer)))"
             ),
-            warningFragments = listOf("The <do> expected")
+            warningFragments = listOf("The <do> expected"),
+            strictParseExpectation = StrictParseExpectation.CURRENTLY_ACCEPTS
         )
     )
 
