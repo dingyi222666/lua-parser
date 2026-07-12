@@ -1,0 +1,9 @@
+task: TASK-645
+wave: WINSLICE-29203364688
+owner: worker-WINSLICE-29203364688-TASK-645
+finalStatus: review
+utc: 2026-07-12T18:20:20Z
+summary: Product hard-reject for out-of-scope recovery boundaries even with recovery enabled. Unmatched chunk-scope block terminators (end/else/elseif/until/case/default) now error instead of residual EOF drain; LBRACK/LAMBDA are always expression starts so version assertVersion rejects plain-Lua array/lambda under recovery rather than silently inserting ExpressionNodeSupport. Workspace-snippet recovery path unchanged. No CURRENTLY_ACCEPTS weakening. No Gradle (workers forbidden).
+filesChanged:
+- src/commonMain/kotlin/io/github/dingyi222666/luaparser/parser/LuaParser.kt
+blockedReason: null

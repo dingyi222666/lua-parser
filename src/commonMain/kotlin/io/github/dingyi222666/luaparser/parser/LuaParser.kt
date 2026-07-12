@@ -412,8 +412,13 @@ class LuaParser(
             LuaTokenTypes.BIT_TILDE,
             LuaTokenTypes.NOT -> true
 
+            // Always expression-start candidates so version gating in parseSubExp
+            // (assertVersion) hard-rejects plain Lua 5.3/5.4 even under recovery.
+            // Treating them as non-starts under recovery would insert ExpressionNodeSupport
+            // and silently drain residual `[...]` / lambda tokens (TASK-645 out-of-scope
+            // boundary: version gating is not parser recovery).
             LuaTokenTypes.LAMBDA,
-            LuaTokenTypes.LBRACK -> isAndroLua()
+            LuaTokenTypes.LBRACK -> true
 
             else -> false
         }
@@ -737,6 +742,14 @@ class LuaParser(
                     warning("unexpected ${lexerText()} near '<statement>'")
                     continue
                 }
+                // TASK-645: unmatched chunk-scope block terminators (end/else/elseif/
+                // until/case/default) are true out-of-scope recovery boundaries.
+                // Workspace-snippet recovery (above) is the only intentional absorption
+                // path; normal parse/parseWithDiagnostics must hard-reject even when
+                // errorRecovery is on so residual drain cannot silently accept them.
+                if (isOutOfScopeTopLevelBlockTerminator(parent, nextToken)) {
+                    error("unexpected ${lexerText(true)} near '<eof>")
+                }
                 break
             }
 
@@ -924,9 +937,13 @@ class LuaParser(
                 // tokens for parseChunk EOF hard-errors
                 // (e.g. `return { a = }\nprint(a)` → CallStmt sibling + diagnostics).
                 // Block terminators still end the block so nested `end`/`else`/`until`
-                // remain owned by the outer construct.
+                // remain owned by the outer construct. At chunk scope, unmatched
+                // terminators are out-of-scope recovery boundaries (TASK-645).
                 val afterReturn = peek()
                 if (isBlockTerminator(afterReturn)) {
+                    if (isOutOfScopeTopLevelBlockTerminator(parent, afterReturn)) {
+                        error("unexpected ${lexerText(true)} near '<eof>")
+                    }
                     break
                 }
             }
@@ -945,6 +962,19 @@ class LuaParser(
                 errorRecovery &&
                 parent is ChunkNode &&
                 token != LuaTokenTypes.EOF
+    }
+
+    /**
+     * Chunk-scope residual block terminators that must never be recovered as source
+     * statements. Nested blocks still break on these tokens so the owning construct
+     * can consume a matching end/else/until/case; only unmatched terminators at the
+     * chunk root reach this path (TASK-645).
+     */
+    private fun isOutOfScopeTopLevelBlockTerminator(
+        parent: BaseASTNode?,
+        token: LuaTokenTypes,
+    ): Boolean {
+        return parent is ChunkNode && token != LuaTokenTypes.EOF && isBlockTerminator(token)
     }
 
     //    switch exp do {case explist [then] block} [default block] end

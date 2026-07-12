@@ -1,0 +1,34 @@
+{
+  "sliceId": "s011",
+  "runId": "29203364688",
+  "sha": "044dcc071b892a821e97b29ef105124594e0c345",
+  "status": "failure",
+  "exitCode": 1,
+  "durationSec": 10,
+  "tests": 131,
+  "failures": 1,
+  "errors": 0,
+  "skipped": 0,
+  "failedTests": [
+    "parser.recovery.LuaParserRecoveryTddTest#rejectsOutOfScopeRecoveryBoundariesEvenWithRecoveryEnabled[jvm]"
+  ],
+  "testsPatterns": [
+    "parser.recovery.LuaParserRecoveryMissingEndFunctionTddTest",
+    "parser.recovery.LuaParserRecoveryMultiRhsLineBreakTddTest",
+    "parser.recovery.LuaParserRecoveryNumericForEndTddTest",
+    "parser.recovery.LuaParserRecoveryNumericForStepTddTest",
+    "parser.recovery.LuaParserRecoveryNumericForTddTest",
+    "parser.recovery.LuaParserRecoveryRepeatUntilTddTest",
+    "parser.recovery.LuaParserRecoveryStringConcatIncompleteTddTest",
+    "parser.recovery.LuaParserRecoveryTableConstructorTddTest",
+    "parser.recovery.LuaParserRecoveryTableFieldMissingEqTddTest",
+    "parser.recovery.LuaParserRecoveryTddTest",
+    "parser.recovery.LuaParserRecoveryWhileDoTddTest",
+    "semantic.LegacySemanticAnalyzerCompatibilityTest",
+    "semantic.SemanticPipelineIntegrationTest",
+    "semantic.SemanticPipelinePublicFacadeTddTest",
+    "semantic.SemanticPipelineTest"
+  ],
+  "gate": "must-green-to-advance",
+  "finishedAt": "2026-07-12T18:12:34Z"
+}

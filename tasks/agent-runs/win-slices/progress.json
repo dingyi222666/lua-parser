@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "updatedAt": "2026-07-12T17:57:25Z",
+  "updatedAt": "2026-07-12T18:12:34Z",
   "strategy": "must-green-to-advance",
   "chunkSize": 15,
   "cycle": 1,
@@ -162,18 +162,17 @@
       "status": "failure",
       "label": "parser.recovery..semantic",
       "fileCount": 15,
-      "lastRunId": "29202899347",
-      "lastSha": "747de7f7db8529d31e8b17cbf7b98f79dea6bace",
+      "lastRunId": "29203364688",
+      "lastSha": "044dcc071b892a821e97b29ef105124594e0c345",
       "tests": 131,
-      "failures": 2,
+      "failures": 1,
       "errors": 0,
       "failedTests": [
-        "parser.recovery.LuaParserRecoveryTddTest#rejectsOutOfScopeRecoveryBoundariesEvenWithRecoveryEnabled[jvm]",
-        "parser.recovery.LuaParserRecoveryTddTest#recoversFunctionTableLiteralAndCurrentlySupportedIncompleteCallForms[jvm]"
+        "parser.recovery.LuaParserRecoveryTddTest#rejectsOutOfScopeRecoveryBoundariesEvenWithRecoveryEnabled[jvm]"
       ],
       "durationSec": 10,
-      "artifact": "results/s011-29202899347.json",
-      "updatedAt": "2026-07-12T17:57:25Z"
+      "artifact": "results/s011-29203364688.json",
+      "updatedAt": "2026-07-12T18:12:34Z"
     },
     "s012": {
       "status": "pending",
@@ -654,6 +653,15 @@
       "failures": 2,
       "durationSec": 10,
       "at": "2026-07-12T17:57:25Z"
+    },
+    {
+      "sliceId": "s011",
+      "runId": "29203364688",
+      "status": "failure",
+      "tests": 131,
+      "failures": 1,
+      "durationSec": 10,
+      "at": "2026-07-12T18:12:34Z"
     }
   ],
   "gate": {

@@ -1,0 +1,20 @@
+{
+  "runId": "29203364688",
+  "sliceId": "s011",
+  "status": "failure",
+  "tests": 131,
+  "failures": 1,
+  "failedTests": [
+    "parser.recovery.LuaParserRecoveryTddTest#rejectsOutOfScopeRecoveryBoundariesEvenWithRecoveryEnabled[jvm]"
+  ],
+  "progressSummary": {
+    "total": 25,
+    "totalFiles": 367,
+    "pending": 14,
+    "success": 10,
+    "failure": 1,
+    "running": 0,
+    "filesDone": 150
+  },
+  "notes": "Merged CI progress for run 29203364688; s011 still failure with 1 test(s); gate must-green-to-advance \u2192 re-run s011. failures.txt written from junit."
+}

@@ -1,6 +1,6 @@
 id: TASK-645
 title: Windows recovery out-of-scope boundary strict-reject product fix
-status: ready
+status: review
 priority: p0
 owner: unassigned
 depends_on: []
@@ -8,7 +8,7 @@ scope:
   - src/commonMain/kotlin/io/github/dingyi222666/luaparser/parser/LuaParser.kt
   - src/jvmTest/kotlin/parser/recovery/LuaParserRecoveryTddTest.kt
 acceptance_criteria:
-  - Clear Windows slice s011 failure (evidence run 29202899347 / WINSLICE-29202899347; prior red 29202408385):
+  - Clear Windows slice s011 failure (evidence run 29203364688 / WINSLICE-29203364688; prior red 29202899347 / 29202408385):
     - parser.recovery.LuaParserRecoveryTddTest#rejectsOutOfScopeRecoveryBoundariesEvenWithRecoveryEnabled[jvm]
   - Observed Windows AssertionError: Expected an exception to be thrown, but was completed successfully
     (out-of-scope recovery boundary cases must still throw / hard-fail even with recovery enabled).
@@ -19,6 +19,7 @@ acceptance_criteria:
 required_tests:
   - Deferred to TASK-043 / windows-jvmtest slice s011: `./gradlew.bat jvmTest --tests parser.recovery.LuaParserRecoveryTddTest.rejectsOutOfScopeRecoveryBoundariesEvenWithRecoveryEnabled`
 notes:
+  - Windows slice s011 run 29203364688: still red (1 failure total on s011; only this method remains).
   - Windows slice s011 run 29202899347: still red (2 failures total on s011; down from 8 on 29202408385).
   - Windows slice s011 run 29202408385: RecoveryTdd out-of-scope boundary red (origin).
   - Adjacent inventory honesty (TASK-646) may share inventory constants; coordinate without stealing exclusive locks mid-wave.
@@ -32,3 +33,6 @@ progress:
   - 2026-07-13T materialize WINSLICE-29202408385: created ready product fix for rejectsOutOfScopeRecoveryBoundariesEvenWithRecoveryEnabled.
   - 2026-07-12T17:46:59Z worker-WINSLICE-29202408385-TASK-645: STOP blocked — locks/files/src__commonMain__kotlin__io__github__dingyi222666__luaparser__parser__LuaParser.kt.lock held by live other task TASK-649 (owner worker-WINSLICE-29202408385-TASK-649). Left status=ready; no product edit.
   - 2026-07-13T materialize WINSLICE-29202899347: reuse ready product fix — same classname#method still red on s011 (failureCount 2).
+  - 2026-07-13T materialize WINSLICE-29203364688: reuse ready product fix — same classname#method still red on s011 (failureCount 1; sole remaining red after other RecoveryTdd methods cleared).
+  - 2026-07-12T18:16:15Z worker-WINSLICE-29203364688-TASK-645: claimed locks; implementing product hard-reject for out-of-scope recovery boundaries while keeping in-scope recovery.
+  - 2026-07-12T18:20:00Z worker-WINSLICE-29203364688-TASK-645: product hard-reject for out-of-scope recovery boundaries: (1) unmatched chunk-scope block terminators (end/else/elseif/until/case/default) throw even when errorRecovery=true unless parseWorkspaceSnippet; (2) LBRACK/LAMBDA always expression starts so assertVersion hard-rejects plain Lua array/lambda under recovery instead of ExpressionNodeSupport drain. Prefer product reject over CURRENTLY_ACCEPTS. status=review; locks released.
