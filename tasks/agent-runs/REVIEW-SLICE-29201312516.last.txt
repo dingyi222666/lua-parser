@@ -1,0 +1,25 @@
+{
+  "runId": "29201312516",
+  "sliceId": "s010",
+  "status": "failure",
+  "tests": 166,
+  "failures": 5,
+  "failedTests": [
+    "parser.recovery.LuaParserRecoveryDiagnosticsExpandTddTest#expandsIfMissingThenDiagnosticGoldenWithExactRange[jvm]",
+    "parser.recovery.LuaParserRecoveryDiagnosticsExpandTddTest#expandsDiagnosticsAreDeterministicAndResetAcrossParses[jvm]",
+    "parser.recovery.LuaParserRecoveryDiagnosticsExpandTddTest#expandsSparseGoldenInventoryCoversRequiredRecoveryFamilies[jvm]",
+    "parser.recovery.LuaParserRecoveryDiagnosticsTddTest#parserRecoveryCollectsStructuredDiagnosticsWithoutStdoutNoise[jvm]",
+    "parser.recovery.LuaParserRecoveryLayoutTableTddTest#documentsLayoutTableRecoveryInventorySizeAndCoverage[jvm]"
+  ],
+  "progressSummary": {
+    "total": 25,
+    "totalFiles": 367,
+    "pending": 15,
+    "success": 9,
+    "failure": 1,
+    "running": 0,
+    "filesDone": 135,
+    "activeSlice": "s010"
+  },
+  "notes": "Merged CI progress.json (updatedAt 2026-07-12T17:08:10Z) over local (2026-07-12T16:09:18Z). Copied results/s010-29201312516.json. s010 still failure: 5/166 (down from 13/166 on 29199561336). Gate must-green-to-advance: re-run s010. Wrote failures.txt from 15 TEST-*.xml."
+}

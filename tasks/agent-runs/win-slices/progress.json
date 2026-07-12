@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "updatedAt": "2026-07-12T16:09:18Z",
+  "updatedAt": "2026-07-12T17:08:10Z",
   "strategy": "must-green-to-advance",
   "chunkSize": 15,
   "cycle": 1,
@@ -148,29 +148,21 @@
       "status": "failure",
       "label": "parser.recovery",
       "fileCount": 15,
-      "lastRunId": "29199561336",
-      "lastSha": "96ba4ac5b169ac5c3161df2cbc7a440bec5d133f",
+      "lastRunId": "29201312516",
+      "lastSha": "5277df36575d6d038e5a660b3de10841b716072d",
       "tests": 166,
-      "failures": 13,
+      "failures": 5,
       "errors": 0,
       "failedTests": [
-        "parser.recovery.LuaParserRecoveryAndroluaSwitchWhenTddTest#recoversMissingDoAndEndAndIncompleteSwitchConditions[jvm]",
-        "parser.recovery.LuaParserRecoveryBinaryIncompleteRhsOpsTddTest#strictParseRejectsTrueGapsWhileRecordingHonestAcceptFlags[jvm]",
         "parser.recovery.LuaParserRecoveryDiagnosticsExpandTddTest#expandsIfMissingThenDiagnosticGoldenWithExactRange[jvm]",
         "parser.recovery.LuaParserRecoveryDiagnosticsExpandTddTest#expandsDiagnosticsAreDeterministicAndResetAcrossParses[jvm]",
         "parser.recovery.LuaParserRecoveryDiagnosticsExpandTddTest#expandsSparseGoldenInventoryCoversRequiredRecoveryFamilies[jvm]",
         "parser.recovery.LuaParserRecoveryDiagnosticsTddTest#parserRecoveryCollectsStructuredDiagnosticsWithoutStdoutNoise[jvm]",
-        "parser.recovery.LuaParserRecoveryGotoLabelTddTest#residualGotoAndLabelNodesExposeEmptyOrNamedIdentifiers[jvm]",
-        "parser.recovery.LuaParserRecoveryIfElseifChainTddTest#recoversDuplicateElseWithoutInfiniteClauseLoopAndKeepsFollowingStatement[jvm]",
-        "parser.recovery.LuaParserRecoveryIncompleteTableFieldTddTest#recoversNestedIncompleteFieldsAndStatementContexts[jvm]",
-        "parser.recovery.LuaParserRecoveryIncompleteTableFieldTddTest#strictParseRejectsTrueGapsWhileRecordingHonestAcceptFlags[jvm]",
-        "parser.recovery.LuaParserRecoveryIncompleteTableFieldTddTest#recoveryDiagnosticsArePresentDeterministicAndDoNotThrow[jvm]",
-        "parser.recovery.LuaParserRecoveryLayoutTableTddTest#documentsLayoutTableRecoveryInventorySizeAndCoverage[jvm]",
-        "parser.recovery.LuaParserRecoveryLocalAssignTddTest#recoversIncompleteRhsExpressionsAndKeepsLaterStatements[jvm]"
+        "parser.recovery.LuaParserRecoveryLayoutTableTddTest#documentsLayoutTableRecoveryInventorySizeAndCoverage[jvm]"
       ],
       "durationSec": 10,
-      "artifact": "results/s010-29199561336.json",
-      "updatedAt": "2026-07-12T16:09:18Z"
+      "artifact": "results/s010-29201312516.json",
+      "updatedAt": "2026-07-12T17:08:10Z"
     },
     "s011": {
       "status": "pending",
@@ -620,6 +612,15 @@
       "failures": 13,
       "durationSec": 10,
       "at": "2026-07-12T16:09:18Z"
+    },
+    {
+      "sliceId": "s010",
+      "runId": "29201312516",
+      "status": "failure",
+      "tests": 166,
+      "failures": 5,
+      "durationSec": 10,
+      "at": "2026-07-12T17:08:10Z"
     }
   ],
   "gate": {

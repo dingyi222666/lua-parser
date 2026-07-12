@@ -477,9 +477,10 @@ class LuaParser(
      * (leave the token unconsumed for the outer block).
      *
      * Keyword/control statement starts always recover. A bare NAME recovers only
-     * when it begins a call-shaped statement (`name(`, `name{`, `name"..."`) —
-     * so well-formed multi-line multi-RHS names (`a, b =\n x,\n y`) parse as
-     * expressions while incomplete `a =\nprint(a)` still keeps print as sibling.
+     * when it begins a call-shaped statement (name(, name{, name string) so
+     * well-formed multi-line multi-RHS names and table array fields
+     * ({ NL LinearLayout, ...}) parse as expressions while incomplete
+     * a = NL print(a) still keeps print as sibling.
      */
     private fun shouldRecoverStatementStartAsMissingExpression(token: LuaTokenTypes): Boolean {
         if (isKeywordStatementStart(token)) {
@@ -1982,6 +1983,12 @@ class LuaParser(
     }
 
     //  field ::= ‘[’ exp ‘]’ ‘=’ exp | Name ‘=’ exp | exp
+    //
+    // TASK-642 layout-table product lock:
+    // Bare Name after `{` + newline is a valid array-field expression start
+    // (LinearLayout / TextView / ...). parseExpressionOrMissing only inserts
+    // ExpressionNodeSupport for keyword statement starts or call-shaped Name
+    // after a line break; bare Name remains TableKey(Const(n)=Id(...)).
     private fun parseField(parent: BaseASTNode, index: Int): ParsedTableField? {
         skipCommentTokens()
         when (peek()) {

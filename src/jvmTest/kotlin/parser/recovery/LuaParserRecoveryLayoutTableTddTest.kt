@@ -62,16 +62,19 @@ import parser.renderShape
  * - later statements remaining reachable after recovery
  *
  * Goldens track current product behaviour (aligned with
- * [LuaParser.parseTableConstructorExpression] / field-list recovery, WAVE36D
- * product probe after REVIEW37 reject):
+ * [LuaParser.parseTableConstructorExpression] / field-list recovery and
+ * [parseExpressionOrMissing] statement-start-after-line-break policy):
  * - unclosed empty `{` + following expression-start (`print` / `loadlayout`) is
  *   absorbed as a table array field rather than a sibling CallStmt;
- * - **newline-after-`{` footgun**: when the first array field Name starts on the
- *   next line after `{`, [parseExpressionOrMissing] treats that Name as a
- *   statement-start after a line break and inserts `ExpressionNodeSupport`,
- *   leaving residual Names as sibling Assigns. Layout fixtures that intend to
- *   keep LinearLayout/TextView as table fields therefore open on the same line
- *   as the first field (`{ LinearLayout, ...`);
+ * - **newline-after-`{` bare Name is NOT a footgun**: a bare Name after a line
+ *   break is a valid table array-field expression start, so
+ *   `{` + NL + `LinearLayout, orientation = ...` keeps LinearLayout as
+ *   `TableKey(Const(1)=Id(LinearLayout))` (AndroLua loadlayout editing).
+ *   [shouldRecoverStatementStartAsMissingExpression] only inserts
+ *   `ExpressionNodeSupport` for keyword statement starts (`local` / `return` /
+ *   ...) or call-shaped Name (`name(` / `name{` / `name"..."`). Layout fixtures
+ *   that need the missing-field placeholder therefore use a following `local`
+ *   (not a bare widget class Name);
  * - completed named/array fields leave following print/local as siblings when
  *   the next significant token is not a fieldsep-bound expression start that
  *   still belongs to the open constructor;
@@ -89,7 +92,9 @@ import parser.renderShape
  *   into the function body; fixtures that need sibling print after a listener
  *   keep a well-formed `end` and only omit the outer `}`.
  *
- * Test-only until review expands production scope. No production edits.
+ * Inventory probe in [documentsLayoutTableRecoveryInventorySizeAndCoverage]
+ * locks the bare-Name-after-newline product shape so inventory cannot drift
+ * back to the outdated ExpressionNodeSupport-first-field expectation.
  */
 class LuaParserRecoveryLayoutTableTddTest {
 
@@ -147,24 +152,45 @@ class LuaParserRecoveryLayoutTableTddTest {
             strictAccepts
         )
 
-        // Explicit product footgun probe: newline after `{` before first array Name.
-        val footgun = parseRecoveringWithWarnings(
+        // Explicit product probe: newline after `{` before first bare array Name.
+        // Bare Name is a valid expression start (not call-shaped / keyword statement),
+        // so product keeps LinearLayout as the first table field for AndroLua layouts.
+        // Contrast with unclosed empty layout + following `local`, which does insert
+        // ExpressionNodeSupport (see missingOuterBraceCases).
+        val bareNameAfterNewline = parseRecoveringWithWarnings(
             LuaVersion.ANDROLUA_5_3,
             "local layout = {\nLinearLayout,\norientation = \"vertical\"\nprint(layout)"
         )
-        val footgunShape = renderShape(footgun.chunk)
+        val bareNameShape = renderShape(bareNameAfterNewline.chunk)
         assertTrue(
-            footgunShape.contains("Table(TableKey(Const(1)=ExpressionNodeSupport))"),
-            "newline-after-{ footgun should insert ExpressionNodeSupport first field:\n$footgunShape"
+            bareNameShape.contains(
+                "Local(Id(layout)=Table(TableKey(Const(1)=Id(LinearLayout)),TableKeyString(Id(orientation)=Const(\"vertical\"))))"
+            ),
+            "newline-after-{ bare Name should keep LinearLayout/orientation as table fields:\n$bareNameShape"
         )
         assertTrue(
-            footgunShape.contains("Assign(Id(LinearLayout),Id(orientation)=Const(\"vertical\"))") ||
-                footgunShape.contains("Assign(Id(LinearLayout)"),
-            "newline-after-{ footgun should leave residual LinearLayout as Assign:\n$footgunShape"
+            !bareNameShape.contains("Table(TableKey(Const(1)=ExpressionNodeSupport))"),
+            "newline-after-{ bare Name must not invent ExpressionNodeSupport first field:\n$bareNameShape"
         )
         assertTrue(
-            footgunShape.contains("CallStmt(Call(Id(print):Id(layout)))"),
-            "newline-after-{ footgun should keep following print:\n$footgunShape"
+            bareNameShape.contains("CallStmt(Call(Id(print):Id(layout)))"),
+            "newline-after-{ bare Name should keep following print as sibling:\n$bareNameShape"
+        )
+
+        // Honest keyword footgun: statement-start after `{` + NL still inserts
+        // ExpressionNodeSupport and leaves the later local as a sibling.
+        val keywordFootgun = parseRecoveringWithWarnings(
+            LuaVersion.ANDROLUA_5_3,
+            "local layout = {\nlocal after = 1"
+        )
+        val keywordShape = renderShape(keywordFootgun.chunk)
+        assertTrue(
+            keywordShape.contains("Table(TableKey(Const(1)=ExpressionNodeSupport))"),
+            "newline-after-{ keyword statement-start should insert ExpressionNodeSupport:\n$keywordShape"
+        )
+        assertTrue(
+            keywordShape.contains("Local(Id(after)=Const(1))"),
+            "newline-after-{ keyword statement-start should keep following local sibling:\n$keywordShape"
         )
     }
 
@@ -345,8 +371,9 @@ class LuaParserRecoveryLayoutTableTddTest {
 
     // -------------------------------------------------------------------------
     // Missing outer `}` on layout tables (LinearLayout root + named props).
-    // First layout field is written on the same line as `{` so product keeps
-    // LinearLayout as TableKey array field (see newline-after-`{` footgun).
+    // Same-line `{ LinearLayout, ...` and newline-after-`{` bare Name both keep
+    // the widget class as TableKey array field; only keyword/call-shaped
+    // statement starts after `{` + NL insert ExpressionNodeSupport.
     // -------------------------------------------------------------------------
 
     private val missingOuterBraceCases = listOf(

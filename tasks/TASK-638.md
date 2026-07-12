@@ -9,7 +9,7 @@ scope:
   - src/jvmTest/kotlin/parser/recovery/LuaParserRecoveryDiagnosticsExpandTddTest.kt
   - src/jvmTest/kotlin/parser/recovery/LuaParserRecoveryDiagnosticsTddTest.kt
 acceptance_criteria:
-  - Clear Windows slice s010 failures (evidence run 29199561336 / WINSLICE-29199561336):
+  - Clear Windows slice s010 failures (evidence run 29201312516 / WINSLICE-29201312516; still red after 29199561336):
     - parser.recovery.LuaParserRecoveryDiagnosticsExpandTddTest#expandsIfMissingThenDiagnosticGoldenWithExactRange[jvm]
     - parser.recovery.LuaParserRecoveryDiagnosticsExpandTddTest#expandsDiagnosticsAreDeterministicAndResetAcrossParses[jvm]
     - parser.recovery.LuaParserRecoveryDiagnosticsExpandTddTest#expandsSparseGoldenInventoryCoversRequiredRecoveryFamilies[jvm]
@@ -21,7 +21,8 @@ acceptance_criteria:
 required_tests:
   - Deferred to TASK-043 / windows-jvmtest slice s010: `./gradlew.bat jvmTest --tests parser.recovery.LuaParserRecoveryDiagnosticsExpandTddTest --tests parser.recovery.LuaParserRecoveryDiagnosticsTddTest.parserRecoveryCollectsStructuredDiagnosticsWithoutStdoutNoise`
 notes:
-  - Windows slice s010 run 29199561336: 4 reds clustered on missing-then structured diagnostics (Expand ×3 + DiagnosticsTdd ×1).
+  - Windows slice s010 run 29201312516: still 4 reds clustered on missing-then structured diagnostics (Expand ×3 + DiagnosticsTdd ×1); re-materialize reuses this ready task.
+  - Prior evidence run 29199561336 same cluster; worker was blocked on LuaParser.kt exclusive lock.
   - Adjacent TASK-580 (local missing initializer, review) is distinct; this task owns if-missing-then family under WINSLICE evidence.
   - Workers no Gradle. One task one agent. No docs filler.
 related_locks:
@@ -30,5 +31,7 @@ related_locks:
   - locks/files/src__commonMain__kotlin__io__github__dingyi222666__luaparser__parser__LuaParser.kt.lock
 related_commits: []
 progress:
+  - 2026-07-12T17:15:44Z worker-WINSLICE-29201312516-TASK-638: blocked: LuaParser.kt locked by live TASK-642 (owner worker-WINSLICE-29201312516-TASK-642, acquired 2026-07-12T17:15:09Z); leave ready, no product edit. Root cause confirmed: parseIfCause/parseElseIfCause skip missing-then warning under isAndroLua() optional-then path, so ANDROLUA_5_3 goldens for `if ready print('x') end` emit empty diagnostics.
+  - 2026-07-13T materialize WINSLICE-29201312516: reuse ready product task for 4 still-red missing-then structured diagnostic failures (s010 5/166).
   - 2026-07-13T materialize WINSLICE-29199561336: created ready product fix for 4 missing-then structured diagnostic reds.
   - 2026-07-12T16:17:06Z worker-WINSLICE-29199561336-TASK-638: blocked: LuaParser.kt locked by live TASK-637 (owner worker-WINSLICE-29199561336-TASK-637); leave ready, no product edit.
