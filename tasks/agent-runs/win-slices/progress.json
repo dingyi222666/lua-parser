@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "updatedAt": "2026-07-12T19:06:26Z",
+  "updatedAt": "2026-07-12T19:16:57Z",
   "strategy": "must-green-to-advance",
   "chunkSize": 15,
   "cycle": 1,
@@ -190,18 +190,22 @@
       "status": "failure",
       "label": "semantic.api..semantic.binder",
       "fileCount": 15,
-      "lastRunId": "29205133158",
-      "lastSha": "6c808721f0d83f002d06807e446880508f95635c",
+      "lastRunId": "29205436079",
+      "lastSha": "52eee0db5bec21ef716f800f0c8685448d679185",
       "tests": 198,
-      "failures": 2,
+      "failures": 6,
       "errors": 0,
       "failedTests": [
-        "semantic.binder.BinderMultiAssignRangeTddTest#unbalancedAssignmentMultiLhs_stillDoesNotDeclare[jvm]",
-        "semantic.binder.BinderMultiAssignRangeTddTest#multiAssignWithoutLocal_doesNotCreateDeclarationsForLhsNames[jvm]"
+        "semantic.binder.BinderGlobalAssignmentDeclarationTddTest#multiLhsBareAssignment_createsGlobalPerBareIdentifier[jvm]",
+        "semantic.binder.BinderGlobalAssignmentDeclarationTddTest#unbalancedMultiLhsBareAssignment_stillCreatesGlobalsPerName[jvm]",
+        "semantic.binder.BinderGlobalAssignmentRangeTddTest#multiLineMultiLhsBareAssignment_eachNameDisjointCommaNotARange[jvm]",
+        "semantic.binder.BinderGlobalAssignmentRangeTddTest#unbalancedMultiLhsBareAssignment_eachNameHasDeclarationRange[jvm]",
+        "semantic.binder.BinderGlobalAssignmentRangeTddTest#multiLhsBareAssignment_eachNameHasDisjointIdentifierRange[jvm]",
+        "semantic.binder.BinderGlobalAssignmentRangeTddTest#multiLhsBareAssignment_usesDisjointIdentifierRanges[jvm]"
       ],
       "durationSec": 10,
-      "artifact": "results/s013-29205133158.json",
-      "updatedAt": "2026-07-12T19:06:26Z"
+      "artifact": "results/s013-29205436079.json",
+      "updatedAt": "2026-07-12T19:16:57Z"
     },
     "s014": {
       "status": "pending",
@@ -699,6 +703,15 @@
       "failures": 2,
       "durationSec": 10,
       "at": "2026-07-12T19:06:26Z"
+    },
+    {
+      "sliceId": "s013",
+      "runId": "29205436079",
+      "status": "failure",
+      "tests": 198,
+      "failures": 6,
+      "durationSec": 10,
+      "at": "2026-07-12T19:16:57Z"
     }
   ],
   "gate": {

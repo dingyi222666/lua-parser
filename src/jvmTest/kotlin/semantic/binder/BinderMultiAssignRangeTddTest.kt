@@ -20,7 +20,7 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
- * Binder multi-assign / multi-local declaration-range corpus (TASK-195).
+ * Binder multi-assign / multi-local declaration-range corpus (TASK-195 / TASK-654).
  *
  * Acceptance:
  * - Local multi-assign declaration ranges are queryable per name (distinct
@@ -28,6 +28,8 @@ import kotlin.test.assertTrue
  * - Unbalanced RHS/LHS remains conservative: every LHS name still binds, no
  *   phantom names from extra RHS, no shared/statement-wide ranges, multi-local
  *   type syntax stays unresolved.
+ * - Bare free-name multi-LHS assignment invents per-name AST GLOBAL (identifier
+ *   ranges only; commas invent none) — aligned with BinderGlobalAssignment*.
  *
  * Test-only; production defects surface as assertion failures (review-owned
  * verification via `jvmTest --tests semantic.binder.BinderMultiAssignRangeTddTest`).
@@ -254,10 +256,12 @@ class BinderMultiAssignRangeTddTest {
         assertEquals(right, result.positionQueries.getDeclarationAt(positionOf(source, "emptyRight")))
     }
 
-    // --- multi-assign (assignment statement) is not a declaration source ------
+    // --- multi-assign (assignment statement) invents per-name GLOBAL on free names -
 
     @Test
-    fun multiAssignWithoutLocal_doesNotCreateDeclarationsForLhsNames() {
+    fun multiAssignWithoutLocal_createsGlobalDeclarationsForLhsNames() {
+        // Product binder (TASK-558 / TASK-654): bare free-name multi-LHS first-write
+        // invents AST GLOBAL per name with identifier-only ranges.
         val source = """
             a, b = 1, 2
             x, y, z = f()
@@ -265,25 +269,41 @@ class BinderMultiAssignRangeTddTest {
         val result = bind(source)
 
         listOf("a", "b", "x", "y", "z").forEach { name ->
-            assertTrue(
-                result.declarationIndex.declarations.none {
-                    it.name == name && it.origin != DeclarationOrigin.BUILTIN
-                },
-                "Assignment multi-LHS must not invent declaration for '$name'"
-            )
-            assertNull(result.positionQueries.getDeclarationAt(positionOf(source, name)))
+            val matches = result.declarationIndex.declarations.filter {
+                it.name == name &&
+                    it.kind == DeclarationKind.GLOBAL &&
+                    it.origin != DeclarationOrigin.BUILTIN
+            }
+            assertEquals(1, matches.size, "Expected one GLOBAL declaration for multi-LHS '$name'")
+            val decl = matches.single()
+            assertEquals(DeclarationKind.GLOBAL, decl.kind)
+            assertEquals(name, decl.name)
+            val range = assertNotNull(decl.range, "GLOBAL multi-LHS '$name' must expose a range")
+            val anchor = assertIs<Identifier>(assertNotNull(decl.anchorNode))
+            assertEquals(name, anchor.name)
+            assertEquals(anchor.range, range)
+            assertEquals(decl, result.positionQueries.getDeclarationAt(positionOf(source, name)))
         }
+        // Commas invent no declaration ranges.
+        assertNull(result.positionQueries.getDeclarationAt(positionOf(source, ",")))
     }
 
     @Test
-    fun unbalancedAssignmentMultiLhs_stillDoesNotDeclare() {
+    fun unbalancedAssignmentMultiLhs_stillCreatesGlobalsPerName() {
         val source = "u, v, w = 1"
         val result = bind(source)
 
         listOf("u", "v", "w").forEach { name ->
-            assertTrue(result.declarationIndex.declarations.none {
-                it.name == name && it.origin != DeclarationOrigin.BUILTIN
-            })
+            val matches = result.declarationIndex.declarations.filter {
+                it.name == name &&
+                    it.kind == DeclarationKind.GLOBAL &&
+                    it.origin != DeclarationOrigin.BUILTIN
+            }
+            assertEquals(1, matches.size, "Expected GLOBAL for unbalanced multi-LHS '$name'")
+            val decl = matches.single()
+            assertEquals(decl, result.positionQueries.getDeclarationAt(positionOf(source, name)))
+            assertEquals(name, assertIs<Identifier>(assertNotNull(decl.anchorNode)).name)
+            assertEquals(assertIs<Identifier>(decl.anchorNode).range, decl.range)
         }
     }
 
