@@ -2,15 +2,15 @@
   "version": 2,
   "strategy": "must-green-to-advance",
   "activeSlice": "s015",
-  "updatedAt": "2026-07-12T20:38:13Z",
+  "updatedAt": "2026-07-12T20:53:17Z",
   "summary": {
     "total": 18,
     "totalFiles": 367,
     "pending": 3,
-    "success": 14,
-    "failure": 1,
+    "success": 15,
+    "failure": 0,
     "running": 0,
-    "filesDone": 210
+    "filesDone": 255
   },
   "slices": {
     "s001": {
@@ -214,21 +214,19 @@
       "updatedAt": "2026-07-12T19:42:56Z"
     },
     "s015": {
-      "status": "failure",
+      "status": "success",
       "label": "semantic.checker..semantic.interop",
       "fileCount": 45,
-      "lastRunId": "29208029511",
-      "lastSha": "318b329950674a2c109227532e34ef0f2053e797",
+      "lastRunId": "29208492285",
+      "lastSha": "c258e8e7d2be0520e3f030003ce47bef6ca051bb",
       "tests": 853,
-      "failures": 1,
+      "failures": 0,
       "errors": 0,
-      "failedTests": [
-        "semantic.interop.JavaChainedCallTddTest#non_listener_interface_setter_callback_remains_unknown[jvm]"
-      ],
-      "durationSec": 35,
-      "artifact": "results/s015-29208029511.json",
-      "updatedAt": "2026-07-12T20:38:13Z",
-      "note": "8 failures on run 29206739850; 853 tests"
+      "failedTests": [],
+      "durationSec": 40,
+      "artifact": "results/s015-29208492285.json",
+      "updatedAt": "2026-07-12T20:53:17Z",
+      "note": "green on run 29208492285; 853 tests 0 failures"
     },
     "s016": {
       "status": "pending",
@@ -637,6 +635,15 @@
       "failures": 1,
       "durationSec": 35,
       "at": "2026-07-12T20:38:13Z"
+    },
+    {
+      "sliceId": "s015",
+      "runId": "29208492285",
+      "status": "success",
+      "tests": 853,
+      "failures": 0,
+      "durationSec": 40,
+      "at": "2026-07-12T20:53:17Z"
     }
   ]
 }

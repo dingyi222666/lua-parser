@@ -1,6 +1,6 @@
 id: TASK-659
 title: Windows non-listener interface setter callback remains unknown product fix
-status: review
+status: done
 priority: p0
 owner: unassigned
 depends_on: []
@@ -33,3 +33,5 @@ progress:
   - 2026-07-13T materialize WINSLICE-29208029511: reuse ready TASK-659 for still-red non_listener_interface_setter_callback_remains_unknown (s015 1 failure of 853).
   - 2026-07-12T20:45:00Z worker-WINSLICE-29208029511-TASK-659: claimed; fixing pure-arity chain recovery inventing nil for non-Listener/Callback interface setter callbacks.
   - 2026-07-12T20:49:47Z worker-WINSLICE-29208029511-TASK-659: refuse pure-arity Java chain recovery for Lua callable args so non-Listener/Callback interface setters stay unknown; soft path still accepts *Listener/*Callback via isJavaListenerAssignableFrom.
+
+  - 2026-07-12T20:53:17Z gate: s015 GREEN on run 29208492285 (853/0); non_listener_interface_setter_callback_remains_unknown fixed; advancing.
