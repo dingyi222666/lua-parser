@@ -62,6 +62,8 @@ fun Type.toLegacyType(): LegacyType = when (this) {
     is PrimitiveType -> PrimitiveTypeBridge.toLegacy(this)
     is LiteralType -> LegacyLiteralType(value = value, baseType = PrimitiveTypeBridge.toLegacyPrimitive(baseType))
     is FunctionType -> LegacyFunctionType(
+        // Legacy FunctionType has no typeParameters field. Generic fun<T>(...) labels for
+        // signature help are preserved on the model path (SignatureHelpProvider / TASK-670).
         parameters = parameters.map(FunctionParameter::toLegacyParameter),
         returnType = returnType.toLegacyType()
     )

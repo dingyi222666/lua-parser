@@ -1093,8 +1093,12 @@ class LuaWorkspaceQueryFacade(
         if (constant.constantType != ConstantNode.TYPE.STRING) {
             return null
         }
-        val call = enclosingCallExpression(constant) ?: return null
-        if (!callArguments(call).any { it === constant }) {
+        // Prefer parent-linked enclosing call (string-call args parent-linked by the parser).
+        // Fall back to range containment for compact AST shapes where argument.parent may be unset.
+        val call = enclosingCallExpression(constant)
+            ?: importStringCallContaining(semanticFile, constant)
+            ?: return null
+        if (!callArguments(call).any { it === constant || isSameStringLiteral(it, constant) }) {
             return null
         }
         if (!isImportCallee(semanticFile, effectiveCallBase(call))) {
@@ -1107,13 +1111,93 @@ class LuaWorkspaceQueryFacade(
         return WorkspaceLocation(imported.providerPath, syntheticModuleRange(imported.alias))
     }
 
-    private fun callArguments(call: CallExpression): List<io.github.dingyi222666.luaparser.parser.ast.node.ExpressionNode> {
-        val stringCallBase = call.base as? io.github.dingyi222666.luaparser.parser.ast.node.StringCallExpression
-        return buildList {
-            if (stringCallBase != null) {
-                addAll(stringCallBase.arguments)
+    private fun isSameStringLiteral(
+        expression: io.github.dingyi222666.luaparser.parser.ast.node.ExpressionNode,
+        constant: ConstantNode
+    ): Boolean {
+        val other = expression as? ConstantNode ?: return false
+        return other.constantType == ConstantNode.TYPE.STRING &&
+            other.stringOf() == constant.stringOf() &&
+            other.range == constant.range
+    }
+
+    /**
+     * Recover the enclosing import/require string-call when ConstantNode.parent is unset.
+     * Walks CallExpressions in the file and matches the caret constant by range identity.
+     */
+    private fun importStringCallContaining(
+        semanticFile: WorkspaceSemanticFile,
+        constant: ConstantNode
+    ): CallExpression? {
+        var match: CallExpression? = null
+        val visitor = object : io.github.dingyi222666.luaparser.parser.ast.visitor.ASTVisitor<Unit> {
+            override fun visitCallExpression(node: CallExpression, value: Unit) {
+                if (callArguments(node).any { it === constant || isSameStringLiteral(it, constant) }) {
+                    if (isImportCallee(semanticFile, effectiveCallBase(node)) ||
+                        (effectiveCallBase(node) as? Identifier)?.name == "require"
+                    ) {
+                        match = node
+                        return
+                    }
+                }
+                super.visitCallExpression(node, value)
             }
-            addAll(call.arguments)
+
+            override fun visitStringCallExpression(
+                node: io.github.dingyi222666.luaparser.parser.ast.node.StringCallExpression,
+                value: Unit
+            ) {
+                if (callArguments(node).any { it === constant || isSameStringLiteral(it, constant) }) {
+                    if (isImportCallee(semanticFile, effectiveCallBase(node)) ||
+                        (effectiveCallBase(node) as? Identifier)?.name == "require"
+                    ) {
+                        match = node
+                        return
+                    }
+                }
+                super.visitStringCallExpression(node, value)
+            }
+
+            override fun visitIdentifier(node: Identifier, value: Unit) = Unit
+            override fun visitAttributeIdentifier(
+                identifier: io.github.dingyi222666.luaparser.parser.ast.node.AttributeIdentifier,
+                value: Unit
+            ) = Unit
+            override fun visitCommentStatement(
+                commentStatement: io.github.dingyi222666.luaparser.parser.ast.node.CommentStatement,
+                value: Unit
+            ) = Unit
+        }
+        visitor.visitChunkNode(semanticFile.chunk, Unit)
+        return match
+    }
+
+    private fun callArguments(call: CallExpression): List<io.github.dingyi222666.luaparser.parser.ast.node.ExpressionNode> {
+        // Flatten nested string/table-call bases so outer CallExpression(import "X") and
+        // the nested StringCallExpression both surface the string argument.
+        return buildList {
+            fun appendFrom(expression: io.github.dingyi222666.luaparser.parser.ast.node.ExpressionNode) {
+                when (expression) {
+                    is io.github.dingyi222666.luaparser.parser.ast.node.StringCallExpression -> {
+                        appendFrom(expression.base)
+                        addAll(expression.arguments)
+                    }
+                    is io.github.dingyi222666.luaparser.parser.ast.node.TableCallExpression -> {
+                        appendFrom(expression.base)
+                        addAll(expression.arguments)
+                    }
+                    is CallExpression -> {
+                        val nestedBase = expression.base
+                        if (nestedBase is io.github.dingyi222666.luaparser.parser.ast.node.StringCallExpression ||
+                            nestedBase is io.github.dingyi222666.luaparser.parser.ast.node.TableCallExpression
+                        ) {
+                            appendFrom(nestedBase)
+                        }
+                        addAll(expression.arguments)
+                    }
+                }
+            }
+            appendFrom(call)
         }
     }
 

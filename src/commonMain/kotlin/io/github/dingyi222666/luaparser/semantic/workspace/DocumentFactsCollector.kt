@@ -734,13 +734,25 @@ object DocumentFactsCollector {
         }
     }
 
+    /**
+     * True only for list/array fields written as bare values (`"java.io.File"`), not
+     * named keys (`ignored = ...`) or explicit sparse numeric keys (`[3] = ...`).
+     *
+     * The parser synthesizes ConstantNode.INTERGER keys for implicit array slots and
+     * marks those keys with a zero-width range (start == end). Explicit bracket keys
+     * keep a non-degenerate source range over the key expression and must not be
+     * collected as import targets.
+     */
     private fun isImplicitTableSequenceField(field: TableKey): Boolean {
         if (field is TableKeyString) {
             return false
         }
-        // Array-style fields in table constructors use integer keys. After finishNode, the key
-        // range may be non-degenerate; still treat non-named keys as sequence entries for import({...}).
-        return true
+        val key = field.key as? ConstantNode ?: return false
+        if (key.constantType != ConstantNode.TYPE.INTERGER) {
+            return false
+        }
+        // Synthetic implicit array keys are zero-width; explicit [n] keys span source text.
+        return key.range.start == key.range.end
     }
 
     private fun extractStringTargets(expression: ExpressionNode?): List<String> {

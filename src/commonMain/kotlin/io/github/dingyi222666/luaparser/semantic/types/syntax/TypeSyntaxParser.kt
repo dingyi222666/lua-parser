@@ -37,7 +37,9 @@ object TypeSyntaxParser {
 
         fun parse(requireEof: Boolean, allowBoundaryStop: Boolean = false): TypeSyntax {
             this.allowBoundaryStop = allowBoundaryStop
-            val syntax = parseType()
+            // parsePrefix treats top-level commas as host/description boundaries (doc
+            // consumers split multi-return themselves). Full parse keeps multi-return.
+            val syntax = parseType(allowMultiReturn = !allowBoundaryStop)
             skipWhitespace()
             if (requireEof && !isAtEnd()) {
                 fail("Unexpected trailing type tokens")
@@ -454,6 +456,8 @@ object TypeSyntaxParser {
             // terminates the type for doc-comment consumers (`string | number -- note`).
             // Non-boundary prose after a candidate arm (e.g. `trailing prose`) rejects
             // the arm so parsePrefix can stop before the operator without throwing.
+            // Top-level multi-return is disabled for parsePrefix; this boundary check
+            // still applies to nested multi-return (function returns) and to | / & arms.
             val validBoundary = isValidContinuationBoundary()
             currentIndex = checkpoint
             return validBoundary

@@ -446,6 +446,12 @@ object BuiltinOverlayLoader {
             )
         }
 
+        // Hard-lock documented pairs/ipairs generic callable metadata so completion +
+        // signature help always surface fun<K, V>/fun<V> shapes (TASK-668 / TASK-122).
+        // EmmyLua parse paths can collapse to fun(): unknown when generic return fun(...)
+        // multi-returns are not fully rehydrated into binder-visible declaredType.
+        applyDocumentedPairsIpairsHardLocks(membersByPath, analyzedByPath)
+
         return membersByPath.values
             .sortedWith(compareBy<StandardMemberDescriptor>({ symbolKindOrder(it.kind) }, { it.exportPath.joinToString(".") }))
             .map { descriptor ->
@@ -460,6 +466,68 @@ object BuiltinOverlayLoader {
                     range = null
                 )
             }
+    }
+
+    /**
+     * Documented EmmyLua pairs/ipairs shapes for free-id completion and signature help.
+     * pairs: fun of K,V table/array to iterator returning K, V.
+     * ipairs: fun of V table/array to iterator returning number, V.
+     */
+    private fun applyDocumentedPairsIpairsHardLocks(
+        membersByPath: MutableMap<List<String>, StandardMemberDescriptor>,
+        analyzedByPath: Map<List<String>, ModuleExportSurface.MemberExport>
+    ) {
+        val pairsType = documentedPairsFunctionType()
+        val ipairsType = documentedIpairsFunctionType()
+        listOf(
+            "pairs" to pairsType,
+            "ipairs" to ipairsType
+        ).forEach { (name, type) ->
+            val exportPath = listOf(name)
+            val existing = membersByPath[exportPath]
+            membersByPath[exportPath] = StandardMemberDescriptor(
+                name = name,
+                exportPath = exportPath,
+                // Keep FIELD so BuiltinSymbolSeeder still treats these as value callables with
+                // declared FunctionType (DOCUMENTED_CALLABLE_GLOBAL_VALUE_NAMES).
+                kind = SymbolKind.FIELD,
+                type = type,
+                range = existing?.range ?: analyzedByPath[exportPath]?.range
+            )
+        }
+    }
+
+    private fun documentedPairsFunctionType(): FunctionType {
+        val key = TypeParameterType(name = "K")
+        val value = TypeParameterType(name = "V")
+        val tableKV = TableType(indexSignature = TableType.IndexSignature(key, value))
+        val paramT = unionTypeOf(tableKV, ArrayType(value))
+        val iterator = FunctionType(
+            parameters = listOf(FunctionParameter(name = "tbl", type = tableKV)),
+            returnType = MultiReturnType(listOf(key, value))
+        )
+        return FunctionType(
+            parameters = listOf(FunctionParameter(name = "t", type = paramT)),
+            returnType = iterator,
+            typeParameters = listOf(key, value)
+        )
+    }
+
+    private fun documentedIpairsFunctionType(): FunctionType {
+        val value = TypeParameterType(name = "V")
+        val tableNV = TableType(
+            indexSignature = TableType.IndexSignature(PrimitiveType.NUMBER, value)
+        )
+        val paramT = unionTypeOf(tableNV, ArrayType(value))
+        val iterator = FunctionType(
+            parameters = listOf(FunctionParameter(name = "tbl", type = tableNV)),
+            returnType = MultiReturnType(listOf(PrimitiveType.NUMBER, value))
+        )
+        return FunctionType(
+            parameters = listOf(FunctionParameter(name = "t", type = paramT)),
+            returnType = iterator,
+            typeParameters = listOf(value)
+        )
     }
 
     /**
@@ -548,21 +616,49 @@ object BuiltinOverlayLoader {
             }
         }
 
-        // Preserve luajava ModuleType on the free-id global (not renamed).
-        importModuleType.fields["luajava"]?.let { luajavaType ->
-            val exportPath = listOf("luajava")
-            val hydrated = hydrateDocumentedType(luajavaType, documentedClassTypes)
-            membersByPath.putIfAbsent(
-                exportPath,
-                StandardMemberDescriptor(
-                    name = "luajava",
-                    exportPath = exportPath,
-                    kind = SymbolKind.FIELD,
-                    type = hydrated,
-                    range = analyzedByPath[exportPath]?.range
-                )
+        // Free-id global `luajava` reuses the documented luajava member surface installed by
+        // require "import", but brands moduleName as "import" while keeping displayName
+        // "luajava" (TASK-146 / TASK-668 import.luajava surface contract).
+        val documentedLuajava = when (val field = importModuleType.fields["luajava"]) {
+            is ModuleType -> field
+            else -> null
+        }
+        val brandedLuajava = when {
+            documentedLuajava != null -> ModuleType(
+                moduleName = "import",
+                fields = documentedLuajava.fields,
+                methods = documentedLuajava.methods,
+                indexSignature = documentedLuajava.indexSignature,
+                name = "luajava"
+            )
+            else -> ModuleType(
+                moduleName = "import",
+                fields = importModuleType.fields.filterKeys { it != "luajava" && it != "__call" && it != "env_import" && it !in listOf("loadlayout", "loadbitmap", "loadmenu") }
+                    .filterValues { it !is FunctionType && it !is OverloadedFunctionType }
+                    .ifEmpty {
+                        // Fall back to import-module methods/fields that mirror luajava helpers.
+                        linkedMapOf<String, Type>().also { fields ->
+                            importModuleType.fields.forEach { (name, type) ->
+                                if (name in LUJAVA_SURFACE_FIELD_NAMES) {
+                                    fields[name] = type
+                                }
+                            }
+                        }
+                    },
+                methods = importModuleType.methods.filterKeys { it in LUJAVA_SURFACE_METHOD_NAMES },
+                name = "luajava"
             )
         }
+        val exportPath = listOf("luajava")
+        val hydrated = hydrateDocumentedType(brandedLuajava, documentedClassTypes)
+        val existing = membersByPath[exportPath]
+        membersByPath[exportPath] = StandardMemberDescriptor(
+            name = "luajava",
+            exportPath = exportPath,
+            kind = SymbolKind.FIELD,
+            type = hydrated,
+            range = existing?.range ?: analyzedByPath[exportPath]?.range
+        )
     }
 
     private fun documentedModuleMembers(
@@ -2478,6 +2574,11 @@ object BuiltinOverlayLoader {
         "xml2table"
     )
     private val DOCUMENTED_CALLABLE_GLOBAL_VALUE_NAMES = setOf("ipairs", "pairs")
+    private val LUJAVA_SURFACE_FIELD_NAMES = setOf("loaded", "imported", "ids", "luadir")
+    private val LUJAVA_SURFACE_METHOD_NAMES = setOf(
+        "bindClass", "new", "newInstance", "loadLib", "createProxy", "newArray", "createArray",
+        "astable", "tostring", "instanceof", "getContext", "override"
+    )
     private val DOCUMENTED_INTEGER_TYPE = PrimitiveType("integer", PrimitiveType.Kind.NUMBER)
     private val ANDROID_FRAMEWORK_FUNCTION_REGEX =
         Regex("""^\s*function\s+([A-Za-z_][A-Za-z0-9_]*)([.:])([A-Za-z_][A-Za-z0-9_]*)\s*\(([^)]*)\)""")

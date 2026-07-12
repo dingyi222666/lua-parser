@@ -385,15 +385,19 @@ object ModuleExportCollector {
                 }
 
                 else -> {
+                    // Normalize through chained local aliases so writes on path aliases
+                    // (local routes = alias.routes; function routes:open() end) attach to the
+                    // returned export root instead of the intermediate local name.
                     val target = extractWriteTarget(identifier) ?: return
+                    val normalizedTarget = normalizeWriteTarget(target)
                     writes += CollectedWrite(
-                        name = target.rootIdentifier,
-                        path = target.path,
+                        name = normalizedTarget.rootIdentifier,
+                        path = normalizedTarget.path,
                         type = valueType,
-                        isMethod = target.isMethod,
+                        isMethod = normalizedTarget.isMethod,
                         segment = legacyEnvironment.segmentAt(identifier.range.start),
-                        range = target.range,
-                        pathRanges = target.pathRanges
+                        range = normalizedTarget.range,
+                        pathRanges = normalizedTarget.pathRanges
                     )
                 }
             }

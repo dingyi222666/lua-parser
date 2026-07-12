@@ -129,6 +129,15 @@ class TypeSyntaxParserTest {
             withDelimiter.syntax
         )
         assertEquals(") tail", withDelimiter.remainder.trimStart())
+
+        // Top-level commas are host/description boundaries for parsePrefix (doc consumers
+        // split multi-return themselves). Do not absorb following identifiers as arms.
+        val withComma = TypeSyntaxParser.parsePrefix("string | number, note")
+        assertEquals(
+            UnionTypeSyntax(listOf(NamedTypeSyntax("string"), NamedTypeSyntax("number"))),
+            withComma.syntax
+        )
+        assertEquals(", note", withComma.remainder.trimStart())
     }
 
     @Test

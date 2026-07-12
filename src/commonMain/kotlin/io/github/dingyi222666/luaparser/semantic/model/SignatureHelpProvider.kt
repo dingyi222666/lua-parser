@@ -41,6 +41,7 @@ import io.github.dingyi222666.luaparser.semantic.types.model.OverloadedFunctionT
 import io.github.dingyi222666.luaparser.semantic.types.model.PrimitiveType
 import io.github.dingyi222666.luaparser.semantic.types.model.TableType
 import io.github.dingyi222666.luaparser.semantic.types.model.Type
+import io.github.dingyi222666.luaparser.semantic.types.model.TypeParameterType
 import io.github.dingyi222666.luaparser.semantic.types.model.UnknownType
 import io.github.dingyi222666.luaparser.semantic.types.model.VarargType
 import io.github.dingyi222666.luaparser.semantic.types.resolve.unionTypeOf
@@ -280,13 +281,15 @@ internal class SignatureHelpProvider(
         val inferredType = evaluator.evaluate(node, context)
         val declarationCallableType = declaration?.let(::callableTypeForDeclaration)
 
-        if (declarationCallableType != null && shouldPreferDeclarationCallableType(inferredType)) {
+        if (declarationCallableType != null && shouldPreferDeclarationCallableType(inferredType, declarationCallableType)) {
             return declarationCallableType
         }
 
         val resolved = callChecker.resolveCallable(inferredType, lexicalScopeId, declaration)
         if (inferredType is CallableType || resolved.isSuccess) {
-            return inferredType
+            // Body inference / merge often drops @generic type-parameter labels even when the
+            // declaration still carries fun<T>(...): R. Restore those labels for signature help.
+            return preserveGenericTypeParameterLabels(inferredType, declarationCallableType)
         }
 
         if (declarationCallableType != null) {
@@ -296,9 +299,69 @@ internal class SignatureHelpProvider(
         return inferredType.takeIf { it is CallableType }
     }
 
-    private fun shouldPreferDeclarationCallableType(type: Type): Boolean {
+    private fun shouldPreferDeclarationCallableType(type: Type, declared: CallableType?): Boolean {
         val callable = type as? CallableType ?: return true
-        return callable.callSignatures.all { it.returnType == UnknownType }
+        if (callable.callSignatures.all { it.returnType == UnknownType }) {
+            return true
+        }
+        // Prefer the documented generic form when inference produced a non-generic callable with
+        // otherwise comparable parameter/return surfaces (TASK-670).
+        return declared != null &&
+            hasGenericTypeParameterLabels(declared) &&
+            !hasGenericTypeParameterLabels(callable)
+    }
+
+    /**
+     * Keep signature-help labels like `fun<T>(value: T): T` after type resolution.
+     * Expression evaluation may rebuild FunctionType without typeParameters even though the
+     * binder/TypeResolver declaration still owns @generic TYPE_PARAMETER children.
+     */
+    private fun preserveGenericTypeParameterLabels(type: Type, declared: CallableType?): Type {
+        if (declared == null || type !is CallableType) {
+            return type
+        }
+        if (!hasGenericTypeParameterLabels(declared) || hasGenericTypeParameterLabels(type)) {
+            return type
+        }
+        return enrichCallableWithTypeParameters(type, declared)
+    }
+
+    private fun hasGenericTypeParameterLabels(callable: CallableType): Boolean {
+        return callable.callSignatures.any { it.typeParameters.isNotEmpty() }
+    }
+
+    private fun enrichCallableWithTypeParameters(
+        inferred: CallableType,
+        declared: CallableType
+    ): CallableType {
+        val declaredSignatures = declared.callSignatures
+        val fallbackTypeParameters = declaredSignatures
+            .firstOrNull { it.typeParameters.isNotEmpty() }
+            ?.typeParameters
+            .orEmpty()
+        val enriched = inferred.callSignatures.mapIndexed { index, signature ->
+            if (signature.typeParameters.isNotEmpty()) {
+                signature
+            } else {
+                val typeParameters = declaredSignatures.getOrNull(index)?.typeParameters
+                    ?.takeIf { it.isNotEmpty() }
+                    ?: fallbackTypeParameters
+                if (typeParameters.isEmpty()) {
+                    signature
+                } else {
+                    FunctionType(
+                        parameters = signature.parameters,
+                        returnType = signature.returnType,
+                        typeParameters = typeParameters
+                    )
+                }
+            }
+        }
+        return when (enriched.size) {
+            0 -> inferred
+            1 -> enriched.single()
+            else -> OverloadedFunctionType(enriched)
+        }
     }
 
     /**
@@ -509,7 +572,23 @@ internal class SignatureHelpProvider(
         } else {
             inferredReturnType
         }
-        return FunctionType(parameters = parameters, returnType = returnType)
+        val typeParameters = ownedTypeParametersForDeclaration(declaration)
+            .ifEmpty { declaredSignature?.typeParameters.orEmpty() }
+        return FunctionType(
+            parameters = parameters,
+            returnType = returnType,
+            typeParameters = typeParameters
+        )
+    }
+
+    private fun ownedTypeParametersForDeclaration(declaration: BinderDeclaration): List<TypeParameterType> {
+        return binder.declarationIndex
+            .getOwnedDeclarations(DeclarationOwner.Declaration(declaration.id))
+            .filter { it.kind == DeclarationKind.TYPE_PARAMETER }
+            .map { parameterDeclaration ->
+                (parameterDeclaration.declaredType as? TypeParameterType)
+                    ?: TypeParameterType(name = parameterDeclaration.name)
+            }
     }
 
     private fun inferReturnedParameterType(

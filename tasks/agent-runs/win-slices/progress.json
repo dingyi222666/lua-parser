@@ -2,7 +2,7 @@
   "version": 2,
   "strategy": "must-green-to-advance",
   "activeSlice": "s017",
-  "updatedAt": "2026-07-12T21:34:31Z",
+  "updatedAt": "2026-07-12T21:46:30Z",
   "summary": {
     "total": 18,
     "totalFiles": 367,
@@ -246,8 +246,8 @@
       "status": "failure",
       "label": "semantic.types.resolve..semantic.workspace",
       "fileCount": 45,
-      "lastRunId": "29209854844",
-      "lastSha": "2daf4ba7dc38fcd7fd52f70ebfcc83cef02907bd",
+      "lastRunId": "29210211230",
+      "lastSha": "db04b0072df8df5897297bde264061747be12af2",
       "tests": 574,
       "failures": 16,
       "errors": 0,
@@ -269,10 +269,10 @@
         "semantic.workspace.SemanticWorkspaceCampaignGapTddTest#androlua_socket_url_overlay_keeps_dotted_module_resolution_and_parse_method[jvm]",
         "semantic.workspace.SemanticWorkspaceCampaignGapTddTest#alias_return_export_surface_preserves_nested_writes_through_chained_locals[jvm]"
       ],
-      "durationSec": 30,
-      "artifact": "results/s017-29209854844.json",
-      "updatedAt": "2026-07-12T21:34:31Z",
-      "note": "red on run 29209854844; 574 tests 16 failures"
+      "durationSec": 35,
+      "artifact": "results/s017-29210211230.json",
+      "updatedAt": "2026-07-12T21:46:30Z",
+      "note": "red on run 29210211230; 574 tests 16 failures; product fixes staged for re-trigger"
     },
     "s018": {
       "status": "pending",
@@ -707,6 +707,15 @@
       "failures": 16,
       "durationSec": 30,
       "at": "2026-07-12T21:34:31Z"
+    },
+    {
+      "sliceId": "s017",
+      "runId": "29210211230",
+      "status": "failure",
+      "tests": 574,
+      "failures": 16,
+      "durationSec": 35,
+      "at": "2026-07-12T21:46:30Z"
     }
   ]
 }

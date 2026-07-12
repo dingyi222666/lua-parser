@@ -198,11 +198,16 @@ internal class WorkspaceModuleResolver(
     }
 
     fun classProviderForAlias(alias: String): WorkspaceModuleGraph.ModuleProvider? {
-        val provider = activeProvider(alias)
-            ?: findExtraClassProviderByAlias(alias)
-            ?: return null
-        val moduleType = exportSurface(provider)?.moduleType ?: return null
-        return if (moduleType.fields.containsKey("__class")) provider else null
+        // Never let a non-class activeProvider claim (package/overlay/module without __class)
+        // short-circuit path recovery for JVM class modules (File / Locale / BigDecimal).
+        activeProvider(alias)?.takeIf(::isJvmClassProvider)?.let { return it }
+        findExtraClassProviderByAlias(alias)?.takeIf(::isJvmClassProvider)?.let { return it }
+        return null
+    }
+
+    private fun isJvmClassProvider(provider: WorkspaceModuleGraph.ModuleProvider): Boolean {
+        val moduleType = exportSurface(provider)?.moduleType ?: return false
+        return moduleType.fields.containsKey("__class")
     }
 
     fun classProviderForMember(
@@ -236,7 +241,12 @@ internal class WorkspaceModuleResolver(
 
     private fun importedClassSymbol(importText: String): WorkspaceImportedSymbol? {
         val aliases = classAliasCandidates(importText)
-        val provider = aliases.firstNotNullOfOrNull(::classProviderForAlias) ?: return null
+        val provider = aliases.firstNotNullOfOrNull(::classProviderForAlias)
+            // Simple-name source imports (import "File" / import "BigDecimal") may only be
+            // discoverable via mounted __jvm__/classes/... path suffixes when graph claims
+            // temporarily omit the simple moduleName alias.
+            ?: simpleNameClassProvider(importText)
+            ?: return null
         val surface = exportSurface(provider) ?: return null
         val simpleName = aliases.firstOrNull { it == surface.moduleType.moduleName }
             ?: aliases.firstOrNull { !it.contains('.') && !it.contains('$') && !it.contains('_') }
@@ -247,6 +257,19 @@ internal class WorkspaceModuleResolver(
             providerPath = provider.path,
             moduleType = surface.moduleType
         )
+    }
+
+    /**
+     * Recover a mounted JVM class provider for a simple import target (File / BigDecimal)
+     * from extraProviders path shape when active-provider indexing missed the alias.
+     * Never invents providers: only existing __jvm__/classes entries with __class surfaces.
+     */
+    private fun simpleNameClassProvider(importText: String): WorkspaceModuleGraph.ModuleProvider? {
+        val normalized = normalizeImportTarget(importText)
+        if (normalized.isBlank() || normalized.endsWith(".*") || '.' in normalized || '$' in normalized) {
+            return null
+        }
+        return classProviderForAlias(normalized) ?: findExtraClassProviderByAlias(normalized)
     }
 
     private fun importedPackageSymbol(packageName: String): WorkspaceImportedSymbol? {
@@ -296,16 +319,43 @@ internal class WorkspaceModuleResolver(
     }
 
     private fun findExtraClassProviderByAlias(alias: String): WorkspaceModuleGraph.ModuleProvider? {
+        // Never invent providers. Recover only from already-mounted extras.
+        // Slash paths are not aliases; blank is invalid. Dotted FQCNs still recover via
+        // simpleName tail (java.io.File → File) when path ends with /File.lua.
         if (alias.isBlank() || alias.contains('/')) {
             return null
         }
-        val match = snapshot.extraProviders.entries.firstOrNull { (path, file) ->
+        val simpleAlias = alias.substringAfterLast('.').substringAfterLast('$').substringAfterLast('_')
+        if (simpleAlias.isBlank()) {
+            return null
+        }
+        // Prefer reflective class modules under __jvm__/classes so package providers and
+        // non-class extras never win simple-name recovery for Android-Lua source imports
+        // (import "File" / import "BigDecimal" under default or custom importPrefixes).
+        val classMatch = snapshot.extraProviders.entries.firstOrNull { (path, file) ->
+            val value = path.value
+            if (!value.startsWith("__jvm__/classes/")) {
+                return@firstOrNull false
+            }
             val moduleName = file.moduleExportSurface?.moduleType?.moduleName
             moduleName == alias ||
+                moduleName == simpleAlias ||
+                value.endsWith("/$simpleAlias.lua") ||
+                value.endsWith("\$$simpleAlias.lua") ||
+                value.endsWith("/$alias.lua") ||
+                value.endsWith("\$$alias.lua")
+        }
+        val match = classMatch ?: snapshot.extraProviders.entries.firstOrNull { (path, file) ->
+            val moduleName = file.moduleExportSurface?.moduleType?.moduleName
+            moduleName == alias ||
+                moduleName == simpleAlias ||
+                path.value.endsWith("/$simpleAlias.lua") ||
+                path.value.endsWith("\$$simpleAlias.lua") ||
                 path.value.endsWith("/$alias.lua") ||
                 path.value.endsWith("\$$alias.lua")
         } ?: return null
-        val moduleName = match.value.moduleExportSurface?.moduleType?.moduleName ?: alias
+        val moduleName = match.value.moduleExportSurface?.moduleType?.moduleName
+            ?: simpleAlias
         return WorkspaceModuleGraph.ModuleProvider(
             moduleName = moduleName,
             path = match.key,

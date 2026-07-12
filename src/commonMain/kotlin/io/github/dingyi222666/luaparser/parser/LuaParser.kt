@@ -2548,14 +2548,16 @@ class LuaParser(
         // Using parseExp here would keep consuming binary ops (e.g. `printer 'ready' or
         // fallback` wrongly became StringCall(..., Binary(or, 'ready', fallback))).
         // Mark at the string token so the ConstantNode range is the literal itself.
+        // Parent-link the argument so import/require string-call definition walks
+        // (enclosingCallExpression) resolve import "File" / import "BigDecimal".
         peek { markLocation() }
-        result.arguments.add(
-            finishNode(
-                consume {
-                    ConstantNode(ConstantNode.TYPE.STRING, lexerText())
-                }
-            )
+        val argument = finishNode(
+            consume {
+                ConstantNode(ConstantNode.TYPE.STRING, lexerText())
+            }
         )
+        argument.parent = result
+        result.arguments.add(argument)
 
         return result
     }
