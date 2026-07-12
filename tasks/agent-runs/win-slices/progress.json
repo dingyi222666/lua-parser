@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "updatedAt": "2026-07-12T14:36:13Z",
+  "updatedAt": "2026-07-12T14:52:53Z",
   "strategy": "must-green-to-advance",
   "chunkSize": 15,
   "cycle": 1,
@@ -8,10 +8,10 @@
     "total": 25,
     "totalFiles": 367,
     "pending": 18,
-    "success": 6,
-    "failure": 1,
+    "success": 7,
+    "failure": 0,
     "running": 0,
-    "filesDone": 90
+    "filesDone": 105
   },
   "slices": {
     "s001": {
@@ -102,23 +102,19 @@
       "updatedAt": "2026-07-12T14:25:22Z"
     },
     "s007": {
-      "status": "failure",
+      "status": "success",
       "label": "parser..parser.ast",
       "fileCount": 15,
-      "lastRunId": "29196531532",
-      "lastSha": "631e0e4cd31678ffaad8bd38196b68858e45292c",
+      "lastRunId": "29197045304",
+      "lastSha": "94b25c707f9914670292a96c264fb03f0a76e08f",
       "tests": 115,
-      "failures": 3,
+      "failures": 0,
       "errors": 0,
-      "failedTests": [
-        "parser.androidlua.AndroidLuaAssetCorpusParseTddTest#parsesRepresentativeAndroidLuaAssetCorpus[jvm]",
-        "parser.ast.AstShapeTddTest#statementFixtureExposesStableStatementShapesParentsAndRanges[jvm]",
-        "parser.ast.AstShapeTddTest#tableFunctionAndCommentFixtureExposesStableAstShapesParentsAndRanges[jvm]"
-      ],
-      "durationSec": 10,
-      "artifact": "results/s007-29196531532.json",
-      "updatedAt": "2026-07-12T14:36:13Z",
-      "note": "red on run 29196531532; 115 tests 3 failures \u2014 re-run same slice"
+      "failedTests": [],
+      "durationSec": 5,
+      "artifact": "results/s007-29197045304.json",
+      "updatedAt": "2026-07-12T14:52:53Z",
+      "note": "green on run 29197045304; 115 tests 0 failures"
     },
     "s008": {
       "status": "pending",
@@ -547,6 +543,15 @@
       "durationSec": 10,
       "at": "2026-07-12T14:36:13Z",
       "note": "CI slice-progress artifact upload failed (ECONNRESET); reconstructed from junit + run logs"
+    },
+    {
+      "sliceId": "s007",
+      "runId": "29197045304",
+      "status": "success",
+      "tests": 115,
+      "failures": 0,
+      "durationSec": 5,
+      "at": "2026-07-12T14:52:53Z"
     }
   ],
   "gate": {
@@ -554,5 +559,5 @@
     "advanceOnlyIfSuccess": true,
     "workersPerSliceMax": 30
   },
-  "activeSlice": "s007"
+  "activeSlice": "s008"
 }

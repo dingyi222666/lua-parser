@@ -1,0 +1,32 @@
+{
+  "sliceId": "s007",
+  "runId": "29197045304",
+  "sha": "94b25c707f9914670292a96c264fb03f0a76e08f",
+  "status": "success",
+  "exitCode": 0,
+  "durationSec": 5,
+  "tests": 115,
+  "failures": 0,
+  "errors": 0,
+  "skipped": 0,
+  "failedTests": [],
+  "testsPatterns": [
+    "parser.Lua53SyntaxRegressionTest",
+    "parser.Lua54SyntaxRegressionTest",
+    "parser.ParserCommentSyntaxRegressionTest",
+    "parser.ParserRecoveryRegressionTest",
+    "parser.ParserRegressionHarnessTest",
+    "parser.ParserShebangBomTddTest",
+    "parser.androidlua.AndroLuaSyntaxTddTest",
+    "parser.androidlua.AndroidLuaAssetCorpusExtraFixturesTddTest",
+    "parser.androidlua.AndroidLuaAssetCorpusParseTddTest",
+    "parser.androidlua.ParserVersionPolicyKeywordGatingTddTest",
+    "parser.androidlua.ParserVersionPolicyTddTest",
+    "parser.ast.AstShapeTddTest",
+    "parser.ast.AstVisitorAndroLuaNodesTddTest",
+    "parser.ast.AstVisitorModifierTddTest",
+    "parser.ast.BreakContinueAndroidLuaShapeTddTest"
+  ],
+  "gate": "must-green-to-advance",
+  "finishedAt": "2026-07-12T14:52:53Z"
+}
