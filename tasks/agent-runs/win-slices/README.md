@@ -1,9 +1,9 @@
 # Windows file-chunk progress bar
 
-Fast iteration: **15 test files per Action run** (range 10–20).
+Fast iteration: **45 test files per Action run** (~3× prior 15-file chunks; last slice may be smaller).
 
 - Total test files: **367**
-- Total slices: **25**
+- Total slices: **18** (s001–s014 already green at legacy 15-file size; s015+ are 45-file)
 - Soft/hard CPU cap still applied (affinity 6/8, workers=5)
 
 ## Files

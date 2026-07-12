@@ -12,7 +12,7 @@ A slice must be success before the next slice runs.
 
 ## Mode
 - Branch: windows-verify only (never main).
-- ~15 test files / Action (25 slices, 367 files).
+- ~45 test files / Action (~3× prior 15-file slices; 18 slices, 367 files; s001–s014 legacy 15-file green retained).
 - Progress: tasks/agent-runs/win-slices/progress.json + PROGRESS.md
 - strategy: must-green-to-advance
 - Workers: <=30 concurrent, 1 task = 1 agent. No docs filler.
@@ -29,7 +29,7 @@ python3 - <<'PY'
 import json
 p=json.load(open('tasks/agent-runs/win-slices/progress.json'))
 s=json.load(open('tasks/agent-runs/win-slices/slices.json'))
-print('strategy', p.get('strategy'), 'summary', p.get('summary'))
+print('strategy', p.get('strategy'), 'chunkSize', s.get('chunkSize'), 'summary', p.get('summary'))
 for sl in s['slices']:
     st=p['slices'][sl['id']]['status']
     if st!='success':
@@ -38,7 +38,7 @@ else:
     print('ALL_GREEN')
 PY
 ```
-If slice full-chain already live -> status line only (no duplicate).
+If slice full-chain already live for current run -> status line only (no duplicate).
 
 ### 2) State machine
 A. Action in_progress/queued: ensure watch-windows-slice-dispatch.js running.
@@ -47,7 +47,7 @@ C. Idle + pending/failure head: push if needed or gh workflow run windows-jvmtes
 D. ALL_GREEN: report progress bar complete for TASK-043 evidence path.
 
 ### 3) Status line
-Action URL + HEAD slice id/status + summary + chain id + workers.
+Action URL + HEAD slice id/status + summary + chain id + workers + chunkSize.
 
 ## Key paths
 - scripts/windows-run-slice.ps1 (GATE in picker)

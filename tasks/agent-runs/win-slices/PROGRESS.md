@@ -1,37 +1,27 @@
 # Windows slice progress (must-green-to-advance)
 
-Updated: 2026-07-12T19:42:56Z
-Strategy: must-green-to-advance
-Active/HEAD: s014 success
-Summary: success=14 failure=0 pending=11 total=25 filesDone=210
+- strategy: must-green-to-advance
+- chunkSize: 45 files/run (~3x prior 15)
+- summary: success=14 failure=0 pending=4 total=18 filesDone=210/367
+- active: s015
+- updatedAt: 2026-07-12T19:48:38Z
 
-Checkbox: [x]=success [F]=failure [ ]=pending [~]=running
-
-| Slice | Status | Files | Notes |
-| --- | --- | --- | --- |
-| s001 | [x] success | 15 | green on run 29175268346; 246 tests 0 failures |
-| s002 | [x] success | 15 | green on run 29184841092; 307 tests 0 failures |
-| s003 | [x] success | 15 | green on run 29192803870; 208 tests 0 failures |
-| s004 | [x] success | 15 | green on run 29193985587; 277 tests 0 failures |
-| s005 | [x] success | 15 | green on run 29194327730; 327 tests 0 failures |
-| s006 | [x] success | 15 | green on run 29196132727; 205 tests 0 failures |
-| s007 | [x] success | 15 | green on run 29197045304; 115 tests 0 failures |
-| s008 | [x] success | 15 | green on run 29198171827; 152 tests 0 failures |
-| s009 | [x] success | 15 | green on run 29199340139; 115 tests 0 failures |
-| s010 | [x] success | 15 | green on run 29202132162; 166 tests 0 failures |
-| s011 | [x] success | 15 | green on run 29203714569; 131 tests 0 failures |
-| s012 | [x] success | 15 | green on run 29204945941; 250 tests 0 failures |
-| s013 | [x] success | 15 | green on run 29205780117; 198 tests 0 failures |
-| s014 | [x] success | 15 | green on run 29206269986; 166 tests 0 failures |
-| s015 | [ ] pending | 15 |  |
-| s016 | [ ] pending | 15 |  |
-| s017 | [ ] pending | 15 |  |
-| s018 | [ ] pending | 15 |  |
-| s019 | [ ] pending | 15 |  |
-| s020 | [ ] pending | 15 |  |
-| s021 | [ ] pending | 15 |  |
-| s022 | [ ] pending | 15 |  |
-| s023 | [ ] pending | 15 |  |
-| s024 | [ ] pending | 15 |  |
-| s025 | [ ] pending | 7 |  |
+[x] s001 success files=15 — integration..interop.jvm
+[x] s002 success files=15 — interop.jvm..lsp
+[x] s003 success files=15 — lsp
+[x] s004 success files=15 — lsp
+[x] s005 success files=15 — lsp
+[x] s006 success files=15 — lsp..parser
+[x] s007 success files=15 — parser..parser.ast
+[x] s008 success files=15 — parser.ast..parser.lexer
+[x] s009 success files=15 — parser.lexer..parser.recovery
+[x] s010 success files=15 — parser.recovery
+[x] s011 success files=15 — parser.recovery..semantic
+[x] s012 success files=15 — semantic..semantic.androidlua
+[x] s013 success files=15 — semantic.api..semantic.binder
+[x] s014 success files=15 — semantic.binder..semantic.checker
+[ ] s015 pending files=45 — semantic.checker..semantic.interop
+[ ] s016 pending files=45 — semantic.interop..semantic.types.resolve
+[ ] s017 pending files=45 — semantic.types.resolve..semantic.workspace
+[ ] s018 pending files=22 — semantic.workspace..testinventory
 

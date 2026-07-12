@@ -1,13 +1,12 @@
 {
   "version": 2,
-  "updatedAt": "2026-07-12T19:42:56Z",
   "strategy": "must-green-to-advance",
-  "chunkSize": 15,
-  "cycle": 1,
+  "activeSlice": "s015",
+  "updatedAt": "2026-07-12T19:48:38Z",
   "summary": {
-    "total": 25,
+    "total": 18,
     "totalFiles": 367,
-    "pending": 11,
+    "pending": 4,
     "success": 14,
     "failure": 0,
     "running": 0,
@@ -216,157 +215,23 @@
     },
     "s015": {
       "status": "pending",
-      "label": "semantic.checker",
-      "fileCount": 15,
-      "lastRunId": null,
-      "lastSha": null,
-      "tests": 0,
-      "failures": 0,
-      "errors": 0,
-      "failedTests": [],
-      "durationSec": null,
-      "artifact": null,
-      "updatedAt": null
+      "label": "semantic.checker..semantic.interop",
+      "fileCount": 45
     },
     "s016": {
       "status": "pending",
-      "label": "semantic.checker..semantic.comments",
-      "fileCount": 15,
-      "lastRunId": null,
-      "lastSha": null,
-      "tests": 0,
-      "failures": 0,
-      "errors": 0,
-      "failedTests": [],
-      "durationSec": null,
-      "artifact": null,
-      "updatedAt": null
+      "label": "semantic.interop..semantic.types.resolve",
+      "fileCount": 45
     },
     "s017": {
       "status": "pending",
-      "label": "semantic.comments..semantic.interop",
-      "fileCount": 15,
-      "lastRunId": null,
-      "lastSha": null,
-      "tests": 0,
-      "failures": 0,
-      "errors": 0,
-      "failedTests": [],
-      "durationSec": null,
-      "artifact": null,
-      "updatedAt": null
+      "label": "semantic.types.resolve..semantic.workspace",
+      "fileCount": 45
     },
     "s018": {
       "status": "pending",
-      "label": "semantic.interop",
-      "fileCount": 15,
-      "lastRunId": null,
-      "lastSha": null,
-      "tests": 0,
-      "failures": 0,
-      "errors": 0,
-      "failedTests": [],
-      "durationSec": null,
-      "artifact": null,
-      "updatedAt": null
-    },
-    "s019": {
-      "status": "pending",
-      "label": "semantic.interop..semantic.model",
-      "fileCount": 15,
-      "lastRunId": null,
-      "lastSha": null,
-      "tests": 0,
-      "failures": 0,
-      "errors": 0,
-      "failedTests": [],
-      "durationSec": null,
-      "artifact": null,
-      "updatedAt": null
-    },
-    "s020": {
-      "status": "pending",
-      "label": "semantic.model..semantic.types.resolve",
-      "fileCount": 15,
-      "lastRunId": null,
-      "lastSha": null,
-      "tests": 0,
-      "failures": 0,
-      "errors": 0,
-      "failedTests": [],
-      "durationSec": null,
-      "artifact": null,
-      "updatedAt": null
-    },
-    "s021": {
-      "status": "pending",
-      "label": "semantic.types.resolve..semantic.workspace",
-      "fileCount": 15,
-      "lastRunId": null,
-      "lastSha": null,
-      "tests": 0,
-      "failures": 0,
-      "errors": 0,
-      "failedTests": [],
-      "durationSec": null,
-      "artifact": null,
-      "updatedAt": null
-    },
-    "s022": {
-      "status": "pending",
-      "label": "semantic.workspace",
-      "fileCount": 15,
-      "lastRunId": null,
-      "lastSha": null,
-      "tests": 0,
-      "failures": 0,
-      "errors": 0,
-      "failedTests": [],
-      "durationSec": null,
-      "artifact": null,
-      "updatedAt": null
-    },
-    "s023": {
-      "status": "pending",
-      "label": "semantic.workspace",
-      "fileCount": 15,
-      "lastRunId": null,
-      "lastSha": null,
-      "tests": 0,
-      "failures": 0,
-      "errors": 0,
-      "failedTests": [],
-      "durationSec": null,
-      "artifact": null,
-      "updatedAt": null
-    },
-    "s024": {
-      "status": "pending",
-      "label": "semantic.workspace..source",
-      "fileCount": 15,
-      "lastRunId": null,
-      "lastSha": null,
-      "tests": 0,
-      "failures": 0,
-      "errors": 0,
-      "failedTests": [],
-      "durationSec": null,
-      "artifact": null,
-      "updatedAt": null
-    },
-    "s025": {
-      "status": "pending",
-      "label": "source..testinventory",
-      "fileCount": 7,
-      "lastRunId": null,
-      "lastSha": null,
-      "tests": 0,
-      "failures": 0,
-      "errors": 0,
-      "failedTests": [],
-      "durationSec": null,
-      "artifact": null,
-      "updatedAt": null
+      "label": "semantic.workspace..testinventory",
+      "fileCount": 22
     }
   },
   "history": [
@@ -733,11 +598,5 @@
       "durationSec": 10,
       "at": "2026-07-12T19:42:56Z"
     }
-  ],
-  "gate": {
-    "rule": "A slice may advance to the next only when its status is success. Failure/pending/running must re-run the same slice until green.",
-    "advanceOnlyIfSuccess": true,
-    "workersPerSliceMax": 30
-  },
-  "activeSlice": "s014"
+  ]
 }
