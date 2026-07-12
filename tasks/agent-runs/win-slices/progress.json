@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "updatedAt": "2026-07-12T18:12:34Z",
+  "updatedAt": "2026-07-12T18:23:15Z",
   "strategy": "must-green-to-advance",
   "chunkSize": 15,
   "cycle": 1,
@@ -8,10 +8,10 @@
     "total": 25,
     "totalFiles": 367,
     "pending": 14,
-    "success": 10,
-    "failure": 1,
+    "success": 11,
+    "failure": 0,
     "running": 0,
-    "filesDone": 150
+    "filesDone": 165
   },
   "slices": {
     "s001": {
@@ -159,20 +159,18 @@
       "updatedAt": "2026-07-12T17:32:54Z"
     },
     "s011": {
-      "status": "failure",
+      "status": "success",
       "label": "parser.recovery..semantic",
       "fileCount": 15,
-      "lastRunId": "29203364688",
-      "lastSha": "044dcc071b892a821e97b29ef105124594e0c345",
+      "lastRunId": "29203714569",
+      "lastSha": "e9c0192c3ed85711aab691f642f7477d12ba3d57",
       "tests": 131,
-      "failures": 1,
+      "failures": 0,
       "errors": 0,
-      "failedTests": [
-        "parser.recovery.LuaParserRecoveryTddTest#rejectsOutOfScopeRecoveryBoundariesEvenWithRecoveryEnabled[jvm]"
-      ],
+      "failedTests": [],
       "durationSec": 10,
-      "artifact": "results/s011-29203364688.json",
-      "updatedAt": "2026-07-12T18:12:34Z"
+      "artifact": "results/s011-29203714569.json",
+      "updatedAt": "2026-07-12T18:23:15Z"
     },
     "s012": {
       "status": "pending",
@@ -662,6 +660,15 @@
       "failures": 1,
       "durationSec": 10,
       "at": "2026-07-12T18:12:34Z"
+    },
+    {
+      "sliceId": "s011",
+      "runId": "29203714569",
+      "status": "success",
+      "tests": 131,
+      "failures": 0,
+      "durationSec": 10,
+      "at": "2026-07-12T18:23:15Z"
     }
   ],
   "gate": {
@@ -669,5 +676,5 @@
     "advanceOnlyIfSuccess": true,
     "workersPerSliceMax": 30
   },
-  "activeSlice": "s011"
+  "activeSlice": "s012"
 }

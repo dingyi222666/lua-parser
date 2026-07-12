@@ -1,9 +1,9 @@
 # Windows slice progress (must-green-to-advance)
 
-Updated: 2026-07-12T18:12:34Z
+Updated: 2026-07-12T18:23:15Z
 Strategy: must-green-to-advance
-Active/HEAD: s011 failure → re-run s011 (must-green-to-advance)
-Summary: success=10 failure=1 pending=14 total=25 filesDone=150
+Active/HEAD: s012 pending (after s011 green)
+Summary: success=11 failure=0 pending=14 total=25 filesDone=165
 
 Checkbox: [x]=success [F]=failure [ ]=pending [~]=running
 
@@ -12,14 +12,14 @@ Checkbox: [x]=success [F]=failure [ ]=pending [~]=running
 | s001 | [x] success | 15 | green on run 29175268346; 246 tests 0 failures |
 | s002 | [x] success | 15 | green on run 29184841092; 307 tests 0 failures |
 | s003 | [x] success | 15 | green on run 29192803870; 208 tests 0 failures |
-| s004 | [x] success | 15 | green 29193985587 |
-| s005 | [x] success | 15 | green 29194327730 |
-| s006 | [x] success | 15 | green 29196132727 |
+| s004 | [x] success | 15 | green on run 29193985587; 277 tests 0 failures |
+| s005 | [x] success | 15 | green on run 29194327730; 327 tests 0 failures |
+| s006 | [x] success | 15 | green on run 29196132727; 205 tests 0 failures |
 | s007 | [x] success | 15 | green on run 29197045304; 115 tests 0 failures |
-| s008 | [x] success | 15 | green 29198171827 |
-| s009 | [x] success | 15 | green 29199340139 |
-| s010 | [x] success | 15 | green 29202132162 |
-| s011 | [F] failure | 15 | 1 fail 29203364688 |
+| s008 | [x] success | 15 | green on run 29198171827; 152 tests 0 failures |
+| s009 | [x] success | 15 | green on run 29199340139; 115 tests 0 failures |
+| s010 | [x] success | 15 | green on run 29202132162; 166 tests 0 failures |
+| s011 | [x] success | 15 | green on run 29203714569; 131 tests 0 failures |
 | s012 | [ ] pending | 15 |  |
 | s013 | [ ] pending | 15 |  |
 | s014 | [ ] pending | 15 |  |

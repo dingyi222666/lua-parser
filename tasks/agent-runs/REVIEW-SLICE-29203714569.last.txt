@@ -1,0 +1,19 @@
+{
+  "runId": "29203714569",
+  "sliceId": "s011",
+  "status": "success",
+  "tests": 131,
+  "failures": 0,
+  "failedTests": [],
+  "progressSummary": {
+    "success": 11,
+    "failure": 0,
+    "pending": 14,
+    "running": 0,
+    "total": 25,
+    "filesDone": 165,
+    "activeSlice": "s011",
+    "updatedAt": "2026-07-12T18:23:15Z"
+  },
+  "notes": "Merged CI progress for run 29203714569; s011 success (131 tests, 0 failures). Copied progress.json and ['s001-29171889166.json', 's001-29172806487.json', 's001-29173315891.json', 's001-29173639103.json', 's001-29174621894.json', 's001-29174854977.json', 's001-29175268346.json', 's002-29175624965.json', 's002-29176527021.json', 's002-29184300559.json', 's002-29184841092.json', 's003-29191587333.json', 's003-29192058315.json', 's003-29192803870.json', 's004-29193414885.json', 's004-29193985587.json', 's005-29194327730.json', 's006-29194477445.json', 's006-29196132727.json', 's007-29196531532.json', 's007-29197045304.json', 's008-29197451642.json', 's008-29198171827.json', 's009-29198381786.json', 's009-29198982731.json', 's009-29199340139.json', 's010-29199561336.json', 's010-29201312516.json', 's010-29201787735.json', 's010-29202132162.json', 's011-29202408385.json', 's011-29202899347.json', 's011-29203364688.json', 's011-29203714569.json']. failures.txt empty."
+}
