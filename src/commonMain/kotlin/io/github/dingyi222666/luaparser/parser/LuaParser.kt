@@ -477,10 +477,12 @@ class LuaParser(
      * (leave the token unconsumed for the outer block).
      *
      * Keyword/control statement starts always recover. A bare NAME recovers only
-     * when it begins a call-shaped statement (name(, name{, name string) so
-     * well-formed multi-line multi-RHS names and table array fields
+     * when it begins a call-shaped statement: name(, name{, name string, or a
+     * member/method chain ending in a call (activity.setContentView(, view:setText()
+     * so well-formed multi-line multi-RHS names and table array fields
      * ({ NL LinearLayout, ...}) parse as expressions while incomplete
-     * a = NL print(a) still keeps print as sibling.
+     * a = NL print(a) / trailing-comma call NL activity.setContentView(view) keep
+     * the following call as a sibling statement.
      */
     private fun shouldRecoverStatementStartAsMissingExpression(token: LuaTokenTypes): Boolean {
         if (isKeywordStatementStart(token)) {
@@ -489,15 +491,67 @@ class LuaParser(
         if (token != LuaTokenTypes.NAME) {
             return false
         }
-        // token is the just-peeked NAME (pushbacked). Look one significant token past it.
-        val afterName = peekN(2)
-        return equalsMore(
-            afterName,
-            LuaTokenTypes.LPAREN,
-            LuaTokenTypes.LCURLY,
-            LuaTokenTypes.STRING,
-            LuaTokenTypes.LONG_STRING
-        )
+        // token is the just-peeked NAME (pushbacked). Walk member chains then call.
+        return isCallShapedNameStatementStart()
+    }
+
+    /**
+     * Lexer is positioned before a NAME. True when that NAME starts a call-shaped
+     * statement: direct call (name(, name{, name string) or a . / : member chain
+     * that ends in a call starter (activity.setContentView(, view:setText().
+     * Restores the lexer with [WrapperLuaLexer.back].
+     *
+     * Used by call-arg trailing-comma recovery (TASK-551 / TASK-647) so incomplete
+     * Android-Lua forms do not absorb later setContentView as an extra argument.
+     */
+    private fun isCallShapedNameStatementStart(): Boolean {
+        var backSize = 0
+
+        fun nextSignificant(): LuaTokenTypes {
+            while (true) {
+                val token = lexer.advance()
+                backSize++
+                if (token == LuaTokenTypes.EOF) {
+                    return LuaTokenTypes.EOF
+                }
+                if (!ignoreToken(token)) {
+                    return token
+                }
+            }
+        }
+
+        // Leading NAME (statement head).
+        if (nextSignificant() != LuaTokenTypes.NAME) {
+            lexer.back(backSize)
+            return false
+        }
+
+        // Zero or more (.|:) NAME segments, then a call starter.
+        while (true) {
+            when (val next = nextSignificant()) {
+                LuaTokenTypes.LPAREN,
+                LuaTokenTypes.LCURLY,
+                LuaTokenTypes.STRING,
+                LuaTokenTypes.LONG_STRING -> {
+                    lexer.back(backSize)
+                    return true
+                }
+
+                LuaTokenTypes.DOT,
+                LuaTokenTypes.COLON -> {
+                    if (nextSignificant() != LuaTokenTypes.NAME) {
+                        lexer.back(backSize)
+                        return false
+                    }
+                    // Continue: more chain segments or the eventual call starter.
+                }
+
+                else -> {
+                    lexer.back(backSize)
+                    return false
+                }
+            }
+        }
     }
 
     /** Statement-start tokens that cannot begin an expression after explist comma. */
@@ -2386,13 +2440,14 @@ class LuaParser(
     }
 
     /**
-     * Call argument list recovery (TASK-551 / TASK-178 lineage).
+     * Call argument list recovery (TASK-551 / TASK-178 / TASK-647 lineage).
      *
      * Unlike assignment multi-RHS (TASK-546), call args treat a line-break + statement-start
      * after a trailing comma as the end of the call so following top-level / loop-body
-     * statements remain siblings. Call-shaped NAME (`print(`, `activity.setContentView`)
-     * recovers as a sibling; bare NAME RHS after comma still parses as a later arg so
-     * well-formed multi-line calls like `foo(\n a,\n b\n)` stay intact.
+     * statements remain siblings. Call-shaped NAME (`print(`, member chain
+     * `activity.setContentView(`) recovers as a sibling; bare NAME RHS after comma still
+     * parses as a later arg so well-formed multi-line calls like `foo(\n a,\n b\n)` stay
+     * intact.
      */
     private fun parseCallArgumentList(parent: BaseASTNode): List<ExpressionNode> {
         val result = mutableListOf<ExpressionNode>()

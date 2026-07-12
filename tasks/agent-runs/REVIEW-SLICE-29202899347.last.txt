@@ -1,0 +1,22 @@
+{
+  "runId": "29202899347",
+  "sliceId": "s011",
+  "status": "failure",
+  "tests": 131,
+  "failures": 2,
+  "failedTests": [
+    "parser.recovery.LuaParserRecoveryTddTest#rejectsOutOfScopeRecoveryBoundariesEvenWithRecoveryEnabled[jvm]",
+    "parser.recovery.LuaParserRecoveryTddTest#recoversFunctionTableLiteralAndCurrentlySupportedIncompleteCallForms[jvm]"
+  ],
+  "progressSummary": {
+    "total": 25,
+    "totalFiles": 367,
+    "pending": 14,
+    "success": 10,
+    "failure": 1,
+    "running": 0,
+    "filesDone": 150,
+    "activeSlice": "s011"
+  },
+  "notes": "Merged CI progress.json (updatedAt 2026-07-12T17:57:25Z) over local (17:40:30Z). s011 still failure: 131 tests, 2 failures (down from 8 on 29202408385). Gate must-green-to-advance: re-run s011. Result artifact results/s011-29202899347.json copied; failures.txt written from junit XML."
+}

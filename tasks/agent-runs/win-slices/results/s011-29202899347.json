@@ -1,0 +1,35 @@
+{
+  "sliceId": "s011",
+  "runId": "29202899347",
+  "sha": "747de7f7db8529d31e8b17cbf7b98f79dea6bace",
+  "status": "failure",
+  "exitCode": 1,
+  "durationSec": 10,
+  "tests": 131,
+  "failures": 2,
+  "errors": 0,
+  "skipped": 0,
+  "failedTests": [
+    "parser.recovery.LuaParserRecoveryTddTest#rejectsOutOfScopeRecoveryBoundariesEvenWithRecoveryEnabled[jvm]",
+    "parser.recovery.LuaParserRecoveryTddTest#recoversFunctionTableLiteralAndCurrentlySupportedIncompleteCallForms[jvm]"
+  ],
+  "testsPatterns": [
+    "parser.recovery.LuaParserRecoveryMissingEndFunctionTddTest",
+    "parser.recovery.LuaParserRecoveryMultiRhsLineBreakTddTest",
+    "parser.recovery.LuaParserRecoveryNumericForEndTddTest",
+    "parser.recovery.LuaParserRecoveryNumericForStepTddTest",
+    "parser.recovery.LuaParserRecoveryNumericForTddTest",
+    "parser.recovery.LuaParserRecoveryRepeatUntilTddTest",
+    "parser.recovery.LuaParserRecoveryStringConcatIncompleteTddTest",
+    "parser.recovery.LuaParserRecoveryTableConstructorTddTest",
+    "parser.recovery.LuaParserRecoveryTableFieldMissingEqTddTest",
+    "parser.recovery.LuaParserRecoveryTddTest",
+    "parser.recovery.LuaParserRecoveryWhileDoTddTest",
+    "semantic.LegacySemanticAnalyzerCompatibilityTest",
+    "semantic.SemanticPipelineIntegrationTest",
+    "semantic.SemanticPipelinePublicFacadeTddTest",
+    "semantic.SemanticPipelineTest"
+  ],
+  "gate": "must-green-to-advance",
+  "finishedAt": "2026-07-12T17:57:25Z"
+}

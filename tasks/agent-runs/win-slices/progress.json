@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "updatedAt": "2026-07-12T17:40:30Z",
+  "updatedAt": "2026-07-12T17:57:25Z",
   "strategy": "must-green-to-advance",
   "chunkSize": 15,
   "cycle": 1,
@@ -162,24 +162,18 @@
       "status": "failure",
       "label": "parser.recovery..semantic",
       "fileCount": 15,
-      "lastRunId": "29202408385",
-      "lastSha": "29bd14ebd26508495db09b4180623c5b3395650a",
+      "lastRunId": "29202899347",
+      "lastSha": "747de7f7db8529d31e8b17cbf7b98f79dea6bace",
       "tests": 131,
-      "failures": 8,
+      "failures": 2,
       "errors": 0,
       "failedTests": [
-        "parser.recovery.LuaParserRecoveryMissingEndFunctionTddTest#recoversMissingEndWithResidualControlFlowBodies[jvm]",
         "parser.recovery.LuaParserRecoveryTddTest#rejectsOutOfScopeRecoveryBoundariesEvenWithRecoveryEnabled[jvm]",
-        "parser.recovery.LuaParserRecoveryTddTest#documentsRequiredRecoveryInventoryAndStrictParseGaps[jvm]",
-        "parser.recovery.LuaParserRecoveryTddTest#recoversFunctionTableLiteralAndCurrentlySupportedIncompleteCallForms[jvm]",
-        "parser.recovery.LuaParserRecoveryTddTest#recoversMissingEndThenDoAndUntilWhileKeepingStatementsReachable[jvm]",
-        "parser.recovery.LuaParserRecoveryTddTest#recoversLocalDeclarationsAndAssignmentsWithMissingPieces[jvm]",
-        "semantic.SemanticPipelinePublicFacadeTddTest#analyzeFacadeIsCallableRepeatedlyOnSamePipelineInstance[jvm]",
-        "semantic.SemanticPipelineTest#analyze_returnsSemanticAnalysisResultBackedByRealPipeline[jvm]"
+        "parser.recovery.LuaParserRecoveryTddTest#recoversFunctionTableLiteralAndCurrentlySupportedIncompleteCallForms[jvm]"
       ],
       "durationSec": 10,
-      "artifact": "results/s011-29202408385.json",
-      "updatedAt": "2026-07-12T17:40:30Z"
+      "artifact": "results/s011-29202899347.json",
+      "updatedAt": "2026-07-12T17:57:25Z"
     },
     "s012": {
       "status": "pending",
@@ -651,6 +645,15 @@
       "failures": 8,
       "durationSec": 10,
       "at": "2026-07-12T17:40:30Z"
+    },
+    {
+      "sliceId": "s011",
+      "runId": "29202899347",
+      "status": "failure",
+      "tests": 131,
+      "failures": 2,
+      "durationSec": 10,
+      "at": "2026-07-12T17:57:25Z"
     }
   ],
   "gate": {
