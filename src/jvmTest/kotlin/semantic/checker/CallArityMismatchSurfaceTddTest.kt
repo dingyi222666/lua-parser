@@ -590,6 +590,7 @@ class CallArityMismatchSurfaceTddTest {
                 "checker.function.signature.unknownParam",
                 "checker.function.signature.varargNotLast",
                 "checker.luajava.target.unresolved",
+                "checker.local.unused",
                 "checker.member.missing"
             ),
             PRODUCT_KNOWN_PIPELINE_CODES

@@ -1,0 +1,14 @@
+task: TASK-655
+wave: WINSLICE-29205966350
+owner: worker-WINSLICE-29205966350-TASK-655
+finalStatus: review
+utc: 2026-07-12T19:40:07Z
+summary: Aligned reservedCallArityCodeStringsRemainLockedAndDistinctFromProductCatalog method-level expected PRODUCT_KNOWN_PIPELINE_CODES set with companion catalog by adding checker.local.unused. Reserved checker.call.* codes unchanged and remain distinct from product catalog. No product emission changes.
+filesChanged:
+- src/jvmTest/kotlin/semantic/checker/CallArityMismatchSurfaceTddTest.kt
+- tasks/TASK-655.md
+locks:
+- locks/tasks/TASK-655.lock
+- locks/files/tasks__TASK-655.md.lock
+- locks/files/src__jvmTest__kotlin__semantic__checker__CallArityMismatchSurfaceTddTest.kt.lock
+verification: workers no Gradle; review-owned s014 jvmTest

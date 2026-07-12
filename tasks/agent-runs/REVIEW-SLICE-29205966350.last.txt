@@ -1,0 +1,21 @@
+{
+  "runId": "29205966350",
+  "sliceId": "s014",
+  "status": "failure",
+  "tests": 166,
+  "failures": 1,
+  "failedTests": [
+    "semantic.checker.CallArityMismatchSurfaceTddTest#reservedCallArityCodeStringsRemainLockedAndDistinctFromProductCatalog[jvm]"
+  ],
+  "progressSummary": {
+    "success": 13,
+    "failure": 1,
+    "pending": 11,
+    "running": 0,
+    "total": 25,
+    "filesDone": 195,
+    "activeSlice": "s014",
+    "activeStatus": "failure"
+  },
+  "notes": "Merged CI progress from /Users/dingyi/projects/java_projects/lua-parser/tasks/agent-runs/win-xml-29205966350/slice/tasks/agent-runs/win-slices/progress.json; s014 failure on run 29205966350; 166 tests 1 failure; copied_results=none (already present)"
+}

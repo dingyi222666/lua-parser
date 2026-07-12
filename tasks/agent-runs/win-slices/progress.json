@@ -1,15 +1,15 @@
 {
   "version": 2,
-  "updatedAt": "2026-07-12T19:28:28Z",
+  "updatedAt": "2026-07-12T19:32:40Z",
   "strategy": "must-green-to-advance",
   "chunkSize": 15,
   "cycle": 1,
   "summary": {
     "total": 25,
     "totalFiles": 367,
-    "pending": 12,
+    "pending": 11,
     "success": 13,
-    "failure": 0,
+    "failure": 1,
     "running": 0,
     "filesDone": 195
   },
@@ -201,18 +201,20 @@
       "updatedAt": "2026-07-12T19:28:28Z"
     },
     "s014": {
-      "status": "pending",
+      "status": "failure",
       "label": "semantic.binder..semantic.checker",
       "fileCount": 15,
-      "lastRunId": null,
-      "lastSha": null,
-      "tests": 0,
-      "failures": 0,
+      "lastRunId": "29205966350",
+      "lastSha": "658993efeba095a3d8dd0c8071c3d6282d9e0d82",
+      "tests": 166,
+      "failures": 1,
       "errors": 0,
-      "failedTests": [],
-      "durationSec": null,
-      "artifact": null,
-      "updatedAt": null
+      "failedTests": [
+        "semantic.checker.CallArityMismatchSurfaceTddTest#reservedCallArityCodeStringsRemainLockedAndDistinctFromProductCatalog[jvm]"
+      ],
+      "durationSec": 15,
+      "artifact": "results/s014-29205966350.json",
+      "updatedAt": "2026-07-12T19:32:40Z"
     },
     "s015": {
       "status": "pending",
@@ -714,6 +716,15 @@
       "failures": 0,
       "durationSec": 15,
       "at": "2026-07-12T19:28:28Z"
+    },
+    {
+      "sliceId": "s014",
+      "runId": "29205966350",
+      "status": "failure",
+      "tests": 166,
+      "failures": 1,
+      "durationSec": 15,
+      "at": "2026-07-12T19:32:40Z"
     }
   ],
   "gate": {
@@ -721,5 +732,5 @@
     "advanceOnlyIfSuccess": true,
     "workersPerSliceMax": 30
   },
-  "activeSlice": "s013"
+  "activeSlice": "s014"
 }
