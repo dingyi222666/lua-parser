@@ -1,0 +1,18 @@
+{
+  "runId": "29192803870",
+  "sliceId": "s003",
+  "status": "success",
+  "tests": 208,
+  "failures": 0,
+  "failedTests": [],
+  "progressSummary": {
+    "total": 25,
+    "totalFiles": 367,
+    "pending": 22,
+    "success": 3,
+    "failure": 0,
+    "running": 0,
+    "filesDone": 45
+  },
+  "notes": "Merged CI progress for run 29192803870; s003 green (208 tests, 0 failures). filesDone=45; success=3/25. Active remains s003 until next advance."
+}

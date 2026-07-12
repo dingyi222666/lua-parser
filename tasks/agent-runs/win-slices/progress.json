@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "updatedAt": "2026-07-12T12:09:37Z",
+  "updatedAt": "2026-07-12T12:34:59Z",
   "strategy": "must-green-to-advance",
   "chunkSize": 15,
   "cycle": 1,
@@ -8,10 +8,10 @@
     "total": 25,
     "totalFiles": 367,
     "pending": 22,
-    "success": 2,
-    "failure": 1,
+    "success": 3,
+    "failure": 0,
     "running": 0,
-    "filesDone": 30
+    "filesDone": 45
   },
   "slices": {
     "s001": {
@@ -45,30 +45,19 @@
       "note": "green on run 29184841092; 307 tests 0 failures"
     },
     "s003": {
-      "status": "failure",
+      "status": "success",
       "label": "lsp",
       "fileCount": 15,
-      "lastRunId": "29192058315",
-      "lastSha": "dbfead19df41cd7bbaf0431899df261cb03a13df",
+      "lastRunId": "29192803870",
+      "lastSha": "b0e0be5b03670a3550fa0627764569359383cdaa",
       "tests": 208,
-      "failures": 11,
+      "failures": 0,
       "errors": 0,
-      "failedTests": [
-        "lsp.LspDiagnosticSeverityMappingTddTest#queriedDiagnosticsAgreeWithPublishedSeveritiesForParseError[jvm]",
-        "lsp.LspDiagnosticSeverityMappingTddTest#parseRecoveryDiagnosticPublishesAsLspError[jvm]",
-        "lsp.LspDiagnosticsPublishOnChangeTddTest#range_edit_introducing_parse_error_publishes_diagnostics[jvm]",
-        "lsp.LspDiagnosticsPublishOnChangeTddTest#multi_range_content_changes_in_one_notification_apply_in_order[jvm]",
-        "lsp.LspDiagnosticsPublishOnChangeTddTest#server_connected_client_receives_change_publishes_in_edit_order[jvm]",
-        "lsp.LspDiagnosticsPublishOnChangeTddTest#full_sync_valid_to_invalid_publishes_non_empty_errors_for_that_uri_only[jvm]",
-        "lsp.LspDiagnosticsPublishOnChangeTddTest#corpus_table_valid_invalid_repair_matrix_across_uris[jvm]",
-        "lsp.LspDiagnosticsPublishOnChangeTddTest#range_edit_repairing_parse_error_clears_diagnostics[jvm]",
-        "lsp.LspDidOpenMultiDocDiagnosticsTddTest#mixed_valid_and_invalid_opens_isolate_diagnostics_per_uri[jvm]",
-        "lsp.LspDidOpenMultiDocDiagnosticsTddTest#server_connected_client_receives_multi_doc_open_diagnostics_in_order[jvm]",
-        "lsp.LspDidOpenMultiDocDiagnosticsTddTest#multi_doc_corpus_table_covers_valid_invalid_and_reopen_matrix[jvm]"
-      ],
+      "failedTests": [],
       "durationSec": 40,
-      "artifact": "results/s003-29192058315.json",
-      "updatedAt": "2026-07-12T12:09:37Z"
+      "artifact": "results/s003-29192803870.json",
+      "updatedAt": "2026-07-12T12:34:59Z",
+      "note": "green on run 29192803870; 208 tests 0 failures"
     },
     "s004": {
       "status": "pending",
@@ -489,6 +478,15 @@
       "failures": 11,
       "durationSec": 40,
       "at": "2026-07-12T12:09:37Z"
+    },
+    {
+      "sliceId": "s003",
+      "runId": "29192803870",
+      "status": "success",
+      "tests": 208,
+      "failures": 0,
+      "durationSec": 40,
+      "at": "2026-07-12T12:34:59Z"
     }
   ],
   "gate": {
@@ -496,5 +494,5 @@
     "advanceOnlyIfSuccess": true,
     "workersPerSliceMax": 30
   },
-  "activeSlice": "s003"
+  "activeSlice": "s004"
 }
