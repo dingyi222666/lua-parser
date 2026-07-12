@@ -1,13 +1,13 @@
 # Windows slice progress (must-green-to-advance)
 
-Updated: 2026-07-12T00:13:23Z
+Updated: 2026-07-12T00:42:14Z
 Strategy: must-green-to-advance
 Active/HEAD: s001 failure
 Summary: success=0 failure=1 pending=24 total=25 filesDone=0
 
 | Slice | Status | Files | Notes |
 | --- | --- | --- | --- |
-| s001 | [F] failure | 15 | run 29173315891 failures=34 |
+| s001 | [F] failure | 15 | run 29173639103 failures=3 |
 | s002 | [ ] pending | 15 |  |
 | s003 | [ ] pending | 15 |  |
 | s004 | [ ] pending | 15 |  |
@@ -32,4 +32,3 @@ Summary: success=0 failure=1 pending=24 total=25 filesDone=0
 | s023 | [ ] pending | 15 |  |
 | s024 | [ ] pending | 15 |  |
 | s025 | [ ] pending | 7 |  |
-

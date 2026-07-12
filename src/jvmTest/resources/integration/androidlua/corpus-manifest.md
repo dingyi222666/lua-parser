@@ -3,6 +3,7 @@
 Prepared by TASK-054 on 2026-06-08.
 Host dual-path external root policy refreshed by TASK-562 on 2026-07-12.
 Joint green-lock (root dual-path + android-35 jar metadata) coordinated by TASK-605 on 2026-07-12.
+Windows dual-path present-clone preference (no macOS hybrid assert) by TASK-609 on 2026-07-12.
 
 External source root, read-only (do not vendor Android-Lua sources into this repo):
 
@@ -11,16 +12,23 @@ External source root, read-only (do not vendor Android-Lua sources into this rep
 ```
 
 Host dual-path default resolution used by
-`AndroidLuaCorpusSemanticVerificationTest` (TASK-562):
+`AndroidLuaCorpusSemanticVerificationTest` (TASK-562 / TASK-609):
 
 1. system property `androidLua.main` (non-blank)
 2. environment `ANDROID_LUA_MAIN` (non-blank; empty env is treated as unset)
-3. host dual-path candidates, first existing directory wins:
-   - preferred macOS clone: `/Users/dingyi/projects/java_projects/Android-Lua/app/src/main`
-   - documented Windows last-resort only: `G:/Android-Lua/app/src/main`
-     (never a sole hard default that fails macOS solely because `G:` is missing)
+3. host dual-path candidates, first existing directory wins (OS-aware):
+   - Windows hosts:
+     - user-home clone: `~/projects/java_projects/Android-Lua/app/src/main`
+     - documented Windows clone: `G:/Android-Lua/app/src/main`
+     - never invent hybrid `G:/Users/dingyi/projects/...` from the macOS absolute path
+   - macOS / other hosts:
+     - preferred macOS clone: `/Users/dingyi/projects/java_projects/Android-Lua/app/src/main`
+     - user-home clone: `~/projects/java_projects/Android-Lua/app/src/main`
+     - documented Windows last-resort only: `G:/Android-Lua/app/src/main`
+       (never a sole hard default that fails macOS solely because `G:` is missing)
 
 Missing root fails with a message that lists tried paths and the override knobs above.
+Joint green-lock asserts the present host clone, not a macOS-only absolute path on Windows CI.
 External tree remains read-only.
 
 Host android.jar dual-path (TASK-605 joint green-lock with root dual-path):

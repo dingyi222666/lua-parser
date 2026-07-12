@@ -1,0 +1,22 @@
+{
+  "runId": "29173639103",
+  "sliceId": "s001",
+  "status": "failure",
+  "tests": 246,
+  "failures": 3,
+  "failedTests": [
+    "integration.AndroidLuaCorpusSemanticVerificationTest#host_dual_path_root_and_android_jar_joint_green_lock[jvm]",
+    "interop.jvm.JvmClassloaderConfigurationTddTest#configured_android_jar_resolves_nested_framework_classes_by_binary_and_dotted_names[jvm]",
+    "interop.jvm.JvmClassloaderConfigurationTddTest#configured_android_jar_loads_framework_classes_from_expected_sdk_path[jvm]"
+  ],
+  "progressSummary": {
+    "total": 25,
+    "totalFiles": 367,
+    "pending": 24,
+    "success": 0,
+    "failure": 1,
+    "running": 0,
+    "filesDone": 0
+  },
+  "notes": "Merged CI artifact progress.json (updatedAt 2026-07-12T00:42:14Z, runId 29173639103) over local progress (older 2026-07-12T00:13:23Z). Copied results/s001-29173639103.json. Wrote failures.txt from 15 TEST-*.xml (3 failed classname#method). Gate must-green-to-advance: s001 remains active with failures reduced 34->3."
+}

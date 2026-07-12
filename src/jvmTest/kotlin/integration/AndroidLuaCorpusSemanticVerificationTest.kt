@@ -37,33 +37,78 @@ class AndroidLuaCorpusSemanticVerificationTest {
     private val androidJar = File(JvmWorkspaceConfiguration.DEFAULT_ANDROID_JAR_PATH)
 
     /**
-     * Joint green-lock (TASK-605): host dual-path Android-Lua root + android-35 jar
-     * defaults must clear the MODULE-VERIFY root/path red without G:/ hard defaults.
+     * Joint green-lock (TASK-605/609): host dual-path Android-Lua root + android-35 jar
+     * defaults must clear MODULE-VERIFY root/path red without G:/ sole hard defaults and
+     * without macOS-only absolute path asserts on Windows CI.
      *
      * Coordinates TASK-562 (root dual-path), TASK-563..565 (recovery/semantic/full-tree),
-     * and JvmWorkspaceConfiguration jar discovery. Host clone + SDK android-35 present
-     * is sufficient; empty ANDROID_LUA_MAIN is treated as unset.
+     * and JvmWorkspaceConfiguration jar discovery. Host-present clone + SDK android-35
+     * present is sufficient; empty ANDROID_LUA_MAIN is treated as unset.
+     *
+     * Windows evidence (run 29173639103): do not assert File(macOS path).canonicalFile
+     * (becomes hybrid G:\Users\dingyi\projects\...) when the present clone is
+     * G:\Android-Lua\app\src\main.
      */
     @Test
     fun host_dual_path_root_and_android_jar_joint_green_lock() {
-        // Root: dual-path candidates (macOS clone first; Windows G: last-resort only).
+        // Root: property/env overrides, then OS-aware host dual-path (present clone wins).
         val root = assertExternalSourceRoot()
         assertTrue(root.isDirectory, "Joint green-lock requires host Android-Lua root directory.")
+
+        val defaultRoot = File(DEFAULT_ANDROID_LUA_MAIN)
+        assertTrue(
+            defaultRoot.isDirectory,
+            "DEFAULT_ANDROID_LUA_MAIN must resolve to a present dual-path candidate; " +
+                "got ${defaultRoot.path}. Tried: ${hostAndroidLuaMainCandidates().joinToString()}."
+        )
         assertEquals(
-            File(HOST_MACOS_ANDROID_LUA_MAIN).canonicalFile,
+            defaultRoot.canonicalFile,
             root.canonicalFile,
-            "With host clone present and overrides unset/empty, dual-path root must prefer " +
-                "$HOST_MACOS_ANDROID_LUA_MAIN over $WINDOWS_DOCUMENTED_ANDROID_LUA_MAIN."
+            "DEFAULT_ANDROID_LUA_MAIN must match assertExternalSourceRoot first present candidate."
         )
         assertTrue(
-            !root.path.replace('\\', '/').startsWith("G:/Android-Lua", ignoreCase = true),
-            "Joint green-lock root must not hard-require G:/Android-Lua when macOS clone exists; got ${root.path}."
+            hostAndroidLuaMainCandidates().any { candidate ->
+                sameResolvedFile(File(candidate), root)
+            },
+            "Joint green-lock root must be one of host dual-path candidates " +
+                "${hostAndroidLuaMainCandidates()}; got ${root.path}."
         )
-        assertEquals(
-            File(DEFAULT_ANDROID_LUA_MAIN).canonicalFile,
-            root.canonicalFile,
-            "DEFAULT_ANDROID_LUA_MAIN must resolve to the first present dual-path candidate."
+        assertTrue(
+            !isInventedWindowsHybridOfMacOsAndroidLuaPath(root),
+            "Dual-path root must not invent broken Windows hybrid of the macOS clone path " +
+                "(for example G:/Users/dingyi/projects/java_projects/Android-Lua/app/src/main); " +
+                "got ${root.path}."
         )
+
+        // macOS host: prefer the real macOS clone when that directory is present.
+        val macClone = File(HOST_MACOS_ANDROID_LUA_MAIN)
+        if (!isWindowsHost() && macClone.isDirectory) {
+            assertEquals(
+                macClone.canonicalFile,
+                root.canonicalFile,
+                "With macOS clone present and overrides unset/empty, dual-path root must prefer " +
+                    "$HOST_MACOS_ANDROID_LUA_MAIN over $WINDOWS_DOCUMENTED_ANDROID_LUA_MAIN."
+            )
+            assertTrue(
+                !root.path.replace('\\', '/').startsWith("G:/Android-Lua", ignoreCase = true),
+                "Joint green-lock root must not hard-require G:/Android-Lua when macOS clone exists; got ${root.path}."
+            )
+        }
+
+        // Windows host: present Windows clone wins (documented G:/Android-Lua or user-home clone);
+        // never require non-existent macOS absolute / hybrid path.
+        if (isWindowsHost()) {
+            val winDoc = File(WINDOWS_DOCUMENTED_ANDROID_LUA_MAIN)
+            val homeClone = File(hostUserHomeAndroidLuaMain())
+            assertTrue(
+                (winDoc.isDirectory && sameResolvedFile(winDoc, root)) ||
+                    (homeClone.isDirectory && sameResolvedFile(homeClone, root)) ||
+                    hostAndroidLuaMainCandidates().any { sameResolvedFile(File(it), root) && File(it).isDirectory },
+                "On Windows, dual-path root must choose a present Windows clone " +
+                    "(for example $WINDOWS_DOCUMENTED_ANDROID_LUA_MAIN or user-home projects clone) " +
+                    "without requiring macOS-only $HOST_MACOS_ANDROID_LUA_MAIN; got ${root.path}."
+            )
+        }
 
         // Jar: DEFAULT_ANDROID_JAR_PATH dual-path discovery (never sole G:/ hardcode).
         assertAndroidJarExists()
@@ -618,10 +663,14 @@ class AndroidLuaCorpusSemanticVerificationTest {
      *
      * Override order:
      * 1. system property `androidLua.main` (non-blank)
-     * 2. environment `ANDROID_LUA_MAIN` (non-blank)
-     * 3. host dual-path candidates: macOS clone path first when present;
-     *    documented Windows `G:/Android-Lua/app/src/main` only as last-resort candidate
-     *    (never a sole hard default that fails macOS solely because G: is missing).
+     * 2. environment `ANDROID_LUA_MAIN` (non-blank; empty treated as unset)
+     * 3. host dual-path candidates (first existing directory wins):
+     *    - Windows: user-home projects clone first, then documented `G:/Android-Lua/app/src/main`
+     *      (never invent `G:/Users/dingyi/projects/...` hybrids from the macOS absolute path)
+     *    - macOS/other: macOS clone path first when present, then user-home clone,
+     *      then documented Windows path as last-resort only
+     *
+     * Missing root fails with a message that lists tried paths and override knobs.
      */
     private fun assertExternalSourceRoot(): File {
         val override = configuredAndroidLuaMainOverride()
@@ -635,7 +684,7 @@ class AndroidLuaCorpusSemanticVerificationTest {
                     append("Tried override path only. ")
                     append("Set a valid checkout via -DandroidLua.main or ANDROID_LUA_MAIN, ")
                     append("or unset them to use host dual-path candidates: ")
-                    append(HOST_ANDROID_LUA_MAIN_CANDIDATES.joinToString())
+                    append(hostAndroidLuaMainCandidates().joinToString())
                     append(". External tree remains read-only.")
                 }
             )
@@ -643,7 +692,7 @@ class AndroidLuaCorpusSemanticVerificationTest {
         }
 
         val tried = mutableListOf<String>()
-        for (candidate in HOST_ANDROID_LUA_MAIN_CANDIDATES) {
+        for (candidate in hostAndroidLuaMainCandidates()) {
             val root = File(candidate)
             tried += root.path
             if (root.isDirectory) {
@@ -657,7 +706,10 @@ class AndroidLuaCorpusSemanticVerificationTest {
                 append("Expected Android-Lua source root among host dual-path candidates; none exist. ")
                 append("Tried: ${tried.joinToString()}. ")
                 append("Override with -DandroidLua.main or ANDROID_LUA_MAIN (empty values are treated as unset). ")
-                append("macOS host clone is preferred when present; ")
+                append("On Windows, prefer a present Windows clone (user-home projects or ")
+                append("$WINDOWS_DOCUMENTED_ANDROID_LUA_MAIN); do not invent hybrid ")
+                append("G:/Users/dingyi/projects/... from the macOS path. ")
+                append("On macOS, host clone $HOST_MACOS_ANDROID_LUA_MAIN is preferred when present; ")
                 append("documented Windows $WINDOWS_DOCUMENTED_ANDROID_LUA_MAIN is last-resort only ")
                 append("(never a sole hard default that fails macOS solely because G: is missing). ")
                 append("External tree remains read-only; do not vendor Android-Lua sources.")
@@ -673,6 +725,50 @@ class AndroidLuaCorpusSemanticVerificationTest {
             ?: System.getenv(ANDROID_LUA_MAIN_ENV)
                 ?.trim()
                 ?.takeIf { it.isNotEmpty() }
+    }
+
+    private fun isWindowsHost(): Boolean {
+        return System.getProperty("os.name").orEmpty().lowercase().contains("win")
+    }
+
+    /**
+     * user.home-relative Android-Lua `app/src/main` clone (portable across hosts).
+     * Prefer this over inventing drive-letter hybrids of the macOS absolute path.
+     */
+    private fun hostUserHomeAndroidLuaMain(): String {
+        val home = System.getProperty("user.home")?.trim()?.takeIf { it.isNotEmpty() } ?: "."
+        return File(home, "projects/java_projects/Android-Lua/app/src/main").path
+    }
+
+    /**
+     * OS-aware dual-path candidates after property/env overrides.
+     * First existing directory wins. Never includes the macOS absolute path on Windows,
+     * because Java maps `/Users/...` to `<current-drive>:\Users\...` hybrids.
+     */
+    private fun hostAndroidLuaMainCandidates(): List<String> = HOST_ANDROID_LUA_MAIN_CANDIDATES
+
+    /**
+     * Detect the broken Windows hybrid of the macOS clone path:
+     * `<drive>:/Users/dingyi/projects/java_projects/Android-Lua/app/src/main`.
+     * Dual-path resolution must never select this invented path over a real Windows clone.
+     */
+    private fun isInventedWindowsHybridOfMacOsAndroidLuaPath(root: File): Boolean {
+        if (!isWindowsHost()) {
+            return false
+        }
+        val normalized = root.path.replace('\\', '/')
+        val hybridSuffix = "/Users/dingyi/projects/java_projects/Android-Lua/app/src/main"
+        val looksLikeHybrid = normalized.length >= 2 &&
+            normalized[1] == ':' &&
+            normalized.substring(2).replace('\\', '/').equals(hybridSuffix, ignoreCase = true)
+        if (!looksLikeHybrid) {
+            return false
+        }
+        // Hybrid is "invented" when the documented/home Windows clones exist or the native
+        // macOS absolute path is not a real directory on this host layout.
+        val winDoc = File(WINDOWS_DOCUMENTED_ANDROID_LUA_MAIN)
+        val homeClone = File(hostUserHomeAndroidLuaMain())
+        return winDoc.isDirectory || homeClone.isDirectory || !File(HOST_MACOS_ANDROID_LUA_MAIN).isDirectory
     }
 
     private fun assertAndroidJarExists() {
@@ -808,7 +904,10 @@ class AndroidLuaCorpusSemanticVerificationTest {
         const val HOST_MACOS_ANDROID_LUA_MAIN =
             "/Users/dingyi/projects/java_projects/Android-Lua/app/src/main"
 
-        /** Documented Windows path used only as a last-resort candidate, never a sole hard default. */
+        /**
+         * Documented Windows clone path. On Windows hosts it is a first-class present-clone
+         * candidate; on macOS/Linux it is last-resort only (never a sole hard default).
+         */
         const val WINDOWS_DOCUMENTED_ANDROID_LUA_MAIN = "G:/Android-Lua/app/src/main"
 
         /**
@@ -821,21 +920,42 @@ class AndroidLuaCorpusSemanticVerificationTest {
 
         /**
          * Host dual-path candidates after system property / env overrides.
-         * First existing directory wins; Windows G: is last so missing G: never fails macOS alone.
+         * OS-aware: Windows prefers present Windows clones and never injects the macOS
+         * absolute path (Java would invent `<drive>:\Users\dingyi\projects\...` hybrids).
+         * macOS prefers the real macOS clone first; Windows G: remains last-resort there.
          */
-        val HOST_ANDROID_LUA_MAIN_CANDIDATES: List<String> = listOf(
-            HOST_MACOS_ANDROID_LUA_MAIN,
-            WINDOWS_DOCUMENTED_ANDROID_LUA_MAIN
-        )
+        val HOST_ANDROID_LUA_MAIN_CANDIDATES: List<String>
+            get() {
+                val home = System.getProperty("user.home")?.trim()?.takeIf { it.isNotEmpty() } ?: "."
+                val homeClone = File(home, "projects/java_projects/Android-Lua/app/src/main").path
+                val windows = System.getProperty("os.name").orEmpty().lowercase().contains("win")
+                return if (windows) {
+                    listOf(homeClone, WINDOWS_DOCUMENTED_ANDROID_LUA_MAIN).distinct()
+                } else {
+                    listOf(
+                        HOST_MACOS_ANDROID_LUA_MAIN,
+                        homeClone,
+                        WINDOWS_DOCUMENTED_ANDROID_LUA_MAIN
+                    ).distinct()
+                }
+            }
 
         /**
          * Default / fallback root when overrides are unset: first present dual-path candidate,
-         * else the preferred macOS host path for messaging (not G: alone).
+         * else an OS-appropriate messaging candidate (never invent a Windows hybrid of the
+         * macOS absolute path when no directory is present).
          */
         val DEFAULT_ANDROID_LUA_MAIN: String
-            get() = HOST_ANDROID_LUA_MAIN_CANDIDATES
-                .firstOrNull { File(it).isDirectory }
-                ?: HOST_MACOS_ANDROID_LUA_MAIN
+            get() {
+                val candidates = HOST_ANDROID_LUA_MAIN_CANDIDATES
+                candidates.firstOrNull { File(it).isDirectory }?.let { return it }
+                val windows = System.getProperty("os.name").orEmpty().lowercase().contains("win")
+                return if (windows) {
+                    candidates.firstOrNull() ?: WINDOWS_DOCUMENTED_ANDROID_LUA_MAIN
+                } else {
+                    HOST_MACOS_ANDROID_LUA_MAIN
+                }
+            }
 
         /**
          * Workspace virtual paths for the expanded semantic matrix (TASK-564).

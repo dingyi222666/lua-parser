@@ -861,13 +861,14 @@ class JvmClassModuleProvider(
      *
      * Uses [JvmWorkspaceConfiguration.reflectionClasspathEntries] first. When an explicit
      * jvm.androidJar metadata path is missing on disk (common with Windows-only G: fixtures
-     * on macOS hosts, or macOS Library/Android/sdk absolute paths on Windows CI), soft-falls
-     * back to host SDK discovery via
-     * [JvmWorkspaceConfiguration.discoverReflectiveAndroidJarPath] so nested AndroLua
-     * aliases (View$OnClickListener, Map$Entry) still resolve when the host jar is present.
+     * on macOS hosts, macOS Library/Android/sdk absolute paths on Windows CI, or a missing
+     * Windows AppData android-35 hard-lock candidate), soft-falls back to host SDK discovery
+     * via [JvmWorkspaceConfiguration.discoverReflectiveAndroidJarPath] so nested AndroLua
+     * aliases (View$OnClickListener, Map$Entry) still resolve when another host jar is present.
      *
      * Never invents framework classes: only existing directories/jars are returned.
-     * Never hard-requires G: or a macOS-only absolute path.
+     * Never hard-requires G:, a missing AppData android-35 path alone, or a macOS-only
+     * absolute path.
      */
     private fun reflectiveClasspathFiles(configuration: JvmWorkspaceConfiguration): List<File> {
         val entries = configuration.reflectionClasspathEntries()
@@ -880,9 +881,10 @@ class JvmClassModuleProvider(
             entry.isFile && entry.name.equals("android.jar", ignoreCase = true)
         }
         if (!hasAndroidJar && shouldSoftFallbackToHostAndroidJar(configuration)) {
-            // Legacy Windows G:/ android.jar metadata fixtures soft-fall back to host SDK
-            // discovery so nested AndroLua aliases still resolve on macOS. Explicit missing
-            // non-G paths (isolation tests) stay empty and never invent framework classes.
+            // Foreign host fixtures / missing well-known dual-path candidates soft-fall back
+            // to host SDK discovery so nested AndroLua aliases still resolve when a real jar
+            // exists elsewhere. Explicit missing non-well-known paths (isolation tests) stay
+            // empty and never invent framework classes.
             JvmWorkspaceConfiguration.discoverReflectiveAndroidJarPath()
                 ?.let(::File)
                 ?.takeIf { hostJar ->
@@ -904,14 +906,30 @@ class JvmClassModuleProvider(
             return false
         }
         val normalized = configuredJar.replace('\\', '/')
-        // Soft-fallback only for known foreign host fixtures that cannot exist on this OS:
+        // Soft-fallback only for known foreign host fixtures / dual-path hard-lock candidates
+        // that may be missing on this OS while another host jar is present:
         // - documented Windows G: inventing root on non-G hosts
         // - macOS Library/Android/sdk absolute path when missing on Windows/Linux CI
+        // - Windows AppData/Local/Android/Sdk android-35|34 candidates when absent on hosts
+        //   that still have another present SDK root
         // Never invent jars for arbitrary missing paths (isolation tests must stay empty).
         val isWindowsDocumentedSdkPath = normalized.startsWith("G:/Android/Sdk", ignoreCase = true)
         val isMacLibrarySdkPath = normalized.contains("/Library/Android/sdk/", ignoreCase = true) ||
             normalized.contains("/Library/Android/sdk", ignoreCase = true)
-        return isWindowsDocumentedSdkPath || isMacLibrarySdkPath
+        val isWindowsAppDataSdkPath =
+            normalized.contains("/AppData/Local/Android/Sdk/", ignoreCase = true) ||
+                normalized.contains("/AppData/Local/Android/sdk/", ignoreCase = true)
+        val isWellKnownPlatformAndroidJar =
+            normalized.endsWith("/platforms/android-35/android.jar", ignoreCase = true) ||
+                normalized.endsWith("/platforms/android-34/android.jar", ignoreCase = true)
+        return isWindowsDocumentedSdkPath ||
+            isMacLibrarySdkPath ||
+            isWindowsAppDataSdkPath ||
+            (isWellKnownPlatformAndroidJar && (
+                normalized.contains("/Android/Sdk/", ignoreCase = true) ||
+                    normalized.contains("/Android/sdk/", ignoreCase = true) ||
+                    normalized.contains("/Library/Android/", ignoreCase = true)
+                ))
     }
 
     /**

@@ -1,0 +1,36 @@
+{
+  "sliceId": "s001",
+  "runId": "29173639103",
+  "sha": "1bf0f1f0270c06aaff6ba5965de773e541e43099",
+  "status": "failure",
+  "exitCode": 1,
+  "durationSec": 25,
+  "tests": 246,
+  "failures": 3,
+  "errors": 0,
+  "skipped": 100,
+  "failedTests": [
+    "integration.AndroidLuaCorpusSemanticVerificationTest#host_dual_path_root_and_android_jar_joint_green_lock[jvm]",
+    "interop.jvm.JvmClassloaderConfigurationTddTest#configured_android_jar_resolves_nested_framework_classes_by_binary_and_dotted_names[jvm]",
+    "interop.jvm.JvmClassloaderConfigurationTddTest#configured_android_jar_loads_framework_classes_from_expected_sdk_path[jvm]"
+  ],
+  "testsPatterns": [
+    "integration.AndroidLuaCorpusSemanticVerificationTest",
+    "integration.AndroidLuaMixedLuajavaIntegrationTddTest",
+    "integration.LuaJavaBindClassHoverIntegrationTddTest",
+    "integration.RequireChainCompletionIntegrationTddTest",
+    "interop.jvm.AndroidJarActivityMemberSurfaceTddTest",
+    "interop.jvm.AndroidJarContextMemberSurfaceTddTest",
+    "interop.jvm.AndroidJarDefaultPathDiscoveryTddTest",
+    "interop.jvm.AndroidJarIntentMemberSurfaceTddTest",
+    "interop.jvm.AndroidJarPackageEnumerationTddTest",
+    "interop.jvm.AndroidJarReflectionTddTest",
+    "interop.jvm.JvmClassProviderArrayClassTddTest",
+    "interop.jvm.JvmClassProviderInnerClassTddTest",
+    "interop.jvm.JvmClassloaderConfigurationTddTest",
+    "interop.jvm.JvmClassloaderIsolationPolicyTddTest",
+    "interop.jvm.JvmClassloaderParentChildPolicyTddTest"
+  ],
+  "gate": "must-green-to-advance",
+  "finishedAt": "2026-07-12T00:42:14Z"
+}
