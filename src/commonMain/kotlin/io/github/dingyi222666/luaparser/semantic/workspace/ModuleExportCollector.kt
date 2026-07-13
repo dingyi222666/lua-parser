@@ -1,12 +1,13 @@
 package io.github.dingyi222666.luaparser.semantic.workspace
 
 import io.github.dingyi222666.luaparser.parser.ast.node.AssignmentStatement
+import io.github.dingyi222666.luaparser.parser.ast.node.BinaryExpression
 import io.github.dingyi222666.luaparser.parser.ast.node.BlockNode
 import io.github.dingyi222666.luaparser.parser.ast.node.ChunkNode
 import io.github.dingyi222666.luaparser.parser.ast.node.ConstantNode
 import io.github.dingyi222666.luaparser.parser.ast.node.DoStatement
-import io.github.dingyi222666.luaparser.parser.ast.node.ElseClause
 import io.github.dingyi222666.luaparser.parser.ast.node.ExpressionNode
+import io.github.dingyi222666.luaparser.parser.ast.node.ExpressionOperator
 import io.github.dingyi222666.luaparser.parser.ast.node.ForGenericStatement
 import io.github.dingyi222666.luaparser.parser.ast.node.ForNumericStatement
 import io.github.dingyi222666.luaparser.parser.ast.node.FunctionDeclaration
@@ -22,18 +23,27 @@ import io.github.dingyi222666.luaparser.parser.ast.node.StatementNode
 import io.github.dingyi222666.luaparser.parser.ast.node.SwitchStatement
 import io.github.dingyi222666.luaparser.parser.ast.node.TableConstructorExpression
 import io.github.dingyi222666.luaparser.parser.ast.node.TableKey
+import io.github.dingyi222666.luaparser.parser.ast.node.UnaryExpression
 import io.github.dingyi222666.luaparser.parser.ast.node.WhenStatement
 import io.github.dingyi222666.luaparser.parser.ast.node.WhileStatement
 import io.github.dingyi222666.luaparser.semantic.api.SymbolKind
+import io.github.dingyi222666.luaparser.semantic.comments.CommentAttachPass
+import io.github.dingyi222666.luaparser.semantic.comments.CommentAttachmentIndex
+import io.github.dingyi222666.luaparser.semantic.comments.ParamTagSyntax
+import io.github.dingyi222666.luaparser.semantic.comments.ReturnTagSyntax
 import io.github.dingyi222666.luaparser.semantic.types.model.CustomType
 import io.github.dingyi222666.luaparser.semantic.types.model.FunctionParameter
 import io.github.dingyi222666.luaparser.semantic.types.model.FunctionType
 import io.github.dingyi222666.luaparser.semantic.types.model.LiteralType
 import io.github.dingyi222666.luaparser.semantic.types.model.ModuleType
+import io.github.dingyi222666.luaparser.semantic.types.model.MultiReturnType
 import io.github.dingyi222666.luaparser.semantic.types.model.PrimitiveType
 import io.github.dingyi222666.luaparser.semantic.types.model.TableType
 import io.github.dingyi222666.luaparser.semantic.types.model.Type
 import io.github.dingyi222666.luaparser.semantic.types.model.UnknownType
+import io.github.dingyi222666.luaparser.semantic.types.syntax.NamedTypeSyntax
+import io.github.dingyi222666.luaparser.semantic.types.syntax.TypeSyntax
+import io.github.dingyi222666.luaparser.semantic.types.syntax.TypeSyntaxParser
 
 object ModuleExportCollector {
     private val reservedLegacyNames = setOf("_M", "_NAME", "_PACKAGE", "...")
@@ -46,7 +56,10 @@ object ModuleExportCollector {
         facts: DocumentFacts,
         legacyEnvironment: LegacyModuleEnvironment
     ): ModuleExportSurface? {
-        val analyzer = Analyzer(facts, legacyEnvironment)
+        // One-pass Emmy attach for this chunk so export FunctionTypes carry ---@param/---@return
+        // into ModuleType fields consumers resolve (require-backed greeter.hello → string).
+        val commentIndex = CommentAttachPass().attach(chunk)
+        val analyzer = Analyzer(facts, legacyEnvironment, commentIndex)
         analyzer.visitBlock(chunk.body)
 
         val exportRoot = facts.returnHint.identifierName?.let(analyzer::resolveAlias)
@@ -235,7 +248,8 @@ object ModuleExportCollector {
 
     private class Analyzer(
         private val facts: DocumentFacts,
-        private val legacyEnvironment: LegacyModuleEnvironment
+        private val legacyEnvironment: LegacyModuleEnvironment,
+        private val commentIndex: CommentAttachmentIndex
     ) {
         val writes = mutableListOf<CollectedWrite>()
         private val locals = linkedMapOf<String, AliasBinding>()
@@ -519,19 +533,154 @@ object ModuleExportCollector {
         }
 
         /**
-         * Build a [FunctionType] from a declaration's parameter list.
-         * Emmy/declared return types are not available at export-collection time; parameters still
-         * keep names so consumers see `fun(x, lo, hi): unknown` rather than empty `fun(): unknown`.
+         * Build a [FunctionType] for the export surface.
+         *
+         * Emmy `---@param` / `---@return` attached to this declaration participate here (same
+         * comment index TypeResolver uses later). When docs omit a return, honest structural body
+         * returns (string concat, literals, tables) may fill it — never invent opaque types.
          */
         private fun functionTypeFromDeclaration(function: FunctionDeclaration): FunctionType {
+            val tags = commentIndex.getAttachment(function)?.docComment?.tags.orEmpty()
+            val paramTags = tags.filterIsInstance<ParamTagSyntax>()
             val parameters = function.params.map { parameter ->
+                val tag = paramTags.lastOrNull { it.name == parameter.name }
                 FunctionParameter(
                     name = parameter.name,
-                    type = UnknownType,
-                    vararg = parameter.name == "..."
+                    type = tag?.typeText?.let(::emmyTypeText) ?: UnknownType,
+                    optional = tag?.optional == true,
+                    vararg = tag?.vararg == true || parameter.name == "..."
                 )
             }
-            return FunctionType(parameters = parameters, returnType = UnknownType)
+            val documentedReturn = tags
+                .filterIsInstance<ReturnTagSyntax>()
+                .lastOrNull()
+                ?.typeTexts
+                ?.mapNotNull { text -> emmyTypeText(text).takeUnless { it == UnknownType } }
+                .orEmpty()
+            val returnType = when {
+                documentedReturn.size == 1 -> documentedReturn.single()
+                documentedReturn.size > 1 -> MultiReturnType(documentedReturn)
+                else -> inferFunctionBodyReturnType(function.body) ?: UnknownType
+            }
+            return FunctionType(parameters = parameters, returnType = returnType)
+        }
+
+        private fun emmyTypeText(text: String?): Type {
+            if (text.isNullOrBlank()) {
+                return UnknownType
+            }
+            val syntax = TypeSyntaxParser.parseOrNull(text.trim()) ?: NamedTypeSyntax(text.trim())
+            return primitiveOrUnknown(syntax)
+        }
+
+        private fun primitiveOrUnknown(syntax: TypeSyntax): Type {
+            val name = (syntax as? NamedTypeSyntax)?.name?.lowercase() ?: return UnknownType
+            return when (name) {
+                "string" -> PrimitiveType.STRING
+                "number", "integer", "int", "float" -> PrimitiveType.NUMBER
+                "boolean", "bool" -> PrimitiveType.BOOLEAN
+                "nil", "void" -> PrimitiveType.NIL
+                "any" -> PrimitiveType.ANY
+                "table" -> TableType()
+                "function" -> FunctionType()
+                else -> UnknownType
+            }
+        }
+
+        /**
+         * Structural body return only: literals, concat, unary ops, nested tables/functions.
+         * Stops at identifiers/calls (would invent without full type resolve).
+         */
+        private fun inferFunctionBodyReturnType(body: BlockNode?): Type? {
+            body ?: return null
+            val returns = mutableListOf<Type>()
+            collectStructuralReturns(body, returns)
+            val concrete = returns.filter { it != UnknownType }
+            return when {
+                concrete.isEmpty() -> null
+                concrete.size == 1 -> concrete.single()
+                concrete.all { it == concrete.first() } -> concrete.first()
+                else -> null
+            }
+        }
+
+        private fun collectStructuralReturns(block: BlockNode, out: MutableList<Type>) {
+            block.statements.forEach { statement ->
+                when (statement) {
+                    is DoStatement -> collectStructuralReturns(statement.body, out)
+                    is IfStatement -> statement.causes.forEach { collectStructuralReturns(it.body, out) }
+                    is WhileStatement -> collectStructuralReturns(statement.body, out)
+                    is RepeatStatement -> collectStructuralReturns(statement.body, out)
+                    is ForNumericStatement -> collectStructuralReturns(statement.body, out)
+                    is ForGenericStatement -> collectStructuralReturns(statement.body, out)
+                    is WhenStatement -> {
+                        walkStatementForReturns(statement.ifCause, out)
+                        statement.elseCause?.let { walkStatementForReturns(it, out) }
+                    }
+                    is SwitchStatement -> statement.causes.forEach { cause ->
+                        when (cause) {
+                            is io.github.dingyi222666.luaparser.parser.ast.node.CaseCause ->
+                                collectStructuralReturns(cause.body, out)
+                            is io.github.dingyi222666.luaparser.parser.ast.node.DefaultCause ->
+                                collectStructuralReturns(cause.body, out)
+                        }
+                    }
+                    else -> Unit
+                }
+            }
+            block.returnStatement?.let { ret ->
+                out += structuralExpressionType(ret.arguments.firstOrNull())
+            }
+        }
+
+        private fun walkStatementForReturns(statement: StatementNode, out: MutableList<Type>) {
+            when (statement) {
+                is DoStatement -> collectStructuralReturns(statement.body, out)
+                is IfStatement -> statement.causes.forEach { collectStructuralReturns(it.body, out) }
+                is WhileStatement -> collectStructuralReturns(statement.body, out)
+                is RepeatStatement -> collectStructuralReturns(statement.body, out)
+                is ForNumericStatement -> collectStructuralReturns(statement.body, out)
+                is ForGenericStatement -> collectStructuralReturns(statement.body, out)
+                else -> Unit
+            }
+        }
+
+        private fun structuralExpressionType(expression: ExpressionNode?): Type {
+            return when (expression) {
+                null -> UnknownType
+                is ConstantNode -> constantType(expression)
+                is TableConstructorExpression -> tableLiteralType(expression)
+                is FunctionDeclaration -> functionTypeFromDeclaration(expression)
+                is BinaryExpression -> when (expression.operator) {
+                    ExpressionOperator.CONCAT -> PrimitiveType.STRING
+                    ExpressionOperator.ADD,
+                    ExpressionOperator.MINUS,
+                    ExpressionOperator.MULT,
+                    ExpressionOperator.DIV,
+                    ExpressionOperator.MOD,
+                    ExpressionOperator.DOUBLE_DIV,
+                    ExpressionOperator.BIT_EXP,
+                    ExpressionOperator.BIT_AND,
+                    ExpressionOperator.BIT_OR,
+                    ExpressionOperator.BIT_LT,
+                    ExpressionOperator.BIT_GT -> PrimitiveType.NUMBER
+                    ExpressionOperator.LT,
+                    ExpressionOperator.GT,
+                    ExpressionOperator.LE,
+                    ExpressionOperator.GE,
+                    ExpressionOperator.EQ,
+                    ExpressionOperator.NE -> PrimitiveType.BOOLEAN
+                    else -> UnknownType
+                }
+                is UnaryExpression -> when (expression.operator) {
+                    ExpressionOperator.MINUS,
+                    ExpressionOperator.BIT_TILDE,
+                    ExpressionOperator.GETLEN -> PrimitiveType.NUMBER
+                    ExpressionOperator.NOT -> PrimitiveType.BOOLEAN
+                    else -> UnknownType
+                }
+                else -> UnknownType
+            }
         }
 
         private fun constantType(node: ConstantNode): Type {
