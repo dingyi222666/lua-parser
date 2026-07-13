@@ -2,7 +2,7 @@
 
 This guide is the top-level operating map for the current lua-parser repository. It summarizes setup, supported workflows, Android-Lua inputs, JVM interop configuration, language-server usage, extension points, and validation boundaries without expanding compatibility claims beyond the current implementation wave.
 
-Final Gradle/test confirmation is deferred to TASK-043, and final acceptance audit is deferred to TASK-037. During coordinated worker waves, treat every Gradle or test command in this document as a reproducible command for the serialized verification worker, not as permission to run it from a parallel implementation or documentation task.
+Serialized verification is **TASK-043 done** (Windows tip-coherent full `jvmTest` run 29228040252: 5386 tests, 0 failures). Final acceptance audit is **TASK-037 done** against `docs/final-verification.md` (TASK-105) and `docs/acceptance-traceability.md` (TASK-106). Parallel workers must still not run Gradle unless they own a new serialized verification task.
 
 ## Readiness Status
 
@@ -15,29 +15,19 @@ The repository currently contains:
 - A JVM LSP4J server under `io.github.dingyi222666.luaparser.lsp` for diagnostics, hover, completion, signature help, navigation, highlights, and symbol queries over opened documents and, where implemented, indexed workspace folders.
 - Documentation and fixtures for Android-Lua corpus verification, compatibility scope, helper-library modeling, parser/test strategy, serialized verification, and platform setup.
 
-**This repository is not finally green.** Do not treat partial focused-filter accepts, worker `done` statuses, or this guide as a release statement. TASK-043 must run the serialized Gradle/test suite and TASK-037 must record the final acceptance audit before any global green claim is valid.
+**Windows tip-coherent full `jvmTest` is green** (TASK-043 run 29228040252). Final acceptance audit **TASK-037 is done** against the TASK-105 ledger and TASK-106 matrix. Optional product/docs backlog outside that evidence may still exist; it does not reopen the recorded suite exit code until a later suite fails.
 
-### Production readiness gap checklist (TASK-501 refresh, post-TASK-184 / pre-TASK-043)
-
-Snapshot date: 2026-07-12 (docs-only inventory criterion note from live task metadata and host path checks; no Gradle/tests run by this refresh). Supersedes the TASK-451 gap checklist.
-
-Inventory criterion (not final until TASK-043): source-count drafts and TASK-125 recounts may reconcile file/`@Test` bars, but inventory is **not final** until serialized verification accepts those bars under TASK-043. Do not treat raised inventory constants or docs-only recount notes as green suite evidence.
-
-Host paths (read-only checks for this macOS machine; never hard-code `G:/`):
-
-| Path | Purpose | Status |
-| --- | --- | --- |
-| `/Users/dingyi/Library/Android/sdk/platforms/android-35/android.jar` | Preferred host `android.jar` (SDK android-35) | **Present** (~27,092,450 bytes) |
-| `/Users/dingyi/Downloads/android.jar` | Alternate host `android.jar` | **Absent** |
-| `/Users/dingyi/Library/Java/JavaVirtualMachines/corretto-17.0.19/Contents/Home` | Coordinated-wave JDK 17 for verification docs | **Present** |
+### Production readiness status (2026-07-13 post-043)
 
 | Area | Current state | Notes |
 | --- | --- | --- |
-| Global green / release | **Not green** | Final gates TASK-043 (serialized verification) and TASK-037 (acceptance audit) remain **blocked**. TASK-184 acceptance does **not** unlock or satisfy TASK-043. |
-| Final verification ledger | **Blocked chain** | TASK-105 blocked on TASK-043; TASK-106 blocked on TASK-105. Pre-verification inventory drafts may refresh source counts only. |
-| Pre-verification inventory | **Open pre-final path** | TASK-125 is **review** after WAVE36F live recount (baseline 331 `*Test.kt` / 4624 `@Test`; campaign 272 `*TddTest.kt` / 4109 `@Test`). Inventory is **not final until TASK-043**. TASK-038 is **ready** and still depends on TASK-125. |
-| Pre-verification traceability | **Done draft (not final)** | TASK-115 is **done** for the broader pre-verification AC matrix refresh after the TASK-085–TASK-184 wave. Final AC pass/fail remains reserved for TASK-105/TASK-106 after TASK-043. |
-| Acceptance traceability draft | May lag live task files | Prefer this checklist and individual task files for current blocked/open state until TASK-106 finalizes the matrix after serialized verification. |
+| Global green / release (suite) | **Green (Windows full jvmTest)** | Action [29228040252](https://github.com/dingyi222666/lua-parser/actions/runs/29228040252): 5386 tests, 0 failures, 0 errors, 177 skipped; SHA `cd18823`. |
+| Final verification ledger | **Done** | TASK-105 → `docs/final-verification.md` |
+| Acceptance traceability | **Done** | TASK-106 → `docs/acceptance-traceability.md` (AC-01..AC-12 Pass) |
+| Final acceptance audit | **Done** | TASK-037 consumes 043/105/106 evidence |
+| Slice progress bar | Supporting | s001–s018 ALL_GREEN, 367/367 files; not tip-coherent alone |
+| Campaign inventory | Met | 307/4857 campaign; `remaining_to_500=0`; suite pass recorded |
+| android.jar policy | Dual-path | Prefer host SDK android-35; never invent `G:/` |
 
 #### Closed product gates (post-TASK-184; still not global green)
 
