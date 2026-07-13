@@ -1,0 +1,43 @@
+{
+  "sliceId": "s018",
+  "runId": "29220594557",
+  "sha": "5075298ec846b34a8a438c35f956d614e22f7fde",
+  "status": "failure",
+  "exitCode": 1,
+  "durationSec": 20,
+  "tests": 240,
+  "failures": 3,
+  "errors": 0,
+  "skipped": 0,
+  "failedTests": [
+    "source.AST2LuaIfElseifRoundTripTddTest#nestedIfWithOuterSiblingRequiresDoTerminatorForShapeStableReparse[jvm]",
+    "testinventory.NewTestInventoryTddTest#documentsHowNewTddSuitesCountTowardFiveHundredTestGoal[jvm]",
+    "testinventory.NewTestInventoryTddTest#reportsCurrentCommonAndJvmTestInventory[jvm]"
+  ],
+  "testsPatterns": [
+    "semantic.workspace.WorkspaceModuleGraphTest",
+    "semantic.workspace.WorkspaceModuleResolutionCaseTddTest",
+    "semantic.workspace.WorkspaceModuleResolverPathStyleTddTest",
+    "semantic.workspace.WorkspaceMultiRootPathStyleTddTest",
+    "semantic.workspace.WorkspaceMultiRootRelativeCollisionTddTest",
+    "semantic.workspace.WorkspacePackagePathSearchOrderTddTest",
+    "semantic.workspace.WorkspacePublicFingerprintStabilityTddTest",
+    "semantic.workspace.WorkspaceRequireChainVisibilityTddTest",
+    "semantic.workspace.WorkspaceRequireRelativePathTddTest",
+    "semantic.workspace.WorkspaceRequireShadowLocalTddTest",
+    "source.AST2LuaBinaryUnaryRoundTripTddTest",
+    "source.AST2LuaCallChainRoundTripTddTest",
+    "source.AST2LuaForWhileRepeatRoundTripTddTest",
+    "source.AST2LuaFunctionLocalRoundTripTddTest",
+    "source.AST2LuaGotoAttributeRoundTripTddTest",
+    "source.AST2LuaGotoLabelRoundTripTddTest",
+    "source.AST2LuaIfElseifRoundTripTddTest",
+    "source.AST2LuaNestedTableRoundTripTddTest",
+    "source.AST2LuaRoundTripTest",
+    "source.AST2LuaStringLiteralRoundTripTddTest",
+    "source.AST2LuaTableKeyFormsRoundTripTddTest",
+    "testinventory.NewTestInventoryTddTest"
+  ],
+  "gate": "must-green-to-advance",
+  "finishedAt": "2026-07-13T02:58:39Z"
+}

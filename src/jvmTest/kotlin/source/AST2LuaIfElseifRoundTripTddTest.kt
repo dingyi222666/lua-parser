@@ -55,13 +55,16 @@ import kotlin.test.fail
  * 5. **Nested if inside terminated blocks** — when an if lives inside a construct that *does*
  *    print `end`, full parse→print→reparse shape stability is asserted. Nested pure-if still
  *    does not invent its own trailing `end`; outer terminators keep the surface parseable.
- * 6. **Nested if + outer else/elseif sibling (REVIEW28)** — because nested [IfStatement]
- *    also omits `end`, a bare nested `if … else … end` followed by an outer `else` /
- *    `elseif` is not shape-stable under reparse: the outer clause is absorbed into the
- *    inner if. Corpus samples that need both nesting and outer siblings therefore wrap
- *    the nested if in an explicit `do … end` (which *does* print `end`) so clause
- *    boundaries survive print→reparse. Pure nested trees without trailing outer siblings
- *    remain unwrapped and still round-trip via the outer terminator.
+ * 6. **Nested if + outer else/elseif sibling (REVIEW28 / TASK-676)** — nested
+ *    [IfStatement] still omits trailing `end` (policy §3). On print→reparse the
+ *    missing inner `end` is recovered by [io.github.dingyi222666.luaparser.parser.LuaParser]
+ *    (`errorRecovery` default on), so a bare nested `if … else` followed by an outer
+ *    `else` / `elseif` is currently **shape-stable** under reparse (the outer clause is
+ *    not absorbed into the inner if). Corpus samples that need both nesting and outer
+ *    siblings still wrap the nested if in an explicit `do … end` (which *does* print
+ *    `end`) so clause ownership is explicit and independent of recovery. Pure nested
+ *    trees without trailing outer siblings remain unwrapped and still round-trip via
+ *    the outer terminator.
  * 7. **Version** — all samples use [LuaVersion.LUA_5_3].
  * 8. **Out of scope** — jump legality, comment preservation, and semantic checks are not
  *    asserted here. Production printer `end` emission for IfStatement is out of scope
@@ -385,8 +388,9 @@ class AST2LuaIfElseifRoundTripTddTest {
     @Test
     fun nestedIfInsideDoRoundTripsStructurally() {
         // Nested trees inside `do`. Nested ifs that are followed by an outer else/elseif
-        // sibling are wrapped in an inner `do … end` so the no-if-end printer cannot absorb
-        // the outer clause into the nested if (REVIEW28 / policy §6).
+        // sibling are wrapped in an inner `do … end` so clause ownership is explicit under
+        // the no-if-end printer (REVIEW28 / TASK-676 / policy §6). Bare nested shapes may
+        // also reparse stably via missing-end recovery; do-isolation remains the corpus rule.
         assertRoundTrips(
             listOf(
                 Sample(
@@ -470,8 +474,8 @@ class AST2LuaIfElseifRoundTripTddTest {
 
     @Test
     fun nestedIfPrinterStableAcrossControlFlowSurfaces() {
-        // Nested `if deep` sits inside an inner `do` so the outer elseif/else siblings of
-        // the parent if are not absorbed under the no-if-end policy (policy §6).
+        // Nested `if deep` sits inside an inner `do` so clause ownership of outer
+        // elseif/else siblings is explicit under the no-if-end policy (policy §6).
         val source = """
             ::root::
             while keep do
@@ -659,7 +663,7 @@ class AST2LuaIfElseifRoundTripTddTest {
     fun bulkIfElseifElseCorpusWithoutShapeDrift() {
         // Only terminated-block samples so reparse is meaningful under the no-if-end policy.
         // Nested ifs followed by outer else/elseif siblings use an inner `do` terminator
-        // (policy §6 / REVIEW28).
+        // for explicit ownership (policy §6 / REVIEW28 / TASK-676).
         val samples = listOf(
             "do if ready then start() end end",
             "do if ready then local value = 1 return value end end",
@@ -793,8 +797,12 @@ class AST2LuaIfElseifRoundTripTddTest {
 
     @Test
     fun nestedIfWithOuterSiblingRequiresDoTerminatorForShapeStableReparse() {
-        // Regression for REVIEW28: bare nested if+else then outer else drifts under
-        // no-if-end print; wrapping nested if in do keeps clause ownership.
+        // Regression for REVIEW28 / TASK-676 (Windows s018): pure-if print still omits
+        // trailing `end` (policy §3). Bare nested if+else then outer else is shape-stable
+        // on reparse under default parseIfStatement missing-end recovery — the outer
+        // else stays an outer clause rather than being absorbed. Do-isolation remains
+        // the corpus ownership pattern (policy §6) so clause boundaries do not depend
+        // on recovery alone.
         val bareNested = """
             do
               if outer then
@@ -810,11 +818,23 @@ class AST2LuaIfElseifRoundTripTddTest {
         """.trimIndent()
         val bareInitial = LuaParser(luaVersion = version).parse(bareNested)
         val barePrinted = printer.asCode(bareInitial)
-        val bareReparsed = LuaParser(luaVersion = version).parse(barePrinted)
-        assertTrue(
-            renderShape(bareInitial) != renderShape(bareReparsed),
-            "Expected bare nested if+outer-else to drift under no-if-end policy:\n$barePrinted"
+        // Outer `do` alone prints `end`; nested IfStatement still omits end (policy §3).
+        assertEquals(
+            1,
+            Regex("\\bend\\b").findAll(barePrinted).count(),
+            "bare nested if+outer-else must print only the outer do end (no-if-end):\n$barePrinted"
         )
+        val bareReparsed = LuaParser(luaVersion = version).parse(barePrinted)
+        // Product recovery keeps clause ownership shape-stable without an inner do.
+        assertEquals(
+            renderShape(bareInitial),
+            renderShape(bareReparsed),
+            "bare nested if+outer-else must stay shape-stable under no-if-end + recovery:\n$barePrinted"
+        )
+        assertTrue(barePrinted.contains("if outer then"), "printed:\n$barePrinted")
+        assertTrue(barePrinted.contains("if inner then"), "printed:\n$barePrinted")
+        assertTrue(barePrinted.contains("else"), "printed:\n$barePrinted")
+        assertTrue(barePrinted.contains("fallback()"), "printed:\n$barePrinted")
 
         val isolated = """
             do
@@ -835,6 +855,12 @@ class AST2LuaIfElseifRoundTripTddTest {
         val printed = printer.asCode(initial)
         val reparsed = LuaParser(luaVersion = version).parse(printed)
         assertEquals(renderShape(initial), renderShape(reparsed), "printed:\n$printed")
+        // Inner do + outer do => two printed ends (if still omits end).
+        assertEquals(
+            2,
+            Regex("\\bend\\b").findAll(printed).count(),
+            "do-isolated nested if must print outer+inner do ends only:\n$printed"
+        )
         assertTrue(printed.contains("do"), "printed:\n$printed")
         assertTrue(printed.contains("if outer then"), "printed:\n$printed")
         assertTrue(printed.contains("if inner then"), "printed:\n$printed")
