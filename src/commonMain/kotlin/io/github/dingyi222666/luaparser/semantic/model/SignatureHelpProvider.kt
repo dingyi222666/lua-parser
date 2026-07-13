@@ -197,8 +197,8 @@ internal class SignatureHelpProvider(
      * For call-site member bases such as Arrays.asList, prefix the member name so labels
      * stay discoverable while keeping the generic form for TASK-670.
      *
-     * Keep bare generic labels when there is no call-site method name (Lua @generic
-     * helpers such as identity), so exact-label workspace asserts remain green.
+     * Bare Lua @generic helpers (Identifier call base such as identity) must keep the
+     * exact fun<T>(...): R form. Do not prefix the local/function name onto the label.
      */
     private fun signatureHelpLabel(signature: FunctionType, methodName: String?): String {
         // Prefer a freshly built generic label when typeParameters are present. FunctionType.copy
@@ -223,9 +223,10 @@ internal class SignatureHelpProvider(
             return display
         }
         val trimmedName = methodName?.trim().orEmpty()
-        // Java static/instance members: generic fun<T>(...) alone fails LspJavaAndroidFeature
-        // asList|fun( hard-lock. Prefix the call-site member name when missing.
-        // Bare Lua generics (no method name) keep the generic form unchanged (TASK-670).
+        // Only MemberExpression call bases (Java static/instance members) get a method-name
+        // prefix. Generic fun<T>(...) alone fails LspJavaAndroidFeature asList|fun( hard-lock,
+        // so Arrays.asList becomes "asList fun<T>(...)" while still preserving type params.
+        // Identifier Lua locals must stay bare fun<T>(value: T): T (TASK-670 exact label).
         if (trimmedName.isNotEmpty() && !display.contains(trimmedName)) {
             return "$trimmedName $display"
         }
@@ -236,10 +237,12 @@ internal class SignatureHelpProvider(
         callableBase: ExpressionNode,
         declaration: BinderDeclaration?
     ): String? {
+        // Only member-access call sites need a discoverable method-name prefix on generic
+        // labels (Arrays.asList, receiver:method). Bare Identifier/local function calls must
+        // keep the pure fun(...) / fun<T>(...) form expected by workspace exact-label asserts.
         return when (callableBase) {
             is MemberExpression -> callableBase.identifier.name.takeIf { it.isNotBlank() }
-            is Identifier -> callableBase.name.takeIf { it.isNotBlank() }
-            else -> declaration?.name?.takeIf { it.isNotBlank() }
+            else -> null
         }
     }
 

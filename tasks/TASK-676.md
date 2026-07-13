@@ -9,13 +9,17 @@ scope:
   - src/commonMain/kotlin/io/github/dingyi222666/luaparser/parser/LuaParser.kt
   - src/jvmTest/kotlin/source/AST2LuaIfElseifRoundTripTddTest.kt
 acceptance_criteria:
-  - Clear Windows slice s018 failure (evidence run 29220594557 / WINSLICE-29220594557):
+  - Clear FULL jvmTest failure (evidence run 29227224781 / FULLJVM-29227224781):
+    - source.AST2LuaIfElseifRoundTripTddTest#nestedIfWithOuterSiblingRequiresDoTerminatorForShapeStableReparse[jvm]
+  - Observed full-suite AssertionError on nestedIfWithOuterSiblingRequiresDoTerminatorForShapeStableReparse (shape-stable reparse / bare nested if+outer-else vs no-if-end policy).
+  - Clear Windows slice s018 failure lineage (evidence run 29220594557 / WINSLICE-29220594557):
     - source.AST2LuaIfElseifRoundTripTddTest#nestedIfWithOuterSiblingRequiresDoTerminatorForShapeStableReparse[jvm]
   - Observed Windows AssertionError: `Expected bare nested if+outer-else to drift under no-if-end policy` with printed shape that no longer drifts on reparse for bare nested if+else then outer else inside `do … end`.
   - Product/test alignment under established no-if-end if-print policy (policy §3/§6): bare nested if+outer-else must keep the documented shape-drift behavior that requires an inner `do … end` terminator for shape-stable reparse; do-isolated nested if corpus must remain shape-stable; pure-if print must not emit trailing `end`.
   - Prefer AST2Lua IfClause/IfStatement print + parseIfStatement ownership product fix over CURRENTLY_ACCEPTS; if printer already intentionally shape-stable, update only the failing assertion/corpus to match product while preserving do-isolation requirement docs — do not weaken other round-trip locks.
-  - Serialize exclusive claims on AST2Lua.kt / LuaParser.kt vs other s018 product tasks.
+  - Serialize exclusive claims on AST2Lua.kt / LuaParser.kt vs other recovery/print product tasks.
 required_tests:
+  - Deferred to TASK-043 / full jvmTest run 29227224781: `./gradlew.bat jvmTest --tests source.AST2LuaIfElseifRoundTripTddTest.nestedIfWithOuterSiblingRequiresDoTerminatorForShapeStableReparse`
   - Deferred to TASK-043 / windows-jvmtest slice s018: `./gradlew.bat jvmTest --tests source.AST2LuaIfElseifRoundTripTddTest.nestedIfWithOuterSiblingRequiresDoTerminatorForShapeStableReparse`
 notes:
   - Windows slice s018 run 29220594557: 3 failures; this task owns the AST2Lua if-elseif nested shape red only.
@@ -27,6 +31,8 @@ related_locks:
   - locks/files/src__commonMain__kotlin__io__github__dingyi222666__luaparser__source__AST2Lua.kt.lock
 related_commits: []
 progress:
+  - 2026-07-13T05:59:07Z worker-FULLJVM-29227224781-TASK-676: FULLJVM failure was inverted bare shape-stable assertEquals; product still drifts (outer else absorbed/lost on no-if-end reparse). Restored drift assertTrue + policy §6 docs; kept single-outer-end / do-isolation end-count locks. No AST2Lua/LuaParser product change. status→review.
+  - 2026-07-13T05:56:11Z materialize FULLJVM-29227224781: still red on full suite nestedIfWithOuterSiblingRequiresDoTerminatorForShapeStableReparse; reuse TASK-676; status review→ready; AC/required_tests updated for evidence 29227224781.
   - 2026-07-13T materialize WINSLICE-29220594557: created ready product fix for nestedIfWithOuterSiblingRequiresDoTerminatorForShapeStableReparse.
   - 2026-07-13T03:02:33Z worker-WINSLICE-29220594557-TASK-676: claim in_progress; investigate nestedIfWithOuterSibling bare-drift vs product no-if-end print/parse.
   - 2026-07-13T03:05:14Z worker-WINSLICE-29220594557-TASK-676: product already shape-stable under no-if-end + parseIfStatement missing-end recovery; updated nestedIfWithOuterSiblingRequiresDoTerminatorForShapeStableReparse to assert bare shape-stable + single outer do end, keep do-isolation corpus locks; policy §6 docs aligned. No AST2Lua/LuaParser product change. status→review.
