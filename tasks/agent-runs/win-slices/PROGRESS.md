@@ -2,11 +2,12 @@
 
 - strategy: must-green-to-advance
 - chunkSize: 45
-- total: 0/5 slices green (209 files)
-- rebuilt: 2026-07-13T15:17:54Z
+- summary: success=0 failure=1 pending=4 total=5 filesDone=0
+- updatedAt: 2026-07-13T15:21:47Z
+- activeSlice: s001
 
-- [ ] `s001` integration..lsp (45 files) pending
-- [ ] `s002` lsp..parser.lua54 (45 files) pending
-- [ ] `s003` parser.recovery..semantic.comments (45 files) pending
-- [ ] `s004` semantic.comments..semantic.types.resolve (45 files) pending
-- [ ] `s005` semantic.types.syntax..testinventory (29 files) pending
+- [F] `s001` integration..lsp (45) failure
+- [ ] `s002` lsp..parser.lua54 (45) pending
+- [ ] `s003` parser.recovery..semantic.comments (45) pending
+- [ ] `s004` semantic.comments..semantic.types.resolve (45) pending
+- [ ] `s005` semantic.types.syntax..testinventory (29) pending

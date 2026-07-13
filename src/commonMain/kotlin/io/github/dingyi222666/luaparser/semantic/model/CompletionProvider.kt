@@ -27,13 +27,13 @@ internal class CompletionProvider(
     }
 
     private fun resolveMemberExpression(node: BaseASTNode?, position: Position): MemberExpression? {
-        memberExpressionFromNode(node)?.let { return it }
+        memberExpressionFromNode(node, position)?.let { return it }
 
         // Fall back to enclosing nodes when parent links are missing or the innermost
         // hit is a broader expression covering the member access site.
         nodePositionIndex.findEnclosing(position)
             .asSequence()
-            .mapNotNull { candidate -> memberExpressionFromNode(candidate) }
+            .mapNotNull { candidate -> memberExpressionFromNode(candidate, position) }
             .firstOrNull()
             ?.let { return it }
 
@@ -43,16 +43,10 @@ internal class CompletionProvider(
         if (position.column > 1) {
             val left = Position(position.line, position.column - 1)
             val leftNode = nodePositionIndex.findInnermost(left)
-            memberExpressionFromNode(leftNode)?.let { return it }
+            memberExpressionFromNode(leftNode, left)?.let { return it }
             nodePositionIndex.findEnclosing(left)
                 .asSequence()
-                .mapNotNull { candidate ->
-                    when (candidate) {
-                        is MemberExpression -> candidate
-                        is Identifier -> runCatching { candidate.parent }.getOrNull() as? MemberExpression
-                        else -> null
-                    }
-                }
+                .mapNotNull { candidate -> memberExpressionFromNode(candidate, left) }
                 .firstOrNull()
                 ?.let { return it }
         }
@@ -60,7 +54,9 @@ internal class CompletionProvider(
         if (node is Identifier) {
             val parent = runCatching { node.parent }.getOrNull() as? MemberExpression
             if (
-                parent?.base === node &&
+                parent != null &&
+                parent.base === node &&
+                parent.identifier.name.isBlank() &&
                 position.line == parent.range.end.line &&
                 position.column >= parent.range.end.column
             ) {
@@ -70,20 +66,40 @@ internal class CompletionProvider(
         return null
     }
 
-    private fun memberExpressionFromNode(node: BaseASTNode?): MemberExpression? {
+    /**
+     * Member completions apply when the caret is on the member name / after the indexer
+     * (`base.|`, `base:set|`), not when the caret is still on the receiver identifier
+     * of a completed access (`mess|ageText:setText` must stay lexical for the local).
+     */
+    private fun memberExpressionFromNode(node: BaseASTNode?, position: Position): MemberExpression? {
         return when (node) {
-            is MemberExpression -> node
+            is MemberExpression -> node.takeIf { isMemberCompletionSite(it, position) }
             is Identifier -> {
                 val parent = runCatching { node.parent }.getOrNull() as? MemberExpression
                 parent?.takeIf {
-                    // Completed `base.member` caret on the member name, or incomplete `base.`
-                    // where the member Identifier is still blank and caret is on the base.
+                    // Caret on member name, or incomplete `base.` / `base:` with blank member.
                     it.identifier === node ||
                         (it.base === node && it.identifier.name.isBlank())
-                }
+                }?.takeIf { isMemberCompletionSite(it, position) }
             }
             else -> null
         }
+    }
+
+    private fun isMemberCompletionSite(expression: MemberExpression, position: Position): Boolean {
+        if (expression.identifier.name.isBlank()) {
+            return true
+        }
+        val baseEnd = expression.base.range.end
+        val afterBase =
+            position.line > baseEnd.line ||
+                (position.line == baseEnd.line && position.column > baseEnd.column)
+        if (!afterBase) {
+            return false
+        }
+        val end = expression.range.end
+        return position.line < end.line ||
+            (position.line == end.line && position.column <= end.column + 1)
     }
 
     private fun lexicalCompletions(position: Position, node: BaseASTNode?): List<CompletionItem> {
