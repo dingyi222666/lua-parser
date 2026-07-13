@@ -546,11 +546,6 @@ class LuaLanguageService(
         // binding for true LOCAL/VARIABLE symbols, which yields the consumer file URI
         // instead of the module file. resolveRequire() still maps the alias to the
         // provider path; re-route here so LSP Location.uri matches the opened module.
-        //
-        // Do NOT short-circuit free-id / member carets that merely share a name with a
-        // require alias elsewhere in the file (local foo shadow vs U.foo export).
-        // resolveRequire is restricted to require-backed locals / require() call sites, so
-        // free-id shadows fall through to gotoDefinition (file-local dual-path, TASK-686).
         val requireLookup = queries.resolveRequire(path, position)
         val provider = requireLookup?.provider
         if (provider != null) {

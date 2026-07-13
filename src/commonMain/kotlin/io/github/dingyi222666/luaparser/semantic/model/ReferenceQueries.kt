@@ -80,10 +80,6 @@ internal class ReferenceQueries(
 
     fun getSymbolAt(position: Position, node: BaseASTNode?): Symbol? {
         val importedSymbol = importedSymbolAt(position, node)
-        // Free-id local shadows (`local foo = function...; foo("x")`) must bind to the
-        // file-local VALUE declaration before Java-member-initializer / import rewrites
-        // or any foreign export-handle symbolId (TASK-686 dual-path shadow).
-        freeIdLocalShadowSymbolAt(position, node)?.let { return it }
         localJavaMemberInitializerSymbolAt(position, node)?.let { return it }
         bindClassTargetLocalSymbolAt(node)?.let { return it }
         importCallTargetLocalSymbolAt(node)?.let { return it }
@@ -154,57 +150,6 @@ internal class ReferenceQueries(
             is MemberExpression -> resolveMemberUsage(node)
             else -> importedSymbol?.let(::toImportedSymbol)
         }
-    }
-
-    /**
-     * Prefer a visible file-local VALUE binding for free-id carets so same-name export
-     * members (`U.foo`) never steal free-id `foo` uses of `local foo = ...`.
-     * Skips require-backed / member-initializer locals (those keep import/export navigation).
-     */
-    private fun freeIdLocalShadowSymbolAt(position: Position, node: BaseASTNode?): Symbol? {
-        // Recover Identifier from call bases (`foo("x")`) when innermost node is the call.
-        val identifier = when (node) {
-            is Identifier -> node
-            is io.github.dingyi222666.luaparser.parser.ast.node.CallExpression ->
-                node.base as? Identifier
-            is StringCallExpression -> node.base as? Identifier
-            else -> null
-        } ?: return null
-        val parent = runCatching { identifier.parent }.getOrNull()
-        if (parent is MemberExpression && parent.identifier === identifier) {
-            return null
-        }
-        val freeName = identifier.name.takeIf { it.isNotBlank() } ?: return null
-        val declaration = findNearestVisibleValueDeclaration(freeName, position)
-            ?: findNearestVisibleValueDeclaration(freeName, identifier.range.start)
-            ?: findNearestVisibleValueDeclaration(freeName, identifier.range.end)
-            ?: return null
-        if (
-            declaration.kind != DeclarationKind.LOCAL &&
-            declaration.kind != DeclarationKind.FUNCTION &&
-            declaration.kind != DeclarationKind.PARAMETER
-        ) {
-            return null
-        }
-        // Keep require("mod") aliases and `local x = mod.member` rebinds on import/export paths.
-        val initializer = localDeclarationInitializer(declaration)
-        if (initializer is MemberExpression) {
-            return null
-        }
-        if (initializer is io.github.dingyi222666.luaparser.parser.ast.node.CallExpression) {
-            val callee = when (val base = initializer.base) {
-                is Identifier -> base.name
-                is StringCallExpression -> (base.base as? Identifier)?.name
-                else -> null
-            }
-            if (callee == "require" || callee == "import") {
-                return null
-            }
-        }
-        return preferDeclaredOrInferredSymbolType(
-            adapters.toDeclarationSymbol(declaration) ?: return null,
-            identifier
-        ) ?: adapters.toDeclarationSymbol(declaration)
     }
 
     /**

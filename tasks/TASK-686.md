@@ -41,4 +41,3 @@ progress:
   - 2026-07-14T materialize WINFULL-29268552687: still red barrel completion + shadow_local_foo (definition/hover green); reset review→ready; AC narrowed to remaining 2 methods (evidence run 29268552687).
   - 2026-07-13T17:15:05Z worker-WINFULL-29268552687-TASK-686: claimed; implementing barrel init reexport completion + shadow local dual-path definition product fix.
   - 2026-07-13T17:16:42Z master: fixed residual barrel completion needle + shadow occurrence indices; QueryFacade free-id local-before-export; status=review
-  - 2026-07-13T17:49:26Z worker-WINFULL-29268552687-TASK-686: product fix for residual reds — incomplete trailing-dot barrel completion recovery (source-aware MemberExpression + require-alias resolve fallbacks) and free-id local shadow dual-path (ReferenceQueries freeIdLocalShadow + QueryFacade call-base identifier recovery). status=review owner=unassigned.
