@@ -138,7 +138,11 @@ class MemberResolver(
                 ?: tableType.methods[memberName]?.let { MemberAccessKind.METHOD to it }
         }
         return member?.let { (kind, type) ->
-            MemberResolution(type = bindMethodReceiver(type, receiverType, kind), accessKind = kind, baseType = tableType)
+            MemberResolution(
+                type = bindMethodReceiver(type, receiverType, kind, preferMethod),
+                accessKind = kind,
+                baseType = tableType
+            )
         } ?: MemberResolution(baseType = tableType, failureReason = MemberFailureReason.MISSING_MEMBER)
     }
 
@@ -161,7 +165,7 @@ class MemberResolver(
             val resolvedType = if (classType.isJavaProviderClassReference() && kind == MemberAccessKind.METHOD) {
                 type.withJavaCallableSurface(receiverType = receiverType, includeReceiver = preferMethod)
             } else {
-                bindMethodReceiver(type, receiverType, kind)
+                bindMethodReceiver(type, receiverType, kind, preferMethod)
             }
             MemberResolution(type = resolvedType, accessKind = kind, baseType = classType)
         } ?: MemberResolution(baseType = classType, failureReason = MemberFailureReason.MISSING_MEMBER)
@@ -264,7 +268,9 @@ class MemberResolver(
                 // Static helpers may land on fields as callable types; still surface as methods.
                 type.withJavaCallableSurface()
             } else {
-                bindMethodReceiver(type, receiverType, kind)
+                // Dot access (preferMethod=false) keeps free-function shape for module methods
+                // such as AndroLua luajava.bindClass / createProxy — no synthetic self: luajava.
+                bindMethodReceiver(type, receiverType, kind, preferMethod)
             }
             val accessKind = when {
                 kind == MemberAccessKind.METHOD -> MemberAccessKind.METHOD
@@ -291,7 +297,13 @@ class MemberResolver(
             }
             tableType.methods[literalKey]?.let {
                 return MemberResolution(
-                    type = bindMethodReceiver(it, receiverBindingType(tableType), MemberAccessKind.METHOD),
+                    // Index access is never colon sugar; keep free-function callable shape.
+                    type = bindMethodReceiver(
+                        it,
+                        receiverBindingType(tableType),
+                        MemberAccessKind.METHOD,
+                        preferMethod = false
+                    ),
                     accessKind = MemberAccessKind.METHOD,
                     baseType = tableType
                 )
@@ -319,7 +331,13 @@ class MemberResolver(
             val resolvedType = if (classType.isJavaProviderClassReference()) {
                 it.withJavaCallableSurface(receiverType = receiverBindingType(classType), includeReceiver = false)
             } else {
-                bindMethodReceiver(it, receiverBindingType(classType), MemberAccessKind.METHOD)
+                // Index access is never colon sugar; keep free-function callable shape.
+                bindMethodReceiver(
+                    it,
+                    receiverBindingType(classType),
+                    MemberAccessKind.METHOD,
+                    preferMethod = false
+                )
             }
             return MemberResolution(
                 type = resolvedType,
@@ -372,7 +390,13 @@ class MemberResolver(
                 val resolvedType = if (moduleType.isJavaBackedModule()) {
                     it.withJavaCallableSurface()
                 } else {
-                    bindMethodReceiver(it, receiverBindingType(moduleType), MemberAccessKind.METHOD)
+                    // Index access is never colon sugar; keep free-function callable shape.
+                    bindMethodReceiver(
+                        it,
+                        receiverBindingType(moduleType),
+                        MemberAccessKind.METHOD,
+                        preferMethod = false
+                    )
                 }
                 return MemberResolution(
                     type = resolvedType,
@@ -449,8 +473,20 @@ class MemberResolver(
         }
     }
 
-    private fun bindMethodReceiver(type: Type, receiverType: Type, accessKind: MemberAccessKind): Type {
-        if (accessKind != MemberAccessKind.METHOD) {
+    /**
+     * Bind an implicit self receiver only for colon-method access ([preferMethod] true).
+     *
+     * Dot/index access on METHOD members is free-function style. Injecting `self: Receiver`
+     * there invents fake parameters for helpers such as AndroLua `luajava.bindClass` /
+     * `createProxy` and breaks documented completion/hover details (TASK-668).
+     */
+    private fun bindMethodReceiver(
+        type: Type,
+        receiverType: Type,
+        accessKind: MemberAccessKind,
+        preferMethod: Boolean
+    ): Type {
+        if (accessKind != MemberAccessKind.METHOD || !preferMethod) {
             return type
         }
 
@@ -467,8 +503,12 @@ class MemberResolver(
             return signature
         }
 
-        return signature.copy(
-            parameters = listOf(FunctionParameter(name = "self", type = receiverType)) + signature.parameters
+        // Rebuild name so displayName/signature help stay aligned with the injected self param.
+        val parameters = listOf(FunctionParameter(name = "self", type = receiverType)) + signature.parameters
+        return FunctionType(
+            parameters = parameters,
+            returnType = signature.returnType,
+            typeParameters = signature.typeParameters
         )
     }
 
