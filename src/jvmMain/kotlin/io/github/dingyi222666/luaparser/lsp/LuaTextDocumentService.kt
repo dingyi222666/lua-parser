@@ -22,6 +22,7 @@ import org.eclipse.lsp4j.DidSaveTextDocumentParams
 import org.eclipse.lsp4j.TextEdit
 import org.eclipse.lsp4j.DocumentRangeFormattingParams
 import org.eclipse.lsp4j.DocumentFormattingParams
+import org.eclipse.lsp4j.DocumentOnTypeFormattingParams
 import org.eclipse.lsp4j.DocumentHighlight
 import org.eclipse.lsp4j.DocumentHighlightParams
 import org.eclipse.lsp4j.DocumentSymbolParams
@@ -45,6 +46,8 @@ import org.eclipse.lsp4j.SelectionRange
 import org.eclipse.lsp4j.SelectionRangeParams
 import org.eclipse.lsp4j.SemanticTokensParams
 import org.eclipse.lsp4j.SemanticTokens
+import org.eclipse.lsp4j.SemanticTokensDelta
+import org.eclipse.lsp4j.SemanticTokensDeltaParams
 import org.eclipse.lsp4j.SignatureHelp
 
 import org.eclipse.lsp4j.SignatureHelpParams
@@ -394,6 +397,25 @@ class LuaTextDocumentService(
     }
 
     /**
+     * TASK-252 — textDocument/semanticTokens/full/delta.
+     * Soft-degrades to empty full tokens under quiet policies; never throws
+     * UnsupportedOperationException once wired.
+     */
+    override fun semanticTokensFullDelta(
+        params: SemanticTokensDeltaParams
+    ): CompletableFuture<Either<SemanticTokens, SemanticTokensDelta>> {
+        return guardedRequest(
+            quietResponse = {
+                CompletableFuture.completedFuture(
+                    Either.forLeft(SemanticTokens(emptyList()))
+                )
+            }
+        ) {
+            CompletableFuture.completedFuture(languageService.semanticTokensFullDelta(params))
+        }
+    }
+
+    /**
      * TASK-542 — textDocument/codeAction for published diagnostics (quickFix).
      * Soft-degrades to an empty list under quiet policies / when no safe fix exists;
      * never throws UnsupportedOperationException once wired.
@@ -443,6 +465,21 @@ class LuaTextDocumentService(
             quietResponse = { CompletableFuture.completedFuture(mutableListOf()) }
         ) {
             CompletableFuture.completedFuture(languageService.rangeFormatting(params).toMutableList())
+        }
+    }
+
+    /**
+     * TASK-274 — textDocument/onTypeFormatting for Lua `end` / `then` triggers.
+     * Soft-degrades to an empty list under quiet policies / unknown triggers /
+     * malformed buffers; never throws UnsupportedOperationException once wired.
+     */
+    override fun onTypeFormatting(
+        params: DocumentOnTypeFormattingParams
+    ): CompletableFuture<List<out TextEdit>> {
+        return guardedRequest(
+            quietResponse = { CompletableFuture.completedFuture(emptyList()) }
+        ) {
+            CompletableFuture.completedFuture(languageService.onTypeFormatting(params))
         }
     }
 

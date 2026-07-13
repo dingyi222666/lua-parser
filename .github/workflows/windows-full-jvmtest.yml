@@ -11,6 +11,7 @@ on:
       - '.github/workflows/windows-full-jvmtest.yml'
       - 'scripts/windows-run-full-jvmtest.ps1'
       - 'scripts/windows-run-gradle-capped.ps1'
+      - 'scripts/windows-ensure-android-jar.ps1'
 
 jobs:
   full-jvmtest:
@@ -34,6 +35,14 @@ jobs:
           Write-Host "processor_count=$env:NUMBER_OF_PROCESSORS"
           git rev-parse --short HEAD
           Write-Host "mode=full-jvmtest cpu_hard_cap=affinity_0x3F workers=5"
+
+      # Arm 174 soft-skips that need reflective android.jar (SDK platforms/android-35).
+      # Idempotent: no-op when jar already present. Never invents G:/.
+      - name: Ensure android.jar (platforms/android-35)
+        shell: pwsh
+        run: |
+          $env:Path = "$env:JAVA_HOME\bin;$env:Path"
+          ./scripts/windows-ensure-android-jar.ps1
 
       - name: Full jvmTest (CPU hard-capped)
         shell: pwsh

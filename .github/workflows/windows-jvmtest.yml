@@ -39,6 +39,13 @@ jobs:
             Get-Content tasks/agent-runs/win-slices/progress.json | Select-Object -First 40
           }
 
+      # Arm reflective Android soft-skips when host SDK platform jar is missing.
+      - name: Ensure android.jar (platforms/android-35)
+        shell: pwsh
+        run: |
+          $env:Path = "$env:JAVA_HOME\bin;$env:Path"
+          ./scripts/windows-ensure-android-jar.ps1
+
       - name: Compile test sources (CPU hard-capped)
         shell: pwsh
         run: |

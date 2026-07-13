@@ -102,10 +102,15 @@ import org.eclipse.lsp4j.SelectionRangeParams
 import org.eclipse.lsp4j.SemanticTokenModifiers
 import org.eclipse.lsp4j.SemanticTokenTypes
 import org.eclipse.lsp4j.SemanticTokens
+import org.eclipse.lsp4j.SemanticTokensDelta
+import org.eclipse.lsp4j.SemanticTokensDeltaParams
 import org.eclipse.lsp4j.SemanticTokensLegend
 import org.eclipse.lsp4j.SemanticTokensParams
+import org.eclipse.lsp4j.SemanticTokensServerFull
 import org.eclipse.lsp4j.SemanticTokensWithRegistrationOptions
 import org.eclipse.lsp4j.ServerCapabilities
+import org.eclipse.lsp4j.DocumentOnTypeFormattingOptions
+import org.eclipse.lsp4j.DocumentOnTypeFormattingParams
 
 import org.eclipse.lsp4j.SignatureHelp
 import org.eclipse.lsp4j.SignatureHelpOptions
@@ -144,6 +149,9 @@ class LuaLanguageService(
     private val workspaceFolderUriPrefixes = linkedMapOf<String, String>()
     private val openDocuments = linkedMapOf<VirtualPath, String>()
     private val documentUris = linkedMapOf<VirtualPath, String>()
+    /** Last full semantic-tokens payload per path for delta requests (TASK-252). */
+    private val semanticTokensCache = linkedMapOf<VirtualPath, CachedSemanticTokens>()
+    private var semanticTokensResultSeq: Long = 0L
     private var workspaceMetadata: Map<String, String> = emptyMap()
     private var workspaceFolders: List<WorkspaceFolder> = emptyList()
     /**
@@ -625,20 +633,91 @@ class LuaLanguageService(
      * Returns LSP delta-encoded semantic tokens (5-int groups) for keyword /
      * function / variable / parameter / string / number / comment highlighting.
      * Empty / unknown / malformed sources soft-degrade to empty data without throw.
+     * Caches the payload + resultId so semanticTokens/full/delta can answer (TASK-252).
      */
     fun semanticTokensFull(params: SemanticTokensParams): SemanticTokens = synchronized(stateLock) {
         val path = pathOf(params.textDocument)
+        return@synchronized computeSemanticTokensFull(path)
+    }
+
+    /**
+     * TASK-252 — textDocument/semanticTokens/full/delta.
+     *
+     * When [previousResultId] matches the cached full payload for the document and the
+     * token stream is unchanged, returns an empty-edit [SemanticTokensDelta]. When the
+     * document changed or the id is unknown, re-sends a full [SemanticTokens] payload
+     * (LSP allows Either.left full on the delta request). Soft-degrades without throw.
+     */
+    fun semanticTokensFullDelta(
+        params: SemanticTokensDeltaParams
+    ): Either<SemanticTokens, SemanticTokensDelta> = synchronized(stateLock) {
+        val path = pathOf(params.textDocument)
+        val previousResultId = params.previousResultId
+        return@synchronized try {
+            val full = computeSemanticTokensFull(path)
+            val cached = semanticTokensCache[path]
+            if (
+                !previousResultId.isNullOrBlank() &&
+                cached != null &&
+                cached.resultId == previousResultId &&
+                cached.data == full.data.orEmpty()
+            ) {
+                // Unchanged document: empty edit list is the preferred no-op delta.
+                Either.forRight(SemanticTokensDelta(emptyList(), full.resultId))
+            } else {
+                // Unknown previousResultId or content drift: re-send full tokens.
+                Either.forLeft(full)
+            }
+        } catch (_: Exception) {
+            Either.forLeft(SemanticTokens(emptyList()))
+        }
+    }
+
+    /**
+     * TASK-274 — textDocument/onTypeFormatting for Lua block keywords (`end` / `then`).
+     *
+     * Reuses the full-document formatting pipeline after typing the final character of
+     * `end` / `then` (or newline). Unknown triggers, empty/missing docs, and OOB
+     * positions soft-degrade to an empty edit list without throw.
+     */
+    fun onTypeFormatting(params: DocumentOnTypeFormattingParams): List<TextEdit> = synchronized(stateLock) {
+        try {
+            val ch = params.ch.orEmpty()
+            if (ch.isEmpty()) {
+                return@synchronized emptyList()
+            }
+            // Accept advertised triggers: d (end), n (then), and newline after keyword line.
+            if (ch != "d" && ch != "n" && ch != "\n") {
+                return@synchronized emptyList()
+            }
+            formatDocument(params.textDocument, params.options, range = null)
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    private fun computeSemanticTokensFull(path: VirtualPath): SemanticTokens {
         val source = openDocuments[path] ?: indexedWorkspaceFiles[path]
         if (source.isNullOrEmpty()) {
-            return@synchronized SemanticTokens(emptyList())
+            semanticTokensCache.remove(path)
+            return SemanticTokens(emptyList())
         }
         val semanticFile = snapshot.files[path]?.semanticFile
-        return@synchronized try {
-            SemanticTokens(encodeSemanticTokens(source, semanticFile))
+        val data = try {
+            encodeSemanticTokens(source, semanticFile)
         } catch (_: Exception) {
             // Malformed buffers / lexer edge cases must not kill the request path.
-            SemanticTokens(emptyList())
+            emptyList()
         }
+        val previous = semanticTokensCache[path]
+        val resultId = if (previous != null && previous.data == data) {
+            previous.resultId
+        } else {
+            semanticTokensResultSeq += 1L
+            "st-${semanticTokensResultSeq}"
+        }
+        semanticTokensCache[path] = CachedSemanticTokens(resultId = resultId, data = data)
+        return SemanticTokens(resultId, data)
     }
 
     /**
@@ -1593,10 +1672,15 @@ class LuaLanguageService(
             foldingRangeProvider = Either.forLeft(true)
             // TASK-540: advertise selection ranges for nested expand/shrink selection.
             selectionRangeProvider = Either.forLeft(true)
-            // TASK-541: full semantic tokens with legend (keyword/function/variable/...).
+            // TASK-541 / TASK-252: full semantic tokens with legend + delta support.
             semanticTokensProvider = SemanticTokensWithRegistrationOptions(
                 SEMANTIC_TOKENS_LEGEND,
-                true
+                SemanticTokensServerFull(/* delta = */ true)
+            )
+            // TASK-274: onTypeFormatting for Lua block keywords (end / then).
+            documentOnTypeFormattingProvider = DocumentOnTypeFormattingOptions(
+                "d",
+                listOf("n", "\n")
             )
             // TASK-542: advertise code actions (quickfix) for published diagnostics.
             codeActionProvider = Either.forRight(
@@ -1996,6 +2080,11 @@ class LuaLanguageService(
         val startChar: Int,
         val length: Int,
         val tokenType: Int
+    )
+
+    private data class CachedSemanticTokens(
+        val resultId: String,
+        val data: List<Int>
     )
 
     private data class NameClassification(
