@@ -1,0 +1,11 @@
+{
+  "runId": "29228040252",
+  "mode": "full-jvmtest",
+  "status": "success",
+  "tests": 5386,
+  "failures": 0,
+  "errors": 0,
+  "skipped": 177,
+  "failedTests": [],
+  "notes": "Merged from full-xml-29228040252/result/full-jvmtest-result.json. compileExit=0; jvmTest exitCode=0; durationSec=161; sha=cd188239b7a52744c9519e8d15169808a9f7e2c2; gate=task-043-full-jvmtest. failures.txt written under ART (empty); result JSON copied to tasks/agent-runs/full-jvmtest/. TASK-043 status\u2192review (green full suite; failures==0). Not marked done by this merge agent."
+}
