@@ -394,12 +394,26 @@ internal class WorkspaceModuleResolver(
             )
         }
         // Path-suffix recovery: __lua_std__/<ver>/socket.url.lua for module "socket.url".
-        val suffix = "/$moduleName.lua"
-        val bare = "$moduleName.lua"
+        // Also accept nested historical paths (__lua_std__/<ver>/socket/url.lua) when present.
+        val dotted = moduleName.replace('\\', '/').replace('/', '.')
+        val slash = dotted.replace('.', '/')
+        val candidates = listOf(
+            "/$dotted.lua",
+            "$dotted.lua",
+            "/$slash.lua",
+            "$slash.lua"
+        )
         snapshot.builtinOverlay.providerModules.entries.firstOrNull { (path, provider) ->
             val value = path.value
-            (value.endsWith(suffix) || value == bare || value.endsWith(bare)) &&
-                (provider.moduleName == moduleName || provider.moduleName.replace('/', '.') == moduleName)
+            val providerDotted = provider.moduleName.replace('\\', '/').replace('/', '.')
+            val nameMatches = providerDotted == dotted || provider.moduleName == moduleName
+            val pathMatches = candidates.any { candidate ->
+                value == candidate.trimStart('/') ||
+                    value.endsWith(candidate) ||
+                    value.endsWith("/$dotted.lua") ||
+                    value.endsWith("/$slash.lua")
+            }
+            pathMatches && (nameMatches || provider.moduleName.isBlank())
         }?.let { (path, provider) ->
             return WorkspaceModuleGraph.ModuleProvider(
                 moduleName = moduleName,

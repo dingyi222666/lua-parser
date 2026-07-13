@@ -402,8 +402,17 @@ class TypeResolver(
                 overloadTypes.isNotEmpty() ||
                 resolvedParameterTypes.isNotEmpty() ||
                 parameters.any { it.type != UnknownType }
-        if (!hasDocumentedShape && declaration.kind != DeclarationKind.FUNCTION) {
-            return declaration
+        if (!hasDocumentedShape) {
+            // Preserve ambient BuiltinOverlayLoader seeds (pairs/ipairs generic FunctionType, etc.)
+            // that BuiltinSymbolSeeder already attached. Rebuilding from empty owned parameters
+            // would collapse those to fun(): unknown and break completion/signature help (TASK-668).
+            when (declaration.declaredType) {
+                is FunctionType, is OverloadedFunctionType -> return declaration
+                else -> Unit
+            }
+            if (declaration.kind != DeclarationKind.FUNCTION) {
+                return declaration
+            }
         }
 
         val functionType = FunctionType(

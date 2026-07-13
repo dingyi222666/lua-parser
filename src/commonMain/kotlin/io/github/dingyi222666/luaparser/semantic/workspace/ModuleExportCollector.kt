@@ -29,6 +29,7 @@ import io.github.dingyi222666.luaparser.semantic.types.model.CustomType
 import io.github.dingyi222666.luaparser.semantic.types.model.FunctionType
 import io.github.dingyi222666.luaparser.semantic.types.model.LiteralType
 import io.github.dingyi222666.luaparser.semantic.types.model.ModuleType
+import io.github.dingyi222666.luaparser.semantic.types.model.OverloadedFunctionType
 import io.github.dingyi222666.luaparser.semantic.types.model.PrimitiveType
 import io.github.dingyi222666.luaparser.semantic.types.model.TableType
 import io.github.dingyi222666.luaparser.semantic.types.model.Type
@@ -279,7 +280,16 @@ object ModuleExportCollector {
             table.fields.forEach { field ->
                 val key = staticFieldName(field)
                 if (key != null) {
-                    builder.put(listOf(key), inferValueType(field.value), isMethod = false, range = field.key.range)
+                    // Named table fields keep FunctionType values in the fields map so
+                    // moduleType.fields["run"] remains addressable for export consumers,
+                    // while collectMembersFromTableType promotes callable fields to METHOD.
+                    val valueType = inferValueType(field.value)
+                    builder.put(
+                        listOf(key),
+                        valueType,
+                        isMethod = false,
+                        range = field.key.range
+                    )
                     return@forEach
                 }
                 // Free-form Android-Lua layout tables use sequence slots for view-class children
@@ -690,10 +700,14 @@ object ModuleExportCollector {
         val output = mutableListOf<ModuleExportSurface.MemberExport>()
         tableType.fields.forEach { (name, type) ->
             val exportPath = prefix + name
+            // Direct `return { run = function() end }` stores callables in fields so
+            // moduleType.fields.getValue("run") stays FunctionType, but export members
+            // must surface those callables as METHOD (Windows slice s017 / TASK-673).
+            val kind = if (isCallableExportType(type)) SymbolKind.METHOD else SymbolKind.FIELD
             output += ModuleExportSurface.MemberExport(
                 name = name,
                 exportPath = exportPath,
-                kind = SymbolKind.FIELD,
+                kind = kind,
                 type = type,
                 range = ranges[exportPath]
             )
@@ -712,6 +726,10 @@ object ModuleExportCollector {
             )
         }
         return output.sortedWith(compareBy<ModuleExportSurface.MemberExport>({ if (it.kind == SymbolKind.FIELD) 0 else 1 }, { it.exportPath.joinToString(".") }))
+    }
+
+    private fun isCallableExportType(type: Type): Boolean {
+        return type is FunctionType || type is OverloadedFunctionType
     }
 
     private fun extractWriteTarget(expression: ExpressionNode): WriteTarget? {

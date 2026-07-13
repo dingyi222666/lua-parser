@@ -314,10 +314,20 @@ object BuiltinOverlayLoader {
     }
 
     private fun documentedMemberPaths(moduleName: String, resourceText: String): Set<List<String>> {
-        val functionRegex = Regex("""^\s*function\s+${Regex.escape(moduleName)}[.:]([A-Za-z_][A-Za-z0-9_]*)\s*\(""")
-        val assignmentRegex = Regex("""^\s*${Regex.escape(moduleName)}\.([A-Za-z_][A-Za-z0-9_]*)\s*=""")
-        val paths = documentedClassFieldMembers(moduleName, resourceText)
-            .mapTo(linkedSetOf()) { member -> member.exportPath }
+        // Match full dotted names and short local aliases (socket.url + url) so synthetic
+        // method kinds can merge with documented ranges for AndroLua helper modules.
+        val nameAliases = linkedSetOf(moduleName)
+        if (moduleName.contains('.')) {
+            nameAliases += moduleName.substringAfterLast('.')
+        }
+        val namePattern = nameAliases.joinToString("|") { Regex.escape(it) }
+        val functionRegex = Regex("""^\s*function\s+(?:$namePattern)[.:]([A-Za-z_][A-Za-z0-9_]*)\s*\(""")
+        val assignmentRegex = Regex("""^\s*(?:$namePattern)\.([A-Za-z_][A-Za-z0-9_]*)\s*=""")
+        val paths = linkedSetOf<List<String>>()
+        nameAliases.forEach { alias ->
+            documentedClassFieldMembers(alias, resourceText)
+                .mapTo(paths) { member -> member.exportPath }
+        }
         val pendingDocLines = mutableListOf<String>()
 
         resourceText.lineSequence().forEach { line ->
@@ -330,7 +340,9 @@ object BuiltinOverlayLoader {
             val memberName = functionRegex.find(line)?.groupValues?.get(1)
                 ?: assignmentRegex.find(line)?.groupValues?.get(1)
             if (memberName != null) {
-                if (pendingDocLines.hasTypedMemberDoc()) {
+                // Always record the member path for dotted modules (url.parse) so synthetic
+                // METHOD kinds can merge; typed docs still preferred when present.
+                if (pendingDocLines.hasTypedMemberDoc() || moduleName.contains('.')) {
                     paths += listOf(memberName)
                 }
                 pendingDocLines.clear()
@@ -666,8 +678,16 @@ object BuiltinOverlayLoader {
         resourceText: String,
         analyzedSurface: ModuleExportSurface?
     ): List<ModuleExportSurface.MemberExport> {
-        val functionRegex = Regex("""^\s*function\s+${Regex.escape(moduleName)}([.:])([A-Za-z_][A-Za-z0-9_]*)\s*\(([^)]*)\)""")
-        val assignmentRegex = Regex("""^\s*${Regex.escape(moduleName)}\.([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$""")
+        // AndroLua dotted modules (socket.url) document methods as `function url.parse(...)`
+        // while the require module name stays dotted. Accept both the full moduleName and the
+        // short local alias so parse/build stay on the export surface as methods.
+        val nameAliases = linkedSetOf(moduleName)
+        if (moduleName.contains('.')) {
+            nameAliases += moduleName.substringAfterLast('.')
+        }
+        val namePattern = nameAliases.joinToString("|") { Regex.escape(it) }
+        val functionRegex = Regex("""^\s*function\s+(?:$namePattern)([.:])([A-Za-z_][A-Za-z0-9_]*)\s*\(([^)]*)\)""")
+        val assignmentRegex = Regex("""^\s*(?:$namePattern)\.([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$""")
         val analyzedByPath = analyzedSurface?.members.orEmpty().associateBy { it.exportPath }
         val membersByPath = linkedMapOf<List<String>, StandardMemberDescriptor>()
         val pendingDocLines = mutableListOf<String>()
@@ -677,6 +697,15 @@ object BuiltinOverlayLoader {
             membersByPath[descriptor.exportPath] = descriptor.copy(
                 type = hydrateDocumentedType(descriptor.type, documentedClassTypes)
             )
+        }
+        // Also collect @field members under short aliases (---@class socket.url with local url).
+        nameAliases.filter { it != moduleName }.forEach { alias ->
+            documentedClassFieldMembers(alias, resourceText, analyzedByPath).forEach { descriptor ->
+                membersByPath.putIfAbsent(
+                    descriptor.exportPath,
+                    descriptor.copy(type = hydrateDocumentedType(descriptor.type, documentedClassTypes))
+                )
+            }
         }
 
         resourceText.lineSequence().forEach { line ->
@@ -696,10 +725,17 @@ object BuiltinOverlayLoader {
                     documentedFunctionType(functionMatch.groupValues[3], doc),
                     documentedClassTypes
                 )
+                // Prefer METHOD for dotted-module helpers (url.parse) so ModuleType.methods
+                // keeps parse even when docs use field-style `function url.parse`.
+                val kind = when {
+                    separator == ":" -> SymbolKind.METHOD
+                    moduleName.contains('.') -> SymbolKind.METHOD
+                    else -> SymbolKind.FIELD
+                }
                 membersByPath[exportPath] = StandardMemberDescriptor(
                     name = memberName,
                     exportPath = exportPath,
-                    kind = if (separator == ":") SymbolKind.METHOD else SymbolKind.FIELD,
+                    kind = kind,
                     type = type,
                     range = analyzedByPath[exportPath]?.range
                 )
@@ -1470,7 +1506,13 @@ object BuiltinOverlayLoader {
     private fun overlayModulePath(versionSegment: String, moduleName: String): VirtualPath {
         // Keep dotted module names (socket.url) as a single path segment so providers stay
         // at __lua_std__/<ver>/socket.url.lua rather than a nested socket/url.lua tree.
-        val safeName = moduleName.replace('\\', '/').trim('/')
+        // Never rewrite '.' to '/': VirtualPath normalizes only separators, so dotted names
+        // must remain one segment for require("socket.url") dotted-name resolution.
+        val safeName = moduleName
+            .replace('\\', '/')
+            .trim('/')
+            .replace('/', '.')
+            .trim('.')
         return VirtualPath.of("__lua_std__/$versionSegment/$safeName.lua")
     }
 

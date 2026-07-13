@@ -923,9 +923,21 @@ class LuaWorkspaceQueryFacade(
             return null
         }
         val resolved = resolvedRequireForExportPathRoot(semanticFile, path, memberInitializer)
+            ?: resolveRequireByWalkingExpressionBases(semanticFile, path, memberInitializer)
             ?: return null
-        val export = resolver.exportedMember(resolved.provider.path, exportPath) ?: return null
-        return exportLocation(export)
+        val export = resolver.exportedMember(resolved.provider.path, exportPath)
+            ?: exportPath.lastOrNull()?.let { leaf ->
+                resolver.exportedMember(resolved.provider.path, listOf(leaf))
+            }
+        if (export != null) {
+            return exportLocation(export)
+        }
+        // Still navigate to the require-backed provider (e.g. AndroLua socket.url overlay)
+        // when the export member range is not yet collected, rather than the local binding site.
+        return WorkspaceLocation(
+            resolved.provider.path,
+            syntheticModuleRange(exportPath.last())
+        )
     }
 
     private fun memberInitializerForLocal(declaration: BinderDeclaration): MemberExpression? {
@@ -1008,37 +1020,49 @@ class LuaWorkspaceQueryFacade(
         path: VirtualPath,
         expression: ExpressionNode
     ): WorkspaceModuleResolver.ResolvedRequire? {
+        // Keep each branch an expression of ResolvedRequire?. A while-loop block typed as Unit
+        // previously made the whole when infer as Any? and failed compileKotlinJvm (TASK-674).
         return when (expression) {
             is MemberExpression -> resolvedRequireForExportPathRoot(semanticFile, path, expression)
-            is IndexExpression -> {
-                // Reuse member-expression walker by synthesizing path via base + require resolution.
-                var current: ExpressionNode = expression
-                val seen = linkedSetOf<String>()
-                while (true) {
-                    when (current) {
-                        is MemberExpression -> current = current.base
-                        is IndexExpression -> current = current.base
-                        is Identifier -> {
-                            val key = "${current.range.start.line}:${current.range.start.column}:${current.name}"
-                            if (!seen.add(key)) {
-                                return null
-                            }
-                            resolvedRequireForWorkspaceMemberReceiver(semanticFile, path, current)?.let { return it }
-                            val symbol = semanticFile.model.getSymbolAt(current.range.start)
-                            val declaration = localDeclarationForSymbol(semanticFile, symbol?.symbolId)
-                                ?: exactLocalDeclarationForIdentifier(semanticFile, current)
-                                ?: visibleLocalValueDeclaration(semanticFile, current.name, current.range.start)
-                                ?: return null
-                            val initializer = localInitializerExpression(declaration) ?: return null
-                            current = initializer
-                        }
-                        is CallExpression -> return resolvedRequireForReceiver(semanticFile, path, current)
-                        else -> return null
-                    }
-                }
-            }
+            is IndexExpression -> resolveRequireByWalkingExpressionBases(semanticFile, path, expression)
             is Identifier, is CallExpression -> resolvedRequireForWorkspaceMemberReceiver(semanticFile, path, expression)
             else -> null
+        }
+    }
+
+    /**
+     * Walk nested Index/Member/alias chains until a require-backed module root is found.
+     * Extracted from when-expression branches so the walker can use imperative returns without
+     * poisoning the enclosing when type (Windows compileKotlinJvm).
+     */
+    private fun resolveRequireByWalkingExpressionBases(
+        semanticFile: WorkspaceSemanticFile,
+        path: VirtualPath,
+        expression: ExpressionNode
+    ): WorkspaceModuleResolver.ResolvedRequire? {
+        var current: ExpressionNode = expression
+        val seen = linkedSetOf<String>()
+        while (true) {
+            when (current) {
+                is MemberExpression -> current = current.base
+                is IndexExpression -> current = current.base
+                is Identifier -> {
+                    val key = "${current.range.start.line}:${current.range.start.column}:${current.name}"
+                    if (!seen.add(key)) {
+                        return null
+                    }
+                    resolvedRequireForWorkspaceMemberReceiver(semanticFile, path, current)?.let { return it }
+                    val symbol = semanticFile.model.getSymbolAt(current.range.start)
+                    val declaration = localDeclarationForSymbol(semanticFile, symbol?.symbolId)
+                        ?: exactLocalDeclarationForIdentifier(semanticFile, current)
+                        ?: visibleLocalValueDeclaration(semanticFile, current.name, current.range.start)
+                        ?: return null
+                    val initializer = localInitializerExpression(declaration) ?: return null
+                    current = initializer
+                }
+                is CallExpression -> return resolvedRequireForReceiver(semanticFile, path, current)
+                else -> return null
+            }
         }
     }
 
@@ -2395,44 +2419,156 @@ class LuaWorkspaceQueryFacade(
         if (moduleName.isBlank()) {
             return false
         }
-        val semanticFile = snapshot.files[path]?.semanticFile ?: return false
-        var found = false
-        val visitor = object : io.github.dingyi222666.luaparser.parser.ast.visitor.ASTVisitor<Unit> {
-            override fun visitCallExpression(node: CallExpression, value: Unit) {
-                if (!found && builtinRequireModuleName(semanticFile, node) == moduleName) {
-                    found = true
-                    return
-                }
-                if (!found) {
-                    super.visitCallExpression(node, value)
-                }
-            }
-
-            override fun visitStringCallExpression(
-                node: io.github.dingyi222666.luaparser.parser.ast.node.StringCallExpression,
-                value: Unit
-            ) {
-                if (!found && builtinRequireModuleName(semanticFile, node) == moduleName) {
-                    found = true
-                    return
-                }
-                if (!found) {
-                    super.visitStringCallExpression(node, value)
-                }
-            }
-
-            override fun visitIdentifier(node: Identifier, value: Unit) = Unit
-            override fun visitAttributeIdentifier(
-                identifier: io.github.dingyi222666.luaparser.parser.ast.node.AttributeIdentifier,
-                value: Unit
-            ) = Unit
-            override fun visitCommentStatement(
-                commentStatement: io.github.dingyi222666.luaparser.parser.ast.node.CommentStatement,
-                value: Unit
-            ) = Unit
+        val fileSnapshot = snapshot.files[path] ?: return false
+        val semanticFile = fileSnapshot.semanticFile ?: return false
+        // Fast reject: document facts record syntactic require("name") strings. When facts are
+        // present and never mention [moduleName], this consumer has no matching call form.
+        // (Shadowed require still appears in facts; the AST walk below rejects non-builtin callees.)
+        val facts = fileSnapshot.documentFacts
+        if (facts != null && facts.requires.none { it.moduleName == moduleName }) {
+            return false
         }
-        visitor.visitChunkNode(semanticFile.chunk, Unit)
-        return found
+        // Explicit AST walk (not ASTVisitor overrides): recognize only unshadowed builtin
+        // require("moduleName") / require "moduleName" call sites via builtinRequireModuleName.
+        return chunkHasBuiltinRequireModule(semanticFile, semanticFile.chunk.body, moduleName)
+    }
+
+    private fun chunkHasBuiltinRequireModule(
+        semanticFile: WorkspaceSemanticFile,
+        block: io.github.dingyi222666.luaparser.parser.ast.node.BlockNode,
+        moduleName: String
+    ): Boolean {
+        for (statement in block.statements) {
+            if (statementHasBuiltinRequireModule(semanticFile, statement, moduleName)) {
+                return true
+            }
+        }
+        val returnStatement = block.returnStatement
+        if (returnStatement != null) {
+            for (argument in returnStatement.arguments) {
+                if (expressionHasBuiltinRequireModule(semanticFile, argument, moduleName)) {
+                    return true
+                }
+            }
+        }
+        return false
+    }
+
+    private fun statementHasBuiltinRequireModule(
+        semanticFile: WorkspaceSemanticFile,
+        statement: io.github.dingyi222666.luaparser.parser.ast.node.StatementNode,
+        moduleName: String
+    ): Boolean {
+        return when (statement) {
+            is LocalStatement ->
+                statement.variables.any { expressionHasBuiltinRequireModule(semanticFile, it, moduleName) }
+            is io.github.dingyi222666.luaparser.parser.ast.node.AssignmentStatement ->
+                statement.variables.any { expressionHasBuiltinRequireModule(semanticFile, it, moduleName) } ||
+                    statement.init.any { expressionHasBuiltinRequireModule(semanticFile, it, moduleName) }
+            is io.github.dingyi222666.luaparser.parser.ast.node.CallStatement ->
+                expressionHasBuiltinRequireModule(semanticFile, statement.expression, moduleName)
+            is io.github.dingyi222666.luaparser.parser.ast.node.ReturnStatement ->
+                statement.arguments.any { expressionHasBuiltinRequireModule(semanticFile, it, moduleName) }
+            is io.github.dingyi222666.luaparser.parser.ast.node.DoStatement ->
+                chunkHasBuiltinRequireModule(semanticFile, statement.body, moduleName)
+            is io.github.dingyi222666.luaparser.parser.ast.node.WhileStatement ->
+                expressionHasBuiltinRequireModule(semanticFile, statement.condition, moduleName) ||
+                    chunkHasBuiltinRequireModule(semanticFile, statement.body, moduleName)
+            is io.github.dingyi222666.luaparser.parser.ast.node.RepeatStatement ->
+                chunkHasBuiltinRequireModule(semanticFile, statement.body, moduleName) ||
+                    expressionHasBuiltinRequireModule(semanticFile, statement.condition, moduleName)
+            is io.github.dingyi222666.luaparser.parser.ast.node.IfStatement ->
+                statement.causes.any { clause ->
+                    when (clause) {
+                        // ElseClause / ElseIfClause are IfClause subclasses: match most-specific first.
+                        is io.github.dingyi222666.luaparser.parser.ast.node.ElseClause ->
+                            chunkHasBuiltinRequireModule(semanticFile, clause.body, moduleName)
+                        is io.github.dingyi222666.luaparser.parser.ast.node.ElseIfClause ->
+                            expressionHasBuiltinRequireModule(semanticFile, clause.condition, moduleName) ||
+                                chunkHasBuiltinRequireModule(semanticFile, clause.body, moduleName)
+                        is io.github.dingyi222666.luaparser.parser.ast.node.IfClause ->
+                            expressionHasBuiltinRequireModule(semanticFile, clause.condition, moduleName) ||
+                                chunkHasBuiltinRequireModule(semanticFile, clause.body, moduleName)
+                        else -> false
+                    }
+                }
+            is io.github.dingyi222666.luaparser.parser.ast.node.ForNumericStatement ->
+                expressionHasBuiltinRequireModule(semanticFile, statement.start, moduleName) ||
+                    expressionHasBuiltinRequireModule(semanticFile, statement.end, moduleName) ||
+                    (statement.step?.let { expressionHasBuiltinRequireModule(semanticFile, it, moduleName) } == true) ||
+                    chunkHasBuiltinRequireModule(semanticFile, statement.body, moduleName)
+            is io.github.dingyi222666.luaparser.parser.ast.node.ForGenericStatement ->
+                statement.iterators.any { expressionHasBuiltinRequireModule(semanticFile, it, moduleName) } ||
+                    chunkHasBuiltinRequireModule(semanticFile, statement.body, moduleName)
+            is io.github.dingyi222666.luaparser.parser.ast.node.FunctionDeclaration ->
+                (statement.identifier?.let { expressionHasBuiltinRequireModule(semanticFile, it, moduleName) } == true) ||
+                    (statement.body?.let { chunkHasBuiltinRequireModule(semanticFile, it, moduleName) } == true)
+            is io.github.dingyi222666.luaparser.parser.ast.node.WhenStatement ->
+                expressionHasBuiltinRequireModule(semanticFile, statement.condition, moduleName) ||
+                    statementHasBuiltinRequireModule(semanticFile, statement.ifCause, moduleName) ||
+                    (statement.elseCause?.let { statementHasBuiltinRequireModule(semanticFile, it, moduleName) } == true)
+            is io.github.dingyi222666.luaparser.parser.ast.node.SwitchStatement ->
+                expressionHasBuiltinRequireModule(semanticFile, statement.condition, moduleName) ||
+                    statement.causes.any { cause ->
+                        when (cause) {
+                            is io.github.dingyi222666.luaparser.parser.ast.node.CaseCause ->
+                                cause.conditions.any { expressionHasBuiltinRequireModule(semanticFile, it, moduleName) } ||
+                                    chunkHasBuiltinRequireModule(semanticFile, cause.body, moduleName)
+                            is io.github.dingyi222666.luaparser.parser.ast.node.DefaultCause ->
+                                chunkHasBuiltinRequireModule(semanticFile, cause.body, moduleName)
+                            else -> false
+                        }
+                    }
+            else -> false
+        }
+    }
+
+    private fun expressionHasBuiltinRequireModule(
+        semanticFile: WorkspaceSemanticFile,
+        expression: ExpressionNode,
+        moduleName: String
+    ): Boolean {
+        when (expression) {
+            is CallExpression -> {
+                if (builtinRequireModuleName(semanticFile, expression) == moduleName) {
+                    return true
+                }
+                if (expressionHasBuiltinRequireModule(semanticFile, expression.base, moduleName)) {
+                    return true
+                }
+                if (expression.arguments.any { expressionHasBuiltinRequireModule(semanticFile, it, moduleName) }) {
+                    return true
+                }
+                return false
+            }
+            is MemberExpression ->
+                return expressionHasBuiltinRequireModule(semanticFile, expression.base, moduleName) ||
+                    expressionHasBuiltinRequireModule(semanticFile, expression.identifier, moduleName)
+            is IndexExpression ->
+                return expressionHasBuiltinRequireModule(semanticFile, expression.base, moduleName) ||
+                    expressionHasBuiltinRequireModule(semanticFile, expression.index, moduleName)
+            is io.github.dingyi222666.luaparser.parser.ast.node.BinaryExpression -> {
+                val left = expression.left
+                val right = expression.right
+                return (left != null && expressionHasBuiltinRequireModule(semanticFile, left, moduleName)) ||
+                    (right != null && expressionHasBuiltinRequireModule(semanticFile, right, moduleName))
+            }
+            is io.github.dingyi222666.luaparser.parser.ast.node.UnaryExpression ->
+                return expressionHasBuiltinRequireModule(semanticFile, expression.arg, moduleName)
+            is io.github.dingyi222666.luaparser.parser.ast.node.TableConstructorExpression ->
+                return expression.fields.any { field ->
+                    expressionHasBuiltinRequireModule(semanticFile, field.value, moduleName) ||
+                        expressionHasBuiltinRequireModule(semanticFile, field.key, moduleName)
+                }
+            is io.github.dingyi222666.luaparser.parser.ast.node.ArrayConstructorExpression ->
+                return expression.values.any { expressionHasBuiltinRequireModule(semanticFile, it, moduleName) }
+            is io.github.dingyi222666.luaparser.parser.ast.node.FunctionDeclaration ->
+                return (expression.identifier?.let { expressionHasBuiltinRequireModule(semanticFile, it, moduleName) } == true) ||
+                    (expression.body?.let { chunkHasBuiltinRequireModule(semanticFile, it, moduleName) } == true)
+            is io.github.dingyi222666.luaparser.parser.ast.node.LambdaDeclaration ->
+                return expressionHasBuiltinRequireModule(semanticFile, expression.expression, moduleName)
+            else -> return false
+        }
     }
 
     private fun requireCallSite(path: VirtualPath, position: Position): RequireCallSite? {

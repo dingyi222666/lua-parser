@@ -1,0 +1,21 @@
+{
+  "runId": "29213080707",
+  "sliceId": "s017",
+  "status": "failure",
+  "tests": 0,
+  "failures": 0,
+  "failedTests": [],
+  "progressSummary": {
+    "total": 18,
+    "totalFiles": 367,
+    "pending": 1,
+    "success": 16,
+    "failure": 1,
+    "running": 0,
+    "filesDone": 300,
+    "activeSlice": "s017",
+    "chunkSize": 45,
+    "updatedAt": "2026-07-12T23:16:51Z"
+  },
+  "notes": "Merged run 29213080707: CI slice-progress artifact had no slice-result.json and no history for this runId (progress.json identical to local updatedAt=2026-07-12T22:50:21Z). junit-xml/html artifacts missing. Recorded s017 compileFailure from CI logs \u2014 compileKotlinJvm failed before jvmTest: LuaWorkspaceQueryFacade.kt:1011:16 Return type mismatch expected 'WorkspaceModuleResolver.ResolvedRequire?', actual 'Any?'. No TEST-*.xml produced. Gate retains s017 failure (prior 6 test reds on 29212217687). Wrote results/s017-29213080707.json; rewrote PROGRESS.md; failures.txt empty (0 TEST-*.xml). Gate remains must-green-to-advance on s017."
+}
