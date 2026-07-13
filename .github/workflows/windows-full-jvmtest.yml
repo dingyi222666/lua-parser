@@ -1,0 +1,78 @@
+# Windows self-hosted FULL jvmTest (tip-coherent, TASK-043 evidence).
+# Does NOT use slice progress bar. CPU hard-capped (affinity 0x3F, workers=5).
+# Branch: windows-verify only. Never main.
+name: windows-full-jvmtest
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [windows-verify]
+    paths:
+      - '.github/workflows/windows-full-jvmtest.yml'
+      - 'scripts/windows-run-full-jvmtest.ps1'
+      - 'scripts/windows-run-gradle-capped.ps1'
+
+jobs:
+  full-jvmtest:
+    runs-on: [self-hosted, Windows, X64]
+    # Full suite can exceed slice timeouts; keep headroom under CPU cap.
+    timeout-minutes: 360
+    env:
+      JAVA_HOME: C:\Users\dingyi\.jdks\temurin-17.0.11
+      ANDROID_HOME: C:\Users\dingyi\AppData\Local\Android\Sdk
+      GRADLE_OPTS: -Dorg.gradle.workers.max=5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show environment
+        shell: pwsh
+        run: |
+          $env:Path = "$env:JAVA_HOME\bin;$env:Path"
+          Write-Host "JAVA_HOME=$env:JAVA_HOME"
+          & "$env:JAVA_HOME\bin\java.exe" -version
+          Write-Host "processor_count=$env:NUMBER_OF_PROCESSORS"
+          git rev-parse --short HEAD
+          Write-Host "mode=full-jvmtest cpu_hard_cap=affinity_0x3F workers=5"
+
+      - name: Full jvmTest (CPU hard-capped)
+        shell: pwsh
+        run: |
+          $env:Path = "$env:JAVA_HOME\bin;$env:Path"
+          ./scripts/windows-run-full-jvmtest.ps1
+
+      - name: Stop Gradle and kill leftover Java
+        if: always()
+        shell: cmd
+        run: |
+          set "PATH=%JAVA_HOME%\bin;%PATH%"
+          call gradlew.bat --stop
+          taskkill /F /IM java.exe 2>nul
+          taskkill /F /IM javaw.exe 2>nul
+          exit /b 0
+
+      - name: Upload JUnit XML
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: full-junit-xml
+          path: build/test-results/jvmTest/**
+          if-no-files-found: warn
+
+      - name: Upload full-jvmtest result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: full-jvmtest-result
+          path: |
+            full-jvmtest-result.json
+            tasks/agent-runs/full-jvmtest/**
+          if-no-files-found: warn
+
+      - name: Upload HTML report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: full-test-report-html
+          path: build/reports/tests/jvmTest/**
+          if-no-files-found: warn
