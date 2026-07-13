@@ -115,9 +115,13 @@ class ModuleExportCollectorTest {
         assertEquals(1, (surface.moduleType.fields.getValue("value") as LiteralType).value)
         val nested = assertIs<TableType>(surface.moduleType.fields.getValue("nested"))
         assertEquals(true, (nested.fields.getValue("enabled") as LiteralType).value)
+        // Direct-return table fields keep FunctionType values on moduleType.fields and surface as
+        // SymbolKind.FIELD (colon methods only use METHOD). Member name "run" must be present.
         assertIs<FunctionType>(surface.moduleType.fields.getValue("run"))
         assertNotNull(surface.members.firstOrNull { it.name == "value" }?.range)
-        assertEquals("run", surface.members.firstOrNull { it.kind == io.github.dingyi222666.luaparser.semantic.api.SymbolKind.METHOD }?.name)
+        val runMember = assertNotNull(surface.members.firstOrNull { it.name == "run" })
+        assertEquals(io.github.dingyi222666.luaparser.semantic.api.SymbolKind.FIELD, runMember.kind)
+        assertIs<FunctionType>(runMember.type)
     }
 
     @Test
