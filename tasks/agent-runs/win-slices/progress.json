@@ -1,16 +1,16 @@
 {
   "version": 2,
   "strategy": "must-green-to-advance",
-  "activeSlice": "s017",
-  "updatedAt": "2026-07-13T02:46:52Z",
+  "activeSlice": "s018",
+  "updatedAt": "2026-07-13T02:54:18Z",
   "summary": {
     "total": 18,
     "totalFiles": 367,
     "pending": 1,
-    "success": 16,
-    "failure": 1,
+    "success": 17,
+    "failure": 0,
     "running": 0,
-    "filesDone": 300
+    "filesDone": 345
   },
   "slices": {
     "s001": {
@@ -243,22 +243,19 @@
       "artifact": "results/s016-29209549075.json"
     },
     "s017": {
-      "status": "failure",
+      "status": "success",
       "label": "semantic.types.resolve..semantic.workspace",
       "fileCount": 45,
-      "lastRunId": "29220138002",
-      "lastSha": "4c4a88fa08251f27d7b246e02ecaea4800da475a",
+      "lastRunId": "29220402657",
+      "lastSha": "f6cc06f0ba483362ca96741d95aa890436949691",
       "tests": 574,
-      "failures": 1,
+      "failures": 0,
       "errors": 0,
-      "failedTests": [
-        "semantic.workspace.ModuleExportCollectorTest#direct_return_table_literal_is_collected[jvm]"
-      ],
+      "failedTests": [],
       "durationSec": 35,
-      "artifact": "results/s017-29220138002.json",
-      "updatedAt": "2026-07-13T02:46:52Z",
-      "note": "compile failure on run 29213080707; compileKotlinJvm failed before jvmTest: LuaWorkspaceQueryFacade.kt:1011:16 Return type mismatch expected 'WorkspaceModuleResolver.ResolvedRequire?', actual 'Any?'. No TEST-*.xml produced. Gate retains s017 failure (prior 6 test reds on 29212217687).",
-      "compileFailure": true
+      "artifact": "results/s017-29220402657.json",
+      "updatedAt": "2026-07-13T02:54:18Z",
+      "note": "green on run 29220402657; 574 tests 0 failures"
     },
     "s018": {
       "status": "pending",
@@ -267,15 +264,6 @@
     }
   },
   "history": [
-    {
-      "sliceId": "s001",
-      "runId": "29173639103",
-      "status": "failure",
-      "tests": 246,
-      "failures": 3,
-      "durationSec": 25,
-      "at": "2026-07-12T00:42:14Z"
-    },
     {
       "sliceId": "s001",
       "runId": "29174621894",
@@ -721,6 +709,15 @@
       "failures": 1,
       "durationSec": 35,
       "at": "2026-07-13T02:46:52Z"
+    },
+    {
+      "sliceId": "s017",
+      "runId": "29220402657",
+      "status": "success",
+      "tests": 574,
+      "failures": 0,
+      "durationSec": 35,
+      "at": "2026-07-13T02:54:18Z"
     }
   ]
 }
