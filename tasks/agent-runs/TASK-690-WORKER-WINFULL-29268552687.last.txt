@@ -1,0 +1,9 @@
+task: TASK-690
+wave: WINFULL-29268552687
+owner: worker-WINFULL-29268552687-TASK-690
+finalStatus: review
+utc: 2026-07-13T17:15:54Z
+summary: Locked DocumentFacts init.lua module-name candidates to dual VIRTUAL_PATH (pkg.runtime + pkg.runtime.init) plus LEGACY_MODULE_CALL. Product pathDerivedModuleNameCandidates already emitted both; unit test golden lagged (expected 2-tuple). Updated derives_module_name_candidates_from_virtual_path_and_module_call golden. No product strip of .init claim.
+filesChanged:
+  - src/commonTest/kotlin/semantic/workspace/DocumentFactsCollectorTest.kt
+  - tasks/TASK-690.md

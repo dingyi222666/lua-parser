@@ -73,7 +73,12 @@ class LuaWorkspaceQueryFacade(
         if (semanticFile == null) {
             return baseCompletions
         }
+        // Prefer require-backed export members whenever a member site is detectable.
+        // Incomplete trailing-dot forms (`local x = pkg.|` / `U.|`) often miss half-open
+        // nodeAt hits; fall back to source-aware recovery so barrel reexport surfaces
+        // (leafRun/leafValue) still complete instead of free-id globals.
         val memberExpression = memberExpressionAt(semanticFile, position)
+            ?: incompleteMemberExpressionFromSource(semanticFile, position)
         if (memberExpression != null) {
             // Member-context completions must not merge lexical/import free-identifier
             // candidates (Monaco demo: greeter. flooded with locals + builtins). Prefer
@@ -214,36 +219,48 @@ class LuaWorkspaceQueryFacade(
         // (same name as util.foo/util.trim) even when a shadowing local is in scope; symbolId
         // then fails localDeclarationForSymbol and definition incorrectly jumps only to util.lua.
         if (memberAccess == null && semanticFile != null) {
-            val freeId = node as? Identifier
-            if (freeId != null) {
-                val parent = runCatching { freeId.parent }.getOrNull()
-                val onMemberSelector = parent is MemberExpression && parent.identifier === freeId
-                if (!onMemberSelector) {
-                    val visibleLocal = visibleLocalValueDeclaration(
-                        semanticFile,
-                        freeId.name,
-                        freeId.range.start
-                    )
-                    // Keep require("mod") aliases and `local x = mod.member` rebinds on the
-                    // provider/export path above — only true non-import shadows stay file-local.
-                    val isRequireOrMemberImport =
-                        visibleLocal != null &&
-                            (
-                                requiredModuleNameForDeclaration(semanticFile, visibleLocal) != null ||
-                                    memberInitializerForLocal(visibleLocal) != null
-                                )
-                    if (
-                        visibleLocal != null &&
-                        !isRequireOrMemberImport &&
-                        visibleLocal.origin != DeclarationOrigin.BUILTIN &&
-                        (
-                            visibleLocal.kind == DeclarationKind.LOCAL ||
-                                visibleLocal.kind == DeclarationKind.FUNCTION ||
-                                visibleLocal.kind == DeclarationKind.PARAMETER
-                            )
-                    ) {
-                        declarationReferenceLocation(path, visibleLocal)?.let { return listOf(it) }
+            val freeId = when (val n = node) {
+                is Identifier -> n
+                is CallExpression -> n.base as? Identifier
+                is io.github.dingyi222666.luaparser.parser.ast.node.StringCallExpression ->
+                    n.base as? Identifier
+                else -> null
+            } ?: identifierCoveringPosition(semanticFile, position)
+            val parent = freeId?.let { runCatching { it.parent }.getOrNull() }
+            val onMemberSelector = freeId != null &&
+                parent is MemberExpression &&
+                parent.identifier === freeId
+            val freeName = freeId?.name?.takeIf { it.isNotBlank() }
+                ?: symbol?.name?.takeIf { it.isNotBlank() && !onMemberSelector }
+            if (freeName != null && !onMemberSelector) {
+                // Probe at caret and at the identifier start so shadow locals win even when
+                // binder symbolId points at a foreign export handle (util.foo vs local foo).
+                val visibleLocal = visibleLocalValueDeclaration(semanticFile, freeName, position)
+                    ?: freeId?.let {
+                        visibleLocalValueDeclaration(semanticFile, freeName, it.range.start)
                     }
+                    ?: freeId?.let {
+                        visibleLocalValueDeclaration(semanticFile, freeName, it.range.end)
+                    }
+                // Keep require("mod") aliases and `local x = mod.member` rebinds on the
+                // provider/export path above — only true non-import shadows stay file-local.
+                val isRequireOrMemberImport =
+                    visibleLocal != null &&
+                        (
+                            requiredModuleNameForDeclaration(semanticFile, visibleLocal) != null ||
+                                memberInitializerForLocal(visibleLocal) != null
+                            )
+                if (
+                    visibleLocal != null &&
+                    !isRequireOrMemberImport &&
+                    visibleLocal.origin != DeclarationOrigin.BUILTIN &&
+                    (
+                        visibleLocal.kind == DeclarationKind.LOCAL ||
+                            visibleLocal.kind == DeclarationKind.FUNCTION ||
+                            visibleLocal.kind == DeclarationKind.PARAMETER
+                        )
+                ) {
+                    declarationReferenceLocation(path, visibleLocal)?.let { return listOf(it) }
                 }
             }
         }
@@ -1134,7 +1151,10 @@ class LuaWorkspaceQueryFacade(
         identifier: Identifier
     ): String? {
         val declaration = localDeclarationForSymbol(semanticFile, symbolId)
+            ?: exactLocalDeclarationForIdentifier(semanticFile, identifier)
             ?: visibleLocalValueDeclaration(semanticFile, identifier.name, identifier.range.start)
+            // Synthetic incomplete-member receivers may have approximate ranges; probe end too.
+            ?: visibleLocalValueDeclaration(semanticFile, identifier.name, identifier.range.end)
             ?: return null
         return requiredModuleNameForDeclaration(semanticFile, declaration)
     }
@@ -1586,13 +1606,18 @@ class LuaWorkspaceQueryFacade(
         memberExpression: MemberExpression
     ): List<CompletionItem> {
         // Prefix under the require-backed root: greeter. → []; cfg.ui. → ["ui"].
-        val prefixPath = requireBackedExportPath(semanticFile, path, memberExpression.base)
-            ?: return emptyList()
+        // Incomplete trailing-dot recovery may synthesize a receiver Identifier whose range is
+        // not binder-backed; fall back to require-local lookup by receiver name so barrel
+        // reexports (leafRun/leafValue) still surface for `local pkg = require("pkg.init"); pkg.`
         val resolved = when (val base = memberExpression.base) {
             is Identifier -> resolvedRequireForCompletionReceiver(semanticFile, path, base)
+                ?: resolveRequiredModuleNameForVisibleLocal(semanticFile, null, base)
+                    ?.let { moduleName -> resolveWorkspaceRequire(path, moduleName) }
             else -> resolvedRequireForExportPathRootFromExpression(semanticFile, path, base)
                 ?: resolvedRequireForCompletionReceiver(semanticFile, path, base)
         } ?: return emptyList()
+        val prefixPath = requireBackedExportPath(semanticFile, path, memberExpression.base)
+            ?: emptyList()
         val expectedDepth = prefixPath.size + 1
         return resolved.surface.members
             .asSequence()
@@ -1732,6 +1757,9 @@ class LuaWorkspaceQueryFacade(
                 val declaration = localDeclarationForSymbol(semanticFile, symbol?.symbolId)
                     ?: exactLocalDeclarationForIdentifier(semanticFile, expression)
                     ?: visibleLocalValueDeclaration(semanticFile, expression.name, expression.range.start)
+                    // Synthetic incomplete-member receivers may have approximate ranges; also
+                    // probe by name at caret-adjacent positions so require-alias roots still bind.
+                    ?: visibleLocalValueDeclaration(semanticFile, expression.name, expression.range.end)
                 if (declaration != null) {
                     requiredModuleNameForDeclaration(semanticFile, declaration)?.let {
                         // Root require-backed local: export path is empty before the member segment.
@@ -2287,6 +2315,17 @@ class LuaWorkspaceQueryFacade(
             ) {
                 return parent
             }
+            // Trailing-dot caret may land past half-open MemberExpression.range.end while still
+            // sitting on the receiver Identifier (parent-linked incomplete member).
+            if (
+                parent != null &&
+                parent.base === node &&
+                parent.identifier.name.isBlank() &&
+                position.line == parent.range.end.line &&
+                position.column >= parent.range.end.column
+            ) {
+                return parent
+            }
             return null
         }
         // Prefer the most specific (longest) member expression covering the caret, and
@@ -2297,7 +2336,14 @@ class LuaWorkspaceQueryFacade(
             isMemberCompletionSite(it, position) &&
                 (
                     memberCompletionRangeContains(it.range, position) ||
-                        rangeContains(it.identifier.range, position)
+                        rangeContains(it.identifier.range, position) ||
+                        // Incomplete blank members: accept caret at/after member range end.
+                        (
+                            it.identifier.name.isBlank() &&
+                                position.line == it.range.end.line &&
+                                position.column >= it.range.end.column &&
+                                position.column <= it.range.end.column + 1
+                            )
                     )
         }
         if (candidates.isEmpty()) {
@@ -2309,6 +2355,115 @@ class LuaWorkspaceQueryFacade(
                 .thenBy { it.range.end.line }
                 .thenBy { it.range.end.column }
         )
+    }
+
+    /**
+     * Recover incomplete trailing-dot / colon member sites from source text when AST
+     * nodeAt / half-open ranges miss the caret (common for `local x = pkg.|`).
+     * Builds a synthetic [MemberExpression] over the receiver Identifier so
+     * [workspaceMemberCompletions] can resolve require-backed export surfaces.
+     */
+    private fun incompleteMemberExpressionFromSource(
+        semanticFile: WorkspaceSemanticFile,
+        position: Position
+    ): MemberExpression? {
+        val lineText = sourceLineAt(semanticFile.source, position.line) ?: return null
+        if (lineText.isEmpty() || position.column <= 1) {
+            return null
+        }
+        // Strip trailing CR so Windows CRLF sources still match the trailing-dot regex.
+        val normalizedLine = lineText.trimEnd('\r')
+        val caretIndex = (position.column - 1).coerceIn(0, normalizedLine.length)
+        val before = normalizedLine.take(caretIndex)
+        val match = Regex("""([A-Za-z_][A-Za-z0-9_]*)\s*([.:])\s*$""").find(before) ?: return null
+        val receiverName = match.groupValues[1]
+        val indexer = match.groupValues[2]
+        val receiver = semanticFile.identifiers
+            .asSequence()
+            .filter { identifier ->
+                identifier.name == receiverName &&
+                    identifier.range.start.line == position.line &&
+                    identifier.range.start.column < position.column
+            }
+            .maxByOrNull { it.range.start.column }
+            ?: syntheticReceiverIdentifier(receiverName, position, before, match)
+        // Prefer an existing incomplete AST member on this receiver when present.
+        semanticFile.memberExpressions
+            .lastOrNull {
+                (it.base === receiver ||
+                    ((it.base as? Identifier)?.name == receiverName &&
+                        it.base.range.start.line == position.line)) &&
+                    it.identifier.name.isBlank() &&
+                    it.indexer == indexer
+            }
+            ?.let { return it }
+        // Synthetic incomplete member for require-alias export completion recovery.
+        return MemberExpression().also { member ->
+            member.base = receiver
+            member.indexer = indexer
+            member.identifier = Identifier("").also { blank ->
+                blank.range = Range(position, position)
+                blank.parent = member
+            }
+            member.range = Range(receiver.range.start, position)
+            // Keep parent unset so free-id paths on the receiver stay unchanged.
+        }
+    }
+
+    /**
+     * Fallback receiver when the incomplete trailing-dot site is present in source but
+     * the Identifier AST node was not collected (partial parse / recovery).
+     */
+    private fun syntheticReceiverIdentifier(
+        receiverName: String,
+        position: Position,
+        before: String,
+        match: MatchResult
+    ): Identifier {
+        val receiverStartColumn = (match.range.first + 1).coerceAtLeast(1)
+        val start = Position(position.line, receiverStartColumn)
+        val end = Position(position.line, receiverStartColumn + receiverName.length)
+        return Identifier(receiverName).also { id ->
+            id.range = Range(start, end)
+        }
+    }
+
+    private fun identifierCoveringPosition(
+        semanticFile: WorkspaceSemanticFile,
+        position: Position
+    ): Identifier? {
+        return semanticFile.identifiers
+            .asSequence()
+            .filter { identifier ->
+                rangeContains(identifier.range, position) ||
+                    (
+                        position.line == identifier.range.start.line &&
+                            position.column >= identifier.range.start.column &&
+                            position.column <= identifier.range.end.column
+                        )
+            }
+            .minByOrNull { spanLength(it.range) }
+    }
+
+    private fun sourceLineAt(source: String, line: Int): String? {
+        if (line < 1) {
+            return null
+        }
+        var current = 1
+        var start = 0
+        var i = 0
+        while (i < source.length) {
+            val ch = source[i]
+            if (ch == '\n') {
+                if (current == line) {
+                    return source.substring(start, i)
+                }
+                current += 1
+                start = i + 1
+            }
+            i += 1
+        }
+        return if (current == line) source.substring(start) else null
     }
 
     private fun spanLength(range: Range): Int {
@@ -2343,10 +2498,15 @@ class LuaWorkspaceQueryFacade(
                 (position.line == baseEnd.line && position.column > baseEnd.column)
         if (expression.identifier.name.isBlank()) {
             // Incomplete `base.` / `base:` — member surface once past the base, or on the blank
-            // member identifier itself (trailing-dot caret often sits at range end).
+            // member identifier itself (trailing-dot caret often sits at range end or one past).
             if (afterBase || position.line == baseEnd.line && position.column == baseEnd.column) {
                 return memberCompletionRangeContains(expression.range, position) ||
-                    rangeContains(expression.identifier.range, position)
+                    rangeContains(expression.identifier.range, position) ||
+                    (
+                        position.line == expression.range.end.line &&
+                            position.column >= expression.range.end.column &&
+                            position.column <= expression.range.end.column + 1
+                        )
             }
             return false
         }

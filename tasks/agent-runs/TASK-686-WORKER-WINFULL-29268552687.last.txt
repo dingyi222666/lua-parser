@@ -1,0 +1,18 @@
+taskId=686
+status=review
+wave=WINFULL-29268552687
+owner=worker-WINFULL-29268552687-TASK-686
+filesChanged=
+  src/commonMain/kotlin/io/github/dingyi222666/luaparser/semantic/workspace/LuaWorkspaceQueryFacade.kt
+  src/commonMain/kotlin/io/github/dingyi222666/luaparser/semantic/model/ReferenceQueries.kt
+  src/jvmMain/kotlin/io/github/dingyi222666/luaparser/lsp/LuaLanguageService.kt
+summary:
+  Barrel completion: recover incomplete trailing-dot member sites from source (CRLF-safe),
+  synthetic MemberExpression over require-alias receivers, and resolve require-backed export
+  members even when receiver Identifier ranges are approximate.
+  Shadow dual-path: freeIdLocalShadowSymbolAt prefers file-local VALUE decls for free-id
+  uses (including CallExpression bases); QueryFacade gotoDefinition recovers Identifier from
+  call bases / covering positions before export-handle fallback.
+  LSP definition documents free-id shadows fall through to goto (resolveRequire restricted).
+noGradle=true
+finished_at=2026-07-13T17:49:26Z

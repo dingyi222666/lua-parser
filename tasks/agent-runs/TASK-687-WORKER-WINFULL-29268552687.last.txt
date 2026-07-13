@@ -1,0 +1,14 @@
+task: TASK-687
+wave: WINFULL-29268552687
+owner: worker-WINFULL-29268552687-TASK-687
+finalStatus: blocked
+utc: 2026-07-13T17:15:45Z
+summary: STOP leave ready — exclusive file locks held by live worker-WINFULL-29268552687-TASK-686 on shared product paths needed for AC (LuaLanguageService.kt, LuaWorkspaceQueryFacade.kt, ReferenceQueries.kt). TASK-686 also owns related shadow dual-path AC (shadow_local_foo_does_not_force_only_export_uri). MemberResolver.kt / ExpressionTypeEvaluator.kt free but preferred local-shadow dual-path fix is ReferenceQueries + facade/LSP definition (locked). No product edits; status left ready/unassigned.
+blocked_by: TASK-686 (in_progress, claimed_at 2026-07-13T17:15:19Z)
+locks_seen:
+  - locks/files/src_jvmMain_kotlin_io_github_dingyi222666_luaparser_lsp_LuaLanguageService.kt.lock = worker-WINFULL-29268552687-TASK-686
+  - locks/files/src_commonMain_kotlin_io_github_dingyi222666_luaparser_semantic_workspace_LuaWorkspaceQueryFacade.kt.lock = worker-WINFULL-29268552687-TASK-686
+  - locks/files/src_commonMain_kotlin_io_github_dingyi222666_luaparser_semantic_model_ReferenceQueries.kt.lock = worker-WINFULL-29268552687-TASK-686
+  - locks/tasks/TASK-686.lock = worker-WINFULL-29268552687-TASK-686
+ac_remaining:
+  - lsp.LspRealProjectMultiModuleGraphTddTest#shadow_local_same_name_as_export_stays_file_local
