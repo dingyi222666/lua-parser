@@ -165,7 +165,15 @@ class MemberResolver(
             val resolvedType = if (classType.isJavaProviderClassReference() && kind == MemberAccessKind.METHOD) {
                 type.withJavaCallableSurface(receiverType = receiverType, includeReceiver = preferMethod)
             } else {
-                bindMethodReceiver(type, receiverType, kind, preferMethod)
+                // ClassType methods bind implicit self for both colon and dot access when the
+                // signature lacks a compatible receiver (TASK-681). Module/table free-function
+                // surfaces keep preferMethod-gated binding via their own resolvers (TASK-668).
+                bindMethodReceiver(
+                    type,
+                    receiverType,
+                    kind,
+                    preferMethod = preferMethod || kind == MemberAccessKind.METHOD
+                )
             }
             MemberResolution(type = resolvedType, accessKind = kind, baseType = classType)
         } ?: MemberResolution(baseType = classType, failureReason = MemberFailureReason.MISSING_MEMBER)

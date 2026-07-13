@@ -189,11 +189,16 @@ internal class SignatureHelpProvider(
     /**
      * Build the LSP signature label for one overload.
      *
-     * Plain Lua/function surfaces already use `fun(...): R` and must keep that exact form
-     * for existing exact-label asserts. Generic Java reflection surfaces render as
-     * `fun<T>(...): R` (type parameters sit between `fun` and `(`), so they match neither
-     * `fun(` nor the member name. When the call base is a named member (e.g. asList),
-     * prefix the member name so signature help remains discoverable.
+     * Plain Lua/function surfaces already use fun(...): R and must keep that exact form
+     * for existing exact-label asserts (do not invent a method-name prefix there).
+     *
+     * Generic surfaces render as fun<T>(...): R (type parameters sit between fun and
+     * '('), so they match neither the literal fun( hard-lock nor a Java member name.
+     * For call-site member bases such as Arrays.asList, prefix the member name so labels
+     * stay discoverable while keeping the generic form for TASK-670.
+     *
+     * Keep bare generic labels when there is no call-site method name (Lua @generic
+     * helpers such as identity), so exact-label workspace asserts remain green.
      */
     private fun signatureHelpLabel(signature: FunctionType, methodName: String?): String {
         // Prefer a freshly built generic label when typeParameters are present. FunctionType.copy
@@ -212,10 +217,15 @@ internal class SignatureHelpProvider(
         } else {
             signature.displayName
         }
-        if (display.contains("fun(") || display.contains("fun<")) {
+        // Plain non-generic callable labels already satisfy fun( hard-locks and exact Lua
+        // label asserts. Do not rewrite them.
+        if (display.contains("fun(")) {
             return display
         }
         val trimmedName = methodName?.trim().orEmpty()
+        // Java static/instance members: generic fun<T>(...) alone fails LspJavaAndroidFeature
+        // asList|fun( hard-lock. Prefix the call-site member name when missing.
+        // Bare Lua generics (no method name) keep the generic form unchanged (TASK-670).
         if (trimmedName.isNotEmpty() && !display.contains(trimmedName)) {
             return "$trimmedName $display"
         }

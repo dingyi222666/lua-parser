@@ -1146,17 +1146,29 @@ class LuaParser(
         while (true) {
             when (peek()) {
                 LuaTokenTypes.ELSEIF -> {
-                    // elseif after else is illegal; stop so we can recover `end`
-                    // / leave the unexpected token for the outer block.
+                    // elseif after else is illegal. Under recovery, absorb residual
+                    // elseif/else so chunk-scope residual terminators do not hard-fail
+                    // as out-of-scope (TASK-640 duplicate-else). Strict mode breaks and
+                    // lets the outer construct reject the unexpected token.
                     if (sawElse) {
-                        break
+                        if (!errorRecovery) {
+                            break
+                        }
+                        absorbDuplicateIfClause(result)
+                        result.bad = true
+                        continue
                     }
                     result.causes.add(finishNode(parseElseIfCause(result)))
                 }
 
                 LuaTokenTypes.ELSE -> {
                     if (sawElse) {
-                        break
+                        if (!errorRecovery) {
+                            break
+                        }
+                        absorbDuplicateIfClause(result)
+                        result.bad = true
+                        continue
                     }
                     result.causes.add(finishNode(parseElseClause(result)))
                     sawElse = true
@@ -1179,6 +1191,26 @@ class LuaParser(
         }
 
         return result
+    }
+
+    /**
+     * Consume a residual duplicate `else` / `elseif` after the first else under recovery.
+     * Parses the residual branch body so a later `end` remains available for the owning
+     * if, and chunk-scope residual ELSE does not throw as an out-of-scope terminator.
+     */
+    private fun absorbDuplicateIfClause(parent: BaseASTNode) {
+        val token = peek()
+        warning("unexpected ${lexerText()} near '<statement>'")
+        advance()
+        if (token == LuaTokenTypes.ELSEIF) {
+            // Skip residual condition; missing then is fine — body recovery is shared.
+            if (!isBlockTerminator(peek()) && peek() != LuaTokenTypes.THEN) {
+                parseExp(parent)
+            }
+            consumeToken(LuaTokenTypes.THEN)
+        }
+        // Body stops at end/else/elseif so further duplicates or the real end stay owned here.
+        parseBlockNode(parent)
     }
 
     //       else block
@@ -2225,7 +2257,17 @@ class LuaParser(
     //  primaryexp ::= NAME | '(' expr ')' *
     private fun parsePrimaryExp(parent: BaseASTNode): ExpressionNode {
         return when (peek()) {
-            LuaTokenTypes.NAME -> parseName(parent)
+            LuaTokenTypes.NAME -> {
+                val name = parseName(parent)
+                // Lexer demotes AndroLua `lambda` to NAME under plain Lua 5.3/5.4 so
+                // `local lambda = ...` / `return lambda` stay valid identifiers. When the
+                // following tokens form an AndroLua lambdadef shape, hard-reject even under
+                // recovery — version gating is not residual drain (TASK-679).
+                if (!isAndroLua() && name.name == "lambda" && isAndroLuaLambdaShapeAhead()) {
+                    error("lambda expression is only supported in androlua 5.3")
+                }
+                name
+            }
             LuaTokenTypes.LPAREN -> {
                 advance()
                 markLocation()
@@ -2236,6 +2278,77 @@ class LuaParser(
 
             else -> error("<expression> expected near ${lexerText(true)}")
         }
+    }
+
+    /**
+     * True when tokens after a plain-Lua identifier `lambda` match AndroLua lambdadef tails:
+     * `lambda: exp`, `lambda name (:|->|=>) exp`, or `lambda (...) (->|=>) exp`.
+     *
+     * Parenthesized form only keys on `->` / `=>` so valid plain-Lua method calls such as
+     * `lambda(x):method()` remain accepted.
+     */
+    private fun isAndroLuaLambdaShapeAhead(): Boolean {
+        return when (peek()) {
+            LuaTokenTypes.COLON -> true
+            LuaTokenTypes.NAME -> {
+                val afterParam = peekN(2)
+                afterParam == LuaTokenTypes.COLON ||
+                    afterParam == LuaTokenTypes.MINUS ||
+                    afterParam == LuaTokenTypes.ASSIGN
+            }
+            LuaTokenTypes.LPAREN -> {
+                val afterParams = tokenAfterMatchingParen()
+                afterParams == LuaTokenTypes.MINUS || afterParams == LuaTokenTypes.ASSIGN
+            }
+            else -> false
+        }
+    }
+
+    /**
+     * Significant token immediately after a balanced `(...)` starting at the current peek.
+     * Returns EOF when the group is unclosed or empty look-ahead cannot complete.
+     */
+    private fun tokenAfterMatchingParen(): LuaTokenTypes {
+        if (peek() != LuaTokenTypes.LPAREN) {
+            return LuaTokenTypes.EOF
+        }
+        var depth = 0
+        var seen = 0
+        var backSize = 0
+        // Walk significant tokens via the underlying lexer, then restore.
+        while (seen <= 64) {
+            val token = lexer.advance().requireNotNull()
+            backSize++
+            if (ignoreToken(token)) {
+                continue
+            }
+            seen++
+            when (token) {
+                LuaTokenTypes.LPAREN -> depth++
+                LuaTokenTypes.RPAREN -> {
+                    depth--
+                    if (depth == 0) {
+                        // Next significant token after the matching ')'.
+                        while (true) {
+                            val next = lexer.advance().requireNotNull()
+                            backSize++
+                            if (ignoreToken(next)) {
+                                continue
+                            }
+                            lexer.back(backSize)
+                            return next
+                        }
+                    }
+                }
+                LuaTokenTypes.EOF -> {
+                    lexer.back(backSize)
+                    return LuaTokenTypes.EOF
+                }
+                else -> Unit
+            }
+        }
+        lexer.back(backSize)
+        return LuaTokenTypes.EOF
     }
 
     //  prefixExp ::= primaryexp { '.' fieldset | '[' exp ']' | ':' NAME funcargs | funcargs  }

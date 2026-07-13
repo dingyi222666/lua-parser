@@ -1777,7 +1777,9 @@ object BuiltinOverlayLoader {
                 methodTypes = linkedMapOf(
                     "exists" to anyFunction(PrimitiveType.BOOLEAN),
                     "isDirectory" to anyFunction(PrimitiveType.BOOLEAN),
-                    "isFile" to anyFunction(PrimitiveType.BOOLEAN)
+                    "isFile" to anyFunction(PrimitiveType.BOOLEAN),
+                    // TASK-680: file.loadbitmap(path) returns Bitmap-like (not bare JavaObject).
+                    "loadbitmap" to anyFunction(CustomType("Bitmap"))
                 )
             ),
             callableAndroidLuaResource("helpers/loadlayout2.lua", "loadlayout2"),

@@ -1137,8 +1137,9 @@ class JvmClassModuleProvider(
             cacheKey = workspaceFingerprintHash(source),
             moduleExportSurface = surface,
             publicFingerprint = io.github.dingyi222666.luaparser.semantic.workspace.WorkspacePublicFingerprint(
-                // Nested AndroLua aliases (View$OnClickListener / Map$Entry / View_OnClickListener)
-                // claim binary, dotted, underscore, and simple names so require()/imports resolve.
+                // Fingerprint module-name surface is the simple name only (Locale / State /
+                // Entry / String[]). Nested binary/dotted/underscore aliases resolve via
+                // Class.forName candidates and path recovery, not providedModuleNames.
                 providedModuleNames = reflectedClassProviderModuleNames(clazz),
                 value = workspaceFingerprintHash(fingerprintPayload)
             )
@@ -1146,37 +1147,24 @@ class JvmClassModuleProvider(
     }
 
     /**
-     * Module-name aliases advertised for a reflected class provider.
+     * Module names advertised on a reflected class provider public fingerprint.
      *
-     * Top-level: simple name only (String / Locale / TextView).
-     * Nested (Map$Entry / View$OnClickListener): also binary, dotted, and underscore forms so
-     * AndroLua underscore aliases and require("OnClickListener") stay resolvable when the host
-     * android.jar (or JDK) mounts the class. Never invents names outside the reflected binary.
+     * Always the reflection simple name only (String / Locale / TextView / State / Entry /
+     * String[]). Nested types such as Thread$State and Map$Entry must not expand binary,
+     * dotted, or underscore aliases into providedModuleNames — that over-broad set broke
+     * Thread.State fingerprint equality (expected {State}).
+     *
+     * Binary/dotted/underscore AndroLua aliases remain loadable via candidateClassNames and
+     * path recovery; they are not fingerprint claims. Never invents names outside reflection.
      */
     private fun reflectedClassProviderModuleNames(clazz: Class<*>): Set<String> {
         val simple = clazz.simpleName.takeIf(String::isNotBlank)
-        val binary = clazz.name
-        val names = linkedSetOf<String>()
-        // Always claim the reflection simple name (String / Locale / OnClickListener / Entry).
-        simple?.let(names::add)
-        // Nested types also advertise binary / dotted / underscore AndroLua aliases so
-        // require("OnClickListener") and Map_Entry-style names stay resolvable.
-        if ('$' in binary) {
-            names += binary
-            names += binary.replace('$', '.')
-            names += binary.replace('$', '_')
-            val nestedSimple = binary.substringAfterLast('$')
-            if (nestedSimple.isNotBlank()) {
-                names += nestedSimple
-            }
-            val afterPackage = binary.substringAfterLast('.')
-            if (afterPackage.isNotBlank()) {
-                names += afterPackage
-                names += afterPackage.replace('$', '_')
-                names += afterPackage.replace('$', '.')
-            }
+            ?: clazz.name.substringAfterLast('$').substringAfterLast('.').takeIf(String::isNotBlank)
+        return if (simple.isNullOrBlank()) {
+            emptySet()
+        } else {
+            linkedSetOf(simple)
         }
-        return names.filterTo(linkedSetOf()) { it.isNotBlank() }
     }
 
     private fun providerForPackage(

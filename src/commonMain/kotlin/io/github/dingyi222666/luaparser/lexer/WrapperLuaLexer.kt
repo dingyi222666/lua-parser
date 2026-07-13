@@ -58,6 +58,10 @@ class WrapperLuaLexer(
     }
 
     fun pushback(size: Int) {
+        // advance() always records currentState into lastStates. When we re-queue that
+        // token for re-play, drop the matching history head so back() does not see a
+        // ghost duplicate (TASK-612 recovery underflow / history starvation).
+        dropHistoryHeadMatchingCurrent()
         if (currentStates.isNotEmpty()) {
             currentStates.addFirst(currentState)
             return
@@ -70,11 +74,37 @@ class WrapperLuaLexer(
         }
     }
 
+    private fun dropHistoryHeadMatchingCurrent() {
+        if (lastStates.isEmpty()) {
+            return
+        }
+        val head = lastStates.first()
+        if (head.index == currentState.index &&
+            head.length == currentState.length &&
+            head.type == currentState.type
+        ) {
+            lastStates.removeFirst()
+        }
+    }
 
+
+    /**
+     * Rewind the last [tokenSize] advanced tokens into [currentStates] for re-play.
+     *
+     * Recovery look-ahead (call-shaped NAME chains, bare-NAME call-arg sibling checks,
+     * peekN) advances whitespace + significant tokens then restores with back(). History
+     * is bounded, so never throw on underflow: restore what is available and stop
+     * (TASK-612 ArrayDeque empty during Android-Lua workspace parse).
+     */
     fun back(tokenSize: Int) {
-        for (i in 0..<tokenSize) {
+        if (tokenSize <= 0) {
+            return
+        }
+        var remaining = tokenSize
+        while (remaining > 0 && lastStates.isNotEmpty()) {
             val state = lastStates.removeFirst()
             currentStates.addFirst(state)
+            remaining--
         }
     }
 
@@ -101,13 +131,24 @@ class WrapperLuaLexer(
     }
 
     private fun clearStates() {
-        if (lastStates.size >= 6) {
+        // Keep enough history for recovery look-ahead (member chains + whitespace).
+        // The previous cap of 5 overflowed on peekN / isCallShapedNameStatementStart
+        // and threw NoSuchElementException from back() (TASK-612 full jvmTest).
+        while (lastStates.size > MAX_LAST_STATES) {
             lastStates.removeLast()
         }
     }
 
     private fun versionAwareTokenType(type: LuaTokenTypes): LuaTokenTypes {
         return if (supportAndroLuaKeywords || !LuaLexer.isAndroLuaKeyword(type)) type else LuaTokenTypes.NAME
+    }
+
+    companion object {
+        /**
+         * Max tokens retained for [back]. Must cover recovery look-aheads that walk
+         * whitespace and member chains (e.g. activity.setContentView forms).
+         */
+        private const val MAX_LAST_STATES = 64
     }
 }
 

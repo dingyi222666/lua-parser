@@ -34,7 +34,7 @@ function file.deleteFile(path) end
 function file.getFileList(path) end
 
 ---@param path string
----@return JavaObject
+---@return Bitmap
 function file.loadbitmap(path) end
 
 ---@param path string

@@ -752,10 +752,12 @@ class ExpressionTypeEvaluator internal constructor(
     }
 
     private fun resolveNewInstanceCall(node: CallExpression, context: Context): Type? {
-        val target = stringCallTarget(node) ?: return null
         if (!isNewInstanceCallBase(effectiveCallBase(node), context)) {
             return null
         }
+        // Dynamic / non-literal class names must not inherit the JavaObject stub return from
+        // luajava.newInstance overlays (TASK-682). Keep unknown without inventing providers.
+        val target = stringCallTarget(node) ?: return UnknownType
         val moduleType = resolveLuaJavaImportTarget(target)?.moduleType ?: return UnknownType
         val instanceType = moduleType.javaInstanceSurface()
             ?.hydrateLuaJavaProviderType()
@@ -1291,8 +1293,9 @@ class ExpressionTypeEvaluator internal constructor(
     }
 
     private fun resolveLoadlayoutFamilyCall(node: CallExpression, context: Context): Type? {
-        val base = effectiveCallBase(node) as? Identifier ?: return null
-        val helperName = base.name
+        // TASK-680: also accept member call form `file.loadbitmap(...)` (helpers/file.lua)
+        // so the return surface is Bitmap-like, not bare JavaObject from the helper stub.
+        val helperName = loadFamilyHelperName(node) ?: return null
         if (helperName !in setOf("loadlayout", "loadlayout2", "loadlayout3", "loadbitmap", "loadmenu")) {
             return null
         }
@@ -1303,6 +1306,18 @@ class ExpressionTypeEvaluator internal constructor(
             "loadbitmap" -> androidLuaHydratedSurface("Bitmap")
             "loadmenu" -> androidLuaHydratedSurface("AndroidMenu")
             else -> androidLuaHydratedSurface("AndroidView")
+        }
+    }
+
+    /**
+     * Resolve bare `loadbitmap(...)` and member `file.loadbitmap(...)` helper names.
+     * Member form is AndroLua helpers/file.lua; bare form is import/_G globals.
+     */
+    private fun loadFamilyHelperName(node: CallExpression): String? {
+        return when (val base = effectiveCallBase(node)) {
+            is Identifier -> base.name
+            is MemberExpression -> base.identifier.name
+            else -> null
         }
     }
 
@@ -2428,7 +2443,19 @@ class ExpressionTypeEvaluator internal constructor(
         }
         val initializer = localDeclarationInitializer(declaration) as? CallExpression ?: return null
         val initializerContext = localInitializerContext(declaration, initializer, context)
-        val target = stringCallTarget(initializer) ?: return null
+        val target = stringCallTarget(initializer)
+        if (target == null) {
+            // Dynamic class-name newInstance/bindClass/loadLib must stay unknown rather than
+            // falling through to the JavaObject stub declaredType (TASK-682).
+            val base = effectiveCallBase(initializer)
+            if (isNewInstanceCallBase(base, initializerContext) ||
+                isBindClassCallBase(base, initializerContext) ||
+                isLoadLibCallBase(base, initializerContext)
+            ) {
+                return UnknownType
+            }
+            return null
+        }
         return luaJavaHelperCallType(initializer, target, initializerContext)
             ?: luaJavaHelperCallTypeFromDeclarationChain(initializer, target, declaration)
     }

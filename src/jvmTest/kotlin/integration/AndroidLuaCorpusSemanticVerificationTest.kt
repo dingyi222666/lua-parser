@@ -232,7 +232,8 @@ class AndroidLuaCorpusSemanticVerificationTest {
     @Test
     fun semantic_workspace_analyzes_representative_external_sources_with_android_java_metadata() {
         val root = assertExternalSourceRoot()
-        val jarPresent = androidJar.isFile && androidJar.length() > 0
+        // Dual-path: DEFAULT candidate OR discoverReflectiveAndroidJarPath (never sole AppData hard-fail).
+        val jarPresent = isHostAndroidJarPresent()
         val rowsById = loadManifestRows().associateBy { it.id }
         val workspaceFiles = semanticWorkspaceRows(rowsById, root)
         val harness = WorkspaceSemanticHarness.build(
@@ -324,7 +325,8 @@ class AndroidLuaCorpusSemanticVerificationTest {
     @Test
     fun semantic_workspace_full_tree_external_paths_resolve_require_import_and_helpers() {
         val root = assertExternalSourceRoot()
-        val jarPresent = androidJar.isFile && androidJar.length() > 0
+        // Dual-path: DEFAULT candidate OR discoverReflectiveAndroidJarPath (never sole AppData hard-fail).
+        val jarPresent = isHostAndroidJarPresent()
         val rowsById = loadManifestRows().associateBy { it.id }
 
         // Full-tree mode: keep real relative paths under app/src/main (no synthetic remaps).
@@ -413,19 +415,23 @@ class AndroidLuaCorpusSemanticVerificationTest {
         val root = assertExternalSourceRoot()
         // Dual-path discovery (ANDROID_HOME/SDK_ROOT + well-known SDK roots). Never hard-fail solely
         // because a preferred candidate such as %LOCALAPPDATA%/Android/Sdk/platforms/android-35/android.jar
-        // is absent when no present host jar was discovered — soft-skip with an explicit reason instead.
-        val jarPresent = androidJar.isFile && androidJar.length() > 0
-        if (!jarPresent) {
+        // is absent when another present host jar can be discovered — soft-skip only when truly absent.
+        val effectiveJar = resolvePresentHostAndroidJar()
+        if (effectiveJar == null) {
             val reason = JvmWorkspaceConfiguration.missingAndroidJarSoftSkipReason()
             val message =
                 "Soft-skip LSP android metadata gate: host android.jar missing or empty at " +
                     "${androidJar.path} (JvmWorkspaceConfiguration.DEFAULT_ANDROID_JAR_PATH dual-path). " +
                     "Discovery reason: $reason"
             assertTrue(reason.isNotBlank(), message)
+            assertTrue(
+                !reason.contains("android.jar is present", ignoreCase = true),
+                "When jar is absent, soft-skip reason must not claim presence; got: $reason"
+            )
             println(message)
             return
         }
-        assertAndroidJarExists()
+        assertAndroidJarExists(effectiveJar)
         val rows = loadManifestRows().associateBy { it.id }
         // Query surface still uses real external asset-main source text (no inlined constants).
         // Workspace folder stays synthetic so LSP does not walk the entire Android-Lua tree;
@@ -622,16 +628,22 @@ class AndroidLuaCorpusSemanticVerificationTest {
     }
 
     private fun androidSettings(): Map<String, Any> {
+        val jarPath = resolvePresentHostAndroidJar()?.path ?: androidJar.path
         return mapOf(
-            "jvm.androidJar" to androidJar.path,
+            "jvm.androidJar" to jarPath,
             "jvm.importPrefixes" to androidImportPrefixes,
             "androlua.imports" to androidLuaImports
         )
     }
 
     private fun androidMetadata(includeAndroidJar: Boolean = true): Map<String, String> {
+        val jarPath = if (includeAndroidJar) {
+            resolvePresentHostAndroidJar()?.path ?: androidJar.path
+        } else {
+            null
+        }
         return JvmWorkspaceConfiguration(
-            androidJar = if (includeAndroidJar) androidJar.path else null,
+            androidJar = jarPath,
             classes = setOf("java.io.File", "java.util.ArrayList", "android.widget.TextView", "android.view.View\$OnClickListener"),
             androluaImports = androidLuaImports,
             importPrefixes = androidImportPrefixes
@@ -801,6 +813,26 @@ class AndroidLuaCorpusSemanticVerificationTest {
         val winDoc = File(WINDOWS_DOCUMENTED_ANDROID_LUA_MAIN)
         val homeClone = File(hostUserHomeAndroidLuaMain())
         return winDoc.isDirectory || homeClone.isDirectory || !File(HOST_MACOS_ANDROID_LUA_MAIN).isDirectory
+    }
+
+    /**
+     * True when dual-path discovery finds a real non-empty android.jar (DEFAULT path
+     * or [JvmWorkspaceConfiguration.discoverReflectiveAndroidJarPath]). Soft-skip gates
+     * must use this instead of hard-requiring a single AppData android-35 candidate.
+     */
+    private fun isHostAndroidJarPresent(): Boolean = resolvePresentHostAndroidJar() != null
+
+    /**
+     * Prefer DEFAULT_ANDROID_JAR_PATH when present; otherwise the discovered reflective jar.
+     * Returns null only when dual-path honestly finds no present host jar.
+     */
+    private fun resolvePresentHostAndroidJar(): File? {
+        if (androidJar.isFile && androidJar.length() > 0) {
+            return androidJar
+        }
+        return JvmWorkspaceConfiguration.discoverReflectiveAndroidJarPath()
+            ?.let { File(it) }
+            ?.takeIf { it.isFile && it.length() > 0 }
     }
 
     /**
