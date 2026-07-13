@@ -79,9 +79,9 @@ class NewTestInventoryTddTest {
         val strategy = strategyPath.readText()
 
         assertTrue(strategyPath.exists())
-        assertTrue(strategy.contains("| **Total current inventory** | Common + JVM | **223** | **1697** |"))
-        assertTrue(strategy.contains("current_campaign_files = 167"))
-        assertTrue(strategy.contains("current_campaign_total = 1259"))
+        assertTrue(strategy.contains("| **Total current inventory** | Common + JVM | **227** | **1708** |"))
+        assertTrue(strategy.contains("current_campaign_files = 171"))
+        assertTrue(strategy.contains("current_campaign_total = 1270"))
         assertTrue(strategy.contains("remaining_to_500 = 0"))
 
         assertTrue(strategy.contains("`src/commonTest/kotlin` is included"))
@@ -192,12 +192,12 @@ class NewTestInventoryTddTest {
     private companion object {
         val repoRoot: Path = Path.of("").toAbsolutePath().normalize()
         val testAnnotationRegex = Regex("""(?m)^\s*@Test\b""")
-        // Synced to live inventory + docs/test-strategy.md (TASK-677 WINFULL-29265516413 post-cull; baseline 223/1697, campaign 167/1259).
-        // Post-cull lower totals are intentional inventory lockstep (not silent product bar-drop).
-        const val expectedBaselineFiles = 223
-        const val expectedBaselineTestMethods = 1697
-        const val expectedCampaignFiles = 167
-        const val expectedCampaignTestMethods = 1259
+        // Synced to live inventory + docs/test-strategy.md (Monaco Button/utils TDD + prior cull lockstep).
+        // Baseline excludes the inventory fixture; campaign is *TddTest.kt only.
+        const val expectedBaselineFiles = 227
+        const val expectedBaselineTestMethods = 1708
+        const val expectedCampaignFiles = 171
+        const val expectedCampaignTestMethods = 1270
 
         val expectedExcludedAnnotatedKotlinFiles = mapOf(
             "src/commonTest/kotlin/parser.common.kt" to 2,
