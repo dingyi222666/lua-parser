@@ -190,6 +190,7 @@ open class LuaWorkspaceEngine(
             }
             val chunk = sources[path]?.let(::parseWorkspaceSource)
                 ?: previous?.files?.get(path)?.semanticFile?.chunk
+                ?: fileSnapshot.semanticFile?.chunk
                 ?: parseWorkspaceSource("")
             val semanticSnapshot = semanticPipeline.analyzeSnapshot(
                 chunk,
@@ -207,12 +208,15 @@ open class LuaWorkspaceEngine(
                 path = path,
                 source = sources[path]
                     ?: previous?.files?.get(path)?.semanticFile?.source
+                    ?: fileSnapshot.semanticFile?.source
                     ?: "",
                 chunk = chunk,
                 model = semanticSnapshot.model,
                 snapshot = semanticSnapshot
             )
-            // Keep moduleExportSurface from analyzeFile/ModuleExportCollector (no post-bind rewrite).
+            // moduleExportSurface stays from analyzeFile/ModuleExportCollector (pre-pipeline facts).
+            // CommentAttachPass runs only inside SemanticPipeline.analyzeSnapshot — do not re-attach
+            // or post-bind rewrite export FunctionTypes here.
             fileSnapshot.copy(semanticFile = semanticFile)
         }
         return baseSnapshot.copy(files = files)

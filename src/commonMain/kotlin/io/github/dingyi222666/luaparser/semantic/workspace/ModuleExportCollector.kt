@@ -27,23 +27,15 @@ import io.github.dingyi222666.luaparser.parser.ast.node.UnaryExpression
 import io.github.dingyi222666.luaparser.parser.ast.node.WhenStatement
 import io.github.dingyi222666.luaparser.parser.ast.node.WhileStatement
 import io.github.dingyi222666.luaparser.semantic.api.SymbolKind
-import io.github.dingyi222666.luaparser.semantic.comments.CommentAttachPass
-import io.github.dingyi222666.luaparser.semantic.comments.CommentAttachmentIndex
-import io.github.dingyi222666.luaparser.semantic.comments.ParamTagSyntax
-import io.github.dingyi222666.luaparser.semantic.comments.ReturnTagSyntax
 import io.github.dingyi222666.luaparser.semantic.types.model.CustomType
 import io.github.dingyi222666.luaparser.semantic.types.model.FunctionParameter
 import io.github.dingyi222666.luaparser.semantic.types.model.FunctionType
 import io.github.dingyi222666.luaparser.semantic.types.model.LiteralType
 import io.github.dingyi222666.luaparser.semantic.types.model.ModuleType
-import io.github.dingyi222666.luaparser.semantic.types.model.MultiReturnType
 import io.github.dingyi222666.luaparser.semantic.types.model.PrimitiveType
 import io.github.dingyi222666.luaparser.semantic.types.model.TableType
 import io.github.dingyi222666.luaparser.semantic.types.model.Type
 import io.github.dingyi222666.luaparser.semantic.types.model.UnknownType
-import io.github.dingyi222666.luaparser.semantic.types.syntax.NamedTypeSyntax
-import io.github.dingyi222666.luaparser.semantic.types.syntax.TypeSyntax
-import io.github.dingyi222666.luaparser.semantic.types.syntax.TypeSyntaxParser
 
 object ModuleExportCollector {
     private val reservedLegacyNames = setOf("_M", "_NAME", "_PACKAGE", "...")
@@ -56,10 +48,12 @@ object ModuleExportCollector {
         facts: DocumentFacts,
         legacyEnvironment: LegacyModuleEnvironment
     ): ModuleExportSurface? {
-        // One-pass Emmy attach for this chunk so export FunctionTypes carry ---@param/---@return
-        // into ModuleType fields consumers resolve (require-backed greeter.hello → string).
-        val commentIndex = CommentAttachPass().attach(chunk)
-        val analyzer = Analyzer(facts, legacyEnvironment, commentIndex)
+        // Pre-pipeline export facts only: no CommentAttachPass here.
+        // Emmy ---@param/---@return are applied once in SemanticPipeline.analyzeSnapshot
+        // (CommentAttach → bind → TypeResolver). Export FunctionTypes use parameter names plus
+        // honest structural body returns (concat/literals/tables) so require ModuleType fields
+        // stay useful without a second Emmy mini-resolver.
+        val analyzer = Analyzer(facts, legacyEnvironment)
         analyzer.visitBlock(chunk.body)
 
         val exportRoot = facts.returnHint.identifierName?.let(analyzer::resolveAlias)
@@ -248,8 +242,7 @@ object ModuleExportCollector {
 
     private class Analyzer(
         private val facts: DocumentFacts,
-        private val legacyEnvironment: LegacyModuleEnvironment,
-        private val commentIndex: CommentAttachmentIndex
+        private val legacyEnvironment: LegacyModuleEnvironment
     ) {
         val writes = mutableListOf<CollectedWrite>()
         private val locals = linkedMapOf<String, AliasBinding>()
@@ -535,56 +528,21 @@ object ModuleExportCollector {
         /**
          * Build a [FunctionType] for the export surface.
          *
-         * Emmy `---@param` / `---@return` attached to this declaration participate here (same
-         * comment index TypeResolver uses later). When docs omit a return, honest structural body
-         * returns (string concat, literals, tables) may fill it — never invent opaque types.
+         * Parameter names are preserved for hover/completion. Return types come only from
+         * honest structural body inference (concat/literals/tables/ops) — not a second Emmy
+         * attach/resolve. Pipeline TypeResolver remains the sole Emmy path for declarations.
          */
         private fun functionTypeFromDeclaration(function: FunctionDeclaration): FunctionType {
-            val tags = commentIndex.getAttachment(function)?.docComment?.tags.orEmpty()
-            val paramTags = tags.filterIsInstance<ParamTagSyntax>()
             val parameters = function.params.map { parameter ->
-                val tag = paramTags.lastOrNull { it.name == parameter.name }
                 FunctionParameter(
                     name = parameter.name,
-                    type = tag?.typeText?.let(::emmyTypeText) ?: UnknownType,
-                    optional = tag?.optional == true,
-                    vararg = tag?.vararg == true || parameter.name == "..."
+                    type = UnknownType,
+                    optional = false,
+                    vararg = parameter.name == "..."
                 )
             }
-            val documentedReturn = tags
-                .filterIsInstance<ReturnTagSyntax>()
-                .lastOrNull()
-                ?.typeTexts
-                ?.mapNotNull { text -> emmyTypeText(text).takeUnless { it == UnknownType } }
-                .orEmpty()
-            val returnType = when {
-                documentedReturn.size == 1 -> documentedReturn.single()
-                documentedReturn.size > 1 -> MultiReturnType(documentedReturn)
-                else -> inferFunctionBodyReturnType(function.body) ?: UnknownType
-            }
+            val returnType = inferFunctionBodyReturnType(function.body) ?: UnknownType
             return FunctionType(parameters = parameters, returnType = returnType)
-        }
-
-        private fun emmyTypeText(text: String?): Type {
-            if (text.isNullOrBlank()) {
-                return UnknownType
-            }
-            val syntax = TypeSyntaxParser.parseOrNull(text.trim()) ?: NamedTypeSyntax(text.trim())
-            return primitiveOrUnknown(syntax)
-        }
-
-        private fun primitiveOrUnknown(syntax: TypeSyntax): Type {
-            val name = (syntax as? NamedTypeSyntax)?.name?.lowercase() ?: return UnknownType
-            return when (name) {
-                "string" -> PrimitiveType.STRING
-                "number", "integer", "int", "float" -> PrimitiveType.NUMBER
-                "boolean", "bool" -> PrimitiveType.BOOLEAN
-                "nil", "void" -> PrimitiveType.NIL
-                "any" -> PrimitiveType.ANY
-                "table" -> TableType()
-                "function" -> FunctionType()
-                else -> UnknownType
-            }
         }
 
         /**
