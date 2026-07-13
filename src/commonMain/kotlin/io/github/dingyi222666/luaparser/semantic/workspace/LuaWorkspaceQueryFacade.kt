@@ -2220,13 +2220,18 @@ class LuaWorkspaceQueryFacade(
         position: Position
     ): MemberExpression? {
         val node = semanticFile.nodeAt(position)
+        // Only treat completed member names (and incomplete blank members) as member sites.
+        // Caret still on the receiver of `messageText:setText` must stay free-id / lexical so
+        // layout-id locals (`messageText`, `submitButton`) surface alongside imports (TASK-683).
         memberAccessAt(node, position)?.let { return it }
         if (node is Identifier) {
             val parent = runCatching { node.parent }.getOrNull() as? MemberExpression
+            // Incomplete `base.|` / `base:` where caret is on the base and the member name is blank.
             if (
-                parent?.base === node &&
-                comparePositions(node.range.end, position) <= 0 &&
-                memberCompletionRangeContains(parent.range, position)
+                parent != null &&
+                parent.base === node &&
+                parent.identifier.name.isBlank() &&
+                isMemberCompletionSite(parent, position)
             ) {
                 return parent
             }
@@ -2235,7 +2240,7 @@ class LuaWorkspaceQueryFacade(
                 parent != null &&
                 parent.identifier === node &&
                 parent.identifier.name.isBlank() &&
-                memberCompletionRangeContains(parent.range, position)
+                isMemberCompletionSite(parent, position)
             ) {
                 return parent
             }
@@ -2244,9 +2249,13 @@ class LuaWorkspaceQueryFacade(
         // Prefer the most specific (longest) member expression covering the caret, and
         // when tied prefer incomplete trailing-dot forms (`cfg.ui.|`) over completed
         // intermediate segments (`cfg.ui`) so nested export completions use the full prefix.
+        // Skip receivers of completed accesses so free-id completions keep layout-id locals.
         val candidates = semanticFile.memberExpressions.filter {
-            memberCompletionRangeContains(it.range, position) ||
-                rangeContains(it.identifier.range, position)
+            isMemberCompletionSite(it, position) &&
+                (
+                    memberCompletionRangeContains(it.range, position) ||
+                        rangeContains(it.identifier.range, position)
+                    )
         }
         if (candidates.isEmpty()) {
             return null
@@ -2279,17 +2288,48 @@ class LuaWorkspaceQueryFacade(
         return position.column == range.end.column || position.column == range.end.column + 1
     }
 
+    /**
+     * Member completions apply when the caret is on the member name / after the indexer
+     * (`base.|`, `base:set|`), not when the caret is still on the receiver identifier of a
+     * completed access (`mess|ageText:setText` must stay lexical for layout-id locals).
+     */
+    private fun isMemberCompletionSite(expression: MemberExpression, position: Position): Boolean {
+        val baseEnd = expression.base.range.end
+        val afterBase =
+            position.line > baseEnd.line ||
+                (position.line == baseEnd.line && position.column > baseEnd.column)
+        if (expression.identifier.name.isBlank()) {
+            // Incomplete `base.` / `base:` — member surface once past the base, or on the blank
+            // member identifier itself (trailing-dot caret often sits at range end).
+            if (afterBase || position.line == baseEnd.line && position.column == baseEnd.column) {
+                return memberCompletionRangeContains(expression.range, position) ||
+                    rangeContains(expression.identifier.range, position)
+            }
+            return false
+        }
+        if (!afterBase) {
+            return false
+        }
+        return memberCompletionRangeContains(expression.range, position) ||
+            rangeContains(expression.identifier.range, position)
+    }
+
     private fun memberAccessAt(node: BaseASTNode?, position: Position): MemberExpression? {
         val memberExpression = when (node) {
             is MemberExpression -> node
             is Identifier -> runCatching { node.parent }.getOrNull() as? MemberExpression
             else -> null
         } ?: return null
-        return when {
-            node is MemberExpression && rangeContains(memberExpression.identifier.range, position) -> memberExpression
-            node is Identifier && memberExpression.identifier === node -> memberExpression
-            else -> null
+        // Completed member-name carets only. Receiver identifiers must not enter member mode.
+        val onMemberName = when {
+            node is MemberExpression && rangeContains(memberExpression.identifier.range, position) -> true
+            node is Identifier && memberExpression.identifier === node -> true
+            else -> false
         }
+        if (!onMemberName) {
+            return null
+        }
+        return memberExpression.takeIf { isMemberCompletionSite(it, position) }
     }
 
     private fun SymbolKind.toCompletionItemKind(): CompletionItemKind {
