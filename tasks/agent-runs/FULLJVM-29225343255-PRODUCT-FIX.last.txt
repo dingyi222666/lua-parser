@@ -1,9 +1,13 @@
 wave: FULLJVM-29225343255
 role: commit-evidence+product-fix
-utc: 2026-07-13T05:33:41Z
+utc: 2026-07-13T05:40:31Z
 priorRunId: 29225343255
 priorStatus: failure
 priorFailures: 9
+commit: 06d0806f782922e351d61159b03d7d0d244d77a6
+pushed: true
+branch: windows-verify
+newRunId: 29226890952
 localRecheck: BUILD SUCCESSFUL for all 9 prior failed methods (Corretto 17)
 suiteStatus: red_pending_windows_full_rerun
 productFiles:
@@ -16,4 +20,4 @@ productFiles:
   - src/commonMain/resources/.../helpers/file.lua
   - src/jvmMain/kotlin/.../interop/jvm/JvmClassModuleProvider.kt
   - src/jvmTest/kotlin/integration/AndroidLuaCorpusSemanticVerificationTest.kt
-notes: TASK-043 remains in_progress until Windows full suite green. Will re-trigger windows-full-jvmtest.yml after push.
+notes: TASK-043 remains in_progress until Windows full suite green. Re-triggered windows-full-jvmtest.yml run 29226890952 after push of 06d0806.
