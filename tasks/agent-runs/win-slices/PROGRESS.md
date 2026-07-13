@@ -3,9 +3,9 @@
 
 - strategy: must-green-to-advance
 - chunkSize: 45 files/run (~3x prior 15)
-- summary: success=17 failure=1 pending=0 total=18 filesDone=345/367
+- summary: success=18 failure=0 pending=0 total=18 filesDone=367/367
 - active: s018
-- updatedAt: 2026-07-13T02:58:39Z
+- updatedAt: 2026-07-13T03:08:32Z
 
 [x] s001 success files=15 — integration..interop.jvm
 [x] s002 success files=15 — interop.jvm..lsp
@@ -24,5 +24,4 @@
 [x] s015 success files=45 — semantic.checker..semantic.interop
 [x] s016 success files=45 — semantic.interop..semantic.types.resolve
 [x] s017 success files=45 — semantic.types.resolve..semantic.workspace
-[F] s018 failure files=22 — semantic.workspace..testinventory
-
+[x] s018 success files=22 — semantic.workspace..testinventory

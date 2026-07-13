@@ -2,15 +2,15 @@
   "version": 2,
   "strategy": "must-green-to-advance",
   "activeSlice": "s018",
-  "updatedAt": "2026-07-13T02:58:39Z",
+  "updatedAt": "2026-07-13T03:08:32Z",
   "summary": {
     "total": 18,
     "totalFiles": 367,
     "pending": 0,
-    "success": 17,
-    "failure": 1,
+    "success": 18,
+    "failure": 0,
     "running": 0,
-    "filesDone": 345
+    "filesDone": 367
   },
   "slices": {
     "s001": {
@@ -258,35 +258,21 @@
       "note": "green on run 29220402657; 574 tests 0 failures"
     },
     "s018": {
-      "status": "failure",
+      "status": "success",
       "label": "semantic.workspace..testinventory",
       "fileCount": 22,
-      "lastRunId": "29220594557",
-      "lastSha": "5075298ec846b34a8a438c35f956d614e22f7fde",
-      "updatedAt": "2026-07-13T02:58:39Z",
+      "lastRunId": "29220930531",
+      "lastSha": "65a4c89e0c7fc534541d7131c827070a97924295",
+      "updatedAt": "2026-07-13T03:08:32Z",
       "tests": 240,
-      "failures": 3,
+      "failures": 0,
       "errors": 0,
-      "failedTests": [
-        "source.AST2LuaIfElseifRoundTripTddTest#nestedIfWithOuterSiblingRequiresDoTerminatorForShapeStableReparse[jvm]",
-        "testinventory.NewTestInventoryTddTest#documentsHowNewTddSuitesCountTowardFiveHundredTestGoal[jvm]",
-        "testinventory.NewTestInventoryTddTest#reportsCurrentCommonAndJvmTestInventory[jvm]"
-      ],
+      "failedTests": [],
       "durationSec": 20,
-      "artifact": "results/s018-29220594557.json"
+      "artifact": "results/s018-29220930531.json"
     }
   },
   "history": [
-    {
-      "sliceId": "s001",
-      "runId": "29174854977",
-      "status": "failure",
-      "tests": 0,
-      "failures": 0,
-      "durationSec": null,
-      "at": "2026-07-12T01:20:00Z",
-      "note": "compileTestKotlinJvm syntax errors; no junit xml"
-    },
     {
       "sliceId": "s001",
       "runId": "29175268346",
@@ -731,6 +717,15 @@
       "failures": 3,
       "durationSec": 20,
       "at": "2026-07-13T02:58:39Z"
+    },
+    {
+      "sliceId": "s018",
+      "runId": "29220930531",
+      "status": "success",
+      "tests": 240,
+      "failures": 0,
+      "durationSec": 20,
+      "at": "2026-07-13T03:08:32Z"
     }
   ]
 }
