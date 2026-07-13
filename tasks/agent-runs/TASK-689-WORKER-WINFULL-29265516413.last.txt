@@ -1,0 +1,10 @@
+task: TASK-689
+wave: WINFULL-29265516413
+owner: worker-WINFULL-29265516413-TASK-689
+finalStatus: review
+utc: 2026-07-13T16:25:03Z
+summary: Fixed RealProject missingAndroidJarSkipReason self-failing G:/ ban phrase. Helper now documents multi-OS ANDROID_HOME/SDK_ROOT/LOCALAPPDATA/macOS Library/Linux Android Sdk soft-skip policy with "never invent Windows drive-letter defaults; never hard-require G drive roots alone" — no literal G:/ or G:\ substring. Product JvmWorkspaceConfiguration.missingAndroidJarSoftSkipReason runtime strings already clean; FORBIDDEN auto-root constants retained for discovery filter only (not embedded in skip reason). LuaLanguageService left untouched (locked by other task; not required for this AC).
+filesChanged:
+- src/jvmTest/kotlin/lsp/LspRealProjectJavaAndroidInteropTddTest.kt
+- tasks/TASK-689.md
+blockedReason: null

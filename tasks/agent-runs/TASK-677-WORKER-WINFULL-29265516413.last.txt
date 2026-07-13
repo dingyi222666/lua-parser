@@ -1,0 +1,20 @@
+TASK-677 worker-WINFULL-29265516413
+status=review
+owner=unassigned
+finalStatus=review
+
+Live recount (same rules as NewTestInventoryTddTest):
+- baseline files=223 methods=1697 (was 366/5378; post-cull intentional)
+- campaign files=167 methods=1259 (was 307/4857)
+- remaining_to_500=0
+- excluded non-*Test.kt map unchanged (parser.common.kt=2, parser.jvm.kt=2)
+- other-area suites=0
+
+filesChanged:
+- src/jvmTest/kotlin/testinventory/NewTestInventoryTddTest.kt
+- docs/test-strategy.md
+- tasks/TASK-677.md
+
+notes:
+- Inventory-only constants + docs area table lockstep; no product source edits.
+- Verification deferred to TASK-043 / full jvmTest (workers no Gradle).

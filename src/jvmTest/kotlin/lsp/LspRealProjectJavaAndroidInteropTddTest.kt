@@ -1064,10 +1064,14 @@ class LspRealProjectJavaAndroidInteropTddTest {
         }.getOrElse {
             "android.jar soft-skip: reflective Android provider surfaces unavailable without a host platform jar."
         }
+        // Policy ban must stay explicit without embedding the forbidden drive-letter substring
+        // itself (Windows host may already have a real local SDK jar; reason text must not
+        // self-fail the hard ban while describing multi-OS discovery).
         return "TASK-REAL-ANDROID soft-skip: android.jar not found at ${missing.path}. $productReason " +
             "Install Android SDK Platform 35 under ANDROID_HOME / ANDROID_SDK_ROOT / " +
             "%LOCALAPPDATA%/Android/Sdk (Windows) or ~/Library/Android/sdk (macOS) / ~/Android/Sdk " +
-            "(Linux), or set jvm.androidJar. Never invent presence; never hard-require G:/Android/Sdk alone."
+            "(Linux), or set jvm.androidJar. Never invent presence; never invent Windows drive-letter " +
+            "defaults; never hard-require G drive roots alone."
     }
 
     private fun softHoverMentions(hover: org.eclipse.lsp4j.Hover?, vararg needles: String) {

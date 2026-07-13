@@ -79,9 +79,9 @@ class NewTestInventoryTddTest {
         val strategy = strategyPath.readText()
 
         assertTrue(strategyPath.exists())
-        assertTrue(strategy.contains("| **Total current inventory** | Common + JVM | **366** | **5378** |"))
-        assertTrue(strategy.contains("current_campaign_files = 307"))
-        assertTrue(strategy.contains("current_campaign_total = 4857"))
+        assertTrue(strategy.contains("| **Total current inventory** | Common + JVM | **223** | **1697** |"))
+        assertTrue(strategy.contains("current_campaign_files = 167"))
+        assertTrue(strategy.contains("current_campaign_total = 1259"))
         assertTrue(strategy.contains("remaining_to_500 = 0"))
 
         assertTrue(strategy.contains("`src/commonTest/kotlin` is included"))
@@ -192,12 +192,12 @@ class NewTestInventoryTddTest {
     private companion object {
         val repoRoot: Path = Path.of("").toAbsolutePath().normalize()
         val testAnnotationRegex = Regex("""(?m)^\s*@Test\b""")
-        // Synced to live inventory + docs/test-strategy.md (TASK-677 WINSLICE-29220594557 s018; baseline 366/5378, campaign 307/4857).
-        // Do not lower these bars; live-tree drift above these values needs a docs refresh first.
-        const val expectedBaselineFiles = 366
-        const val expectedBaselineTestMethods = 5378
-        const val expectedCampaignFiles = 307
-        const val expectedCampaignTestMethods = 4857
+        // Synced to live inventory + docs/test-strategy.md (TASK-677 WINFULL-29265516413 post-cull; baseline 223/1697, campaign 167/1259).
+        // Post-cull lower totals are intentional inventory lockstep (not silent product bar-drop).
+        const val expectedBaselineFiles = 223
+        const val expectedBaselineTestMethods = 1697
+        const val expectedCampaignFiles = 167
+        const val expectedCampaignTestMethods = 1259
 
         val expectedExcludedAnnotatedKotlinFiles = mapOf(
             "src/commonTest/kotlin/parser.common.kt" to 2,

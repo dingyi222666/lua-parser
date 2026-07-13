@@ -1,0 +1,7 @@
+task: TASK-688
+wave: WINFULL-29265516413
+owner: worker-WINFULL-29265516413-TASK-688
+result: blocked
+reason: exclusive product file src/jvmMain/kotlin/io/github/dingyi222666/luaparser/lsp/LuaLanguageService.kt is locked by live TASK-685 (owner=worker-WINSLICE-29264375796-TASK-685, status=in_progress). Contract requires serialize exclusive claim vs overlapping tasks; leave ready if blocked. No product edits performed.
+filesChanged: []
+timestamp_utc: 2026-07-13T16:22:47Z
