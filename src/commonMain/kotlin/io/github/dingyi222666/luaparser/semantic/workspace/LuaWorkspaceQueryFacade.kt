@@ -75,7 +75,14 @@ class LuaWorkspaceQueryFacade(
         }
         val memberExpression = memberExpressionAt(semanticFile, position)
         if (memberExpression != null) {
-            return mergeCompletions(baseCompletions, workspaceMemberCompletions(path, semanticFile, memberExpression))
+            // Member-context completions must not merge lexical/import free-identifier
+            // candidates (Monaco demo: greeter. flooded with locals + builtins). Prefer
+            // require-backed export members when available; otherwise keep model member surface.
+            val workspaceMembers = workspaceMemberCompletions(path, semanticFile, memberExpression)
+            if (workspaceMembers.isNotEmpty()) {
+                return workspaceMembers
+            }
+            return baseCompletions
         }
         return mergeCompletions(baseCompletions, importCompletions(path, position, semanticFile))
     }
@@ -91,9 +98,11 @@ class LuaWorkspaceQueryFacade(
         val modelSymbol = model.getSymbolAt(position)
         val memberExport = exportedMemberAt(semanticFile, path, position, node)
         val importCallLocal = importCallTargetHoverSymbol(semanticFile, path, node)
+        val requireLocal = requireBackedLocalHoverSymbol(semanticFile, path, node)
         val symbol = importRequireSymbol(path, position)
             ?: memberExport?.let(::exportSymbol)
             ?: importCallLocal
+            ?: requireLocal
             ?: modelSymbol
             ?: importedSymbolAt(path, position, node, semanticFile)?.let(::importedSymbol)
             ?: resolver.exportAt(path, position)?.let(::exportSymbol)
@@ -110,19 +119,29 @@ class LuaWorkspaceQueryFacade(
         }
         val preferred = if (symbol?.symbolId?.startsWith("builtin-import:") == true) {
             symbol.type
+        } else if (
+            requireLocal != null &&
+            memberExport == null &&
+            requireLocal.type?.kind == TypeInfoKind.MODULE
+        ) {
+            // Require-alias locals must surface MODULE typing even when the node/model
+            // type is a weak string-literal-ish display (`"greeter"`).
+            requireLocal.type
         } else {
-            // Prefer import-call local MODULE typing (carries moduleName) over coarse node types.
-            // Always run preferredHoverType so structural table literals collapse to "table"
-            // even when the symbol surface has a null type and only nodeType is available.
+            // Prefer import-call / require-alias MODULE typing (carries moduleName) over coarse
+            // node types. Always run preferredHoverType so structural table literals collapse
+            // to "table" even when the symbol surface has a null type and only nodeType is available.
             preferredHoverType(
                 preferredHoverType(
                     importCallLocal?.type
+                        ?: requireLocal?.type
+                        ?: exportType
                         ?: declaredOrInferred
                         ?: symbol?.type
-                        ?: exportType
                         ?: memberType
                         ?: nodeType,
-                    exportType ?: memberType ?: nodeType ?: symbol?.type ?: declaredOrInferred
+                    exportType ?: requireLocal?.type ?: memberType ?: nodeType
+                        ?: symbol?.type ?: declaredOrInferred
                 ),
                 declaredOrInferred
             )
@@ -1523,22 +1542,77 @@ class LuaWorkspaceQueryFacade(
         semanticFile: WorkspaceSemanticFile,
         memberExpression: MemberExpression
     ): List<CompletionItem> {
-        val resolved = resolvedRequireForCompletionReceiver(semanticFile, path, memberExpression.base)
+        // Prefix under the require-backed root: greeter. → []; cfg.ui. → ["ui"].
+        val prefixPath = requireBackedExportPath(semanticFile, path, memberExpression.base)
             ?: return emptyList()
+        val resolved = when (val base = memberExpression.base) {
+            is Identifier -> resolvedRequireForCompletionReceiver(semanticFile, path, base)
+            else -> resolvedRequireForExportPathRootFromExpression(semanticFile, path, base)
+                ?: resolvedRequireForCompletionReceiver(semanticFile, path, base)
+        } ?: return emptyList()
+        val expectedDepth = prefixPath.size + 1
         return resolved.surface.members
             .asSequence()
-            .filter { it.exportPath.size == 1 && isUserFacingExportName(it.name) }
+            .filter { member ->
+                member.exportPath.size == expectedDepth &&
+                    member.exportPath.take(prefixPath.size) == prefixPath &&
+                    isUserFacingExportName(member.name)
+            }
             .distinctBy { it.name }
             .map { member ->
+                val resolvedMember = resolver.exportedMember(resolved.provider.path, member.exportPath)
+                val detail = resolvedMember?.let { enrichExportTypeDisplay(it) }
+                    ?: member.type.displayName
                 CompletionItem(
                     label = member.name,
                     kind = member.kind.toCompletionItemKind(),
-                    detail = member.type.displayName,
+                    detail = detail,
                     insertText = member.name,
-                    sortText = "4:0000:${member.name}"
+                    sortText = "0:0000:${member.name}"
                 )
             }
             .toList()
+    }
+
+    /**
+     * Hover for `local greeter = require("greeter")` aliases: surface MODULE typing from the
+     * resolved export surface instead of a bare local / string-literal-ish display.
+     */
+    private fun requireBackedLocalHoverSymbol(
+        semanticFile: WorkspaceSemanticFile,
+        path: VirtualPath,
+        node: BaseASTNode?
+    ): io.github.dingyi222666.luaparser.semantic.api.Symbol? {
+        val identifier = node as? Identifier ?: return null
+        val parent = runCatching { identifier.parent }.getOrNull()
+        if (parent is MemberExpression && parent.identifier === identifier) {
+            return null
+        }
+        val moduleName = resolveRequiredModuleNameForLocal(semanticFile, null, identifier)
+            ?: resolveRequiredModuleNameForVisibleLocal(
+                semanticFile,
+                semanticFile.model.getSymbolAt(identifier.range.start)?.symbolId,
+                identifier
+            )
+            ?: return null
+        val resolved = resolveWorkspaceRequire(path, moduleName) ?: return null
+        val moduleType = resolved.surface.moduleType
+        val display = "module ${moduleType.moduleName}"
+        val typeInfo = TypeInfo(
+            displayName = display,
+            detail = moduleType.displayName,
+            kind = TypeInfoKind.MODULE,
+            moduleName = moduleType.moduleName
+        )
+        return io.github.dingyi222666.luaparser.semantic.api.Symbol(
+            name = identifier.name,
+            kind = SymbolKind.MODULE,
+            range = identifier.range,
+            type = typeInfo,
+            declaredType = typeInfo,
+            detail = display,
+            symbolId = "require-module:${resolved.provider.path.value}:$moduleName"
+        )
     }
 
     private fun resolvedRequireForCompletionReceiver(
@@ -2156,19 +2230,53 @@ class LuaWorkspaceQueryFacade(
             ) {
                 return parent
             }
+            // Incomplete `base.|` often lands the caret past blank member Identifier.
+            if (
+                parent != null &&
+                parent.identifier === node &&
+                parent.identifier.name.isBlank() &&
+                memberCompletionRangeContains(parent.range, position)
+            ) {
+                return parent
+            }
             return null
         }
-        return semanticFile.memberExpressions.lastOrNull {
+        // Prefer the most specific (longest) member expression covering the caret, and
+        // when tied prefer incomplete trailing-dot forms (`cfg.ui.|`) over completed
+        // intermediate segments (`cfg.ui`) so nested export completions use the full prefix.
+        val candidates = semanticFile.memberExpressions.filter {
             memberCompletionRangeContains(it.range, position) ||
                 rangeContains(it.identifier.range, position)
         }
+        if (candidates.isEmpty()) {
+            return null
+        }
+        return candidates.maxWithOrNull(
+            compareBy<MemberExpression> { spanLength(it.range) }
+                .thenBy { if (it.identifier.name.isBlank()) 1 else 0 }
+                .thenBy { it.range.end.line }
+                .thenBy { it.range.end.column }
+        )
+    }
+
+    private fun spanLength(range: Range): Int {
+        if (range.start.line == range.end.line) {
+            return range.end.column - range.start.column
+        }
+        return (range.end.line - range.start.line) * 10_000 +
+            range.end.column + (1_000 - range.start.column)
     }
 
     private fun memberCompletionRangeContains(range: Range, position: Position): Boolean {
         if (rangeContains(range, position)) {
             return true
         }
-        return position.line == range.end.line && position.column == range.end.column + 1
+        // Half-open AST ranges end at the caret for trailing-dot completions (`table.|`).
+        // Accept caret at end or one column past end.
+        if (position.line != range.end.line) {
+            return false
+        }
+        return position.column == range.end.column || position.column == range.end.column + 1
     }
 
     private fun memberAccessAt(node: BaseASTNode?, position: Position): MemberExpression? {
@@ -2398,17 +2506,42 @@ class LuaWorkspaceQueryFacade(
     private fun exportTypeInfo(export: WorkspaceModuleResolver.ResolvedExportMember): TypeInfo {
         val memberType = export.member.type
         val moduleType = memberType as? ModuleType
+        // Prefer provider-file declared/inferred FunctionType (Emmy @param/@return) when the
+        // export surface only carried param names with unknown types (Monaco cross-file hover).
+        val enrichedDisplay = enrichExportTypeDisplay(export) ?: memberType.displayName
+        val isFunctionLike = export.member.kind == SymbolKind.FUNCTION ||
+            export.member.kind == SymbolKind.METHOD ||
+            enrichedDisplay.contains("fun(") ||
+            enrichedDisplay.contains("fun<")
         return TypeInfo(
-            displayName = memberType.displayName,
-            detail = memberType.displayName,
+            displayName = enrichedDisplay,
+            detail = enrichedDisplay,
             kind = when {
                 moduleType != null -> TypeInfoKind.MODULE
-                export.member.kind == SymbolKind.FUNCTION || export.member.kind == SymbolKind.METHOD -> TypeInfoKind.FUNCTION
+                isFunctionLike -> TypeInfoKind.FUNCTION
                 export.member.kind == SymbolKind.CLASS -> TypeInfoKind.CLASS
                 else -> TypeInfoKind.UNKNOWN
             },
             moduleName = moduleType?.moduleName
         )
+    }
+
+    private fun enrichExportTypeDisplay(export: WorkspaceModuleResolver.ResolvedExportMember): String? {
+        val range = export.member.range ?: return null
+        val providerModel = snapshot.files[export.definitionProviderPath]?.semanticFile?.model
+            ?: snapshot.files[export.providerPath]?.semanticFile?.model
+            ?: return null
+        // Probe the export name range; declared/inferred beat bare export FunctionType unknowns.
+        val symbol = providerModel.getSymbolAt(range.start) ?: return null
+        val declared = providerModel.getDeclaredType(symbol)?.displayName
+        val inferred = providerModel.getInferredType(symbol)?.displayName
+        val candidates = listOfNotNull(declared, inferred, symbol.declaredType?.displayName, symbol.type?.displayName)
+        return candidates.firstOrNull { candidate ->
+            candidate.contains("fun(") || candidate.contains("fun<")
+        }?.takeUnless { candidate ->
+            // Keep export surface if provider only has equally weak fun(): unknown.
+            candidate == "fun(): unknown" || candidate == "fun(): any"
+        }
     }
 
     private fun rangeContains(range: Range, position: Position): Boolean {

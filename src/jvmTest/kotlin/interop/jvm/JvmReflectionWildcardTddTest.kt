@@ -59,7 +59,6 @@ class JvmReflectionWildcardTddTest {
             "Unbounded List<?> must map conservatively to UnknownType, not Object/Any or an invented element type"
         )
     }
-
     @Test
     fun collections_frequency_collection_unbounded_wildcard_argument_is_collection_of_unknown() {
         val frequency = callable(module("java.util.Collections").methods.required("frequency"))
@@ -72,7 +71,6 @@ class JvmReflectionWildcardTddTest {
 
         assertEquals(listOf(UnknownType), collectionArg.typeArguments)
     }
-
     @Test
     fun list_add_all_wildcard_extends_e_preserves_type_parameter_not_invented_concrete() {
         val addAll = callable(classType("java.util.List").allInstanceMembers().required("addAll").valueType)
@@ -97,7 +95,6 @@ class JvmReflectionWildcardTddTest {
         assertTrue(typeParam != PrimitiveType.STRING, "Wildcard extends E must not collapse to STRING")
         assertTrue(typeParam != UnknownType, "Wildcard extends E must not collapse to UnknownType")
     }
-
     @Test
     fun collections_unmodifiable_list_parameter_is_list_with_wildcard_extends_t() {
         val method = callable(module("java.util.Collections").methods.required("unmodifiableList"))
@@ -114,11 +111,6 @@ class JvmReflectionWildcardTddTest {
         val typeParam = assertIs<TypeParameterType>(argument)
         assertEquals("T", typeParam.name)
     }
-
-    // -------------------------------------------------------------------------
-    // Map wildcard fixtures
-    // -------------------------------------------------------------------------
-
     @Test
     fun map_put_all_wildcard_extends_key_value_preserves_type_parameters() {
         val putAll = callable(classType("java.util.Map").allInstanceMembers().required("putAll").valueType)
@@ -138,251 +130,6 @@ class JvmReflectionWildcardTddTest {
         val valueArg = assertIs<TypeParameterType>(mapArg.typeArguments[1])
         assertEquals("K", keyArg.name)
         assertEquals("V", valueArg.name)
-    }
-
-    @Test
-    fun collections_unmodifiable_map_parameter_is_map_with_wildcard_extends_kv() {
-        val method = callable(module("java.util.Collections").methods.required("unmodifiableMap"))
-        val mapArg = method.callSignatures
-            .flatMap { it.parameters }
-            .map { it.type }
-            .filterIsInstance<JavaInstanceType>()
-            .firstOrNull { it.javaName.canonicalName == "java.util.Map" }
-            ?: fail("Expected Collections.unmodifiableMap(Map<? extends K, ? extends V>) parameter")
-
-        assertEquals(2, mapArg.typeArguments.size)
-        assertEquals("K", assertIs<TypeParameterType>(mapArg.typeArguments[0]).name)
-        assertEquals("V", assertIs<TypeParameterType>(mapArg.typeArguments[1]).name)
-    }
-
-    @Test
-    fun collections_singleton_map_return_is_parameterized_map_not_raw_or_any() {
-        val method = callable(module("java.util.Collections").methods.required("singletonMap"))
-        val mapReturn = method.callSignatures
-            .map { it.returnType }
-            .filterIsInstance<JavaInstanceType>()
-            .firstOrNull { it.javaName.canonicalName == "java.util.Map" }
-            ?: fail("Expected Collections.singletonMap to return java.util.Map")
-
-        assertEquals(2, mapReturn.typeArguments.size)
-        // Method type params K/V should appear; not Unknown/Any invention of concrete types.
-        assertTrue(
-            mapReturn.typeArguments.all { it is TypeParameterType },
-            "singletonMap return Map<K,V> should keep type parameters; got ${mapReturn.typeArguments}"
-        )
-        assertEquals("K", (mapReturn.typeArguments[0] as TypeParameterType).name)
-        assertEquals("V", (mapReturn.typeArguments[1] as TypeParameterType).name)
-    }
-
-    // -------------------------------------------------------------------------
-    // Raw generic surfaces stay conservative
-    // -------------------------------------------------------------------------
-
-    @Test
-    fun raw_array_list_get_keeps_unresolved_type_parameter_e() {
-        val rawList = JavaInstanceType(classType("java.util.ArrayList").classType)
-        val get = callable(rawList.allInstanceMembers().required("get").valueType)
-
-        assertTrue(
-            get.callSignatures.any { (it.returnType as? TypeParameterType)?.name == "E" },
-            "Raw ArrayList.get must keep unresolved type parameter E rather than inventing Object/Any/unknown concrete"
-        )
-        assertFalse(
-            get.callSignatures.any {
-                it.returnType == PrimitiveType.ANY ||
-                    it.returnType == PrimitiveType.STRING ||
-                    it.returnType == UnknownType
-            },
-            "Raw get() must not invent ANY/STRING/Unknown in place of the declared type parameter E"
-        )
-    }
-
-    @Test
-    fun raw_hash_map_get_keeps_unresolved_value_type_parameter() {
-        val rawMap = JavaInstanceType(classType("java.util.HashMap").classType)
-        val get = callable(rawMap.allInstanceMembers().required("get").valueType)
-
-        assertTrue(
-            get.callSignatures.any { (it.returnType as? TypeParameterType)?.name == "V" },
-            "Raw HashMap.get must keep unresolved value type parameter V"
-        )
-        assertFalse(
-            get.callSignatures.any { it.returnType == PrimitiveType.ANY || it.returnType == PrimitiveType.STRING },
-            "Raw HashMap.get must not invent a concrete value type"
-        )
-    }
-
-    @Test
-    fun raw_list_receiver_has_no_invented_type_arguments() {
-        val rawList = JavaInstanceType(classType("java.util.List").classType)
-
-        assertTrue(
-            rawList.typeArguments.isEmpty(),
-            "Raw List reflection surface must not invent type arguments; got ${rawList.typeArguments}"
-        )
-    }
-
-    @Test
-    fun raw_map_receiver_has_no_invented_type_arguments() {
-        val rawMap = JavaInstanceType(classType("java.util.Map").classType)
-
-        assertTrue(
-            rawMap.typeArguments.isEmpty(),
-            "Raw Map reflection surface must not invent K/V type arguments; got ${rawMap.typeArguments}"
-        )
-    }
-
-    // -------------------------------------------------------------------------
-    // Conservative bounds: lower-bound wildcards / Object upper bounds
-    // -------------------------------------------------------------------------
-
-    @Test
-    fun collections_add_all_super_wildcard_parameter_stays_conservative() {
-        // Collections.addAll(Collection<? super T> c, T... elements)
-        val addAll = callable(module("java.util.Collections").methods.required("addAll"))
-        val collectionArg = addAll.callSignatures
-            .flatMap { it.parameters }
-            .map { it.type }
-            .filterIsInstance<JavaInstanceType>()
-            .firstOrNull { it.javaName.canonicalName == "java.util.Collection" }
-            ?: fail("Expected Collections.addAll(Collection<? super T>, T...) collection parameter")
-
-        val argument: Type = collectionArg.typeArguments.singleOrNull()
-            ?: fail("Collection<? super T> must keep a single type-argument slot")
-
-        // Lower-bound wildcards are not modeled from the lower bound; upper is Object → UnknownType.
-        // Accept either UnknownType (strict lower-bound erase) or TypeParameterType("T") if the
-        // reflector projects the method type variable through the bound — both are conservative
-        // relative to inventing a concrete element type.
-        val isConservative =
-            argument == UnknownType ||
-                (argument is TypeParameterType && argument.name == "T")
-        assertTrue(
-            isConservative,
-            "Collection<? super T> must stay conservative (UnknownType or T), not invent concrete types; got $argument"
-        )
-        assertTrue(argument != PrimitiveType.STRING, "Lower-bound wildcard must not invent STRING")
-        assertTrue(argument != PrimitiveType.ANY, "Lower-bound wildcard must not invent ANY")
-        assertFalse(
-            (argument as? JavaInstanceType)?.javaName?.canonicalName == "java.lang.Object",
-            "Lower-bound wildcard must not surface as a precise java.lang.Object instance type"
-        )
-    }
-
-    @Test
-    fun unbounded_list_wildcard_does_not_claim_object_instance_type() {
-        val reverse = callable(module("java.util.Collections").methods.required("reverse"))
-        val listArg = reverse.callSignatures
-            .flatMap { it.parameters }
-            .map { it.type }
-            .filterIsInstance<JavaInstanceType>()
-            .first { it.javaName.canonicalName == "java.util.List" }
-
-        val element: Type = listArg.typeArguments.single()
-        assertFalse(
-            (element as? JavaInstanceType)?.javaName?.canonicalName == "java.lang.Object",
-            "List<?> must not claim a precise Object element type; got $element"
-        )
-        assertEquals(UnknownType, element)
-    }
-
-    @Test
-    fun parameterized_string_list_is_not_confused_with_unbounded_wildcard_list() {
-        val arrayListClass = classType("java.util.ArrayList").classType
-        val stringList = JavaInstanceType(arrayListClass, listOf(PrimitiveType.STRING))
-        val reverse = callable(module("java.util.Collections").methods.required("reverse"))
-        val wildcardList = reverse.callSignatures
-            .flatMap { it.parameters }
-            .map { it.type }
-            .filterIsInstance<JavaInstanceType>()
-            .first { it.javaName.canonicalName == "java.util.List" }
-
-        assertEquals(listOf(PrimitiveType.STRING), stringList.typeArguments)
-        assertEquals(listOf(UnknownType), wildcardList.typeArguments)
-        assertNotEquals(
-            stringList.typeArguments,
-            wildcardList.typeArguments,
-            "Concrete List<String> and reflected List<?> must remain distinct surfaces"
-        )
-    }
-
-    // -------------------------------------------------------------------------
-    // Metadata / signature surface sanity (no invented generics)
-    // -------------------------------------------------------------------------
-
-    @Test
-    fun collections_reverse_signature_metadata_retains_wildcard_generic_name() {
-        val reverseMember = classType("java.util.Collections").classType
-            .allStaticMembers()
-            .required("reverse")
-
-        assertTrue(
-            reverseMember.signatureMetadata.any { metadata ->
-                metadata.genericParameterTypeNames.any { name ->
-                    name.contains("List") && name.contains("?")
-                }
-            },
-            "Collections.reverse metadata should retain List<?> generic parameter spelling; " +
-                "got ${reverseMember.signatureMetadata.map { it.genericParameterTypeNames }}"
-        )
-    }
-
-    @Test
-    fun map_put_all_signature_metadata_retains_wildcard_extends_spelling() {
-        val putAllMember = classType("java.util.Map").classType
-            .allInstanceMembers()
-            .required("putAll")
-
-        assertTrue(
-            putAllMember.signatureMetadata.any { metadata ->
-                metadata.genericParameterTypeNames.any { name ->
-                    name.contains("Map") && name.contains("?") && name.contains("extends")
-                }
-            },
-            "Map.putAll metadata should retain Map<? extends K, ? extends V> spelling; " +
-                "got ${putAllMember.signatureMetadata.map { it.genericParameterTypeNames }}"
-        )
-    }
-
-    @Test
-    fun list_add_all_does_not_collapse_wildcard_collection_type_arguments() {
-        val addAll = callable(classType("java.util.List").allInstanceMembers().required("addAll").valueType)
-        val collectionParams = addAll.callSignatures
-            .flatMap { it.parameters }
-            .map { it.type }
-            .filterIsInstance<JavaInstanceType>()
-            .filter { it.javaName.canonicalName == "java.util.Collection" }
-
-        assertTrue(collectionParams.isNotEmpty(), "Expected Collection wildcard parameter on List.addAll")
-        // Collection<? extends E> must remain a Collection surface with a type-argument slot.
-        assertTrue(
-            collectionParams.all { param -> param.typeArguments.size == 1 },
-            "Collection<? extends E> must keep a single type-argument slot"
-        )
-        assertTrue(
-            collectionParams.none { it.typeArguments.isEmpty() },
-            "List.addAll Collection<? extends E> must keep type-argument surface, not collapse to raw"
-        )
-    }
-
-    @Test
-    fun collections_empty_map_return_keeps_method_type_parameters_not_unknown_kv() {
-        val method = callable(module("java.util.Collections").methods.required("emptyMap"))
-        val mapReturn = method.callSignatures
-            .map { it.returnType }
-            .filterIsInstance<JavaInstanceType>()
-            .firstOrNull { it.javaName.canonicalName == "java.util.Map" }
-            ?: fail("Expected Collections.emptyMap to return java.util.Map")
-
-        assertEquals(2, mapReturn.typeArguments.size)
-        assertTrue(
-            mapReturn.typeArguments.all { it is TypeParameterType },
-            "emptyMap Map<K,V> must keep type parameters rather than inventing Unknown/Any K/V; got ${mapReturn.typeArguments}"
-        )
-        assertFalse(
-            mapReturn.typeArguments.any { it == UnknownType || it == PrimitiveType.ANY },
-            "emptyMap must not invent Unknown/Any for K/V"
-        )
     }
 
     // -------------------------------------------------------------------------

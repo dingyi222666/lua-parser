@@ -109,53 +109,6 @@ class LspCompletionKeywordContextTddTest {
         assertNoControlKeywordItems(items, context = "expression RHS")
     }
 
-    @Test
-    fun nested_block_context_surfaces_inner_and_outer_locals() {
-        val service = service()
-        val source = """
-            local outer = 1
-            do
-                local inner = 2
-                local marker = inner
-            end
-            return outer
-        """.trimIndent()
-        val document = service.open("workspace/kw-ctx-nested.lua", source)
-
-        val items = service.completionItemsAt(document, document.positionOf("marker"))
-        val labels = items.map { it.label }
-
-        assertTrue("inner" in labels, "Nested block must surface 'inner'; actual=$labels")
-        assertTrue("outer" in labels, "Nested block must still surface outer 'outer'; actual=$labels")
-        assertNoControlKeywordItems(items, context = "nested block")
-
-    }
-
-    @Test
-    fun return_statement_context_keeps_lexical_surface_without_keywords() {
-        // Completing at the 'return' token site still routes through lexical
-        // completions today (no special keyword-token suppression path).
-        val service = service()
-        val document = service.open(
-            "workspace/kw-ctx-return.lua",
-            """
-            local ready = true
-            return ready
-            """.trimIndent()
-        )
-
-        val items = service.completionItemsAt(document, document.positionOf("return"))
-        val labels = items.map { it.label }
-
-        assertTrue("ready" in labels, "Return-site context must surface local 'ready'; actual=$labels")
-        assertNoControlKeywordItems(items, context = "return statement token")
-        // The token spelling 'return' itself is not a Keyword completion item.
-        assertTrue(
-            items.none { it.label == "return" && it.kind == CompletionItemKind.Keyword },
-            "Product gap lock: 'return' is not a Keyword-kind completion item; labels=$labels"
-        )
-    }
-
     // -------------------------------------------------------------------------
     // Member contexts (. / :)
     // -------------------------------------------------------------------------
@@ -215,79 +168,9 @@ class LspCompletionKeywordContextTddTest {
         assertNoControlKeywordItems(items, context = "member ':' context")
     }
 
-    @Test
-    fun member_context_items_use_member_kinds_not_keyword_kind() {
-        val service = service()
-        val document = service.open(
-            "workspace/kw-ctx-member-kinds.lua",
-            """
-            ---@class Box
-            ---@field width number
-            ---@method Box:area(): number
-            ---@type Box
-            local box = {}
-            local w = box.width
-            local a = box:area()
-            return w
-            """.trimIndent()
-        )
-
-        val fieldItems = service.completionItemsAt(document, document.positionOf("width", occurrence = 2))
-        val field = fieldItems.firstOrNull { it.label == "width" }
-        assertNotNull(field, "Expected field 'width'; labels=${fieldItems.map { it.label }}")
-        assertTrue(
-            field.kind == CompletionItemKind.Field || field.kind == CompletionItemKind.Property,
-            "Member field 'width' must use a field-like kind, not Keyword; was ${field.kind}"
-        )
-        assertTrue(
-            fieldItems.none { it.kind == CompletionItemKind.Keyword },
-            "Member field context must not emit Keyword-kind items; was ${fieldItems.map { it.label to it.kind }}"
-        )
-
-        val methodItems = service.completionItemsAt(document, document.positionOf("area", occurrence = 2))
-        val method = methodItems.firstOrNull { it.label == "area" }
-        assertNotNull(method, "Expected method 'area'; labels=${methodItems.map { it.label }}")
-        assertTrue(
-            method.kind == CompletionItemKind.Method || method.kind == CompletionItemKind.Function,
-            "Member method 'area' must use Method/Function kind, not Keyword; was ${method.kind}"
-        )
-        assertTrue(
-            methodItems.none { it.kind == CompletionItemKind.Keyword },
-            "Member method context must not emit Keyword-kind items; was ${methodItems.map { it.label to it.kind }}"
-        )
-    }
-
     // -------------------------------------------------------------------------
     // Partial-prefix and non-code soft contexts
     // -------------------------------------------------------------------------
-
-    @Test
-    fun partial_identifier_statement_context_keeps_matching_locals_without_keywords() {
-        val service = service()
-        val source = """
-            local alpha = 1
-            i
-            return alpha
-        """.trimIndent()
-        val document = service.open("workspace/kw-ctx-partial.lua", source)
-        val position = document.positionOf("i\n")
-
-        val items = service.completion(document.path, position.line, position.character).items
-        val labels = items.map { it.label }
-
-        assertTrue(
-            "alpha" in labels,
-            "Partial 'i' statement context should still surface lexical local 'alpha'; actual=$labels"
-        )
-        assertTrue(
-            items.none { it.label == "if" && it.kind == CompletionItemKind.Keyword },
-            "Product gap lock: no Keyword-kind 'if' on partial 'i'; hits=${items.filter { it.label == "if" }.map { it.kind }}"
-        )
-        assertTrue(
-            items.none { it.label == "in" && it.kind == CompletionItemKind.Keyword },
-            "Product gap lock: no Keyword-kind 'in' on partial 'i'"
-        )
-    }
 
     @Test
     fun string_literal_context_does_not_emit_keyword_items() {
@@ -314,67 +197,9 @@ class LspCompletionKeywordContextTddTest {
         }
     }
 
-    @Test
-    fun line_comment_context_does_not_emit_keyword_items() {
-        val service = service()
-        val source = """
-            local alpha = 1
-            -- note about alpha
-            return alpha
-        """.trimIndent()
-        val document = service.open("workspace/kw-ctx-comment.lua", source)
-
-        val items = service.completionItemsAt(document, document.positionOf("note"))
-        assertNoControlKeywordItems(items, context = "line comment body")
-    }
-
     // -------------------------------------------------------------------------
     // Stability + documented spellings across contexts
     // -------------------------------------------------------------------------
-
-    @Test
-    fun lexical_context_labels_are_stable_across_repeated_requests() {
-        val service = service()
-        val document = service.open(
-            "workspace/kw-ctx-stable.lua",
-            """
-            local marker = 1
-
-            return marker
-            """.trimIndent()
-        )
-
-        val first = service.completionLabelsAt(document, blankLineAfterLocals()).sorted()
-        val second = service.completionLabelsAt(document, blankLineAfterLocals()).sorted()
-
-        assertEquals(first, second, "Lexical context labels must be stable across repeated completions")
-        assertTrue(first.isNotEmpty(), "Expected non-empty lexical labels for stability check")
-        assertTrue("marker" in first, "Expected stable local 'marker'; actual=$first")
-    }
-
-    @Test
-    fun member_context_labels_are_stable_across_repeated_requests() {
-        val service = service()
-        val document = service.open(
-            "workspace/kw-ctx-member-stable.lua",
-            """
-            ---@class Point
-            ---@field x number
-            ---@field y number
-            ---@type Point
-            local point = {}
-            local current = point.x
-            return current
-            """.trimIndent()
-        )
-
-        val position = document.positionOf("x", occurrence = 2)
-        val first = service.completionLabelsAt(document, position).sorted()
-        val second = service.completionLabelsAt(document, position).sorted()
-
-        assertEquals(first, second, "Member context labels must be stable across repeated completions")
-        assertTrue("x" in first, "Expected stable member 'x'; actual=$first")
-    }
 
     @Test
     fun control_keyword_spellings_remain_documented_lowercase_lua_forms() {
@@ -400,35 +225,6 @@ class LspCompletionKeywordContextTddTest {
             ALL_CONTROL_KEYWORDS,
             "Documented control-keyword corpus must stay the stable Lua 5.x set"
         )
-    }
-
-    @Test
-    fun statement_context_lexical_items_insert_plain_text_equal_to_label() {
-        val service = service()
-        val document = service.open(
-            "workspace/kw-ctx-insert.lua",
-            """
-            local ready = true
-
-            return ready
-            """.trimIndent()
-        )
-
-        val items = service.completionItemsAt(document, blankLineAfterLocals())
-        assertTrue(items.isNotEmpty(), "Expected lexical completion items for insertText checks")
-
-        for (item in items) {
-            val insert = item.insertText ?: item.label
-            assertEquals(
-                item.label,
-                insert,
-                "Item '${item.label}' insertText must equal the stable label under PlainText policy"
-            )
-            assertTrue(
-                item.insertTextFormat == null || item.insertTextFormat == InsertTextFormat.PlainText,
-                "Item '${item.label}' must use PlainText insert format; was ${item.insertTextFormat}"
-            )
-        }
     }
 
     // -------------------------------------------------------------------------

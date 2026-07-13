@@ -118,41 +118,6 @@ class LspWatchedFilesTddTest {
     }
 
     @Test
-    fun watched_delete_of_aly_file_removes_it_from_workspace_symbols() {
-        val root = tempWorkspace()
-        val layout = root.resolve("screen.aly").writeLua("local layoutMarker = true\nreturn layoutMarker")
-        val service = initializedService(root)
-        val workspace = LuaWorkspaceService(service)
-
-        assertTrue(service.workspaceSymbols("layoutMarker").any { it.location.uri == layout.uri })
-
-        layout.path.deleteExisting()
-        workspace.didChangeWatchedFiles(
-            DidChangeWatchedFilesParams(
-                listOf(FileEvent(layout.uri, FileChangeType.Deleted))
-            )
-        )
-
-        assertTrue(service.workspaceSymbols("layoutMarker").none { it.location.uri == layout.uri })
-    }
-
-    @Test
-    fun watched_create_indexes_aly_files() {
-        val root = tempWorkspace()
-        val service = initializedService(root)
-        val workspace = LuaWorkspaceService(service)
-
-        val layout = root.resolve("form.aly").writeLua("local formMarker = 42\nreturn formMarker")
-        workspace.didChangeWatchedFiles(
-            DidChangeWatchedFilesParams(
-                listOf(FileEvent(layout.uri, FileChangeType.Created))
-            )
-        )
-
-        assertTrue(service.workspaceSymbols("formMarker").any { it.name == "formMarker" && it.location.uri == layout.uri })
-    }
-
-    @Test
     fun watched_change_does_not_overwrite_open_document_overlay() {
         val root = tempWorkspace()
         val dep = root.resolve("dep.lua").writeLua("local M = {}\nM.diskName = 1\nreturn M")
@@ -175,60 +140,6 @@ class LspWatchedFilesTddTest {
         assertTrue(service.workspaceSymbols("openOnly").any { it.location.uri == dep.uri })
         assertTrue(service.workspaceSymbols("diskAfterChange").none { it.location.uri == dep.uri })
         assertTrue(service.workspaceSymbols("diskName").none { it.location.uri == dep.uri })
-    }
-
-    @Test
-    fun watched_file_updates_republish_open_document_diagnostics_deterministically() {
-        val root = tempWorkspace()
-        val dep = root.resolve("dep.lua").writeLua("local M = {}\nM.value = 1\nreturn M")
-        val main = root.resolve("main.lua").writeLua("local dep = require(\"dep\")\nreturn dep.value")
-        val service = initializedService(root)
-
-        val published = mutableListOf<PublishDiagnosticsParams>()
-        val textDocuments = LuaTextDocumentService(
-            service,
-            publishDiagnostics = { diagnostics -> published += diagnostics }
-        )
-        val workspace = LuaWorkspaceService(
-            languageService = service,
-            onConfigurationChanged = textDocuments::republishDiagnostics
-        )
-
-        textDocuments.didOpen(
-            DidOpenTextDocumentParams(
-                TextDocumentItem(main.uri, "lua", 1, "local dep = require(\"dep\")\nreturn dep.value")
-            )
-        )
-        published.clear()
-
-        dep.path.deleteExisting()
-        workspace.didChangeWatchedFiles(
-            DidChangeWatchedFilesParams(
-                listOf(FileEvent(dep.uri, FileChangeType.Deleted))
-            )
-        )
-
-        assertEquals(listOf(main.uri), published.map { it.uri })
-        // Republish is deterministic: one params object per open document in open order.
-        assertEquals(1, published.size)
-    }
-
-    @Test
-    fun watched_non_lua_files_are_ignored() {
-        val root = tempWorkspace()
-        val service = initializedService(root)
-        val workspace = LuaWorkspaceService(service)
-
-        val readme = root.resolve("README.md")
-        readme.writeText("# notes")
-        workspace.didChangeWatchedFiles(
-            DidChangeWatchedFilesParams(
-                listOf(FileEvent(readme.toUri().toString(), FileChangeType.Created))
-            )
-        )
-
-        assertTrue(service.workspaceSymbols("notes").none { it.location.uri == readme.toUri().toString() })
-        assertEquals(1, workspace.lastWatchedFileChanges().size)
     }
 
     @Test

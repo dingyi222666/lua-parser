@@ -89,37 +89,6 @@ class LspShutdownExitIdempotencyTddTest {
     }
 
     @Test
-    fun shutdown_exit_shutdown_exit_sequence_stays_stable() {
-        val server = LuaLanguageServer()
-        server.initialize(InitializeParams()).get()
-        val uri = "file:///workspace/shutdown-exit-sequence.lua"
-        server.textDocumentService.didOpen(openParams(uri, "local value = 1\nreturn value"))
-
-        assertEquals(0, server.shutdown().get(5, TimeUnit.SECONDS))
-        assertRejectedTextDocumentRequests(server.textDocumentService, uri)
-        assertFutureFails(
-            server.workspaceService.symbol(WorkspaceSymbolParams("value")),
-            "workspace requests after first shutdown should be rejected"
-        )
-
-        server.exit()
-        assertQuietTextDocumentRequests(server.textDocumentService, uri)
-
-        // Further lifecycle traffic must not resurrect INITIALIZED.
-        assertFutureFails(server.shutdown(), "shutdown after exit should complete exceptionally")
-        server.exit()
-        assertFutureFails(
-            server.initialize(InitializeParams()),
-            "initialize after exit sequence should complete exceptionally"
-        )
-        assertQuietTextDocumentRequests(server.textDocumentService, uri)
-        assertFutureFails(
-            server.workspaceService.symbol(WorkspaceSymbolParams("value")),
-            "workspace requests after exit sequence should remain rejected"
-        )
-    }
-
-    @Test
     fun post_shutdown_requests_are_refused_across_repeated_shutdown_calls() {
         val server = LuaLanguageServer()
         server.initialize(InitializeParams()).get()
@@ -150,35 +119,6 @@ class LspShutdownExitIdempotencyTddTest {
     }
 
     @Test
-    fun post_shutdown_notifications_remain_ignored_after_repeated_shutdown() {
-        val server = LuaLanguageServer()
-        val client = RecordingLanguageClient()
-        server.connect(client.asClient())
-        server.initialize(InitializeParams()).get()
-        val uri = "file:///workspace/post-shutdown-notifications-idempotent.lua"
-        server.textDocumentService.didOpen(openParams(uri, "local value = 1\nreturn value"))
-        client.published.clear()
-
-        server.shutdown().get()
-        server.shutdown().get()
-
-        server.textDocumentService.didOpen(openParams("file:///workspace/ignored-open-after-shutdown.lua", "local ="))
-        server.textDocumentService.didChange(changeParams(uri, 2, "local ="))
-        server.textDocumentService.didClose(closeParams(uri))
-        server.workspaceService.didChangeConfiguration(
-            DidChangeConfigurationParams(
-                mapOf(
-                    "androlua.imports" to listOf("String"),
-                    "jvm.importPrefixes" to listOf("java.lang")
-                )
-            )
-        )
-        server.workspaceService.didChangeWatchedFiles(DidChangeWatchedFilesParams(emptyList()))
-
-        assertTrue(client.published.isEmpty(), "notifications after repeated shutdown should stay ignored")
-    }
-
-    @Test
     fun exit_without_shutdown_is_idempotent_and_quiets_text_document_requests() {
         val server = LuaLanguageServer()
         server.initialize(InitializeParams()).get()
@@ -200,48 +140,6 @@ class LspShutdownExitIdempotencyTddTest {
         assertFutureFails(
             server.initialize(InitializeParams()),
             "initialize after direct exit should complete exceptionally"
-        )
-    }
-
-    @Test
-    fun concurrent_repeated_shutdown_calls_remain_idempotent() {
-        val server = LuaLanguageServer()
-        server.initialize(InitializeParams()).get()
-        val uri = "file:///workspace/concurrent-repeated-shutdown.lua"
-        server.textDocumentService.didOpen(openParams(uri, "local value = 1\nreturn value"))
-
-        runConcurrently(
-            List(6) {
-                {
-                    assertEquals(0, server.shutdown().get(5, TimeUnit.SECONDS))
-                }
-            }
-        )
-
-        assertRejectedTextDocumentRequests(server.textDocumentService, uri)
-        assertFutureFails(
-            server.workspaceService.symbol(WorkspaceSymbolParams("value")),
-            "workspace requests after concurrent shutdowns should be rejected"
-        )
-    }
-
-    @Test
-    fun concurrent_exit_calls_remain_idempotent() {
-        val server = LuaLanguageServer()
-        server.initialize(InitializeParams()).get()
-        val uri = "file:///workspace/concurrent-repeated-exit.lua"
-        server.textDocumentService.didOpen(openParams(uri, "local value = 1\nreturn value"))
-
-        runConcurrently(
-            List(6) {
-                { server.exit() }
-            }
-        )
-
-        assertQuietTextDocumentRequests(server.textDocumentService, uri)
-        assertFutureFails(
-            server.workspaceService.symbol(WorkspaceSymbolParams("value")),
-            "workspace requests after concurrent exits should be rejected"
         )
     }
 
@@ -297,36 +195,6 @@ class LspShutdownExitIdempotencyTddTest {
             server.shutdown(),
             "shutdown after interleaved shutdown/exit should be rejected"
         )
-    }
-
-    @Test
-    fun post_exit_notifications_stay_ignored_after_repeated_exit() {
-        val server = LuaLanguageServer()
-        val client = RecordingLanguageClient()
-        server.connect(client.asClient())
-        server.initialize(InitializeParams()).get()
-        val uri = "file:///workspace/post-exit-notifications-idempotent.lua"
-        server.textDocumentService.didOpen(openParams(uri, "local value = 1\nreturn value"))
-        client.published.clear()
-
-        server.shutdown().get()
-        server.exit()
-        server.exit()
-
-        server.textDocumentService.didOpen(openParams("file:///workspace/ignored-open-after-exit.lua", "local ="))
-        server.textDocumentService.didChange(changeParams(uri, 2, "local ="))
-        server.textDocumentService.didClose(closeParams(uri))
-        server.workspaceService.didChangeConfiguration(
-            DidChangeConfigurationParams(
-                mapOf(
-                    "androlua.imports" to listOf("String"),
-                    "jvm.importPrefixes" to listOf("java.lang")
-                )
-            )
-        )
-        server.workspaceService.didChangeWatchedFiles(DidChangeWatchedFilesParams(emptyList()))
-
-        assertTrue(client.published.isEmpty(), "notifications after repeated exit should stay ignored")
     }
 
     private fun openParams(

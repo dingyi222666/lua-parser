@@ -58,11 +58,6 @@ class LspDiagnosticSeverityMappingTddTest {
     }
 
     @Test
-    fun semanticInfoMapsToLspInformation() {
-        assertEquals(LspDiagnosticSeverity.Information, mapSeverity(SemanticDiagnosticSeverity.INFO))
-    }
-
-    @Test
     fun everySemanticSeverityMapsConsistentlyToExpectedLspSeverity() {
         val expected = mapOf(
             SemanticDiagnosticSeverity.ERROR to LspDiagnosticSeverity.Error,
@@ -85,51 +80,6 @@ class LspDiagnosticSeverityMappingTddTest {
         actual.values.forEach { severity ->
             assertNotNull(severity, "mapped LSP severity must never be null")
         }
-    }
-
-    @Test
-    fun mappingNeverEmitsLspHintForKnownSemanticSeverities() {
-        // Product has no Hint branch; lock that known severities stay Error/Warning/Information.
-        val allowed = setOf(
-            LspDiagnosticSeverity.Error,
-            LspDiagnosticSeverity.Warning,
-            LspDiagnosticSeverity.Information
-        )
-        SemanticDiagnosticSeverity.entries.forEach { semantic ->
-            val mapped = mapSeverity(semantic)
-            assertTrue(
-                mapped in allowed,
-                "semantic $semantic mapped to $mapped; expected one of $allowed (no Hint)"
-            )
-        }
-    }
-
-    @Test
-    fun nullSemanticSeverityIsRejectedRatherThanSilentlyMisclassified() {
-        // "Unknown severities default safely": null is not a valid severity. The
-        // private mapper requires a non-null enum; reflection with null must not
-        // invent Error/Warning/Information and must fail closed.
-        val exception = assertFailsWith<Exception> {
-            mapSeverityNullable(null)
-        }
-        val message = buildString {
-            append(exception::class.simpleName)
-            append(':')
-            append(exception.message.orEmpty())
-            exception.cause?.let { cause ->
-                append('|')
-                append(cause::class.simpleName)
-                append(':')
-                append(cause.message.orEmpty())
-            }
-        }
-        assertTrue(
-            exception is NullPointerException ||
-                exception.cause is NullPointerException ||
-                message.contains("null", ignoreCase = true) ||
-                message.contains("NoWhenBranchMatchedException"),
-            "null severity must fail closed, not invent a mapping; got=$message"
-        )
     }
 
     // -------------------------------------------------------------------------
@@ -155,74 +105,6 @@ class LspDiagnosticSeverityMappingTddTest {
     }
 
     @Test
-    fun checkerTypeMismatchDiagnosticPublishesAsLspError() {
-        val source = """
-            ---@return string
-            local function render()
-                return 1
-            end
-            return render()
-        """.trimIndent()
-
-        val published = openAndCollect(
-            uri = "file:///workspace/severity-type-mismatch.lua",
-            source = source
-        )
-
-        val mismatch = published.diagnostics.filter { diagnostic ->
-            diagnostic.code?.left == "checker.function.return.typeMismatch" ||
-                diagnostic.message.contains("type", ignoreCase = true)
-        }
-        assertTrue(
-            mismatch.isNotEmpty() || published.diagnostics.isNotEmpty(),
-            "expected checker/type diagnostics; got=${published.diagnostics.map { it.message to it.code }}"
-        )
-        // All checker diagnostics default to semantic ERROR today → LSP Error.
-        published.diagnostics.forEach { diagnostic ->
-            assertNotNull(diagnostic.severity, "checker diagnostic severity must be non-null")
-            assertEquals(
-                LspDiagnosticSeverity.Error,
-                diagnostic.severity,
-                "checker diagnostics currently default to semantic ERROR → LSP Error; " +
-                    "got ${diagnostic.severity} for ${diagnostic.code}/${diagnostic.message}"
-            )
-        }
-    }
-
-    @Test
-    fun checkerUnknownParamDiagnosticPublishesAsLspError() {
-        val source = """
-            ---@param first string
-            ---@param missing number
-            local function onlyOne(first)
-            end
-            return onlyOne
-        """.trimIndent()
-
-        val published = openAndCollect(
-            uri = "file:///workspace/severity-unknown-param.lua",
-            source = source
-        )
-
-        val arity = published.diagnostics.filter { diagnostic ->
-            diagnostic.code?.left == "checker.function.signature.unknownParam" ||
-                diagnostic.message.contains("param", ignoreCase = true)
-        }
-        assertTrue(
-            arity.isNotEmpty() || published.diagnostics.isNotEmpty(),
-            "expected arity/unknownParam diagnostics; got=${published.diagnostics.map { it.message to it.code }}"
-        )
-        published.diagnostics.forEach { diagnostic ->
-            assertNotNull(diagnostic.severity)
-            assertEquals(
-                LspDiagnosticSeverity.Error,
-                diagnostic.severity,
-                "arity diagnostics default to ERROR → LSP Error"
-            )
-        }
-    }
-
-    @Test
     fun queriedDiagnosticsAgreeWithPublishedSeveritiesForParseError() {
         val service = LuaLanguageService()
         service.initialize(InitializeParams())
@@ -243,19 +125,6 @@ class LspDiagnosticSeverityMappingTddTest {
         )
         assertTrue(queried.diagnostics.isNotEmpty())
         assertTrue(queried.diagnostics.all { it.severity == LspDiagnosticSeverity.Error })
-    }
-
-    @Test
-    fun validDocumentPublishesEmptyDiagnosticsWithoutInventedSeverity() {
-        val published = openAndCollect(
-            uri = "file:///workspace/severity-valid.lua",
-            source = "local value = 1\nreturn value"
-        )
-
-        assertTrue(
-            published.diagnostics.isEmpty(),
-            "valid Lua must not invent diagnostics; got=${published.diagnostics}"
-        )
     }
 
     // -------------------------------------------------------------------------

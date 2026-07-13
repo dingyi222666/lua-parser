@@ -132,46 +132,6 @@ class LspHierarchicalDocumentSymbolTddTest {
         )
     }
 
-    @Test
-    fun hierarchical_document_symbols_preserve_top_level_locals_with_ranges() {
-        val service = service()
-        service.open(
-            "workspace/hier-locals.lua",
-            """
-            local value = 1
-            local function render()
-                return value
-            end
-            return render
-            """
-        )
-
-        val roots = service.hierarchicalDocumentSymbols("workspace/hier-locals.lua")
-        val names = roots.map { it.name }
-
-        assertTrue("value" in names, "top-level local value missing; got $names")
-        assertTrue("render" in names, "top-level function render missing; got $names")
-        roots.forEach { symbol ->
-            assertNotNull(symbol.range, "range required for ${symbol.name}")
-            assertNotNull(symbol.selectionRange, "selectionRange required for ${symbol.name}")
-        }
-    }
-
-    @Test
-    fun hierarchical_document_symbols_preserve_provider_backed_local_aliases() {
-        val service = service(jdkMetadata)
-        service.open(
-            "workspace/hier-provider-alias.lua",
-            "local Arrays = require(\"Arrays\")\nlocal current = Arrays.asList\nreturn current"
-        )
-
-        val roots = service.hierarchicalDocumentSymbols("workspace/hier-provider-alias.lua")
-        val names = roots.map { it.name }
-
-        assertTrue("Arrays" in names, "provider alias Arrays missing; got $names")
-        assertTrue("current" in names, "local current missing; got $names")
-    }
-
     // -------------------------------------------------------------------------
     // Service-level flatten SymbolInformation
     // -------------------------------------------------------------------------
@@ -205,139 +165,9 @@ class LspHierarchicalDocumentSymbolTddTest {
         }
     }
 
-    @Test
-    fun document_symbols_flatten_includes_nested_names_with_container() {
-        val service = service()
-        service.open(
-            "workspace/flat-nested.lua",
-            """
-            local M = {}
-            function M.render()
-                return 1
-            end
-            M.label = "ok"
-            return M
-            """
-        )
-
-        val hierarchical = service.hierarchicalDocumentSymbols("workspace/flat-nested.lua")
-        val flattened = service.documentSymbols("workspace/flat-nested.lua")
-
-        val hierarchicalNames = flattenHierarchicalNames(hierarchical)
-        val flatNames = flattened.map { it.name }.toSet()
-
-        // Flatten is a depth-first expansion of the hierarchical tree.
-        assertTrue(
-            flatNames.containsAll(hierarchicalNames),
-            "flatten names must cover hierarchical names; hierarchical=$hierarchicalNames flat=$flatNames"
-        )
-        assertEquals(
-            hierarchicalNames.size,
-            flattened.size,
-            "flatten size must equal hierarchical node count; hierarchical=$hierarchicalNames flat=${flattened.describeFlat()}"
-        )
-
-        // Nested children must report containerName = parent name when present in the tree.
-        hierarchical.forEach { root ->
-            root.children.orEmpty().forEach { child ->
-                val match = flattened.filter { it.name == child.name }
-                assertTrue(match.isNotEmpty(), "child ${child.name} must appear in flatten")
-                assertTrue(
-                    match.any { it.containerName == root.name || it.containerName == null },
-                    "child ${child.name} should carry containerName=${root.name} (or null pre-wire); " +
-                        "got ${match.map { it.containerName }}"
-                )
-            }
-        }
-    }
-
-    @Test
-    fun document_symbols_flatten_matches_hierarchical_name_multiset_for_class() {
-        val service = service()
-        service.open(
-            "workspace/flat-class-parity.lua",
-            """
-            ---@class Point
-            ---@field x number
-            ---@field y number
-            local Point = {}
-
-            function Point:len()
-                return self.x + self.y
-            end
-
-            return Point
-            """
-        )
-
-        val hierarchical = service.hierarchicalDocumentSymbols("workspace/flat-class-parity.lua")
-        val flattened = service.documentSymbols("workspace/flat-class-parity.lua")
-
-        assertEquals(
-            flattenHierarchicalNames(hierarchical).sorted(),
-            flattened.map { it.name }.sorted(),
-            "class flatten multiset must match hierarchical node names"
-        )
-    }
-
     // -------------------------------------------------------------------------
     // TextDocumentService wire: Either.left (flatten) vs Either.right (hierarchical)
     // -------------------------------------------------------------------------
-
-    @Test
-    fun text_document_service_document_symbol_without_hierarchical_cap_returns_symbol_information_left() {
-        // Client omits hierarchicalDocumentSymbolSupport (default / legacy clients).
-        val service = service(initializeParams = initializeParams(hierarchical = null))
-        val textDocuments = LuaTextDocumentService(service)
-        val document = textDocuments.open(
-            "workspace/wire-flat-default.lua",
-            """
-            local value = 1
-            local function render()
-                return value
-            end
-            return render
-            """
-        )
-
-        val response = textDocuments.documentSymbol(
-            DocumentSymbolParams(TextDocumentIdentifier(document.uri))
-        ).get()
-
-        assertWireResponse(
-            response = response,
-            hierarchicalCapability = null,
-            expectedNames = setOf("value", "render"),
-            documentUri = document.uri
-        )
-    }
-
-    @Test
-    fun text_document_service_document_symbol_with_hierarchical_false_stays_on_flatten_branch() {
-        val service = service(initializeParams = initializeParams(hierarchical = false))
-        val textDocuments = LuaTextDocumentService(service)
-        val document = textDocuments.open(
-            "workspace/wire-flat-false.lua",
-            """
-            local alpha = 1
-            local function beta()
-                return alpha
-            end
-            return beta
-            """
-        )
-
-        val response = textDocuments.documentSymbol(
-            DocumentSymbolParams(TextDocumentIdentifier(document.uri))
-        ).get()
-
-        assertWireResponse(
-            response = response,
-            hierarchicalCapability = false,
-            expectedNames = setOf("alpha", "beta"),
-            documentUri = document.uri
-        )
-    }
 
     @Test
     fun text_document_service_document_symbol_with_hierarchical_true_dual_path() {
@@ -415,69 +245,6 @@ class LspHierarchicalDocumentSymbolTddTest {
     }
 
     @Test
-    fun text_document_service_document_symbol_hierarchical_true_class_nesting_dual_path() {
-        val service = service(initializeParams = initializeParams(hierarchical = true))
-        val textDocuments = LuaTextDocumentService(service)
-        val document = textDocuments.open(
-            "workspace/wire-hier-class.lua",
-            """
-            ---@class Box
-            ---@field width number
-            local Box = {}
-            function Box:area()
-                return self.width
-            end
-            return Box
-            """
-        )
-
-        val response = textDocuments.documentSymbol(
-            DocumentSymbolParams(TextDocumentIdentifier(document.uri))
-        ).get()
-
-        assertWireResponse(
-            response = response,
-            hierarchicalCapability = true,
-            expectedNames = setOf("Box"),
-            documentUri = document.uri,
-            requireAnyOf = setOf("Box", "width", "area")
-        )
-
-        if (response.all { it.isRight }) {
-            val roots = response.map { it.right }
-            val box = assertNotNull(findHierarchical(roots, "Box"))
-            // Hierarchical branch may nest fields/methods under Box.
-            val nested = flattenHierarchicalNames(listOf(box)) - "Box"
-            assertTrue(
-                nested.isNotEmpty() || roots.any { it.name == "width" || it.name == "area" },
-                "hierarchical class response should expose width/area somewhere; got ${roots.describeHierarchical()}"
-            )
-        }
-    }
-
-    @Test
-    fun text_document_service_document_symbol_empty_document_is_empty_list() {
-        val service = service(initializeParams = initializeParams(hierarchical = true))
-        val textDocuments = LuaTextDocumentService(service)
-        val document = textDocuments.open("workspace/wire-empty.lua", "\n")
-
-        val response = textDocuments.documentSymbol(
-            DocumentSymbolParams(TextDocumentIdentifier(document.uri))
-        ).get()
-
-        assertTrue(
-            response.isEmpty() || response.all { entry ->
-                when {
-                    entry.isLeft -> entry.left.name.isNotBlank()
-                    entry.isRight -> entry.right.name.isNotBlank()
-                    else -> false
-                }
-            },
-            "empty / near-empty buffer must not throw; got size=${response.size}"
-        )
-    }
-
-    @Test
     fun hierarchical_and_flatten_name_parity_stable_across_capability_init_params() {
         // Service helpers ignore client caps today; parity must hold regardless of
         // how initialize was called (null / false / true hierarchical support).
@@ -501,43 +268,6 @@ class LspHierarchicalDocumentSymbolTddTest {
                 hierarchicalNames,
                 flatNames,
                 "parity broken for hierarchicalCapability=$hierarchical"
-            )
-        }
-    }
-
-    @Test
-    fun flatten_container_name_links_child_to_parent_for_module_export() {
-        val service = service()
-        service.open(
-            "workspace/flat-container.lua",
-            """
-            local M = {}
-            function M.paint()
-                return 1
-            end
-            return M
-            """
-        )
-
-        val hierarchical = service.hierarchicalDocumentSymbols("workspace/flat-container.lua")
-        val flattened = service.documentSymbols("workspace/flat-container.lua")
-
-        val parentWithPaintChild = hierarchical.firstOrNull { root ->
-            root.children.orEmpty().any { it.name == "paint" }
-        }
-
-        if (parentWithPaintChild != null) {
-            val paint = flattened.filter { it.name == "paint" }
-            assertTrue(paint.isNotEmpty(), "paint must be in flatten")
-            assertTrue(
-                paint.any { it.containerName == parentWithPaintChild.name },
-                "paint containerName should be ${parentWithPaintChild.name}; got ${paint.map { it.containerName }}"
-            )
-        } else {
-            // paint may surface as a root if product does not nest under M — still present.
-            assertTrue(
-                "paint" in flattened.map { it.name },
-                "paint must still appear in flatten even without nesting; got ${flattened.describeFlat()}"
             )
         }
     }

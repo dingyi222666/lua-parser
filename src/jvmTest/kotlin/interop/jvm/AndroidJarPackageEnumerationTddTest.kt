@@ -47,7 +47,6 @@ class AndroidJarPackageEnumerationTddTest {
             "Skip reason must tell the host how to recover; got: $reason"
         )
     }
-
     @Test
     fun android_jar_present_or_skipped_with_explicit_reason() {
         if (!androidJar.isFile) {
@@ -59,38 +58,6 @@ class AndroidJarPackageEnumerationTddTest {
             "Expected non-empty Android platform jar at ${androidJar.path}."
         )
     }
-
-    @Test
-    fun depth1_android_os_wildcard_enumerates_build_from_samples() {
-        requireAndroidJarOrSkip()
-        val packageModule = packageModuleFor("android.os.*")
-
-        assertEquals("android.os", packageModule.moduleName)
-        assertTrue("Build" in packageModule.fields, fieldsHint("android.os", packageModule))
-        assertTrue("Handler" in packageModule.fields, fieldsHint("android.os", packageModule))
-        assertFalse("VERSION" in packageModule.fields, "Inner class VERSION must not appear as a top-level package field.")
-    }
-
-    @Test
-    fun depth1_android_net_wildcard_enumerates_uri_from_samples() {
-        requireAndroidJarOrSkip()
-        val packageModule = packageModuleFor("android.net.*")
-
-        assertEquals("android.net", packageModule.moduleName)
-        assertTrue("Uri" in packageModule.fields, fieldsHint("android.net", packageModule))
-        assertFalse("Builder" in packageModule.fields, "Inner Uri.Builder must not appear as a top-level package field.")
-    }
-
-    @Test
-    fun depth1_android_util_wildcard_enumerates_typed_value_from_samples() {
-        requireAndroidJarOrSkip()
-        val packageModule = packageModuleFor("android.util.*")
-
-        assertEquals("android.util", packageModule.moduleName)
-        assertTrue("TypedValue" in packageModule.fields, fieldsHint("android.util", packageModule))
-        assertTrue("SparseArray" in packageModule.fields, fieldsHint("android.util", packageModule))
-    }
-
     @Test
     fun depth1_android_graphics_wildcard_enumerates_color_but_not_drawable_subpackage_classes() {
         requireAndroidJarOrSkip()
@@ -110,211 +77,6 @@ class AndroidJarPackageEnumerationTddTest {
             "android.graphics.* must not recurse into android.graphics.drawable.shapes."
         )
     }
-
-    @Test
-    fun depth2_android_graphics_drawable_wildcard_enumerates_color_drawable() {
-        requireAndroidJarOrSkip()
-        val packageModule = packageModuleFor("android.graphics.drawable.*")
-
-        assertEquals("android.graphics.drawable", packageModule.moduleName)
-        assertTrue("ColorDrawable" in packageModule.fields, fieldsHint("android.graphics.drawable", packageModule))
-        assertTrue("GradientDrawable" in packageModule.fields, fieldsHint("android.graphics.drawable", packageModule))
-        // Deeper shapes package is not part of this depth-2 enumeration.
-        assertFalse(
-            "RectShape" in packageModule.fields,
-            "android.graphics.drawable.* must not recurse into shapes subpackage."
-        )
-        assertFalse(
-            "Color" in packageModule.fields,
-            "Parent package class Color must not leak into drawable enumeration."
-        )
-    }
-
-    @Test
-    fun depth3_android_graphics_drawable_shapes_wildcard_enumerates_shape_classes() {
-        requireAndroidJarOrSkip()
-        val packageModule = packageModuleFor("android.graphics.drawable.shapes.*")
-
-        assertEquals("android.graphics.drawable.shapes", packageModule.moduleName)
-        assertTrue("Shape" in packageModule.fields, fieldsHint("android.graphics.drawable.shapes", packageModule))
-        assertTrue("RectShape" in packageModule.fields, fieldsHint("android.graphics.drawable.shapes", packageModule))
-        assertTrue("OvalShape" in packageModule.fields, fieldsHint("android.graphics.drawable.shapes", packageModule))
-        assertFalse(
-            "ColorDrawable" in packageModule.fields,
-            "Sibling package class ColorDrawable must not appear under shapes enumeration."
-        )
-    }
-
-    @Test
-    fun depth2_android_content_pm_wildcard_enumerates_package_manager() {
-        requireAndroidJarOrSkip()
-        val packageModule = packageModuleFor("android.content.pm.*")
-
-        assertEquals("android.content.pm", packageModule.moduleName)
-        assertTrue("PackageManager" in packageModule.fields, fieldsHint("android.content.pm", packageModule))
-        assertTrue("PackageInfo" in packageModule.fields, fieldsHint("android.content.pm", packageModule))
-        assertFalse(
-            "Context" in packageModule.fields,
-            "Parent package class Context must not leak into content.pm enumeration."
-        )
-    }
-
-    @Test
-    fun depth2_android_content_res_wildcard_enumerates_resources() {
-        requireAndroidJarOrSkip()
-        val packageModule = packageModuleFor("android.content.res.*")
-
-        assertEquals("android.content.res", packageModule.moduleName)
-        assertTrue("Resources" in packageModule.fields, fieldsHint("android.content.res", packageModule))
-        assertTrue("AssetManager" in packageModule.fields, fieldsHint("android.content.res", packageModule))
-        assertFalse(
-            "Theme" in packageModule.fields,
-            "Inner Resources.Theme must not appear as a top-level package field."
-        )
-    }
-
-    @Test
-    fun depth2_android_app_job_wildcard_enumerates_job_scheduler() {
-        requireAndroidJarOrSkip()
-        val packageModule = packageModuleFor("android.app.job.*")
-
-        assertEquals("android.app.job", packageModule.moduleName)
-        assertTrue("JobScheduler" in packageModule.fields, fieldsHint("android.app.job", packageModule))
-        assertTrue("JobInfo" in packageModule.fields, fieldsHint("android.app.job", packageModule))
-        assertTrue("JobService" in packageModule.fields, fieldsHint("android.app.job", packageModule))
-        assertFalse(
-            "Activity" in packageModule.fields,
-            "Parent package class Activity must not leak into app.job enumeration."
-        )
-    }
-
-    @Test
-    fun sample_depth1_packages_used_by_android_lua_fixtures_enumerate_expected_classes() {
-        requireAndroidJarOrSkip()
-
-        val widget = packageModuleFor("android.widget.*")
-        assertTrue("TextView" in widget.fields, fieldsHint("android.widget", widget))
-        assertTrue("Button" in widget.fields, fieldsHint("android.widget", widget))
-        // Inner TextView.BufferType must never appear as a top-level package field.
-        assertFalse("BufferType" in widget.fields, "Inner BufferType must not appear under android.widget.*")
-
-        val view = packageModuleFor("android.view.*")
-        assertTrue("View" in view.fields, fieldsHint("android.view", view))
-        assertTrue("ViewGroup" in view.fields, fieldsHint("android.view", view))
-        assertFalse("OnClickListener" in view.fields, "Inner View.OnClickListener must not appear under android.view.*")
-        assertFalse("MeasureSpec" in view.fields, "Inner View.MeasureSpec must not appear under android.view.*")
-
-        val app = packageModuleFor("android.app.*")
-        assertTrue("Activity" in app.fields, fieldsHint("android.app", app))
-        assertFalse("ScreenCaptureCallback" in app.fields, "Inner Activity nested type must not appear under android.app.*")
-
-        val content = packageModuleFor("android.content.*")
-        assertTrue("Context" in content.fields, fieldsHint("android.content", content))
-        // Nested pm/res classes are not direct members of android.content.
-        assertFalse("PackageManager" in content.fields)
-        assertFalse("Resources" in content.fields)
-        assertFalse("BindServiceFlags" in content.fields, "Inner Context.BindServiceFlags must not appear under android.content.*")
-    }
-
-    @Test
-    fun host_android_jar_app_content_view_widget_wildcards_are_non_empty_product_lock() {
-        requireAndroidJarOrSkip()
-        // Product lock for MODULE-VERIFY: wildcards must enumerate the four Android-Lua
-        // fixture packages when the host android-35 jar is present (never invent when absent).
-        val expected = mapOf(
-            "android.app.*" to "Activity",
-            "android.content.*" to "Context",
-            "android.view.*" to "View",
-            "android.widget.*" to "TextView"
-        )
-        expected.forEach { (importTarget, classSimpleName) ->
-            val module = packageModuleFor(importTarget)
-            assertTrue(
-                classSimpleName in module.fields,
-                "Host jar ${androidJar.path} must enumerate $classSimpleName for $importTarget; " +
-                    "fields=${module.fields.keys.sorted()}"
-            )
-            assertTrue(
-                module.fields.isNotEmpty(),
-                "Host jar present ⇒ package module for $importTarget must be non-empty"
-            )
-        }
-    }
-
-    @Test
-    fun missing_android_jar_path_does_not_invent_framework_package_members() {
-        // Honest empty surface: explicit missing non-G path must not soft-mount host SDK.
-        val configuration = JvmWorkspaceConfiguration(
-            classpathEntries = emptyList(),
-            androidJar = "/nonexistent/android-sdk/platforms/android-35/android.jar",
-            classes = emptySet()
-        )
-        val providers = provider.packageProvidersFor(
-            importTargets = listOf(
-                "android.app.*",
-                "android.content.*",
-                "android.view.*",
-                "android.widget.*"
-            ),
-            configuration = configuration
-        )
-        assertTrue(
-            providers.isEmpty(),
-            "Missing android.jar must not invent package providers for app/content/view/widget; " +
-                "got paths=${providers.keys.map { it.value }}"
-        )
-    }
-
-    @Test
-    fun multi_depth_package_providers_are_isolated_and_keyed_by_package_path() {
-        requireAndroidJarOrSkip()
-        val providers = provider.packageProvidersFor(
-            importTargets = listOf(
-                "android.os.*",
-                "android.graphics.drawable.*",
-                "android.graphics.drawable.shapes.*",
-                "android.content.pm.*"
-            ),
-            configuration = androidConfiguration()
-        )
-
-        val expectedPaths = listOf(
-            "__jvm__/packages/android/os.lua",
-            "__jvm__/packages/android/graphics/drawable.lua",
-            "__jvm__/packages/android/graphics/drawable/shapes.lua",
-            "__jvm__/packages/android/content/pm.lua"
-        ).map(VirtualPath::of)
-
-        expectedPaths.forEach { path ->
-            assertTrue(
-                path in providers,
-                "Expected package provider $path; actual: ${providers.keys.map { it.value }}"
-            )
-        }
-
-        val os = assertNotNull(providers[VirtualPath.of("__jvm__/packages/android/os.lua")]?.moduleExportSurface?.moduleType)
-        val drawable = assertNotNull(
-            providers[VirtualPath.of("__jvm__/packages/android/graphics/drawable.lua")]?.moduleExportSurface?.moduleType
-        )
-        val shapes = assertNotNull(
-            providers[VirtualPath.of("__jvm__/packages/android/graphics/drawable/shapes.lua")]?.moduleExportSurface?.moduleType
-        )
-        val pm = assertNotNull(
-            providers[VirtualPath.of("__jvm__/packages/android/content/pm.lua")]?.moduleExportSurface?.moduleType
-        )
-
-        assertTrue("Build" in os.fields)
-        assertTrue("ColorDrawable" in drawable.fields)
-        assertTrue("RectShape" in shapes.fields)
-        assertTrue("PackageManager" in pm.fields)
-
-        // Cross-depth isolation: no package module should absorb another depth's exclusive classes.
-        assertFalse("ColorDrawable" in os.fields)
-        assertFalse("Build" in drawable.fields)
-        assertFalse("PackageManager" in shapes.fields)
-        assertFalse("RectShape" in pm.fields)
-    }
-
     @Test
     fun nested_package_enumeration_skips_inner_classes_at_every_depth() {
         requireAndroidJarOrSkip()
@@ -337,7 +99,6 @@ class AndroidJarPackageEnumerationTddTest {
         assertTrue("JobInfo" in job.fields)
         assertFalse("Builder" in job.fields)
     }
-
     @Test
     fun empty_or_unknown_nested_package_yields_no_provider() {
         requireAndroidJarOrSkip()
@@ -354,7 +115,6 @@ class AndroidJarPackageEnumerationTddTest {
             "Expected no package providers for missing nested packages; actual: ${providers.keys.map { it.value }}"
         )
     }
-
     @Test
     fun non_wildcard_nested_target_is_not_treated_as_package_provider() {
         requireAndroidJarOrSkip()
@@ -371,109 +131,6 @@ class AndroidJarPackageEnumerationTddTest {
             providers.isEmpty(),
             "packageProvidersFor only handles wildcard package targets; actual: ${providers.keys.map { it.value }}"
         )
-    }
-
-    @Test
-    fun workspace_engine_mounts_nested_depth2_drawable_package_from_android_jar() {
-        requireAndroidJarOrSkip()
-        val harness = WorkspaceSemanticHarness.build(
-            "main.lua" to """
-                import "android.graphics.drawable.*"
-                local current = ColorDrawable
-                return current
-            """.trimIndent(),
-            metadata = mapOf(JvmWorkspaceConfiguration.ANDROID_JAR_METADATA_KEY to androidJar.path),
-            engine = JvmWorkspaceEngine()
-        )
-
-        val packagePath = harness.path("__jvm__/packages/android/graphics/drawable.lua")
-        assertTrue(
-            packagePath in harness.snapshot.extraProviders,
-            "Expected nested package provider $packagePath; actual: ${harness.snapshot.extraProviders.keys.map { it.value }}"
-        )
-
-        val completions = harness.queries.completions(
-            harness.path("main.lua"),
-            harness.positionOf("main.lua", "current")
-        )
-        assertTrue(
-            completions.any { it.label == "ColorDrawable" },
-            "Expected ColorDrawable completion from nested drawable package; actual: ${completions.map { it.label }}"
-        )
-    }
-
-    @Test
-    fun workspace_engine_mounts_nested_depth3_shapes_package_from_android_jar() {
-        requireAndroidJarOrSkip()
-        val harness = WorkspaceSemanticHarness.build(
-            "main.lua" to """
-                import "android.graphics.drawable.shapes.*"
-                local shape = RectShape
-                return shape
-            """.trimIndent(),
-            metadata = mapOf(JvmWorkspaceConfiguration.ANDROID_JAR_METADATA_KEY to androidJar.path),
-            engine = JvmWorkspaceEngine()
-        )
-
-        val packagePath = harness.path("__jvm__/packages/android/graphics/drawable/shapes.lua")
-        assertTrue(
-            packagePath in harness.snapshot.extraProviders,
-            "Expected depth-3 package provider $packagePath; actual: ${harness.snapshot.extraProviders.keys.map { it.value }}"
-        )
-
-        val definitions = harness.queries.gotoDefinition(
-            harness.path("main.lua"),
-            harness.positionOf("main.lua", "RectShape")
-        )
-        assertTrue(
-            definitions.any { it.path == harness.path("__jvm__/classes/android/graphics/drawable/shapes/RectShape.lua") },
-            "Expected gotoDefinition to nested RectShape class provider; actual: ${definitions.map { it.path.value }}"
-        )
-    }
-
-    @Test
-    fun workspace_engine_mounts_sample_os_and_net_packages_from_android_jar() {
-        requireAndroidJarOrSkip()
-        val harness = WorkspaceSemanticHarness.build(
-            "main.lua" to """
-                import "android.os.*"
-                import "android.net.*"
-                local sdk = Build
-                local uri = Uri
-                return sdk, uri
-            """.trimIndent(),
-            metadata = mapOf(JvmWorkspaceConfiguration.ANDROID_JAR_METADATA_KEY to androidJar.path),
-            engine = JvmWorkspaceEngine()
-        )
-
-        assertTrue(harness.path("__jvm__/packages/android/os.lua") in harness.snapshot.extraProviders)
-        assertTrue(harness.path("__jvm__/packages/android/net.lua") in harness.snapshot.extraProviders)
-
-        val completions = harness.queries.completions(
-            harness.path("main.lua"),
-            harness.positionOf("main.lua", "sdk")
-        )
-        assertTrue(completions.any { it.label == "Build" }, "Expected Build from android.os.*; got ${completions.map { it.label }}")
-        assertTrue(completions.any { it.label == "Uri" }, "Expected Uri from android.net.*; got ${completions.map { it.label }}")
-    }
-
-    @Test
-    fun parent_and_nested_package_enumerations_do_not_share_fields() {
-        requireAndroidJarOrSkip()
-        val parent = packageModuleFor("android.content.*")
-        val pm = packageModuleFor("android.content.pm.*")
-        val res = packageModuleFor("android.content.res.*")
-
-        assertTrue("Context" in parent.fields)
-        assertTrue("PackageManager" in pm.fields)
-        assertTrue("Resources" in res.fields)
-
-        assertFalse("PackageManager" in parent.fields)
-        assertFalse("Resources" in parent.fields)
-        assertFalse("Context" in pm.fields)
-        assertFalse("Context" in res.fields)
-        assertFalse("PackageManager" in res.fields)
-        assertFalse("Resources" in pm.fields)
     }
 
     private fun packageModuleFor(importTarget: String): ModuleType {

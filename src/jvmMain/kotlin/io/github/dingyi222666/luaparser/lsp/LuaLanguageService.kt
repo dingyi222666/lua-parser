@@ -2811,12 +2811,21 @@ class LuaLanguageService(
             if (value.isNullOrBlank()) return true
             return value == "unknown" || value == "any"
         }
+        fun isQuotedLiteral(value: String): Boolean {
+            return value.length >= 2 && value.startsWith('"') && value.endsWith('"')
+        }
         val candidates = listOf(primary, secondary, tertiary).filterNot { it.isNullOrBlank() }
+        candidates.firstOrNull { value ->
+            !isWeak(value) && value!!.startsWith("module ")
+        }?.let { return it }
         candidates.firstOrNull { value ->
             !isWeak(value) && (value!!.contains("fun(") || value.contains("fun<"))
         }?.let { return it }
         candidates.firstOrNull { value ->
             !isWeak(value) && value!!.startsWith("Array<")
+        }?.let { return it }
+        candidates.firstOrNull { value ->
+            !isWeak(value) && !isQuotedLiteral(value!!)
         }?.let { return it }
         candidates.firstOrNull { value -> !isWeak(value) }?.let { return it }
         return candidates.firstOrNull()

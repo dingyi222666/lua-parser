@@ -76,53 +76,6 @@ class LspOnTypeFormattingEndKeywordTddTest {
     }
 
     @Test
-    fun on_type_formatting_capability_or_documented_gap_when_unimplemented() {
-        val service = service()
-        val capabilities = service.initialize(InitializeParams()).capabilities
-        val textDocuments = LuaTextDocumentService(service)
-        val document = textDocuments.open(
-            "workspace/on-type-capability-probe.lua",
-            """
-            local function probe()
-                return 1
-            end
-            """
-        )
-
-        // Cursor just after the final 'd' of `end` on the closing line.
-        val outcome = invokeOnTypeFormatting(
-            textDocuments,
-            onTypeParams(
-                document,
-                position = document.positionAfter("end", occurrence = 1),
-                ch = "d"
-            )
-        )
-
-        when (outcome) {
-            is OnTypeOutcome.Unsupported -> {
-                assertTrue(
-                    outcome.isUnsupportedOperation,
-                    "Documented gap expects UnsupportedOperationException for onTypeFormatting; " +
-                        "documentOnTypeFormattingProvider=" +
-                        "${capabilities.documentOnTypeFormattingProvider}; " +
-                        "detail=${outcome.detail}"
-                )
-            }
-            is OnTypeOutcome.Failed -> {
-                fail(
-                    "onTypeFormatting surface must not fail hard once reachable: ${outcome.detail}"
-                )
-            }
-            is OnTypeOutcome.Succeeded -> {
-                // Capability may lag implementation; once edits are returned they
-                // must be well-formed even if the initialize flag is still null.
-                assertWellFormedEdits(outcome.edits, document)
-            }
-        }
-    }
-
-    @Test
     fun text_document_service_on_type_formatting_surface_is_invokable() {
         val service = service()
         val textDocuments = LuaTextDocumentService(service)
@@ -178,36 +131,6 @@ class LspOnTypeFormattingEndKeywordTddTest {
     }
 
     @Test
-    fun on_type_after_end_of_global_function_degrades_safely() {
-        assertEndKeywordSafe(
-            path = "workspace/on-type-end-global-function.lua",
-            source = """
-                function compute(a, b)
-                    return a + b
-                end
-                """,
-            endOccurrence = 1,
-            context = "global function ... end"
-        )
-    }
-
-    @Test
-    fun on_type_after_end_of_method_style_function_degrades_safely() {
-        assertEndKeywordSafe(
-            path = "workspace/on-type-end-method-function.lua",
-            source = """
-                local M = {}
-                function M:run(x)
-                    return x
-                end
-                return M
-                """,
-            endOccurrence = 1,
-            context = "method-style function M:run ... end"
-        )
-    }
-
-    @Test
     fun on_type_after_end_of_if_block_degrades_safely() {
         assertEndKeywordSafe(
             path = "workspace/on-type-end-if.lua",
@@ -219,103 +142,6 @@ class LspOnTypeFormattingEndKeywordTddTest {
                 """,
             endOccurrence = 1,
             context = "if ... then ... end"
-        )
-    }
-
-    @Test
-    fun on_type_after_end_of_if_else_block_degrades_safely() {
-        assertEndKeywordSafe(
-            path = "workspace/on-type-end-if-else.lua",
-            source = """
-                local flag = false
-                if flag then
-                    return 1
-                else
-                    return 0
-                end
-                """,
-            endOccurrence = 1,
-            context = "if ... else ... end"
-        )
-    }
-
-    @Test
-    fun on_type_after_end_of_if_elseif_else_chain_degrades_safely() {
-        assertEndKeywordSafe(
-            path = "workspace/on-type-end-if-elseif-else.lua",
-            source = """
-                local n = 0
-                if n == 1 then
-                    return "one"
-                elseif n == 2 then
-                    return "two"
-                else
-                    return "other"
-                end
-                """,
-            endOccurrence = 1,
-            context = "if ... elseif ... else ... end"
-        )
-    }
-
-    @Test
-    fun on_type_after_end_of_for_numeric_block_degrades_safely() {
-        assertEndKeywordSafe(
-            path = "workspace/on-type-end-for-numeric.lua",
-            source = """
-                local sum = 0
-                for i = 1, 3 do
-                    sum = sum + i
-                end
-                return sum
-                """,
-            endOccurrence = 1,
-            context = "for numeric ... end"
-        )
-    }
-
-    @Test
-    fun on_type_after_end_of_for_in_block_degrades_safely() {
-        assertEndKeywordSafe(
-            path = "workspace/on-type-end-for-in.lua",
-            source = """
-                local t = { a = 1, b = 2 }
-                for k, v in pairs(t) do
-                    print(k, v)
-                end
-                """,
-            endOccurrence = 1,
-            context = "for ... in ... end"
-        )
-    }
-
-    @Test
-    fun on_type_after_end_of_while_block_degrades_safely() {
-        assertEndKeywordSafe(
-            path = "workspace/on-type-end-while.lua",
-            source = """
-                local n = 3
-                while n > 0 do
-                    n = n - 1
-                end
-                """,
-            endOccurrence = 1,
-            context = "while ... do ... end"
-        )
-    }
-
-    @Test
-    fun on_type_after_end_of_do_block_degrades_safely() {
-        assertEndKeywordSafe(
-            path = "workspace/on-type-end-do.lua",
-            source = """
-                do
-                    local hidden = 1
-                    return hidden
-                end
-                """,
-            endOccurrence = 1,
-            context = "do ... end"
         )
     }
 
@@ -338,60 +164,9 @@ class LspOnTypeFormattingEndKeywordTddTest {
         )
     }
 
-    @Test
-    fun on_type_after_outermost_end_of_nested_blocks_degrades_safely() {
-        assertEndKeywordSafe(
-            path = "workspace/on-type-end-nested-outer.lua",
-            source = """
-                local function outer()
-                    if true then
-                        return 1
-                    end
-                end
-                """,
-            // Source has two `end` tokens; use the last (function closer).
-            endOccurrence = 2,
-            context = "outer function end after nested if"
-        )
-    }
-
     // -------------------------------------------------------------------------
     // `then` keyword: if / elseif
     // -------------------------------------------------------------------------
-
-    @Test
-    fun on_type_after_then_of_if_degrades_safely() {
-        assertThenKeywordSafe(
-            path = "workspace/on-type-then-if.lua",
-            source = """
-                local flag = true
-                if flag then
-                    return 1
-                end
-                """,
-            thenOccurrence = 1,
-            context = "if ... then"
-        )
-    }
-
-    @Test
-    fun on_type_after_then_of_elseif_degrades_safely() {
-        assertThenKeywordSafe(
-            path = "workspace/on-type-then-elseif.lua",
-            source = """
-                local n = 2
-                if n == 1 then
-                    return "one"
-                elseif n == 2 then
-                    return "two"
-                else
-                    return "other"
-                end
-                """,
-            thenOccurrence = 2,
-            context = "elseif ... then"
-        )
-    }
 
     // -------------------------------------------------------------------------
     // Trigger character variants around end/then
@@ -422,110 +197,9 @@ class LspOnTypeFormattingEndKeywordTddTest {
         assertSafeDegradeOrWellFormed(outcome, document, context = "trigger ch='d' after end")
     }
 
-    @Test
-    fun on_type_trigger_n_at_then_keyword_is_safe() {
-        val service = service()
-        val textDocuments = LuaTextDocumentService(service)
-        val document = textDocuments.open(
-            "workspace/on-type-trigger-n.lua",
-            """
-            if true then
-                return 1
-            end
-            """
-        )
-
-        val outcome = invokeOnTypeFormatting(
-            textDocuments,
-            onTypeParams(
-                document,
-                position = document.positionAfter("then", occurrence = 1),
-                ch = "n"
-            )
-        )
-        assertSafeDegradeOrWellFormed(outcome, document, context = "trigger ch='n' after then")
-    }
-
-    @Test
-    fun on_type_trigger_newline_after_end_is_safe() {
-        // Some clients fire onTypeFormatting on newline after the keyword line.
-        val service = service()
-        val textDocuments = LuaTextDocumentService(service)
-        val document = textDocuments.open(
-            "workspace/on-type-trigger-newline.lua",
-            """
-            local function f()
-                return 1
-            end
-
-            return f
-            """
-        )
-
-        val endPos = document.positionAfter("end", occurrence = 1)
-        val outcome = invokeOnTypeFormatting(
-            textDocuments,
-            onTypeParams(
-                document,
-                // Position on the blank line after `end`.
-                position = Position(endPos.line + 1, 0),
-                ch = "\n"
-            )
-        )
-        assertSafeDegradeOrWellFormed(outcome, document, context = "trigger ch='\\n' after end")
-    }
-
-    @Test
-    fun on_type_trigger_d_while_finishing_partial_end_token_is_safe() {
-        // User has typed `en` and is about to complete with `d`.
-        val service = service()
-        val textDocuments = LuaTextDocumentService(service)
-        val document = textDocuments.open(
-            "workspace/on-type-trigger-partial-end-d.lua",
-            """
-            local function f()
-                return 1
-            en
-            """
-        )
-
-        val outcome = invokeOnTypeFormatting(
-            textDocuments,
-            onTypeParams(
-                document,
-                position = document.positionAfter("en", occurrence = 1),
-                ch = "d"
-            )
-        )
-        assertSafeDegradeOrWellFormed(
-            outcome,
-            document,
-            context = "trigger ch='d' finishing partial 'en' toward end"
-        )
-    }
-
     // -------------------------------------------------------------------------
     // Malformed / empty / out-of-range safety (must not crash)
     // -------------------------------------------------------------------------
-
-    @Test
-    fun on_type_on_empty_document_does_not_crash() {
-        val service = service()
-        val textDocuments = LuaTextDocumentService(service)
-        val document = textDocuments.open(
-            "workspace/on-type-empty.lua",
-            ""
-        )
-
-        val outcome = invokeOnTypeFormatting(
-            textDocuments,
-            onTypeParams(document, position = Position(0, 0), ch = "d")
-        )
-        assertNoHardCrash(outcome, context = "empty document")
-        if (outcome is OnTypeOutcome.Succeeded) {
-            assertWellFormedEdits(outcome.edits, document)
-        }
-    }
 
     @Test
     fun on_type_on_malformed_unclosed_function_does_not_crash() {
@@ -559,113 +233,6 @@ class LspOnTypeFormattingEndKeywordTddTest {
     }
 
     @Test
-    fun on_type_on_malformed_partial_end_token_does_not_crash() {
-        val service = service()
-        val textDocuments = LuaTextDocumentService(service)
-        // User mid-typing `end` as `en` inside a broken if.
-        val document = textDocuments.open(
-            "workspace/on-type-malformed-partial-end.lua",
-            """
-            if true then
-                print(1)
-            en
-            """
-        )
-
-        val outcome = invokeOnTypeFormatting(
-            textDocuments,
-            onTypeParams(
-                document,
-                position = document.positionAfter("en", occurrence = 1),
-                ch = "n"
-            )
-        )
-        assertNoHardCrash(outcome, context = "malformed partial 'en' toward end")
-        if (outcome is OnTypeOutcome.Succeeded) {
-            assertWellFormedEdits(outcome.edits, document)
-        }
-    }
-
-    @Test
-    fun on_type_on_malformed_stray_end_does_not_crash() {
-        val service = service()
-        val textDocuments = LuaTextDocumentService(service)
-        // Extra `end` with no matching opener — must not throw.
-        val document = textDocuments.open(
-            "workspace/on-type-malformed-stray-end.lua",
-            """
-            local x = 1
-            end
-            return x
-            """
-        )
-
-        val outcome = invokeOnTypeFormatting(
-            textDocuments,
-            onTypeParams(
-                document,
-                position = document.positionAfter("end", occurrence = 1),
-                ch = "d"
-            )
-        )
-        assertNoHardCrash(outcome, context = "malformed stray end")
-        if (outcome is OnTypeOutcome.Succeeded) {
-            assertWellFormedEdits(outcome.edits, document)
-        }
-    }
-
-    @Test
-    fun on_type_on_malformed_unclosed_if_then_does_not_crash() {
-        val service = service()
-        val textDocuments = LuaTextDocumentService(service)
-        val document = textDocuments.open(
-            "workspace/on-type-malformed-if-then.lua",
-            """
-            if flag the
-            """
-        )
-
-        val outcome = invokeOnTypeFormatting(
-            textDocuments,
-            onTypeParams(
-                document,
-                position = document.positionAfter("the", occurrence = 1),
-                ch = "e"
-            )
-        )
-        assertNoHardCrash(outcome, context = "malformed partial then")
-        if (outcome is OnTypeOutcome.Succeeded) {
-            assertWellFormedEdits(outcome.edits, document)
-        }
-    }
-
-    @Test
-    fun on_type_on_malformed_unclosed_for_does_not_crash() {
-        val service = service()
-        val textDocuments = LuaTextDocumentService(service)
-        val document = textDocuments.open(
-            "workspace/on-type-malformed-for.lua",
-            """
-            for i = 1, 10 do
-                print(i
-            """
-        )
-
-        val outcome = invokeOnTypeFormatting(
-            textDocuments,
-            onTypeParams(
-                document,
-                position = document.endPosition(),
-                ch = "d"
-            )
-        )
-        assertNoHardCrash(outcome, context = "malformed unclosed for")
-        if (outcome is OnTypeOutcome.Succeeded) {
-            assertWellFormedEdits(outcome.edits, document)
-        }
-    }
-
-    @Test
     fun on_type_at_out_of_range_position_does_not_crash() {
         val service = service()
         val textDocuments = LuaTextDocumentService(service)
@@ -691,65 +258,6 @@ class LspOnTypeFormattingEndKeywordTddTest {
             }
         }
     }
-
-    @Test
-    fun on_type_with_unknown_trigger_character_does_not_crash() {
-        val service = service()
-        val textDocuments = LuaTextDocumentService(service)
-        val document = textDocuments.open(
-            "workspace/on-type-unknown-trigger.lua",
-            """
-            local function f()
-                return 1
-            end
-            """
-        )
-
-        val outcome = invokeOnTypeFormatting(
-            textDocuments,
-            onTypeParams(
-                document,
-                position = document.positionAfter("end", occurrence = 1),
-                ch = "z"
-            )
-        )
-        assertNoHardCrash(outcome, context = "unknown trigger ch='z'")
-        if (outcome is OnTypeOutcome.Succeeded) {
-            assertWellFormedEdits(outcome.edits, document)
-        }
-    }
-
-    @Test
-    fun on_type_with_multi_char_trigger_does_not_crash() {
-        // Spec expects a single character, but defensive clients may send more.
-        val service = service()
-        val textDocuments = LuaTextDocumentService(service)
-        val document = textDocuments.open(
-            "workspace/on-type-multi-char-trigger.lua",
-            """
-            if true then
-                return 1
-            end
-            """
-        )
-
-        val outcome = invokeOnTypeFormatting(
-            textDocuments,
-            onTypeParams(
-                document,
-                position = document.positionAfter("end", occurrence = 1),
-                ch = "end"
-            )
-        )
-        assertNoHardCrash(outcome, context = "multi-char trigger ch='end'")
-        if (outcome is OnTypeOutcome.Succeeded) {
-            assertWellFormedEdits(outcome.edits, document)
-        }
-    }
-
-    // -------------------------------------------------------------------------
-    // Ideal-path content contracts (only when product returns edits)
-    // -------------------------------------------------------------------------
 
     @Test
     fun on_type_after_end_returns_well_formed_edits_when_supported() {

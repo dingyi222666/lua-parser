@@ -26,6 +26,7 @@ import io.github.dingyi222666.luaparser.parser.ast.node.WhenStatement
 import io.github.dingyi222666.luaparser.parser.ast.node.WhileStatement
 import io.github.dingyi222666.luaparser.semantic.api.SymbolKind
 import io.github.dingyi222666.luaparser.semantic.types.model.CustomType
+import io.github.dingyi222666.luaparser.semantic.types.model.FunctionParameter
 import io.github.dingyi222666.luaparser.semantic.types.model.FunctionType
 import io.github.dingyi222666.luaparser.semantic.types.model.LiteralType
 import io.github.dingyi222666.luaparser.semantic.types.model.ModuleType
@@ -377,7 +378,9 @@ object ModuleExportCollector {
 
         private fun visitFunctionDeclaration(function: FunctionDeclaration) {
             val identifier = function.identifier ?: return
-            val valueType = FunctionType()
+            // Preserve parameter names on export FunctionType so cross-file hover/completion
+            // surface fun(name: unknown): unknown instead of bare fun(): unknown (Monaco demo).
+            val valueType = functionTypeFromDeclaration(function)
 
             when (identifier) {
                 is Identifier -> {
@@ -510,9 +513,25 @@ object ModuleExportCollector {
                 null -> UnknownType
                 is ConstantNode -> constantType(expression)
                 is TableConstructorExpression -> tableLiteralType(expression)
-                is FunctionDeclaration -> FunctionType()
+                is FunctionDeclaration -> functionTypeFromDeclaration(expression)
                 else -> UnknownType
             }
+        }
+
+        /**
+         * Build a [FunctionType] from a declaration's parameter list.
+         * Emmy/declared return types are not available at export-collection time; parameters still
+         * keep names so consumers see `fun(x, lo, hi): unknown` rather than empty `fun(): unknown`.
+         */
+        private fun functionTypeFromDeclaration(function: FunctionDeclaration): FunctionType {
+            val parameters = function.params.map { parameter ->
+                FunctionParameter(
+                    name = parameter.name,
+                    type = UnknownType,
+                    vararg = parameter.name == "..."
+                )
+            }
+            return FunctionType(parameters = parameters, returnType = UnknownType)
         }
 
         private fun constantType(node: ConstantNode): Type {

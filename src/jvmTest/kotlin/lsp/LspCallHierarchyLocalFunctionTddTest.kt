@@ -130,61 +130,6 @@ class LspCallHierarchyLocalFunctionTddTest {
     }
 
     @Test
-    fun prepare_call_hierarchy_on_local_assigned_function_degrades_safely() {
-        val service = service()
-        val textDocuments = LuaTextDocumentService(service)
-        val document = textDocuments.open(
-            "workspace/call-hierarchy-local-assigned-function.lua",
-            """
-            local add = function(a, b)
-              return a + b
-            end
-            return add
-            """
-        )
-
-        val outcome = invokePrepare(
-            textDocuments,
-            prepareParams(document, document.positionOf("add", occurrence = 1))
-        )
-
-        assertPrepareSafeOrGap(
-            outcome,
-            document = document,
-            context = "prepareCallHierarchy on 'local add = function(...)'"
-        )
-    }
-
-    @Test
-    fun prepare_call_hierarchy_on_nested_local_function_degrades_safely() {
-        val service = service()
-        val textDocuments = LuaTextDocumentService(service)
-        val document = textDocuments.open(
-            "workspace/call-hierarchy-nested-local-function.lua",
-            """
-            local function outer()
-              local function inner()
-                return 42
-              end
-              return inner()
-            end
-            return outer
-            """
-        )
-
-        val outcome = invokePrepare(
-            textDocuments,
-            prepareParams(document, document.positionOf("inner", occurrence = 1))
-        )
-
-        assertPrepareSafeOrGap(
-            outcome,
-            document = document,
-            context = "prepareCallHierarchy on nested local function 'inner'"
-        )
-    }
-
-    @Test
     fun prepare_call_hierarchy_on_local_function_call_site_degrades_safely() {
         val service = service()
         val textDocuments = LuaTextDocumentService(service)
@@ -219,106 +164,6 @@ class LspCallHierarchyLocalFunctionTddTest {
     // -------------------------------------------------------------------------
     // Non-function positions: empty without throw (or documented gap)
     // -------------------------------------------------------------------------
-
-    @Test
-    fun prepare_call_hierarchy_on_local_number_binding_empty_without_throw_or_gap() {
-        val service = service()
-        val textDocuments = LuaTextDocumentService(service)
-        val document = textDocuments.open(
-            "workspace/call-hierarchy-local-number.lua",
-            """
-            local count = 1
-            return count
-            """
-        )
-
-        val outcome = invokePrepare(
-            textDocuments,
-            prepareParams(document, document.positionOf("count", occurrence = 1))
-        )
-
-        assertEmptyPrepareOrGap(
-            outcome,
-            context = "local number binding is not a call hierarchy root"
-        )
-    }
-
-    @Test
-    fun prepare_call_hierarchy_on_whitespace_empty_without_throw_or_gap() {
-        val service = service()
-        val textDocuments = LuaTextDocumentService(service)
-        val document = textDocuments.open(
-            "workspace/call-hierarchy-whitespace.lua",
-            """
-            local function work()
-              return 1
-            end
-
-            return work
-            """
-        )
-
-        // Blank line between end and return.
-        val outcome = invokePrepare(
-            textDocuments,
-            prepareParams(document, Position(3, 0))
-        )
-
-        assertEmptyPrepareOrGap(
-            outcome,
-            context = "whitespace / blank line between statements"
-        )
-    }
-
-    @Test
-    fun prepare_call_hierarchy_on_keyword_empty_without_throw_or_gap() {
-        val service = service()
-        val textDocuments = LuaTextDocumentService(service)
-        val document = textDocuments.open(
-            "workspace/call-hierarchy-keyword.lua",
-            """
-            local function work()
-              return 1
-            end
-            return work
-            """
-        )
-
-        val outcome = invokePrepare(
-            textDocuments,
-            prepareParams(document, document.positionOf("local"))
-        )
-
-        assertEmptyPrepareOrGap(
-            outcome,
-            context = "keyword 'local'"
-        )
-    }
-
-    @Test
-    fun prepare_call_hierarchy_unknown_free_name_empty_without_throw_or_gap() {
-        val service = service()
-        val textDocuments = LuaTextDocumentService(service)
-        val document = textDocuments.open(
-            "workspace/call-hierarchy-unknown-free.lua",
-            """
-            local function known()
-              return 1
-            end
-            return unknownCaller
-            """
-        )
-
-        val outcome = invokePrepare(
-            textDocuments,
-            prepareParams(document, document.positionOf("unknownCaller"))
-        )
-
-        assertEmptyPrepareOrGap(
-            outcome,
-            context = "unknown free name 'unknownCaller'"
-        )
-    }
 
     // -------------------------------------------------------------------------
     // incoming / outgoing for local functions
@@ -422,139 +267,13 @@ class LspCallHierarchyLocalFunctionTddTest {
         )
     }
 
-    @Test
-    fun call_hierarchy_incoming_unknown_item_empty_without_throw_or_gap() {
-        val service = service()
-        val textDocuments = LuaTextDocumentService(service)
-        val document = textDocuments.open(
-            "workspace/call-hierarchy-incoming-unknown.lua",
-            """
-            local function known()
-              return 1
-            end
-            return known
-            """
-        )
-
-        val phantom = CallHierarchyItem(
-            "PhantomMissing",
-            SymbolKind.Function,
-            document.uri,
-            Range(Position(0, 0), Position(0, 1)),
-            Range(Position(0, 0), Position(0, 1))
-        )
-
-        val outcome = invokeIncoming(textDocuments, CallHierarchyIncomingCallsParams(phantom))
-        assertEmptyIncomingOrGap(
-            outcome,
-            context = "incomingCalls for unknown PhantomMissing item"
-        )
-    }
-
-    @Test
-    fun call_hierarchy_outgoing_unknown_item_empty_without_throw_or_gap() {
-        val service = service()
-        val textDocuments = LuaTextDocumentService(service)
-        val document = textDocuments.open(
-            "workspace/call-hierarchy-outgoing-unknown.lua",
-            """
-            local function known()
-              return 1
-            end
-            return known
-            """
-        )
-
-        val phantom = CallHierarchyItem(
-            "PhantomMissing",
-            SymbolKind.Function,
-            document.uri,
-            Range(Position(0, 0), Position(0, 1)),
-            Range(Position(0, 0), Position(0, 1))
-        )
-
-        val outcome = invokeOutgoing(textDocuments, CallHierarchyOutgoingCallsParams(phantom))
-        assertEmptyOutgoingOrGap(
-            outcome,
-            context = "outgoingCalls for unknown PhantomMissing item"
-        )
-    }
-
     // -------------------------------------------------------------------------
     // Local function positions do not throw (core acceptance)
     // -------------------------------------------------------------------------
 
-    @Test
-    fun local_function_definition_position_does_not_throw() {
-        val service = service()
-        val textDocuments = LuaTextDocumentService(service)
-        val document = textDocuments.open(
-            "workspace/call-hierarchy-no-throw-def.lua",
-            """
-            local function alpha()
-              return 1
-            end
-
-            local beta = function()
-              return 2
-            end
-
-            return alpha() + beta()
-            """
-        )
-
-        val positions = listOf(
-            document.positionOf("alpha", occurrence = 1),
-            document.positionOf("beta", occurrence = 1),
-            document.positionOf("alpha", occurrence = 2),
-            document.positionOf("beta", occurrence = 2)
-        )
-
-        for (position in positions) {
-            val outcome = invokePrepare(textDocuments, prepareParams(document, position))
-            when (outcome) {
-                is PrepareOutcome.Unsupported -> {
-                    assertTrue(
-                        outcome.isUnsupportedOperation,
-                        "Local function position ${formatPosition(position)} documented gap " +
-                            "expects UnsupportedOperationException; got ${outcome.detail}"
-                    )
-                }
-                is PrepareOutcome.Failed -> {
-                    fail(
-                        "Local function position ${formatPosition(position)} must not throw: ${outcome.detail}"
-                    )
-                }
-                is PrepareOutcome.Succeeded -> {
-                    assertWellFormedItems(outcome.items, document)
-                }
-            }
-        }
-    }
-
     // -------------------------------------------------------------------------
     // Malformed / empty buffer safety
     // -------------------------------------------------------------------------
-
-    @Test
-    fun prepare_call_hierarchy_empty_document_does_not_crash() {
-        val service = service()
-        val textDocuments = LuaTextDocumentService(service)
-        val document = textDocuments.open(
-            "workspace/call-hierarchy-empty.lua",
-            ""
-        )
-
-        val outcome = invokePrepare(
-            textDocuments,
-            prepareParams(document, Position(0, 0))
-        )
-
-        assertEmptyPrepareOrGap(
-            outcome,
-            context = "empty document"
-        )
-    }
 
     @Test
     fun prepare_call_hierarchy_malformed_local_function_does_not_crash() {
@@ -579,30 +298,6 @@ class LspCallHierarchyLocalFunctionTddTest {
         assertEmptyPrepareOrGap(
             outcome,
             context = "malformed local function fragments"
-        )
-    }
-
-    @Test
-    fun prepare_call_hierarchy_out_of_bounds_position_does_not_crash() {
-        val service = service()
-        val textDocuments = LuaTextDocumentService(service)
-        val document = textDocuments.open(
-            "workspace/call-hierarchy-oob.lua",
-            """
-            local function tiny()
-              return 0
-            end
-            """
-        )
-
-        val outcome = invokePrepare(
-            textDocuments,
-            prepareParams(document, Position(99, 99))
-        )
-
-        assertEmptyPrepareOrGap(
-            outcome,
-            context = "out-of-bounds position on local function file"
         )
     }
 

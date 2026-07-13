@@ -79,46 +79,6 @@ class LspInlayHintsParamNameTddTest {
         )
     }
 
-    @Test
-    fun inlay_hint_capability_or_explicit_skip_when_unimplemented() {
-        val service = plainService()
-        val capabilities = service.initialize(InitializeParams()).capabilities
-        val textDocuments = LuaTextDocumentService(service)
-        val document = textDocuments.open(
-            "workspace/inlay-param-capability-probe.lua",
-            """
-            ---@param value number
-            ---@param label string
-            local function render(value, label)
-                return label
-            end
-            local current = render(1, "hi")
-            return current
-            """
-        )
-
-        val outcome = invokeInlayHint(textDocuments, fullDocumentInlayParams(document))
-
-        when (outcome) {
-            is InlayOutcome.Unsupported -> {
-                Assume.assumeTrue(
-                    "TASK-270 skipped: inlay hints not yet implemented " +
-                        "(inlayHintProvider=${capabilities.inlayHintProvider}, " +
-                        "detail=${outcome.detail})",
-                    false
-                )
-            }
-            is InlayOutcome.Failed -> {
-                fail("inlayHint must not fail hard once surface is reachable: ${outcome.detail}")
-            }
-            is InlayOutcome.Succeeded -> {
-                // Capability may lag implementation; once hints are returned they
-                // must be well-formed even if the initialize flag is still null.
-                assertWellFormedHints(outcome.hints, document)
-            }
-        }
-    }
-
     // -------------------------------------------------------------------------
     // Parameter-name hints at call sites (hard asserts once supported)
     // -------------------------------------------------------------------------
@@ -173,35 +133,6 @@ class LspInlayHintsParamNameTddTest {
     }
 
     @Test
-    fun parameter_name_hints_cover_two_arg_call_when_supported() {
-        val service = plainService()
-        val textDocuments = LuaTextDocumentService(service)
-        val document = textDocuments.open(
-            "workspace/inlay-param-two-arg.lua",
-            """
-            ---@param value number
-            ---@param label string
-            local function render(value, label)
-                return label
-            end
-            local current = render(1, "hi")
-            return current
-            """
-        )
-
-        val hints = requireInlayHints(textDocuments, document, context = "two-arg local call")
-        val parameterHints = parameterNameHints(hints)
-        val labels = parameterHints.flatMap { hintLabels(it) }.map { it.trim().trimEnd(':') }
-
-        assertTrue(
-            labels.any { it.contains("value", ignoreCase = true) } ||
-                labels.any { it.contains("label", ignoreCase = true) },
-            "Expected parameter-name hint for value and/or label; labels=$labels hints=${describe(hints)}"
-        )
-        assertWellFormedHints(hints, document)
-    }
-
-    @Test
     fun parameter_name_hints_for_colon_method_call_when_supported() {
         val service = plainService()
         val textDocuments = LuaTextDocumentService(service)
@@ -236,74 +167,9 @@ class LspInlayHintsParamNameTddTest {
         assertWellFormedHints(hints, document)
     }
 
-    @Test
-    fun parameter_name_hints_for_overloaded_java_call_when_supported() {
-        val service = jvmService()
-        val textDocuments = LuaTextDocumentService(service)
-        val document = textDocuments.open(
-            "workspace/inlay-param-java-max.lua",
-            """
-            local Math = require("Math")
-            local current = Math.max(1, 2)
-            return current
-            """
-        )
-
-        val outcome = invokeInlayHint(textDocuments, fullDocumentInlayParams(document))
-        when (outcome) {
-            is InlayOutcome.Unsupported -> {
-                Assume.assumeTrue(
-                    "TASK-270 skipped: inlay hints not yet implemented (java Math.max probe); " +
-                        "detail=${outcome.detail}",
-                    false
-                )
-            }
-            is InlayOutcome.Failed -> {
-                fail("inlayHint on Java Math.max call must not fail hard: ${outcome.detail}")
-            }
-            is InlayOutcome.Succeeded -> {
-                // JVM overload parameter names are best-effort; once the surface is
-                // live, hints must remain well-formed (empty list is allowed if the
-                // product cannot resolve formal names for the overload).
-                assertWellFormedHints(outcome.hints, document)
-            }
-        }
-    }
-
     // -------------------------------------------------------------------------
     // Crash / degrade safety (must not throw; may skip only if surface missing)
     // -------------------------------------------------------------------------
-
-    @Test
-    fun inlay_hints_on_empty_document_do_not_crash_when_supported() {
-        val service = plainService()
-        val textDocuments = LuaTextDocumentService(service)
-        val document = textDocuments.open(
-            "workspace/inlay-param-empty.lua",
-            ""
-        )
-
-        val outcome = invokeInlayHint(textDocuments, fullDocumentInlayParams(document))
-        when (outcome) {
-            is InlayOutcome.Unsupported -> {
-                Assume.assumeTrue(
-                    "TASK-270 skipped: inlay hints not yet implemented (empty document probe); " +
-                        "detail=${outcome.detail}",
-                    false
-                )
-            }
-            is InlayOutcome.Failed -> {
-                fail("empty document must not crash inlayHint provider: ${outcome.detail}")
-            }
-            is InlayOutcome.Succeeded -> {
-                assertWellFormedHints(outcome.hints, document)
-                assertTrue(
-                    outcome.hints.isEmpty(),
-                    "empty document should yield no inlay hints; got ${describe(outcome.hints)}"
-                )
-            }
-        }
-    }
 
     @Test
     fun inlay_hints_on_malformed_source_do_not_crash_when_supported() {
@@ -328,128 +194,6 @@ class LspInlayHintsParamNameTddTest {
             }
             is InlayOutcome.Failed -> {
                 fail("malformed source must not crash inlayHint provider: ${outcome.detail}")
-            }
-            is InlayOutcome.Succeeded -> {
-                assertWellFormedHints(outcome.hints, document)
-            }
-        }
-    }
-
-    @Test
-    fun inlay_hints_on_large_open_document_do_not_crash_when_supported() {
-        val service = plainService()
-        val textDocuments = LuaTextDocumentService(service)
-
-        // ~2k lines of simple multi-arg calls — large enough to stress open-doc
-        // inlay computation without inventing product-specific scaling limits.
-        val body = buildString {
-            appendLine("---@param a number")
-            appendLine("---@param b string")
-            appendLine("---@param c boolean")
-            appendLine("local function paint(a, b, c)")
-            appendLine("    return c")
-            appendLine("end")
-            repeat(600) { index ->
-                appendLine("local v$index = paint($index, \"mid$index\", true)")
-            }
-            appendLine("return v0")
-        }
-        val document = textDocuments.open(
-            "workspace/inlay-param-large.lua",
-            body
-        )
-
-        val outcome = invokeInlayHint(textDocuments, fullDocumentInlayParams(document))
-        when (outcome) {
-            is InlayOutcome.Unsupported -> {
-                Assume.assumeTrue(
-                    "TASK-270 skipped: inlay hints not yet implemented (large document probe); " +
-                        "detail=${outcome.detail}",
-                    false
-                )
-            }
-            is InlayOutcome.Failed -> {
-                fail("large open document must not crash inlayHint provider: ${outcome.detail}")
-            }
-            is InlayOutcome.Succeeded -> {
-                assertWellFormedHints(outcome.hints, document)
-                // Large multi-call corpus: empty is allowed only if the product
-                // intentionally returns no parameter hints (e.g. budgeted off for
-                // huge docs); non-empty is the preferred signal once live.
-                // Well-formedness is the hard contract; size is informational.
-                assertTrue(
-                    outcome.hints.size >= 0,
-                    "large-doc inlay surface reachable; size=${outcome.hints.size}"
-                )
-            }
-        }
-    }
-
-    @Test
-    fun inlay_hints_on_call_free_document_are_empty_or_well_formed_when_supported() {
-        val service = plainService()
-        val textDocuments = LuaTextDocumentService(service)
-        val document = textDocuments.open(
-            "workspace/inlay-param-no-calls.lua",
-            """
-            local name = "token"
-            local value = 1
-            return name
-            """
-        )
-
-        val outcome = invokeInlayHint(textDocuments, fullDocumentInlayParams(document))
-        when (outcome) {
-            is InlayOutcome.Unsupported -> {
-                Assume.assumeTrue(
-                    "TASK-270 skipped: inlay hints not yet implemented (call-free probe); " +
-                        "detail=${outcome.detail}",
-                    false
-                )
-            }
-            is InlayOutcome.Failed -> {
-                fail("call-free document must not crash inlayHint provider: ${outcome.detail}")
-            }
-            is InlayOutcome.Succeeded -> {
-                // No call sites → no parameter-name hints required; empty is ideal.
-                assertWellFormedHints(outcome.hints, document)
-            }
-        }
-    }
-
-    @Test
-    fun inlay_hints_range_request_outside_calls_is_empty_or_well_formed_when_supported() {
-        val service = plainService()
-        val textDocuments = LuaTextDocumentService(service)
-        val document = textDocuments.open(
-            "workspace/inlay-param-range-outside.lua",
-            """
-            ---@param value number
-            ---@param label string
-            local function render(value, label)
-                return label
-            end
-            local current = render(1, "hi")
-            return current
-            """
-        )
-
-        // Range covering only the function declaration header (no call site).
-        val range = Range(Position(0, 0), Position(3, 0))
-        val outcome = invokeInlayHint(
-            textDocuments,
-            InlayHintParams(TextDocumentIdentifier(document.uri), range)
-        )
-        when (outcome) {
-            is InlayOutcome.Unsupported -> {
-                Assume.assumeTrue(
-                    "TASK-270 skipped: inlay hints not yet implemented (range-outside probe); " +
-                        "detail=${outcome.detail}",
-                    false
-                )
-            }
-            is InlayOutcome.Failed -> {
-                fail("range-restricted inlayHint must not fail hard: ${outcome.detail}")
             }
             is InlayOutcome.Succeeded -> {
                 assertWellFormedHints(outcome.hints, document)

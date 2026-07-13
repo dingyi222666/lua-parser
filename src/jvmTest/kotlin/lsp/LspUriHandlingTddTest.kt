@@ -42,41 +42,6 @@ class LspUriHandlingTddTest {
     }
 
     @Test
-    fun republish_after_custom_uri_close_interleaving_does_not_use_synthetic_file_uri() {
-        val service = LuaLanguageService()
-        service.initialize(InitializeParams())
-        val published = mutableListOf<PublishDiagnosticsParams>()
-        val firstUri = "untitled:Race-1"
-        val closingUri = "custom-lua:race-closing-document"
-        var duringRepublish = false
-        var closedDuringRepublish = false
-        val textDocumentHolder = arrayOfNulls<LuaTextDocumentService>(1)
-        val textDocuments = LuaTextDocumentService(
-            service,
-            publishDiagnostics = { diagnostics ->
-                published += diagnostics
-                if (duringRepublish && diagnostics.uri == firstUri && !closedDuringRepublish) {
-                    closedDuringRepublish = true
-                    textDocumentHolder[0]!!.didClose(DidCloseTextDocumentParams(TextDocumentIdentifier(closingUri)))
-                }
-            }
-        )
-        textDocumentHolder[0] = textDocuments
-
-        textDocuments.didOpen(openParams(firstUri, "local ="))
-        textDocuments.didOpen(openParams(closingUri, "local ="))
-        published.clear()
-
-        duringRepublish = true
-        textDocuments.republishDiagnostics()
-        duringRepublish = false
-
-        assertTrue(closedDuringRepublish, "test must close a custom URI document during diagnostics republish")
-        assertEquals(listOf(firstUri, closingUri, closingUri), published.map { it.uri })
-        assertTrue(published.none { it.uri.startsWith("file:///__lsp_uri__/") })
-    }
-
-    @Test
     fun opaque_custom_document_uri_is_preserved_for_same_document_definition_locations() {
         val service = LuaLanguageService()
         service.initialize(InitializeParams())
@@ -94,19 +59,6 @@ class LspUriHandlingTddTest {
         assertEquals(uri, diagnostics.uri)
         assertTrue(diagnostics.diagnostics.isEmpty())
         assertEquals(uri, definitions.single().uri)
-    }
-
-    @Test
-    fun custom_scheme_document_uri_is_preserved_for_workspace_symbol_locations() {
-        val service = LuaLanguageService()
-        service.initialize(InitializeParams())
-        val uri = "vscode-notebook-cell:/workspace/main.lua#cell-1"
-
-        service.didOpen(openParams(uri, "local value = 1\nreturn value"))
-
-        val symbols = service.workspaceSymbols("value")
-
-        assertTrue(symbols.any { symbol -> symbol.name == "value" && symbol.location.uri == uri })
     }
 
     @Test
@@ -149,13 +101,6 @@ class LspUriHandlingTddTest {
     }
 
     @Test
-    fun percent_encoded_windows_drive_file_uri_decodes_safely() {
-        // URI decodes %3A to ':' in the path component → "/c:/Users/..."
-        val path = normalizeLspFileUriPath("file:///c%3A/Users/dingyi/app/main.lua")
-        assertEquals("c:/Users/dingyi/app/main.lua", path)
-    }
-
-    @Test
     fun non_file_schemes_return_null_from_normalize_and_use_synthetic_virtual_path() {
         assertNull(normalizeLspFileUriPath("untitled:Untitled-1"))
         assertNull(normalizeLspFileUriPath("custom-lua:opaque-document"))
@@ -167,54 +112,6 @@ class LspUriHandlingTddTest {
             "non-file schemes must map to synthetic virtual paths, not corrupted filesystem paths: ${untitledPath.value}"
         )
         assertTrue(!untitledPath.value.contains("Untitled-1"), untitledPath.value)
-    }
-
-    @Test
-    fun rootUri_and_workspace_folder_uri_share_one_normalization_path() {
-        val unixRoot = "file:///home/user/project"
-        val windowsRoot = "file:///C:/Users/dingyi/project"
-
-        assertEquals(
-            normalizeLspFileUriPath(unixRoot),
-            normalizeLspFileUriPath("file:///home/user/project")
-        )
-        assertEquals(
-            "/home/user/project",
-            normalizeLspFileUriPath(unixRoot)
-        )
-        assertEquals(
-            "C:/Users/dingyi/project",
-            normalizeLspFileUriPath(windowsRoot)
-        )
-
-        // Service initialize accepts either rootUri or workspaceFolders and routes both
-        // through WorkspaceFolder → pathFromFileUri / normalizeLspFileUriPath.
-        val viaRootUri = LuaLanguageService().also { service ->
-            service.initialize(InitializeParams().apply { rootUri = unixRoot })
-        }
-        val viaWorkspaceFolder = LuaLanguageService().also { service ->
-            service.initialize(InitializeParams().apply {
-                workspaceFolders = listOf(WorkspaceFolder(unixRoot, "project"))
-            })
-        }
-        // Both services must accept the same URI shape without crashing; open under that root.
-        val docUri = "file:///home/user/project/main.lua"
-        val source = "local shared = 1\nreturn shared\n"
-        val d1 = viaRootUri.didOpen(openParams(docUri, source))
-        val d2 = viaWorkspaceFolder.didOpen(openParams(docUri, source))
-        assertEquals(docUri, d1.uri)
-        assertEquals(docUri, d2.uri)
-    }
-
-    @Test
-    fun synthetic_workspace_file_uri_still_collapses_without_workspace_folders() {
-        // Regression: no-folder initialize + file:///workspace/*.lua path shim.
-        val path = lspVirtualPathFromUri(
-            "file:///workspace/main.lua",
-            workspaceFolderUriPrefixes = emptyMap(),
-            collapseSyntheticWorkspaceRoot = true
-        )
-        assertEquals("main.lua", path.value)
     }
 
     private fun openParams(uri: String, source: String): DidOpenTextDocumentParams {

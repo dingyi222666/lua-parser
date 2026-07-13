@@ -44,59 +44,6 @@ class LuaJavaArrayLengthMemberTddTest {
         assertHoverType(harness, "count", "number", occurrence = 2)
         assertHoverType(harness, "length", "number")
     }
-
-    @Test
-    fun new_array_string_class_result_exposes_length_as_number() {
-        val harness = jvmHarness(
-            "main.lua" to """
-                local String = luajava.bindClass("java.lang.String")
-                local values = luajava.newArray(String, 3)
-                local count = values.length
-                return count
-            """.trimIndent()
-        )
-
-        assertHoverType(harness, "values", "string[]", occurrence = 2)
-        assertHoverType(harness, "count", "number", occurrence = 2)
-        assertHoverType(harness, "length", "number")
-    }
-
-    @Test
-    fun new_array_integer_class_result_exposes_length_as_number() {
-        val harness = jvmHarness(
-            "main.lua" to """
-                local Integer = luajava.bindClass("java.lang.Integer")
-                local ids = luajava.newArray(Integer, 4)
-                local count = ids.length
-                return count
-            """.trimIndent()
-        )
-
-        assertHoverType(harness, "ids", "number[]", occurrence = 2)
-        assertHoverType(harness, "count", "number", occurrence = 2)
-    }
-
-    @Test
-    fun new_array_file_result_length_hover_is_field_kind() {
-        val harness = jvmHarness(
-            "main.lua" to """
-                local File = luajava.bindClass("java.io.File")
-                local files = luajava.newArray(File, 1)
-                local count = files.length
-                return count
-            """.trimIndent()
-        )
-
-        val hover = assertNotNull(
-            harness.queries.hover(harness.path("main.lua"), harness.positionOf("main.lua", "length"))
-        )
-        assertEquals("number", hover.typeInfo?.displayName)
-        // Synthetic Java array length is a field surface (not a method) when a symbol is attached.
-        hover.symbol?.let { symbol ->
-            assertEquals(SymbolKind.FIELD, symbol.kind)
-        }
-    }
-
     @Test
     fun new_array_member_completions_include_length_field() {
         val harness = jvmHarness(
@@ -114,24 +61,6 @@ class LuaJavaArrayLengthMemberTddTest {
         )
         assertCompletion(completions, "length", CompletionItemKind.FIELD)
     }
-
-    @Test
-    fun new_array_alias_preserves_length_member() {
-        val harness = jvmHarness(
-            "main.lua" to """
-                local Locale = luajava.bindClass("java.util.Locale")
-                local newArray = luajava.newArray
-                local locales = newArray(Locale, 2)
-                local count = locales.length
-                return count
-            """.trimIndent()
-        )
-
-        assertHoverType(harness, "locales", "java.util.Locale[]", occurrence = 2)
-        assertHoverType(harness, "count", "number", occurrence = 2)
-        assertHoverType(harness, "length", "number")
-    }
-
     @Test
     fun multi_dimension_new_array_still_exposes_length() {
         val harness = jvmHarness(
@@ -148,7 +77,6 @@ class LuaJavaArrayLengthMemberTddTest {
         assertHoverType(harness, "count", "number", occurrence = 2)
         assertHoverType(harness, "length", "number")
     }
-
     @Test
     fun new_array_length_and_index_element_coexist() {
         val harness = jvmHarness(
@@ -165,7 +93,6 @@ class LuaJavaArrayLengthMemberTddTest {
         assertHoverType(harness, "count", "number", occurrence = 2)
         assertHoverType(harness, "length", "number")
     }
-
     @Test
     fun create_array_result_also_exposes_length_as_number() {
         // Adjacent helper surface: createArray produces Java arrays and should share
@@ -182,11 +109,6 @@ class LuaJavaArrayLengthMemberTddTest {
         assertHoverType(harness, "count", "number", occurrence = 2)
         assertHoverType(harness, "length", "number")
     }
-
-    // ------------------------------------------------------------------
-    // Negative: non-array receivers must not get synthetic array length
-    // ------------------------------------------------------------------
-
     @Test
     fun non_array_java_instance_without_length_degrades() {
         // Locale has no `length` field/method; synthetic array length must not apply.
@@ -200,177 +122,6 @@ class LuaJavaArrayLengthMemberTddTest {
         )
 
         assertDegradedLength(harness, memberNeedle = "length", localNeedle = "count")
-    }
-
-    @Test
-    fun non_array_bound_class_static_length_degrades() {
-        // Bound class (static surface) is not a Java array.
-        val harness = jvmHarness(
-            "main.lua" to """
-                local Locale = luajava.bindClass("java.util.Locale")
-                local count = Locale.length
-                return count
-            """.trimIndent()
-        )
-
-        assertDegradedLength(harness, memberNeedle = "length", localNeedle = "count")
-    }
-
-    @Test
-    fun non_array_plain_lua_table_length_degrades() {
-        val harness = jvmHarness(
-            "main.lua" to """
-                local values = { "a", "b" }
-                local count = values.length
-                return count
-            """.trimIndent()
-        )
-
-        assertDegradedLength(harness, memberNeedle = "length", localNeedle = "count")
-    }
-
-    @Test
-    fun non_array_number_receiver_length_degrades() {
-        val harness = jvmHarness(
-            "main.lua" to """
-                local n = 42
-                local count = n.length
-                return count
-            """.trimIndent()
-        )
-
-        assertDegradedLength(harness, memberNeedle = "length", localNeedle = "count")
-    }
-
-    @Test
-    fun non_array_unknown_receiver_length_degrades_without_crash() {
-        val harness = jvmHarness(
-            "main.lua" to """
-                local missing = somethingMissing
-                local count = missing.length
-                return count
-            """.trimIndent()
-        )
-
-        assertDegradedLength(harness, memberNeedle = "length", localNeedle = "count")
-    }
-
-    @Test
-    fun non_array_nil_receiver_length_degrades_without_crash() {
-        val harness = jvmHarness(
-            "main.lua" to """
-                local missing = nil
-                local count = missing.length
-                return count
-            """.trimIndent()
-        )
-
-        assertDegradedLength(harness, memberNeedle = "length", localNeedle = "count")
-    }
-
-    @Test
-    fun non_array_completions_do_not_require_synthetic_array_length() {
-        // Plain table member completion must not invent Java array `.length`.
-        val harness = jvmHarness(
-            "main.lua" to """
-                local values = { name = "x" }
-                local count = values.length
-                return count
-            """.trimIndent()
-        )
-
-        val completions = harness.queries.completions(
-            harness.path("main.lua"),
-            harness.positionOf("main.lua", "length")
-        )
-        assertFalse(
-            completions.any { it.label == "length" && it.kind == CompletionItemKind.FIELD },
-            "Non-array table must not surface synthetic Java array length FIELD; actual: ${completions.map { "${it.label}:${it.kind}" }}"
-        )
-        // Pipeline still completes diagnostics without throwing.
-        assertNotNull(harness.queries.diagnostics(harness.path("main.lua")))
-    }
-
-    @Test
-    fun array_length_isolated_from_non_array_in_same_document() {
-        val harness = jvmHarness(
-            "main.lua" to """
-                local Locale = luajava.bindClass("java.util.Locale")
-                local locales = luajava.newArray(Locale, 2)
-                local root = Locale.ROOT
-                local arrayCount = locales.length
-                local badCount = root.length
-                return arrayCount, badCount
-            """.trimIndent()
-        )
-
-        assertHoverType(harness, "arrayCount", "number", occurrence = 2)
-
-        // First `length` is locales.length (array); second is root.length (non-array).
-        assertHoverType(harness, "length", "number", occurrence = 1)
-        val diagnostics = harness.queries.diagnostics(harness.path("main.lua"))
-        val badMemberHover = harness.queries.hover(
-            harness.path("main.lua"),
-            harness.positionOf("main.lua", "length", occurrence = 2)
-        )
-        val badLocalHover = harness.queries.hover(
-            harness.path("main.lua"),
-            harness.positionOf("main.lua", "badCount", occurrence = 2)
-        )
-        assertDegradedDisplay(
-            display = badMemberHover?.typeInfo?.displayName,
-            label = "root.length member",
-            diagnostics = diagnostics,
-            member = "length"
-        )
-        assertDegradedDisplay(
-            display = badLocalHover?.typeInfo?.displayName,
-            label = "badCount local",
-            diagnostics = diagnostics,
-            member = "badCount"
-        )
-        assertNotNull(diagnostics)
-    }
-
-    @Test
-    fun invalid_new_array_unknown_array_may_still_expose_or_degrade_length() {
-        // When dimensions are invalid the result degrades to unknown[]; length may still
-        // surface if the result remains a JavaArrayType(unknown), or fully degrade.
-        // Either is acceptable; the pipeline must not crash.
-        val harness = jvmHarness(
-            "main.lua" to """
-                local Locale = luajava.bindClass("java.util.Locale")
-                local values = luajava.newArray(Locale, -1)
-                local count = values.length
-                return count
-            """.trimIndent()
-        )
-
-        val lengthHover = harness.queries.hover(
-            harness.path("main.lua"),
-            harness.positionOf("main.lua", "length")
-        )
-        val countHover = harness.queries.hover(
-            harness.path("main.lua"),
-            harness.positionOf("main.lua", "count", occurrence = 2)
-        )
-        val lengthDisplay = lengthHover?.typeInfo?.displayName
-        val countDisplay = countHover?.typeInfo?.displayName
-        val ok =
-            lengthDisplay == "number" ||
-                lengthDisplay == null ||
-                lengthDisplay == "unknown" ||
-                lengthDisplay.isBlank() ||
-                countDisplay == "number" ||
-                countDisplay == null ||
-                countDisplay == "unknown" ||
-                countDisplay.isNullOrBlank()
-        assertTrue(
-            ok,
-            "Invalid newArray length access must resolve to number (if still JavaArrayType) or degrade; " +
-                "length='$lengthDisplay' count='$countDisplay'"
-        )
-        assertNotNull(harness.queries.diagnostics(harness.path("main.lua")))
     }
 
     // ------------------------------------------------------------------

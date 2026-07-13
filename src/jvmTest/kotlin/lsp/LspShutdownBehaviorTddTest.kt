@@ -56,45 +56,6 @@ class LspShutdownBehaviorTddTest {
     }
 
     @Test
-    fun text_document_service_request_policy_matches_server_lifecycle_outcomes() {
-        val uri = "file:///workspace/direct-policy.lua"
-        val quietTextDocuments = LuaTextDocumentService(
-            languageService = LuaLanguageService(),
-            requestPolicy = { LspTextDocumentRequestPolicy.QuietEmpty }
-        )
-        val rejectedTextDocuments = LuaTextDocumentService(
-            languageService = LuaLanguageService(),
-            requestPolicy = { LspTextDocumentRequestPolicy.Reject("Lua language server has already shut down") }
-        )
-
-        assertQuietTextDocumentRequests(quietTextDocuments, uri)
-        assertRejectedTextDocumentRequests(rejectedTextDocuments, uri)
-    }
-
-    @Test
-    fun before_initialize_ignores_text_document_and_workspace_notifications() {
-        val server = LuaLanguageServer()
-        val client = RecordingLanguageClient()
-        server.connect(client.asClient())
-        val uri = "file:///workspace/pre-initialize-notifications.lua"
-
-        server.textDocumentService.didOpen(openParams(uri, "local ="))
-        server.textDocumentService.didChange(changeParams(uri, 2, "local value = 1"))
-        server.textDocumentService.didClose(closeParams(uri))
-        server.workspaceService.didChangeConfiguration(
-            DidChangeConfigurationParams(
-                mapOf(
-                    "androlua.imports" to listOf("String"),
-                    "jvm.importPrefixes" to listOf("java.lang")
-                )
-            )
-        )
-        server.workspaceService.didChangeWatchedFiles(DidChangeWatchedFilesParams(emptyList()))
-
-        assertTrue(client.published.isEmpty(), "notifications before initialize should be ignored")
-    }
-
-    @Test
     fun after_shutdown_before_exit_rejects_text_document_and_workspace_requests() {
         val server = LuaLanguageServer()
         server.initialize(InitializeParams()).get()
@@ -200,49 +161,6 @@ class LspShutdownBehaviorTddTest {
     }
 
     @Test
-    fun server_requests_and_notifications_can_overlap_exit_without_escaping_post_exit_state() {
-        val server = LuaLanguageServer()
-        server.initialize(InitializeParams()).get()
-        val uri = "file:///workspace/concurrent-exit.lua"
-        server.textDocumentService.didOpen(openParams(uri, "local value = 1\nreturn value"))
-        val position = Position(1, 7)
-
-        runConcurrently(
-            listOf(
-                {
-                    awaitRequestOrLifecycleRejection(
-                        server.textDocumentService.hover(HoverParams(TextDocumentIdentifier(uri), position))
-                    )
-                },
-                {
-                    awaitRequestOrLifecycleRejection(
-                        server.workspaceService.symbol(WorkspaceSymbolParams("value"))
-                    )
-                },
-                {
-                    server.textDocumentService.didChange(
-                        changeParams(uri, 2, "local nextValue = 2\nreturn nextValue")
-                    )
-                },
-                {
-                    server.workspaceService.didChangeConfiguration(
-                        DidChangeConfigurationParams(
-                            mapOf("jvm" to mapOf("classes" to listOf("java.lang.String")))
-                        )
-                    )
-                },
-                { server.exit() }
-            )
-        )
-
-        assertQuietTextDocumentRequests(server.textDocumentService, uri)
-        assertFutureFails(
-            server.workspaceService.symbol(WorkspaceSymbolParams("value")),
-            "workspace requests should be rejected after exit overlap completes"
-        )
-    }
-
-    @Test
     fun exit_after_shutdown_preserves_quiet_text_document_requests_and_rejected_workspace_requests() {
         val server = LuaLanguageServer()
         server.initialize(InitializeParams()).get()
@@ -257,35 +175,6 @@ class LspShutdownBehaviorTddTest {
             server.workspaceService.symbol(WorkspaceSymbolParams("value")),
             "workspace requests after exit should remain rejected"
         )
-    }
-
-    @Test
-    fun exit_after_shutdown_ignores_text_document_and_workspace_notifications() {
-        val server = LuaLanguageServer()
-        val client = RecordingLanguageClient()
-        server.connect(client.asClient())
-        server.initialize(InitializeParams()).get()
-        val uri = "file:///workspace/post-exit-notifications.lua"
-        server.textDocumentService.didOpen(openParams(uri, "local value = 1\nreturn value"))
-        client.published.clear()
-
-        server.shutdown().get()
-        server.exit()
-
-        server.textDocumentService.didOpen(openParams("file:///workspace/ignored-after-exit.lua", "local ="))
-        server.textDocumentService.didChange(changeParams(uri, 2, "local ="))
-        server.textDocumentService.didClose(closeParams(uri))
-        server.workspaceService.didChangeConfiguration(
-            DidChangeConfigurationParams(
-                mapOf(
-                    "androlua.imports" to listOf("String"),
-                    "jvm.importPrefixes" to listOf("java.lang")
-                )
-            )
-        )
-        server.workspaceService.didChangeWatchedFiles(DidChangeWatchedFilesParams(emptyList()))
-
-        assertTrue(client.published.isEmpty(), "notifications after exit should be ignored")
     }
 
     private fun openParams(

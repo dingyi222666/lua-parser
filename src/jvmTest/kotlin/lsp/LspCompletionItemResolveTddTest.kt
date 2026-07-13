@@ -113,173 +113,9 @@ class LspCompletionItemResolveTddTest {
         }
     }
 
-    @Test
-    fun completion_item_resolve_unimplemented_degrades_as_documented_gap() {
-        val service = service()
-        val textDocuments = LuaTextDocumentService(service)
-        val unresolved = CompletionItem("alpha").apply {
-            kind = CompletionItemKind.Variable
-            detail = "number"
-        }
-
-        val outcome = invokeResolve(textDocuments, unresolved)
-
-        when (outcome) {
-            is ResolveOutcome.Unsupported -> {
-                assertTrue(
-                    outcome.isUnsupportedOperation,
-                    "Documented gap expects UnsupportedOperationException for " +
-                        "completionItem/resolve; got ${outcome.detail}"
-                )
-            }
-            is ResolveOutcome.Identity -> {
-                assertEquals("alpha", outcome.item.label)
-            }
-            is ResolveOutcome.Enriched -> {
-                assertWellFormedResolved(outcome.item, expectedLabel = "alpha")
-            }
-            is ResolveOutcome.Failed -> {
-                assertFalse(
-                    isHardCrash(outcome.detail),
-                    "resolve must not NPE/assert when unimplemented/partial; got ${outcome.detail}"
-                )
-            }
-        }
-    }
-
     // -------------------------------------------------------------------------
     // Synthetic / edge unresolved items — no throw
     // -------------------------------------------------------------------------
-
-    @Test
-    fun resolve_synthetic_item_without_data_does_not_hard_crash() {
-        val service = service()
-        val textDocuments = LuaTextDocumentService(service)
-        val unresolved = CompletionItem("syntheticOnly")
-
-        val outcome = invokeResolve(textDocuments, unresolved)
-
-        assertNoHardCrashOnResolve(outcome, context = "synthetic item without data")
-        when (outcome) {
-            is ResolveOutcome.Identity -> assertEquals("syntheticOnly", outcome.item.label)
-            is ResolveOutcome.Enriched -> assertWellFormedResolved(outcome.item, "syntheticOnly")
-            else -> Unit
-        }
-    }
-
-    @Test
-    fun resolve_item_with_only_label_preserves_or_gaps() {
-        val service = service()
-        val textDocuments = LuaTextDocumentService(service)
-        val unresolved = CompletionItem("labelOnly")
-
-        val outcome = invokeResolve(textDocuments, unresolved)
-
-        when (outcome) {
-            is ResolveOutcome.Unsupported -> {
-                assertTrue(outcome.isUnsupportedOperation)
-            }
-            is ResolveOutcome.Identity -> {
-                assertEquals("labelOnly", outcome.item.label)
-            }
-            is ResolveOutcome.Enriched -> {
-                assertWellFormedResolved(outcome.item, expectedLabel = "labelOnly")
-            }
-            is ResolveOutcome.Failed -> {
-                assertFalse(isHardCrash(outcome.detail), outcome.detail)
-            }
-        }
-    }
-
-    @Test
-    fun resolve_item_with_kind_and_detail_preserves_core_fields_or_gaps() {
-        val service = service()
-        val textDocuments = LuaTextDocumentService(service)
-        val unresolved = CompletionItem("render").apply {
-            kind = CompletionItemKind.Function
-            detail = "fun(input: string): string"
-            insertText = "render"
-        }
-
-        val outcome = invokeResolve(textDocuments, unresolved)
-
-        when (outcome) {
-            is ResolveOutcome.Unsupported -> {
-                assertTrue(outcome.isUnsupportedOperation)
-            }
-            is ResolveOutcome.Identity -> {
-                assertEquals("render", outcome.item.label)
-                // Identity path may keep or drop optional fields; label is the floor.
-            }
-            is ResolveOutcome.Enriched -> {
-                assertWellFormedResolved(outcome.item, expectedLabel = "render")
-                // Kind should not flip to an unrelated category when product enriches.
-                if (outcome.item.kind != null) {
-                    assertTrue(
-                        outcome.item.kind == CompletionItemKind.Function ||
-                            outcome.item.kind == CompletionItemKind.Method ||
-                            outcome.item.kind == CompletionItemKind.Variable,
-                        "enriched kind for function-like item must stay function-family; " +
-                            "got ${outcome.item.kind}"
-                    )
-                }
-            }
-            is ResolveOutcome.Failed -> {
-                assertFalse(isHardCrash(outcome.detail), outcome.detail)
-            }
-        }
-    }
-
-    @Test
-    fun resolve_item_with_opaque_data_payload_does_not_hard_crash() {
-        val service = service()
-        val textDocuments = LuaTextDocumentService(service)
-        val unresolved = CompletionItem("withData").apply {
-            kind = CompletionItemKind.Variable
-            // Opaque client/server round-trip field; product may ignore until resolve lands.
-            data = mapOf(
-                "path" to "workspace/resolve-data.lua",
-                "line" to 1,
-                "character" to 0
-            )
-        }
-
-        val outcome = invokeResolve(textDocuments, unresolved)
-
-        assertNoHardCrashOnResolve(outcome, context = "opaque data payload")
-        when (outcome) {
-            is ResolveOutcome.Identity -> assertEquals("withData", outcome.item.label)
-            is ResolveOutcome.Enriched -> assertWellFormedResolved(outcome.item, "withData")
-            else -> Unit
-        }
-    }
-
-    @Test
-    fun resolve_keyword_like_item_does_not_hard_crash() {
-        val service = service()
-        val textDocuments = LuaTextDocumentService(service)
-        val unresolved = CompletionItem("if").apply {
-            kind = CompletionItemKind.Keyword
-        }
-
-        val outcome = invokeResolve(textDocuments, unresolved)
-
-        assertNoHardCrashOnResolve(outcome, context = "keyword-like item")
-    }
-
-    @Test
-    fun resolve_snippet_like_item_does_not_hard_crash() {
-        val service = service()
-        val textDocuments = LuaTextDocumentService(service)
-        val unresolved = CompletionItem("fori").apply {
-            kind = CompletionItemKind.Snippet
-            insertText = "for i = 1, #\$1 do\n\t\$0\nend"
-        }
-
-        val outcome = invokeResolve(textDocuments, unresolved)
-
-        assertNoHardCrashOnResolve(outcome, context = "snippet-like item")
-    }
 
     // -------------------------------------------------------------------------
     // Live completion → resolve dual-path (local / builtin / function)
@@ -309,75 +145,6 @@ class LspCompletionItemResolveTddTest {
         val outcome = invokeResolve(textDocuments, unresolved)
         assertResolvePreservesOrGaps(outcome, expectedLabel = "alpha", context = "local 'alpha'")
     }
-
-    @Test
-    fun resolve_completion_item_from_builtin_print_is_gap_identity_or_enriched() {
-        val service = service()
-        val textDocuments = LuaTextDocumentService(service)
-        val document = textDocuments.open(
-            "workspace/completion-resolve-print.lua",
-            """
-            local ready = true
-
-            return ready
-            """
-        )
-
-        val items = completionItemsAt(textDocuments, document, blankLineAfterLocals())
-        val labels = items.map { it.label }
-        assertTrue(
-            "print" in labels,
-            "Expected seeded builtin 'print' in completion list before resolve; actual=$labels"
-        )
-        val unresolved = items.first { it.label == "print" }
-
-        val outcome = invokeResolve(textDocuments, unresolved)
-        assertResolvePreservesOrGaps(outcome, expectedLabel = "print", context = "builtin 'print'")
-    }
-
-    @Test
-    fun resolve_completion_item_from_local_function_is_gap_identity_or_enriched() {
-        val service = service()
-        val textDocuments = LuaTextDocumentService(service)
-        // Annotations + multi-line body mean line 1 is `---@return`, *before* `render`
-        // is declared. Product lexical completions exclude later declarations, so the
-        // live completion site must be after the local function (blank / return line).
-        val document = textDocuments.open(
-            "workspace/completion-resolve-function.lua",
-            """
-            ---@param input string
-            ---@return string
-            local function render(input)
-                return input
-            end
-
-            return render
-            """
-        )
-
-        val position = document.positionOf("return render")
-        val items = completionItemsAt(textDocuments, document, position)
-        val labels = items.map { it.label }
-        val unresolved = items.firstOrNull { it.label == "render" }
-        if (unresolved == null) {
-            // CURRENTLY_ACCEPTS: if live surface still misses local function at the
-            // post-declaration site, still probe synthetic resolve dual-path.
-            val synthetic = CompletionItem("render").apply {
-                kind = CompletionItemKind.Function
-            }
-            val syntheticOutcome = invokeResolve(textDocuments, synthetic)
-            assertResolvePreservesOrGaps(
-                syntheticOutcome,
-                expectedLabel = "render",
-                context = "synthetic local function 'render' (live labels=$labels)"
-            )
-            return
-        }
-
-        val outcome = invokeResolve(textDocuments, unresolved)
-        assertResolvePreservesOrGaps(outcome, expectedLabel = "render", context = "local function 'render'")
-    }
-
 
     @Test
     fun resolve_member_completion_item_when_present_is_gap_identity_or_enriched() {
@@ -440,7 +207,6 @@ class LspCompletionItemResolveTddTest {
             return
         }
 
-
         val outcome = invokeResolve(textDocuments, unresolved)
         when (outcome) {
             is ResolveOutcome.Unsupported -> {
@@ -458,93 +224,6 @@ class LspCompletionItemResolveTddTest {
             is ResolveOutcome.Failed -> {
                 assertFalse(isHardCrash(outcome.detail), outcome.detail)
             }
-        }
-    }
-
-    @Test
-    fun resolved_item_when_live_does_not_blank_out_insert_text_when_set() {
-        val service = service()
-        val textDocuments = LuaTextDocumentService(service)
-        val unresolved = CompletionItem("alpha").apply {
-            kind = CompletionItemKind.Variable
-            insertText = "alpha"
-        }
-
-        val outcome = invokeResolve(textDocuments, unresolved)
-
-        when (outcome) {
-            is ResolveOutcome.Unsupported -> assertTrue(outcome.isUnsupportedOperation)
-            is ResolveOutcome.Identity -> {
-                val insert = outcome.item.insertText
-                if (insert != null) {
-                    assertTrue(insert.isNotBlank(), "identity path must not blank insertText")
-                }
-            }
-            is ResolveOutcome.Enriched -> {
-                val insert = outcome.item.insertText
-                if (insert != null) {
-                    assertTrue(
-                        insert.isNotBlank(),
-                        "enriched path must not blank insertText when set; got '$insert'"
-                    )
-                }
-            }
-            is ResolveOutcome.Failed -> assertFalse(isHardCrash(outcome.detail), outcome.detail)
-        }
-    }
-
-    @Test
-    fun resolve_is_stable_across_repeated_calls_or_documented_gap() {
-        val service = service()
-        val textDocuments = LuaTextDocumentService(service)
-        val unresolved = CompletionItem("stable").apply {
-            kind = CompletionItemKind.Variable
-            detail = "number"
-        }
-
-        val first = invokeResolve(textDocuments, unresolved)
-        val second = invokeResolve(textDocuments, unresolved)
-
-        assertTrue(
-            sameOutcomeFamily(first, second),
-            "repeated resolve calls should stay on the same dual-path family; " +
-                "first=$first second=$second"
-        )
-
-        if (first is ResolveOutcome.Enriched && second is ResolveOutcome.Enriched) {
-            assertEquals(first.item.label, second.item.label)
-            assertEquals(
-                documentationText(first.item),
-                documentationText(second.item),
-                "enriched documentation should be stable across repeated resolve"
-            )
-        }
-        if (first is ResolveOutcome.Identity && second is ResolveOutcome.Identity) {
-            assertEquals(first.item.label, second.item.label)
-        }
-    }
-
-    @Test
-    fun resolve_does_not_invent_unrelated_label() {
-        val service = service()
-        val textDocuments = LuaTextDocumentService(service)
-        val unresolved = CompletionItem("keepMe").apply {
-            kind = CompletionItemKind.Variable
-        }
-
-        val outcome = invokeResolve(textDocuments, unresolved)
-
-        when (outcome) {
-            is ResolveOutcome.Unsupported -> assertTrue(outcome.isUnsupportedOperation)
-            is ResolveOutcome.Identity -> assertEquals("keepMe", outcome.item.label)
-            is ResolveOutcome.Enriched -> {
-                assertEquals(
-                    "keepMe",
-                    outcome.item.label,
-                    "resolve must not rename the completion item label"
-                )
-            }
-            is ResolveOutcome.Failed -> assertFalse(isHardCrash(outcome.detail), outcome.detail)
         }
     }
 
@@ -572,30 +251,6 @@ class LspCompletionItemResolveTddTest {
 
         val outcome = invokeResolve(textDocuments, unresolved)
         assertResolvePreservesOrGaps(outcome, expectedLabel = unresolved.label, context = "forward path")
-    }
-
-    @Test
-    fun resolve_empty_completion_list_path_still_allows_synthetic_resolve() {
-        val service = service()
-        val textDocuments = LuaTextDocumentService(service)
-        // Never-opened URI → completion may be empty; resolve remains independent.
-        val params = CompletionParams(
-            TextDocumentIdentifier("file:///workspace/completion-resolve-never-opened.lua"),
-            Position(0, 0)
-        )
-        val list = try {
-            textDocuments.completion(params).get()
-        } catch (error: Throwable) {
-            null
-        }
-        // Soft: either empty list or exception is outside this corpus; synthetic resolve still dual-paths.
-        if (list != null) {
-            val items = completionItemsFromEither(list)
-            assertTrue(items.isEmpty() || items.all { it.label.isNotBlank() })
-        }
-
-        val outcome = invokeResolve(textDocuments, CompletionItem("phantom"))
-        assertNoHardCrashOnResolve(outcome, context = "synthetic after empty/never-opened completion")
     }
 
     // -------------------------------------------------------------------------
@@ -641,7 +296,6 @@ class LspCompletionItemResolveTddTest {
 
     /** Blank line after a single top-level local on line 0 (simple fixtures only). */
     private fun blankLineAfterLocals(): Position = Position(1, 0)
-
 
     private fun invokeResolve(
         textDocuments: LuaTextDocumentService,

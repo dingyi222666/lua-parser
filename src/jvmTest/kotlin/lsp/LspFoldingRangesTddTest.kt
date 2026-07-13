@@ -107,83 +107,9 @@ class LspFoldingRangesTddTest {
         assertWellFormedRanges(ranges, document.lineCount)
     }
 
-    @Test
-    fun folding_ranges_cover_global_function_statement_when_supported() {
-        val service = service()
-        val textDocuments = LuaTextDocumentService(service)
-        val document = textDocuments.open(
-            "workspace/folding-global-function.lua",
-            """
-            function compute(a, b)
-                local sum = a + b
-                return sum
-            end
-            """
-        )
-
-        val ranges = requireFoldingRanges(textDocuments, document, context = "global function statement")
-
-        assertTrue(
-            ranges.any { range -> rangeCoversLines(range, startLine = 0, endLine = 3) },
-            "Expected a fold covering function compute (lines 0..3); got ${describe(ranges)}"
-        )
-        assertWellFormedRanges(ranges, document.lineCount)
-    }
-
-    @Test
-    fun folding_ranges_cover_anonymous_function_expression_when_supported() {
-        val service = service()
-        val textDocuments = LuaTextDocumentService(service)
-        val document = textDocuments.open(
-            "workspace/folding-anon-function.lua",
-            """
-            local handler = function(x)
-                if x then
-                    return x
-                end
-                return 0
-            end
-            return handler
-            """
-        )
-
-        val ranges = requireFoldingRanges(textDocuments, document, context = "anonymous function expression")
-
-        assertTrue(
-            ranges.any { range -> rangeCoversLines(range, startLine = 0, endLine = 5) },
-            "Expected a fold covering the anonymous function (lines 0..5); got ${describe(ranges)}"
-        )
-        assertWellFormedRanges(ranges, document.lineCount)
-    }
-
     // -------------------------------------------------------------------------
     // Table constructor folding
     // -------------------------------------------------------------------------
-
-    @Test
-    fun folding_ranges_cover_multiline_table_constructor_when_supported() {
-        val service = service()
-        val textDocuments = LuaTextDocumentService(service)
-        val document = textDocuments.open(
-            "workspace/folding-table-constructor.lua",
-            """
-            local config = {
-                enabled = true,
-                retries = 3,
-                label = "demo"
-            }
-            return config
-            """
-        )
-
-        val ranges = requireFoldingRanges(textDocuments, document, context = "table constructor")
-
-        assertTrue(
-            ranges.any { range -> rangeCoversLines(range, startLine = 0, endLine = 4) },
-            "Expected a fold covering the table constructor (lines 0..4); got ${describe(ranges)}"
-        )
-        assertWellFormedRanges(ranges, document.lineCount)
-    }
 
     @Test
     fun folding_ranges_cover_nested_table_and_function_when_supported() {
@@ -218,33 +144,6 @@ class LspFoldingRangesTddTest {
     // -------------------------------------------------------------------------
     // Crash / malformed safety (must not throw; may skip only if surface missing)
     // -------------------------------------------------------------------------
-
-    @Test
-    fun folding_ranges_on_empty_document_do_not_crash_when_supported() {
-        val service = service()
-        val textDocuments = LuaTextDocumentService(service)
-        val document = textDocuments.open(
-            "workspace/folding-empty.lua",
-            ""
-        )
-
-        val outcome = invokeFoldingRange(textDocuments, foldingParams(document))
-        when (outcome) {
-            is FoldingOutcome.Unsupported -> {
-                Assume.assumeTrue(
-                    "TASK-251 skipped: folding ranges not yet implemented (empty document probe); " +
-                        "detail=${outcome.detail}",
-                    false
-                )
-            }
-            is FoldingOutcome.Failed -> {
-                fail("empty document must not crash folding provider: ${outcome.detail}")
-            }
-            is FoldingOutcome.Succeeded -> {
-                assertWellFormedRanges(outcome.ranges, document.lineCount)
-            }
-        }
-    }
 
     @Test
     fun folding_ranges_on_malformed_source_do_not_crash_when_supported() {

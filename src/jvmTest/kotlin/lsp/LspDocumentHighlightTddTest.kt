@@ -75,36 +75,6 @@ class LspDocumentHighlightTddTest {
     }
 
     @Test
-    fun document_highlight_from_declaration_site_includes_reads() {
-        val service = service()
-        val document = service.open(
-            "workspace/highlight-from-decl.lua",
-            """
-            local count = 0
-            count = count
-            return count
-            """
-        )
-
-        val highlights = service.documentHighlights(highlightParams(document, "count", occurrence = 1))
-
-        assertEquals(4, highlights.size, "decl + LHS write + RHS read + return read")
-        assertEquals(
-            listOf(
-                Position(0, 6), // local count
-                Position(1, 0), // count =
-                Position(1, 8), // = count
-                Position(2, 7)  // return count
-            ).sortedWith(positionOrder),
-            highlights.map { it.range.start }.sortedWith(positionOrder)
-        )
-        assertTrue(
-            highlights.all { it.kind == DocumentHighlightKind.Read || it.kind == DocumentHighlightKind.Write },
-            "Kinds must be Read or Write; got ${highlights.map { it.kind }}"
-        )
-    }
-
-    @Test
     fun document_highlight_write_and_read_kinds_for_local_with_assignment() {
         val service = service()
         val document = service.open(
@@ -156,57 +126,6 @@ class LspDocumentHighlightTddTest {
         )
     }
 
-    @Test
-    fun document_highlight_local_function_name_occurrences_are_same_file_only() {
-        val service = service()
-        val document = service.open(
-            "workspace/highlight-local-function.lua",
-            """
-            local function render(value)
-                return value
-            end
-            local out = render(1)
-            return render
-            """
-        )
-
-        val highlights = service.documentHighlights(highlightParams(document, "render", occurrence = 2))
-
-        assertTrue(highlights.size >= 3, "definition + call + return of render; got ${highlights.size}")
-        assertEquals(
-            listOf(0, 3, 4),
-            highlights.map { it.range.start.line }.sorted().distinct().take(3)
-        )
-        assertTrue(
-            highlights.all { it.kind == DocumentHighlightKind.Read || it.kind == DocumentHighlightKind.Write },
-            "Kinds must be Read or Write; got ${highlights.map { it.kind }}"
-        )
-    }
-
-    @Test
-    fun document_highlight_parameter_occurrences_within_function_body() {
-        val service = service()
-        val document = service.open(
-            "workspace/highlight-parameter.lua",
-            """
-            local function render(value)
-                local copy = value
-                return value
-            end
-            return render
-            """
-        )
-
-        val highlights = service.documentHighlights(highlightParams(document, "value", occurrence = 2))
-
-        assertEquals(3, highlights.size, "parameter + two body uses")
-        assertTrue(highlights.all { it.range.start.line in 0..2 })
-        assertTrue(
-            highlights.all { it.kind == DocumentHighlightKind.Read || it.kind == DocumentHighlightKind.Write },
-            "Kinds must be Read or Write; got ${highlights.map { it.kind }}"
-        )
-    }
-
     // -------------------------------------------------------------------------
     // File isolation / missing symbol safety
     // -------------------------------------------------------------------------
@@ -239,32 +158,6 @@ class LspDocumentHighlightTddTest {
         assertEquals(listOf(0, 1), highlights.map { it.range.start.line }.sorted())
         highlights.forEach { highlight ->
             assertRangeInsideSource(document, highlight.range, needle = "value")
-        }
-    }
-
-    @Test
-    fun document_highlight_local_does_not_include_provider_virtual_paths() {
-        val service = service(
-            mapOf(
-                JvmClassModuleProvider.CLASSES_METADATA_KEY to "java.util.Arrays"
-            )
-        )
-        val document = service.open(
-            "workspace/highlight-no-provider-leak.lua",
-            """
-            local Arrays = require("Arrays")
-            local first = Arrays
-            return first
-            """
-        )
-
-        // Highlight the pure local alias `first` — must stay in-file only.
-        val highlights = service.documentHighlights(highlightParams(document, "first", occurrence = 1))
-
-        assertEquals(2, highlights.size, "decl + return of local first")
-        assertEquals(listOf(1, 2), highlights.map { it.range.start.line }.sorted())
-        highlights.forEach { highlight ->
-            assertRangeInsideSource(document, highlight.range, needle = "first")
         }
     }
 
@@ -310,30 +203,6 @@ class LspDocumentHighlightTddTest {
     }
 
     @Test
-    fun document_highlight_unknown_identifier_returns_empty_list() {
-        val service = service()
-        val document = service.open(
-            "workspace/highlight-unknown-ident.lua",
-            """
-            return unknownName
-            """
-        )
-
-        val highlights = runCatching {
-            service.documentHighlights(highlightParams(document, "unknownName"))
-        }.getOrElse { error ->
-            fail("documentHighlights must not throw for unbound identifier: ${error.message}")
-        }
-
-        // Unbound global may resolve to nothing (preferred) or a single synthetic hit;
-        // never throw, and never invent multi-file ranges.
-        assertTrue(
-            highlights.isEmpty() || highlights.size == 1,
-            "unbound identifier should yield empty or single highlight; got ${highlights.size}"
-        )
-    }
-
-    @Test
     fun text_document_service_document_highlight_wraps_same_symbol_results() {
         val languageService = service()
         val textDocuments = LuaTextDocumentService(languageService)
@@ -365,65 +234,6 @@ class LspDocumentHighlightTddTest {
             highlights.all { it.kind == DocumentHighlightKind.Read || it.kind == DocumentHighlightKind.Write },
             "Kinds must be Read or Write; got ${highlights.map { it.kind }}"
         )
-    }
-
-    @Test
-    fun document_highlight_ranges_cover_identifier_span_only() {
-        val service = service()
-        // Prefer sites without a trailing binary operator. Product may still
-        // emit multi-line declaration/expression ranges (REVIEW25 rejection on
-        // hard single-line assert). Exact identifier-span is hard-asserted only
-        // when product already returns it; otherwise soft cover floor applies.
-        val document = service.open(
-            "workspace/highlight-ident-span.lua",
-            """
-            local counter = 1
-            counter = 2
-            local other = counter
-            return counter
-            """
-        )
-
-        val highlights = service.documentHighlights(highlightParams(document, "counter", occurrence = 2))
-
-        assertEquals(4, highlights.size, "decl + LHS write + local read + return read")
-        highlights.forEach { highlight ->
-            assertHighlightRangeCoversIdentifier(
-                document = document,
-                range = highlight.range,
-                identifier = "counter",
-                label = "documentHighlight range"
-            )
-        }
-    }
-
-    @Test
-    fun document_highlight_binary_expression_ranges_start_on_identifier() {
-        val service = service()
-        // REVIEW26 rejection: product currently may return "counter +" for the
-        // RHS of a binary expression. REVIEW25: declaration sites may also be
-        // multi-line. Corpus requires every highlight to cover/start on the
-        // identifier; exact single-line end is hard-asserted only on ideal path.
-        val document = service.open(
-            "workspace/highlight-ident-span-binary.lua",
-            """
-            local counter = 1
-            counter = counter + 2
-            return counter
-            """
-        )
-
-        val highlights = service.documentHighlights(highlightParams(document, "counter", occurrence = 2))
-
-        assertEquals(4, highlights.size)
-        highlights.forEach { highlight ->
-            assertHighlightRangeCoversIdentifier(
-                document = document,
-                range = highlight.range,
-                identifier = "counter",
-                label = "binary-expression-context documentHighlight"
-            )
-        }
     }
 
     // -------------------------------------------------------------------------

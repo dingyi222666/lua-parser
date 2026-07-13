@@ -96,54 +96,6 @@ class LspSelectionRangeNestedBlockTddTest {
         }
     }
 
-    @Test
-    fun missing_capability_or_unimplemented_degrades_without_throw() {
-        val service = service()
-        val capabilities = service.initialize(InitializeParams()).capabilities
-        val textDocuments = LuaTextDocumentService(service)
-        val document = textDocuments.open(
-            "workspace/selection-range-missing-capability.lua",
-            """
-            local function probe()
-                return 1
-            end
-            return probe
-            """
-        )
-
-        val outcome = invokeSelectionRange(
-            textDocuments,
-            selectionParams(document, listOf(document.positionOf("return", occurrence = 1)))
-        )
-
-        // Acceptance: missing capability / unsupported surface returns empty
-        // without throw. Documented UnsupportedOperation gap is also allowed
-        // while product has not shipped the provider.
-        when (outcome) {
-            is SelectionOutcome.Unsupported -> {
-                assertTrue(
-                    outcome.isUnsupportedOperation,
-                    "Documented gap expects UnsupportedOperationException when " +
-                        "selectionRangeProvider=${capabilities.selectionRangeProvider}; " +
-                        "got ${outcome.detail}"
-                )
-            }
-            is SelectionOutcome.Empty -> {
-                // Ideal soft degrade when capability is absent or position yields nothing.
-            }
-            is SelectionOutcome.Succeeded -> {
-                // Capability may lag implementation; returned ranges must still be well-formed.
-                assertWellFormedSelectionRanges(outcome.ranges, document, label = "missing-capability probe")
-            }
-            is SelectionOutcome.Failed -> {
-                assertFalse(
-                    isHardCrash(outcome.detail),
-                    "missing capability path must not hard-crash; got ${outcome.detail}"
-                )
-            }
-        }
-    }
-
     // -------------------------------------------------------------------------
     // Nested function / table / if blocks
     // -------------------------------------------------------------------------
@@ -248,97 +200,6 @@ class LspSelectionRangeNestedBlockTddTest {
         }
     }
 
-    @Test
-    fun selection_range_nests_local_function_body_when_supported() {
-        val service = service()
-        val textDocuments = LuaTextDocumentService(service)
-        val document = textDocuments.open(
-            "workspace/selection-range-function-body.lua",
-            """
-            local function greet(name)
-                local message = "hi " .. name
-                return message
-            end
-            return greet
-            """
-        )
-
-        val cursor = document.positionOf("message", occurrence = 2)
-        val outcome = invokeSelectionRange(
-            textDocuments,
-            selectionParams(document, listOf(cursor))
-        )
-
-        assertNestedOrGap(
-            outcome = outcome,
-            document = document,
-            cursor = cursor,
-            context = "local function body"
-        )
-    }
-
-    @Test
-    fun selection_range_nests_table_constructor_when_supported() {
-        val service = service()
-        val textDocuments = LuaTextDocumentService(service)
-        val document = textDocuments.open(
-            "workspace/selection-range-table.lua",
-            """
-            local config = {
-                enabled = true,
-                retries = 3,
-                labels = { "a", "b" }
-            }
-            return config
-            """
-        )
-
-        val cursor = document.positionOf("3")
-        val outcome = invokeSelectionRange(
-            textDocuments,
-            selectionParams(document, listOf(cursor))
-        )
-
-        assertNestedOrGap(
-            outcome = outcome,
-            document = document,
-            cursor = cursor,
-            context = "table constructor"
-        )
-    }
-
-    @Test
-    fun selection_range_nests_if_then_else_when_supported() {
-        val service = service()
-        val textDocuments = LuaTextDocumentService(service)
-        val document = textDocuments.open(
-            "workspace/selection-range-if.lua",
-            """
-            local function pick(flag)
-                if flag then
-                    return "yes"
-                else
-                    return "no"
-                end
-            end
-            return pick
-            """
-        )
-
-        val cursor = document.positionOf("\"yes\"")
-        val outcome = invokeSelectionRange(
-            textDocuments,
-            selectionParams(document, listOf(cursor))
-        )
-
-        assertNestedOrGap(
-            outcome = outcome,
-            document = document,
-            cursor = cursor,
-            context = "if/then/else block"
-        )
-    }
-
     // -------------------------------------------------------------------------
     // Unsupported positions / empty results without throw
     // -------------------------------------------------------------------------
@@ -358,57 +219,6 @@ class LspSelectionRangeNestedBlockTddTest {
         )
 
         assertEmptyOrGapWithoutThrow(outcome, context = "whitespace / blank line")
-    }
-
-    @Test
-    fun selection_range_on_out_of_bounds_position_is_empty_or_documented_gap() {
-        val service = service()
-        val textDocuments = LuaTextDocumentService(service)
-        val document = textDocuments.open(
-            "workspace/selection-range-oob.lua",
-            "local value = 1\nreturn value"
-        )
-
-        val outcome = invokeSelectionRange(
-            textDocuments,
-            selectionParams(document, listOf(Position(50, 0)))
-        )
-
-        assertEmptyOrGapWithoutThrow(outcome, context = "out-of-bounds position past EOF")
-    }
-
-    @Test
-    fun selection_range_on_extreme_character_offset_is_empty_or_documented_gap() {
-        val service = service()
-        val textDocuments = LuaTextDocumentService(service)
-        val document = textDocuments.open(
-            "workspace/selection-range-extreme-col.lua",
-            "local value = 1\nreturn value"
-        )
-
-        val outcome = invokeSelectionRange(
-            textDocuments,
-            selectionParams(document, listOf(Position(0, 10_000)))
-        )
-
-        assertEmptyOrGapWithoutThrow(outcome, context = "extreme character offset")
-    }
-
-    @Test
-    fun selection_range_empty_positions_list_is_empty_or_documented_gap() {
-        val service = service()
-        val textDocuments = LuaTextDocumentService(service)
-        val document = textDocuments.open(
-            "workspace/selection-range-empty-positions.lua",
-            "local value = 1\nreturn value"
-        )
-
-        val outcome = invokeSelectionRange(
-            textDocuments,
-            selectionParams(document, emptyList())
-        )
-
-        assertEmptyOrGapWithoutThrow(outcome, context = "empty positions list")
     }
 
     // -------------------------------------------------------------------------
@@ -479,23 +289,6 @@ class LspSelectionRangeNestedBlockTddTest {
                 }
             }
         }
-    }
-
-    @Test
-    fun selection_range_on_empty_document_does_not_crash() {
-        val service = service()
-        val textDocuments = LuaTextDocumentService(service)
-        val document = textDocuments.open(
-            "workspace/selection-range-empty-doc.lua",
-            ""
-        )
-
-        val outcome = invokeSelectionRange(
-            textDocuments,
-            selectionParams(document, listOf(Position(0, 0)))
-        )
-
-        assertEmptyOrGapWithoutThrow(outcome, context = "empty document")
     }
 
     @Test

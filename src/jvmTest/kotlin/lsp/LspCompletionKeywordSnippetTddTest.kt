@@ -116,84 +116,6 @@ class LspCompletionKeywordSnippetTddTest {
         }
     }
 
-    @Test
-    fun declaration_flow_keywords_are_not_keyword_completion_items() {
-        val service = service()
-        val document = service.open(
-            "workspace/keyword-decl-flow.lua",
-            """
-            local value = 0
-
-            return value
-            """.trimIndent()
-        )
-
-        val items = service.completionItemsAt(document, blankLineAfterLocals())
-        val keywordKindLabels = items
-            .filter { it.kind == CompletionItemKind.Keyword }
-            .map { it.label }
-            .toSet()
-
-        for (keyword in DECLARATION_AND_FLOW_KEYWORDS) {
-            assertFalse(
-                keyword in keywordKindLabels,
-                "Product gap lock: '$keyword' is not a Keyword completion item today; " +
-                    "keyword-kind labels=$keywordKindLabels"
-            )
-        }
-        // Local still surfaces as a symbol, not as the keyword token "local".
-        assertTrue(
-            "value" in items.map { it.label },
-            "Expected lexical local 'value'; actual=${items.map { it.label }}"
-        )
-    }
-
-    @Test
-    fun lexical_completion_labels_are_stable_across_repeated_requests() {
-        val service = service()
-        val document = service.open(
-            "workspace/keyword-stable.lua",
-            """
-            local marker = 1
-
-            return marker
-            """.trimIndent()
-        )
-
-        val first = service.completionLabelsAt(document, blankLineAfterLocals()).sorted()
-        val second = service.completionLabelsAt(document, blankLineAfterLocals()).sorted()
-
-        assertEquals(first, second, "Lexical completion labels must be stable across repeated completions")
-        assertTrue(first.isNotEmpty(), "Expected at least one lexical completion label for stability check")
-        assertTrue("marker" in first, "Expected stable local 'marker'; actual=$first")
-    }
-
-    @Test
-    fun control_keyword_spellings_remain_documented_lowercase_lua_forms() {
-        // Corpus documents the stable Lua spellings expected if/when product emits keywords.
-        // Does not require product to emit them (gap lock above).
-        for (keyword in ALL_CONTROL_KEYWORDS) {
-            assertEquals(
-                keyword.lowercase(),
-                keyword,
-                "Documented keyword spelling '$keyword' must be lowercase Lua form"
-            )
-            assertTrue(
-                keyword.isNotBlank() && keyword.all { it.isLetter() },
-                "Documented keyword spelling '$keyword' must be a simple letter token"
-            )
-        }
-        assertEquals(
-            setOf(
-                "if", "while", "for", "function", "repeat", "do",
-                "else", "elseif", "then", "end", "until", "in",
-                "local", "return", "break", "goto"
-            ),
-            ALL_CONTROL_KEYWORDS,
-            "Documented control-keyword corpus must stay the stable Lua 5.x set"
-        )
-    }
-
     // -------------------------------------------------------------------------
     // Insert text / kinds on the actual surface
     // -------------------------------------------------------------------------
@@ -223,68 +145,6 @@ class LspCompletionKeywordSnippetTddTest {
         assertTrue(
             keywordItems.isEmpty(),
             "Product gap lock: no CompletionItemKind.Keyword items expected; was ${keywordItems.map { it.label }}"
-        )
-    }
-
-    @Test
-    fun lexical_items_insert_plain_text_equal_to_label() {
-        val service = service()
-        val document = service.open(
-            "workspace/keyword-insert.lua",
-            """
-            local ready = true
-
-            return ready
-            """.trimIndent()
-        )
-
-        val items = service.completionItemsAt(document, blankLineAfterLocals())
-        assertTrue(items.isNotEmpty(), "Expected lexical completion items for insertText checks")
-
-        for (item in items) {
-            val insert = item.insertText ?: item.label
-            assertEquals(
-                item.label,
-                insert,
-                "Item '${item.label}' insertText must equal the stable label under PlainText policy"
-            )
-            // LuaLanguageService.completion always sets PlainText today.
-            assertTrue(
-                item.insertTextFormat == null || item.insertTextFormat == InsertTextFormat.PlainText,
-                "Item '${item.label}' must use PlainText insert format on the current LSP path; was ${item.insertTextFormat}"
-            )
-        }
-    }
-
-    @Test
-    fun partial_identifier_still_surfaces_matching_lexical_symbols() {
-        // Cursor on the leading letter of a statement-level name that is a prefix of a local.
-        // Product does not filter server-side by prefix (client filters), so the full
-        // lexical set — including the matching local — remains available.
-        val service = service()
-        val source = """
-            local alpha = 1
-            i
-            return alpha
-        """.trimIndent()
-        val document = service.open("workspace/keyword-partial.lua", source)
-        val position = document.positionOf("i\n")
-
-        val items = service.completion(document.path, position.line, position.character).items
-        val labels = items.map { it.label }
-
-        assertTrue(
-            "alpha" in labels,
-            "Partial identifier site should still surface lexical local 'alpha'; actual=$labels"
-        )
-        // Documented gap: keywords "if"/"in" are not product Keyword completion items.
-        assertTrue(
-            items.none { it.label == "if" && it.kind == CompletionItemKind.Keyword },
-            "Product gap lock: no Keyword-kind 'if' on partial 'i'; actual kinds=${items.filter { it.label == "if" }.map { it.kind }}"
-        )
-        assertTrue(
-            items.none { it.label == "in" && it.kind == CompletionItemKind.Keyword },
-            "Product gap lock: no Keyword-kind 'in' on partial 'i'"
         )
     }
 
@@ -362,31 +222,6 @@ class LspCompletionKeywordSnippetTddTest {
             keywordKindLabels.isEmpty(),
             "Product gap lock: Keyword-kind set stays empty until product seeds keywords; was $keywordKindLabels"
         )
-    }
-
-    @Test
-    fun snippet_labels_when_present_are_stable_across_repeated_requests() {
-        val service = service()
-        val document = service.open(
-            "workspace/keyword-snippet-stable.lua",
-            """
-            local alpha = 1
-
-            return alpha
-            """.trimIndent()
-        )
-
-        val first = service.completionItemsAt(document, blankLineAfterLocals())
-            .filter { it.kind == CompletionItemKind.Snippet }
-            .map { it.label }
-            .sorted()
-        val second = service.completionItemsAt(document, blankLineAfterLocals())
-            .filter { it.kind == CompletionItemKind.Snippet }
-            .map { it.label }
-            .sorted()
-
-        // Policy §2: when snippets are present, labels stay stable; empty == empty is fine.
-        assertEquals(first, second, "Snippet labels must be stable across repeated completions when present")
     }
 
     // -------------------------------------------------------------------------

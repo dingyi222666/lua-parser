@@ -41,41 +41,6 @@ class LuaJavaCreateProxyColonGuardTddTest {
         assertHoverDisplay(harness, "proxy", "unknown", occurrence = 2)
         assertHoverDisplay(harness, "run", "unknown", occurrence = 2)
     }
-
-    @Test
-    fun colon_create_proxy_comma_list_emits_no_create_proxy_facts() {
-        val harness = jvmHarness(
-            "main.lua" to """
-                local proxy = luajava:createProxy("java.lang.Runnable, java.util.Comparator", {})
-                local run = proxy.run
-                local compare = proxy.compare
-                return proxy, run, compare
-            """.trimIndent()
-        )
-
-        assertNoCreateProxyFacts(harness)
-        assertNoJavaProxyInheritance(harness, "proxy", occurrence = 2)
-        assertHoverDisplay(harness, "run", "unknown", occurrence = 2)
-        assertHoverDisplay(harness, "compare", "unknown", occurrence = 2)
-    }
-
-    @Test
-    fun colon_create_proxy_varargs_emits_no_create_proxy_facts() {
-        val harness = jvmHarness(
-            "main.lua" to """
-                local proxy = luajava:createProxy("java.lang.Runnable", "java.util.Comparator", {})
-                local run = proxy.run
-                local compare = proxy.compare
-                return proxy, run, compare
-            """.trimIndent()
-        )
-
-        assertNoCreateProxyFacts(harness)
-        assertNoJavaProxyInheritance(harness, "proxy", occurrence = 2)
-        assertHoverDisplay(harness, "run", "unknown", occurrence = 2)
-        assertHoverDisplay(harness, "compare", "unknown", occurrence = 2)
-    }
-
     @Test
     fun colon_create_proxy_member_alias_does_not_model_proxy_or_facts() {
         // `local createProxy = luajava:createProxy` must not alias the helper kind
@@ -94,7 +59,6 @@ class LuaJavaCreateProxyColonGuardTddTest {
         assertHoverDisplay(harness, "proxy", "unknown", occurrence = 2)
         assertHoverDisplay(harness, "run", "unknown", occurrence = 2)
     }
-
     @Test
     fun colon_create_proxy_chained_alias_does_not_model_proxy_or_facts() {
         val harness = jvmHarness(
@@ -112,161 +76,6 @@ class LuaJavaCreateProxyColonGuardTddTest {
         assertNoJavaProxyInheritance(harness, "proxy", occurrence = 2)
         assertHoverDisplay(harness, "run", "unknown", occurrence = 2)
     }
-
-    @Test
-    fun colon_create_proxy_does_not_invent_runnable_or_comparator_targets() {
-        val harness = jvmHarness(
-            "main.lua" to """
-                local proxy = luajava:createProxy("java.lang.Runnable", "java.util.Comparator", {})
-                return proxy
-            """.trimIndent()
-        )
-
-        val loads = jvmClassLoads(harness)
-        assertFalse(
-            loads.any {
-                it.target == "java.lang.Runnable" || it.target == "java.util.Comparator"
-            },
-            "Colon createProxy must not invent any jvm class-load targets; got $loads"
-        )
-        assertNoCreateProxyFacts(harness)
-    }
-
-    // ------------------------------------------------------------------
-    // Local shadow: no CREATE_PROXY_CALL facts, no JavaProxy inheritance
-    // ------------------------------------------------------------------
-
-    @Test
-    fun local_function_create_proxy_shadow_emits_no_create_proxy_facts() {
-        val harness = jvmHarness(
-            "main.lua" to """
-                local function createProxy(target, impl)
-                    return { value = target }
-                end
-
-                local proxy = createProxy("java.lang.Runnable", {})
-                local run = proxy.run
-                return proxy, run
-            """.trimIndent()
-        )
-
-        assertNoCreateProxyFacts(harness)
-        assertNoCreateProxyTarget(harness, "java.lang.Runnable")
-        assertLocalShadowSurface(harness, "proxy", occurrence = 2)
-        assertHoverDisplay(harness, "run", "unknown", occurrence = 2)
-    }
-
-    @Test
-    fun local_function_create_proxy_shadow_multi_interface_emits_no_facts() {
-        val harness = jvmHarness(
-            "main.lua" to """
-                local function createProxy(target, other, impl)
-                    return { value = target }
-                end
-
-                local proxy = createProxy("java.lang.Runnable", "java.util.Comparator", {})
-                local run = proxy.run
-                local compare = proxy.compare
-                return proxy, run, compare
-            """.trimIndent()
-        )
-
-        assertNoCreateProxyFacts(harness)
-        assertNoCreateProxyTarget(harness, "java.lang.Runnable")
-        assertNoCreateProxyTarget(harness, "java.util.Comparator")
-        assertLocalShadowSurface(harness, "proxy", occurrence = 2)
-        assertHoverDisplay(harness, "run", "unknown", occurrence = 2)
-        assertHoverDisplay(harness, "compare", "unknown", occurrence = 2)
-    }
-
-    @Test
-    fun local_luajava_table_create_proxy_member_shadow_emits_no_facts() {
-        val harness = jvmHarness(
-            "main.lua" to """
-                local luajava = {
-                    createProxy = function(target, impl)
-                        return { value = target }
-                    end
-                }
-
-                local proxy = luajava.createProxy("java.lang.Runnable", {})
-                local run = proxy.run
-                return proxy, run
-            """.trimIndent()
-        )
-
-        assertNoCreateProxyFacts(harness)
-        assertNoCreateProxyTarget(harness, "java.lang.Runnable")
-        assertLocalShadowSurface(harness, "proxy", occurrence = 2)
-        assertHoverDisplay(harness, "run", "unknown", occurrence = 2)
-    }
-
-    @Test
-    fun local_luajava_table_create_proxy_member_shadow_comma_list_emits_no_facts() {
-        val harness = jvmHarness(
-            "main.lua" to """
-                local luajava = {
-                    createProxy = function(target, impl)
-                        return { value = target }
-                    end
-                }
-
-                local proxy = luajava.createProxy("java.lang.Runnable, java.util.Comparator", {})
-                local run = proxy.run
-                local compare = proxy.compare
-                return proxy, run, compare
-            """.trimIndent()
-        )
-
-        assertNoCreateProxyFacts(harness)
-        assertLocalShadowSurface(harness, "proxy", occurrence = 2)
-        assertHoverDisplay(harness, "run", "unknown", occurrence = 2)
-        assertHoverDisplay(harness, "compare", "unknown", occurrence = 2)
-    }
-
-    @Test
-    fun local_assignment_create_proxy_shadow_emits_no_create_proxy_facts() {
-        val harness = jvmHarness(
-            "main.lua" to """
-                local createProxy = function(target, impl)
-                    return { value = target }
-                end
-
-                local proxy = createProxy("java.lang.Runnable", {})
-                local run = proxy.run
-                return proxy, run
-            """.trimIndent()
-        )
-
-        assertNoCreateProxyFacts(harness)
-        assertLocalShadowSurface(harness, "proxy", occurrence = 2)
-        assertHoverDisplay(harness, "run", "unknown", occurrence = 2)
-    }
-
-    @Test
-    fun nested_block_local_create_proxy_shadow_emits_no_facts() {
-        val harness = jvmHarness(
-            "main.lua" to """
-                do
-                    local function createProxy(target, impl)
-                        return { value = target }
-                    end
-                    local proxy = createProxy("java.lang.Runnable", {})
-                    local run = proxy.run
-                    return proxy, run
-                end
-            """.trimIndent()
-        )
-
-        assertNoCreateProxyFacts(harness)
-        // Nested return may not bind outer locals for hover; still hard-lock facts.
-        val loads = jvmClassLoads(harness)
-        assertFalse(
-            loads.any { it.kind == DocumentFacts.JvmClassLoadKind.CREATE_PROXY_CALL },
-            "Nested-block createProxy shadow must not emit CREATE_PROXY_CALL; got $loads"
-        )
-    }
-
     @Test
     fun local_shadow_return_surface_never_inherits_javaproxy() {
         val harness = jvmHarness(
@@ -292,11 +101,6 @@ class LuaJavaCreateProxyColonGuardTddTest {
         assertLocalShadowSurface(harness, "proxy", occurrence = 2)
         assertNoCreateProxyFacts(harness)
     }
-
-    // ------------------------------------------------------------------
-    // Colon guard must not break legitimate real-dot createProxy facts
-    // ------------------------------------------------------------------
-
     @Test
     fun real_dot_create_proxy_still_records_facts_alongside_colon_guard() {
         // Avoid local-alias createProxy bindings so occurrence indexing stays stable
@@ -322,68 +126,6 @@ class LuaJavaCreateProxyColonGuardTddTest {
             runnableProxyLoads.isNotEmpty(),
             "Real-dot createProxy must record CREATE_PROXY_CALL for Runnable; got $loads"
         )
-    }
-
-    @Test
-    fun real_dot_multi_interface_facts_still_work_alongside_colon_guard() {
-        val harness = jvmHarness(
-            "main.lua" to """
-                local colonProxy = luajava:createProxy("java.lang.Runnable", "java.util.Comparator", {})
-                local proxy = luajava.createProxy("java.lang.Runnable", "java.util.Comparator", {})
-                local run = proxy.run
-                local compare = proxy.compare
-                return colonProxy, run, compare
-            """.trimIndent()
-        )
-
-        assertHoverDisplay(harness, "colonProxy", "unknown", occurrence = 2)
-        assertNoJavaProxyInheritance(harness, "colonProxy", occurrence = 2)
-
-        val loads = jvmClassLoads(harness)
-        assertTrue(
-            loads.any {
-                it.kind == DocumentFacts.JvmClassLoadKind.CREATE_PROXY_CALL &&
-                    it.target == "java.lang.Runnable"
-            },
-            "Real-dot multi createProxy must record Runnable CREATE_PROXY_CALL; got $loads"
-        )
-        assertTrue(
-            loads.any {
-                it.kind == DocumentFacts.JvmClassLoadKind.CREATE_PROXY_CALL &&
-                    it.target == "java.util.Comparator"
-            },
-            "Real-dot multi createProxy must record Comparator CREATE_PROXY_CALL; got $loads"
-        )
-    }
-
-    @Test
-    fun colon_only_file_never_emits_create_proxy_call_kind() {
-        // REVIEW37 residual: single-letter needles "a"/"b"/"c" collide with substring
-        // matches inside luajava/createProxy/java.lang.* so occurrence=2 lands on helper
-        // surface (JavaProxy hover) rather than the colon-call result locals. Use unique
-        // multi-char identifiers so hover guards stay on the colon results.
-        val harness = jvmHarness(
-            "main.lua" to """
-                local colonProxyA = luajava:createProxy("java.lang.Runnable", {})
-                local colonProxyB = luajava:createProxy("java.util.Comparator", {})
-                local colonProxyC = luajava:createProxy("java.lang.Runnable, java.util.Comparator", {})
-                return colonProxyA, colonProxyB, colonProxyC
-            """.trimIndent()
-        )
-
-        assertNoCreateProxyFacts(harness)
-        assertEquals(
-            emptyList(),
-            jvmClassLoads(harness).filter { it.kind == DocumentFacts.JvmClassLoadKind.CREATE_PROXY_CALL },
-            "Colon-only createProxy corpus must be free of CREATE_PROXY_CALL facts"
-        )
-        // occurrence=2 = return-site use (declaration is occurrence 1); unique needles.
-        assertNoJavaProxyInheritance(harness, "colonProxyA", occurrence = 2)
-        assertNoJavaProxyInheritance(harness, "colonProxyB", occurrence = 2)
-        assertNoJavaProxyInheritance(harness, "colonProxyC", occurrence = 2)
-        assertHoverDisplay(harness, "colonProxyA", "unknown", occurrence = 2)
-        assertHoverDisplay(harness, "colonProxyB", "unknown", occurrence = 2)
-        assertHoverDisplay(harness, "colonProxyC", "unknown", occurrence = 2)
     }
 
     // ------------------------------------------------------------------

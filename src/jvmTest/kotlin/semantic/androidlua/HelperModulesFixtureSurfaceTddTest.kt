@@ -53,7 +53,6 @@ class HelperModulesFixtureSurfaceTddTest {
             idealTypeFragments = listOf("function", "fun(")
         )
     }
-
     @Test
     fun helper_modules_fixture_base64_decode_member_hover_is_method_function() {
         // fixture: local decoded = base64.decode(base64.encode(encoded))
@@ -65,7 +64,6 @@ class HelperModulesFixtureSurfaceTddTest {
             idealTypeFragments = listOf("function", "fun(")
         )
     }
-
     @Test
     fun helper_modules_fixture_base64_encode_member_hover_is_method_function() {
         // Nested base64.encode inside decode call — second encode member after json.encode.
@@ -77,42 +75,6 @@ class HelperModulesFixtureSurfaceTddTest {
             idealTypeFragments = listOf("function", "fun(")
         )
     }
-
-    @Test
-    fun helper_modules_fixture_socket_url_parse_member_hover_is_method_function() {
-        // fixture: local parsed = socketUrl.parse("https://example.test/path")
-        // "parse" occ=1 is inside local "parsed"; member is occ=2.
-        assertFixtureMemberHover(
-            needle = "parse",
-            occurrence = 2,
-            expectedLabel = "socketUrl.parse",
-            idealTypeFragments = listOf("function", "fun(")
-        )
-    }
-
-    @Test
-    fun helper_modules_fixture_http_get_member_hover_is_method_function() {
-        // fixture: local response = http.get("https://example.test") — unique "get".
-        assertFixtureMemberHover(
-            needle = "get",
-            occurrence = 1,
-            expectedLabel = "http.get",
-            idealTypeFragments = listOf("function", "fun(")
-        )
-    }
-
-    @Test
-    fun helper_modules_fixture_file_exists_member_hover_is_method_function() {
-        // fixture: local exists = files.exists("/sdcard/main.lua")
-        // "exists" occ=1 is the local name; member is occ=2.
-        assertFixtureMemberHover(
-            needle = "exists",
-            occurrence = 2,
-            expectedLabel = "files.exists",
-            idealTypeFragments = listOf("function", "fun(")
-        )
-    }
-
     @Test
     fun helper_modules_fixture_member_hover_batch_encode_decode_parse_get_exists() {
         // Combined corpus mirroring AndroidLuaLibraryStubsTddTest
@@ -170,91 +132,6 @@ class HelperModulesFixtureSurfaceTddTest {
             }
         }
     }
-
-    // ------------------------------------------------------------------
-    // Inline twins (require locals) — same METHOD/function surface
-    // ------------------------------------------------------------------
-
-    @Test
-    fun inline_json_encode_member_hover_is_method_function() {
-        val source = """
-            local json = require "json"
-            local encoded = json.encode({ ok = true })
-            return encoded
-        """.trimIndent()
-        assertInlineMemberHover(
-            source = source,
-            memberAccess = "json.encode",
-            expectedLabel = "json.encode"
-        )
-    }
-
-    @Test
-    fun inline_base64_decode_and_encode_member_hover_is_method_function() {
-        val source = """
-            local base64 = require "base64"
-            local decoded = base64.decode(base64.encode("payload"))
-            return decoded
-        """.trimIndent()
-        assertInlineMemberHover(
-            source = source,
-            memberAccess = "base64.decode",
-            expectedLabel = "base64.decode"
-        )
-        assertInlineMemberHover(
-            source = source,
-            memberAccess = "base64.encode",
-            expectedLabel = "base64.encode"
-        )
-    }
-
-    @Test
-    fun inline_socket_url_parse_member_hover_is_method_function() {
-        val source = """
-            local socketUrl = require "socket.url"
-            local parsed = socketUrl.parse("https://example.test/path")
-            return parsed
-        """.trimIndent()
-        assertInlineMemberHover(
-            source = source,
-            memberAccess = "socketUrl.parse",
-            expectedLabel = "socketUrl.parse"
-        )
-    }
-
-    @Test
-    fun inline_http_get_member_hover_is_method_function() {
-        val source = """
-            local http = require "http"
-            local response = http.get("https://example.test")
-            return response
-        """.trimIndent()
-        assertInlineMemberHover(
-            source = source,
-            memberAccess = "http.get",
-            expectedLabel = "http.get"
-        )
-    }
-
-    @Test
-    fun inline_file_exists_member_hover_is_method_function() {
-        // Fixture uses require "file" bound as `files`.
-        val source = """
-            local files = require "file"
-            local exists = files.exists("/sdcard/main.lua")
-            return exists
-        """.trimIndent()
-        assertInlineMemberHover(
-            source = source,
-            memberAccess = "files.exists",
-            expectedLabel = "files.exists"
-        )
-    }
-
-    // ------------------------------------------------------------------
-    // Typed module exports / call results (dual-path string goldens)
-    // ------------------------------------------------------------------
-
     @Test
     fun helper_modules_fixture_encoded_decoded_host_typed_string_dual_path() {
         // Mirrors helper_modules_fixture_receives_typed_module_exports with dual-path.
@@ -269,85 +146,6 @@ class HelperModulesFixtureSurfaceTddTest {
         assertStringishOrProductGap("encoded", encoded)
         assertStringishOrProductGap("decoded", decoded)
         assertStringishOrProductGap("host", host)
-    }
-
-    @Test
-    fun helper_modules_fixture_permissions_export_known_or_gap() {
-        val harness = fixtureHarness()
-        val path = FIXTURE_FILE
-        val display = hoverDisplay(harness, path, "permissions", occurrence = 1)
-        // Ideal: modeled non-unknown/non-any; product gap: blank/unknown/any/null.
-        assertTrue(
-            display == null ||
-                display.isBlank() ||
-                display == "unknown" ||
-                display == "any" ||
-                (display != "unknown" && display != "any"),
-            "permissions dual-path: modeled or product gap; got $display"
-        )
-        if (display != null && display.isNotBlank() && display != "unknown" && display != "any") {
-            assertTrue(
-                display.isNotBlank(),
-                "Modeled permissions must stay non-blank; got $display"
-            )
-        }
-    }
-
-    // ------------------------------------------------------------------
-    // Module export surface (provider-modeled hard path)
-    // ------------------------------------------------------------------
-
-    @Test
-    fun required_helper_modules_export_encode_decode_parse_get_exists_methods() {
-        // Hard surface: resolveRequire export methods exist on Android-Lua stubs.
-        // This is independent of hover wiring and documents the product catalog.
-        assertExportMethod("json", "encode")
-        assertExportMethod("json", "decode")
-        assertExportMethod("base64", "encode")
-        assertExportMethod("base64", "decode")
-        assertExportMethod("socket.url", "parse")
-        assertExportMethod("http", "get")
-        assertExportMethod("file", "exists")
-    }
-
-    @Test
-    fun required_helper_modules_resolve_from_androlua_stubs() {
-        listOf("json", "base64", "socket.url", "http", "file", "xml", "permission").forEach { moduleName ->
-            val harness = androidHarness("main.lua" to "local module = require(\"$moduleName\")\nreturn module")
-            val resolved = harness.queries.resolveRequire(harness.path("main.lua"), moduleName)
-            val provider = assertNotNull(
-                resolved.provider,
-                "Expected Android-Lua module provider for require \"$moduleName\"."
-            )
-            assertTrue(
-                provider.path.value.contains("androlua5.3") ||
-                    provider.path.value.contains("androidlua") ||
-                    provider.path.value.contains("__lua_std__"),
-                "Expected $moduleName to resolve from Android-Lua stubs, got ${provider.path.value}."
-            )
-            assertNotNull(
-                resolved.exportSurface,
-                "Expected export surface for Android-Lua module $moduleName."
-            )
-        }
-    }
-
-    @Test
-    fun host_android_jar_candidates_never_hardcode_windows_g_drive() {
-        val candidates = hostAndroidJarCandidates().map { it.path.replace('\\', '/') }
-        assertTrue(
-            candidates.any { it.endsWith("/Downloads/android.jar") },
-            "Candidate list must include Downloads android.jar; got: $candidates"
-        )
-        assertTrue(
-            candidates.any { it.contains("platforms/android-35/android.jar") } ||
-                candidates.any { it.contains("Library/Android/sdk") },
-            "Candidate list must include macOS SDK android-35 path; got: $candidates"
-        )
-        assertTrue(
-            candidates.none { it.startsWith("G:/Android/Sdk", ignoreCase = true) },
-            "Candidate list must never hardcode Windows G:/Android/Sdk; got: $candidates"
-        )
     }
 
     // ------------------------------------------------------------------

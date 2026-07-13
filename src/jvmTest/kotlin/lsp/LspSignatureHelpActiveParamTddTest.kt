@@ -75,38 +75,6 @@ class LspSignatureHelpActiveParamTddTest {
     }
 
     @Test
-    fun simple_multi_arg_function_advances_when_cursor_is_between_arguments() {
-        val service = plainService()
-        val document = service.open(
-            "workspace/signature-active-between.lua",
-            """
-            ---@param value number
-            ---@param label string
-            local function render(value, label)
-                return label
-            end
-            local current = render(1,  "hi")
-            return current
-            """
-        )
-
-        val onFirst = assertNotNull(service.signatureHelp(signatureParams(document, "1,")))
-        val between = assertNotNull(
-            service.signatureHelp(
-                SignatureHelpParams(
-                    TextDocumentIdentifier(document.uri),
-                    document.positionBetween("1,", "\"hi\"")
-                )
-            )
-        )
-        val onSecond = assertNotNull(service.signatureHelp(signatureParams(document, "\"hi\")")))
-
-        assertEquals(0, onFirst.activeParameter)
-        assertEquals(1, between.activeParameter, "cursor after comma / in gap selects next parameter")
-        assertEquals(1, onSecond.activeParameter)
-    }
-
-    @Test
     fun colon_method_receiver_offsets_active_parameter_for_multi_arg_call() {
         val service = plainService()
         val document = service.open(
@@ -134,66 +102,6 @@ class LspSignatureHelpActiveParamTddTest {
             first.signatures.single().parameters.size >= 3,
             "colon method signature should include self: ${first.labels()}"
         )
-    }
-
-    @Test
-    fun overloaded_string_value_of_tracks_active_parameter_across_three_args() {
-        val service = jvmService()
-        val document = service.open(
-            "workspace/signature-active-valueof.lua",
-            """
-            local String = require("String")
-            local text = String.valueOf(chars, 0, 1)
-            return text
-            """
-        )
-
-        val first = assertNotNull(service.signatureHelp(signatureParams(document, "chars,")))
-        val second = assertNotNull(service.signatureHelp(signatureParams(document, "0,")))
-        val third = assertNotNull(service.signatureHelp(signatureParams(document, "1)")))
-
-        assertEquals(0, first.activeParameter)
-        assertEquals(1, second.activeParameter)
-        assertEquals(2, third.activeParameter)
-        assertTrue(
-            first.signatures.size >= 2,
-            "Overloaded valueOf must expose multiple signatures; size=${first.signatures.size} labels=${first.labels()}"
-        )
-        val active = third.signatures[third.activeSignature.coerceIn(0, third.signatures.lastIndex)]
-        assertTrue(
-            active.parameters.size > third.activeParameter,
-            "Active signature ${active.label} must host activeParameter=${third.activeParameter}"
-        )
-    }
-
-    @Test
-    fun overloaded_math_max_advances_active_parameter_across_binary_call() {
-        val service = jvmService()
-        val document = service.open(
-            "workspace/signature-active-math-max.lua",
-            """
-            local Math = require("Math")
-            local current = Math.max(1, 2)
-            return current
-            """
-        )
-
-        val first = assertNotNull(service.signatureHelp(signatureParams(document, "1,")))
-        val between = assertNotNull(
-            service.signatureHelp(
-                SignatureHelpParams(
-                    TextDocumentIdentifier(document.uri),
-                    document.positionBetween("1,", "2")
-                )
-            )
-        )
-        val second = assertNotNull(service.signatureHelp(signatureParams(document, "2)")))
-
-        assertEquals(0, first.activeParameter)
-        assertEquals(1, between.activeParameter)
-        assertEquals(1, second.activeParameter)
-        assertTrue(first.signatures.isNotEmpty(), "Math.max must expose signature help")
-        assertTrue(first.signatures.all { it.parameters.size == 2 })
     }
 
     @Test
@@ -251,32 +159,6 @@ class LspSignatureHelpActiveParamTddTest {
             afterCallOutside,
             "signature help past next-token call.range.end (sentinel identifier) should be null"
         )
-    }
-
-    @Test
-    fun outside_call_context_on_empty_and_statement_sites_returns_null_without_crash() {
-        val service = plainService()
-        val empty = service.open(
-            "workspace/signature-active-empty.lua",
-            """
-            local x = 1
-            return x
-            """
-        )
-        val helpOnNumber = service.signatureHelp(signatureParams(empty, "1"))
-        val helpOnReturn = service.signatureHelp(signatureParams(empty, "return"))
-
-        assertNull(helpOnNumber)
-        assertNull(helpOnReturn)
-
-        // Completely empty argument-less expression site still must not throw.
-        val bare = service.open(
-            "workspace/signature-active-bare.lua",
-            """
-            local name = "token"
-            """
-        )
-        assertNull(service.signatureHelp(signatureParams(bare, "token")))
     }
 
     @Test

@@ -31,10 +31,43 @@ internal class CompletionProvider(
 
         // Fall back to enclosing nodes when parent links are missing or the innermost
         // hit is a broader expression covering the member access site.
-        return nodePositionIndex.findEnclosing(position)
+        nodePositionIndex.findEnclosing(position)
             .asSequence()
             .mapNotNull { candidate -> memberExpressionFromNode(candidate) }
             .firstOrNull()
+            ?.let { return it }
+
+        // NodePositionIndex is half-open [start, end). Trailing-dot carets often sit exactly
+        // at MemberExpression.range.end (`table.|` / `greeter.|`) and miss the member node.
+        // Probe one column left so incomplete member access still uses the member surface.
+        if (position.column > 1) {
+            val left = Position(position.line, position.column - 1)
+            val leftNode = nodePositionIndex.findInnermost(left)
+            memberExpressionFromNode(leftNode)?.let { return it }
+            nodePositionIndex.findEnclosing(left)
+                .asSequence()
+                .mapNotNull { candidate ->
+                    when (candidate) {
+                        is MemberExpression -> candidate
+                        is Identifier -> runCatching { candidate.parent }.getOrNull() as? MemberExpression
+                        else -> null
+                    }
+                }
+                .firstOrNull()
+                ?.let { return it }
+        }
+
+        if (node is Identifier) {
+            val parent = runCatching { node.parent }.getOrNull() as? MemberExpression
+            if (
+                parent?.base === node &&
+                position.line == parent.range.end.line &&
+                position.column >= parent.range.end.column
+            ) {
+                return parent
+            }
+        }
+        return null
     }
 
     private fun memberExpressionFromNode(node: BaseASTNode?): MemberExpression? {
@@ -42,7 +75,12 @@ internal class CompletionProvider(
             is MemberExpression -> node
             is Identifier -> {
                 val parent = runCatching { node.parent }.getOrNull() as? MemberExpression
-                parent?.takeIf { it.identifier === node }
+                parent?.takeIf {
+                    // Completed `base.member` caret on the member name, or incomplete `base.`
+                    // where the member Identifier is still blank and caret is on the base.
+                    it.identifier === node ||
+                        (it.base === node && it.identifier.name.isBlank())
+                }
             }
             else -> null
         }

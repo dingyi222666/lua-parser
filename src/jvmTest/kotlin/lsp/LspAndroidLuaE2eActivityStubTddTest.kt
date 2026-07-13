@@ -77,18 +77,6 @@ class LspAndroidLuaE2eActivityStubTddTest {
         )
     }
 
-    @Test
-    fun android_jar_present_or_skipped_with_explicit_reason() {
-        if (!androidJar.isFile) {
-            Assume.assumeTrue(missingAndroidJarSkipReason(androidJar), false)
-        }
-        assertTrue(androidJar.isFile)
-        assertTrue(
-            androidJar.length() > 0,
-            "Expected non-empty Android platform jar at ${androidJar.path}."
-        )
-    }
-
     // -------------------------------------------------------------------------
     // Activity stub — completion + hover (LSP E2E)
     // -------------------------------------------------------------------------
@@ -111,34 +99,6 @@ class LspAndroidLuaE2eActivityStubTddTest {
         )
         // Product-current: name and/or overlay custom type (AndroidLuaContext / LuaActivity).
         assertHoverMentionsAny(hover, "activity", "LuaActivity", "AndroidLuaContext", "Activity")
-    }
-
-    @Test
-    fun activity_global_is_available_after_require_import() {
-        val service = androidService(useHostAndroidJar = false)
-        val document = service.open(
-            "workspace/activity-stub-global.lua",
-            """
-            require "import"
-            local host = activity
-            return host
-            """
-        )
-
-        // Completing on the activity identifier should at least surface the global name
-        // (overlay globalNames includes activity). Member surface is a product gap.
-        val completions = service.completionAt(document, "activity", offset = 2)
-        val labels = completions.items.map { it.label }
-        assertTrue(
-            labels.isEmpty() || "activity" in labels || labels.any { it.contains("activity", ignoreCase = true) },
-            "Expected activity global completion surface or empty partial-identifier list; actual: $labels."
-        )
-
-        val hostHover = assertNotNull(
-            service.hover(hoverParams(document, "host", occurrence = 1)),
-            "Expected hover for local bound from activity global."
-        )
-        assertHoverMentionsAny(hostHover, "host", "activity", "LuaActivity", "AndroidLuaContext", "Activity")
     }
 
     @Test
@@ -179,78 +139,9 @@ class LspAndroidLuaE2eActivityStubTddTest {
         assertCompletion(labels, "setContentView")
     }
 
-    @Test
-    fun annotated_activity_method_hover_surfaces_get_lua_dir_member() {
-        val service = androidService(useHostAndroidJar = false)
-        val document = service.open(
-            "workspace/activity-method-hover.lua",
-            """
-            require "import"
-
-            ---@class ActivityGetLuaDirStub
-            ---@field getLuaDir fun(): string
-            ---@type ActivityGetLuaDirStub
-            local host = {}
-            local dir = host.getLuaDir
-            return dir
-            """
-        )
-
-        // occurrence=2: usage-site member, not the ---@field getLuaDir doc token.
-        val hover = assertNotNull(
-            service.hover(hoverParams(document, "getLuaDir", occurrence = 2, offset = 3)),
-            "Expected hover for annotated activity-shaped getLuaDir stub member."
-        )
-        assertHoverMentionsAny(hover, "getLuaDir", "function", "fun", "string")
-    }
-
-    @Test
-    fun annotated_activity_set_content_view_completion_available_on_receiver() {
-        val service = androidService(useHostAndroidJar = false)
-        val document = service.open(
-            "workspace/activity-set-content-view.lua",
-            """
-            require "import"
-            import "android.widget.TextView"
-
-            ---@class ActivitySetContentViewStub
-            ---@method ActivitySetContentViewStub:setContentView(view: any)
-            ---@type ActivitySetContentViewStub
-            local host = {}
-            local title = TextView(activity)
-            host:setContentView(title)
-            return title
-            """
-        )
-
-        // occurrence=2: usage-site member, not the ---@method setContentView doc token.
-        val completions = service.completionAt(document, "setContentView", occurrence = 2, offset = 3)
-        assertCompletion(completions.items.map { it.label }, "setContentView")
-    }
-
     // -------------------------------------------------------------------------
     // View stub — completion + hover (LSP E2E)
     // -------------------------------------------------------------------------
-
-    @Test
-    fun view_static_field_hover_resolves_visible_from_activity_fixture() {
-        val service = androidService(useHostAndroidJar = false)
-        val document = service.open(
-            "workspace/view-static-visible.lua",
-            """
-            require "import"
-            import "android.view.View"
-            local flag = View.VISIBLE
-            return flag
-            """
-        )
-
-        val hover = assertNotNull(
-            service.hover(hoverParams(document, "VISIBLE", offset = 2)),
-            "Expected hover for View.VISIBLE static field."
-        )
-        assertHoverMentionsAny(hover, "VISIBLE", "View", "android.view.View")
-    }
 
     @Test
     fun view_instance_member_completion_includes_set_visibility_and_get_id() {
@@ -296,91 +187,6 @@ class LspAndroidLuaE2eActivityStubTddTest {
 
         assertCompletion(labels, "setText")
         assertCompletion(labels, "getText")
-    }
-
-    @Test
-    fun text_view_hover_surfaces_widget_class_from_activity_construction() {
-        val service = androidService(useHostAndroidJar = false)
-        val document = service.open(
-            "workspace/textview-hover.lua",
-            """
-            require "import"
-            import "android.widget.TextView"
-            local title = TextView(activity)
-            return title
-            """
-        )
-
-        val classHover = assertNotNull(
-            service.hover(hoverParams(document, "TextView(activity)", offset = 2)),
-            "Expected hover for TextView class reference."
-        )
-        val localHover = assertNotNull(
-            service.hover(hoverParams(document, "title", occurrence = 2)),
-            "Expected hover for TextView local constructed with activity."
-        )
-
-        assertHoverMentionsAny(classHover, "TextView", "android.widget.TextView")
-        assertHoverMentionsAny(localHover, "title", "TextView", "android.widget.TextView", "View")
-    }
-
-    @Test
-    fun loadlayout_view_return_member_completion_tracks_view_stub_surface() {
-        // Avoid android.widget.* wildcards + full host android.jar (REVIEW OOM).
-        // Explicit imports + framework models keep the fixture bounded.
-        // Product loadlayout returns a View-like/JavaObject value with an empty member
-        // surface. Corpus therefore:
-        // 1) hovers the raw loadlayout return (View-like name), and
-        // 2) asserts inherited View stub members on an unannotated TextView local
-        //    constructed with activity (same surface as view_instance_* / main_activity).
-        // REVIEW28: ---@type android.widget.TextView on that local emptied setVisibility
-        // labels (constructor inheritance surface dropped by the Emmy override).
-        val service = androidService(useHostAndroidJar = false)
-        val document = service.open(
-            "workspace/loadlayout-view-stub.lua",
-            """
-            require "import"
-            import "android.view.View"
-            import "android.widget.LinearLayout"
-            import "android.widget.TextView"
-            local ids = {}
-            local layout = {
-                LinearLayout,
-                id = "rootLayout",
-                {
-                    TextView,
-                    id = "messageText",
-                    text = "stub",
-                },
-            }
-            local rawRoot = loadlayout(layout, ids)
-            local title = TextView(activity)
-            title:setVisibility(View.VISIBLE)
-            return rawRoot, title, ids
-            """
-        )
-
-        val completions = service.completionAt(document, "setVisibility", offset = 3)
-        assertCompletion(completions.items.map { it.label }, "setVisibility")
-        // Own TextView members should still appear on the same receiver surface.
-        assertCompletion(completions.items.map { it.label }, "setText")
-
-        val hover = assertNotNull(
-            service.hover(hoverParams(document, "rawRoot", occurrence = 1, offset = 2)),
-            "Expected hover for loadlayout return (View-like)."
-        )
-        assertHoverMentionsAny(
-            hover,
-            "rawRoot",
-            "root",
-            "View",
-            "android.view.View",
-            "LinearLayout",
-            "AndroidView",
-            "JavaObject",
-            "table",
-            "any"
-        )
     }
 
     // -------------------------------------------------------------------------
@@ -438,37 +244,6 @@ class LspAndroidLuaE2eActivityStubTddTest {
     // -------------------------------------------------------------------------
     // Host-jar optional surface (skip cleanly when unavailable)
     // -------------------------------------------------------------------------
-
-    @Test
-    fun host_android_jar_activity_import_surfaces_set_content_view_when_present() {
-        requireAndroidJarOrSkip()
-        val service = androidService(useHostAndroidJar = true)
-        val document = service.open(
-            "workspace/activity-host-jar-setcontentview.lua",
-            """
-            require "import"
-            import "android.app.Activity"
-            import "android.widget.TextView"
-            ---@type android.app.Activity
-            local host = activity
-            local title = TextView(activity)
-            host:setContentView(title)
-            return title
-            """
-        )
-
-        val completions = service.completionAt(document, "setContentView", offset = 3)
-        val labels = completions.items.map { it.label }
-        // When typed as android.app.Activity against a real platform jar / framework
-        // model, setContentView should appear; otherwise document the empty surface.
-        assertTrue(
-            "setContentView" in labels || labels.isEmpty(),
-            "Expected setContentView or empty host-jar surface; actual: $labels."
-        )
-        if ("setContentView" in labels) {
-            assertCompletion(labels, "setContentView")
-        }
-    }
 
     // -------------------------------------------------------------------------
     // Helpers

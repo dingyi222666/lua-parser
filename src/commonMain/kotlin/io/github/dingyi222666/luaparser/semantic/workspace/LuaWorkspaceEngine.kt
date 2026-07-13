@@ -181,7 +181,6 @@ open class LuaWorkspaceEngine(
         pathsToAnalyze: Set<VirtualPath>,
         previous: WorkspaceSnapshot?
     ): WorkspaceSnapshot {
-        val resolver = WorkspaceModuleResolver(baseSnapshot)
         val files = baseSnapshot.files.mapValues { (path, fileSnapshot) ->
             if (path !in pathsToAnalyze) {
                 previous?.files?.get(path)?.semanticFile?.let { existing ->
@@ -204,17 +203,17 @@ open class LuaWorkspaceEngine(
                     baseSnapshot
                 )
             )
-            fileSnapshot.copy(
-                semanticFile = WorkspaceSemanticFile(
-                    path = path,
-                    source = sources[path]
-                        ?: previous?.files?.get(path)?.semanticFile?.source
-                        ?: "",
-                    chunk = chunk,
-                    model = semanticSnapshot.model,
-                    snapshot = semanticSnapshot
-                )
+            val semanticFile = WorkspaceSemanticFile(
+                path = path,
+                source = sources[path]
+                    ?: previous?.files?.get(path)?.semanticFile?.source
+                    ?: "",
+                chunk = chunk,
+                model = semanticSnapshot.model,
+                snapshot = semanticSnapshot
             )
+            // Keep moduleExportSurface from analyzeFile/ModuleExportCollector (no post-bind rewrite).
+            fileSnapshot.copy(semanticFile = semanticFile)
         }
         return baseSnapshot.copy(files = files)
     }

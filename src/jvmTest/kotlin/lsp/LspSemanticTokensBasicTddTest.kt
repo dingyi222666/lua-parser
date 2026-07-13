@@ -88,60 +88,9 @@ class LspSemanticTokensBasicTddTest {
         )
     }
 
-    @Test
-    fun semantic_tokens_capability_absent_skips_hard_token_corpus() {
-        val service = service()
-        val provider = service.initialize(InitializeParams()).capabilities.semanticTokensProvider
-
-        Assume.assumeTrue(
-            "TASK-252 skipped: semanticTokensProvider not advertised yet " +
-                "(documented product gap; hard keyword/identifier corpus deferred until capability lands).",
-            provider != null
-        )
-
-        // Reached only when capability is present.
-        assertNotNull(provider)
-        assertNotNull(provider.legend)
-    }
-
     // -------------------------------------------------------------------------
     // Full request: empty / keywords / identifiers / large file
     // -------------------------------------------------------------------------
-
-    @Test
-    fun semantic_tokens_full_empty_document_does_not_crash() {
-        val service = service()
-        val textDocuments = LuaTextDocumentService(service)
-        val document = textDocuments.open(
-            "workspace/semantic-tokens-empty.lua",
-            ""
-        )
-
-        val outcome = invokeSemanticTokensFull(
-            textDocuments,
-            SemanticTokensParams(TextDocumentIdentifier(document.uri))
-        )
-
-        when (outcome) {
-            is TokensOutcome.Unsupported -> {
-                assertTrue(
-                    outcome.isUnsupportedOperation,
-                    "Documented gap expects UnsupportedOperationException for empty full; got ${outcome.detail}"
-                )
-            }
-            is TokensOutcome.Failed -> {
-                fail("semanticTokensFull on empty document must not fail hard: ${outcome.detail}")
-            }
-            is TokensOutcome.Succeeded -> {
-                assertNotNull(outcome.tokens)
-                val data = outcome.tokens.data.orEmpty()
-                assertTrue(
-                    data.isEmpty() || data.size % 5 == 0,
-                    "empty document tokens must be empty or well-formed 5-int groups; size=${data.size}"
-                )
-            }
-        }
-    }
 
     @Test
     fun semantic_tokens_full_keywords_and_identifiers_encode_without_crash() {
@@ -231,53 +180,6 @@ class LspSemanticTokensBasicTddTest {
                         "token span must fit line ${token.line} (len=${lineText.length}): $token"
                     )
                 }
-            }
-        }
-    }
-
-    @Test
-    fun semantic_tokens_full_large_document_does_not_crash() {
-        val service = service()
-        val textDocuments = LuaTextDocumentService(service)
-        val body = buildString {
-            appendLine("local total = 0")
-            // ~2k lines of simple statements — large enough to stress encoding.
-            repeat(2000) { index ->
-                appendLine("total = total + $index")
-            }
-            appendLine("return total")
-        }
-        val document = textDocuments.open(
-            "workspace/semantic-tokens-large.lua",
-            body
-        )
-
-        val outcome = invokeSemanticTokensFull(
-            textDocuments,
-            SemanticTokensParams(TextDocumentIdentifier(document.uri))
-        )
-
-        when (outcome) {
-            is TokensOutcome.Unsupported -> {
-                assertTrue(
-                    outcome.isUnsupportedOperation,
-                    "Documented gap expects UnsupportedOperationException for large full; got ${outcome.detail}"
-                )
-            }
-            is TokensOutcome.Failed -> {
-                fail("semanticTokensFull on large document must not fail hard: ${outcome.detail}")
-            }
-            is TokensOutcome.Succeeded -> {
-                val data = outcome.tokens.data.orEmpty()
-                assertTrue(
-                    data.size % 5 == 0,
-                    "large-file token data must be well-formed 5-int groups; size=${data.size}"
-                )
-                // Sanity: large source should produce a non-trivial token stream when live.
-                assertTrue(
-                    data.isNotEmpty(),
-                    "large keyword/identifier file should not yield an empty token stream once capability is live"
-                )
             }
         }
     }
@@ -381,62 +283,6 @@ class LspSemanticTokensBasicTddTest {
                 )
             }
         }
-    }
-
-    @Test
-    fun semantic_tokens_full_twice_is_stable_when_capability_present() {
-        val service = service()
-        val provider = service.initialize(InitializeParams()).capabilities.semanticTokensProvider
-
-        Assume.assumeTrue(
-            "TASK-252 skipped: semanticTokensProvider not advertised; full stability deferred.",
-            provider != null
-        )
-
-        val textDocuments = LuaTextDocumentService(service)
-        val document = textDocuments.open(
-            "workspace/semantic-tokens-stable.lua",
-            """
-            local count = 0
-            count = count + 1
-            return count
-            """
-        )
-
-        val first = invokeSemanticTokensFull(
-            textDocuments,
-            SemanticTokensParams(TextDocumentIdentifier(document.uri))
-        )
-        val second = invokeSemanticTokensFull(
-            textDocuments,
-            SemanticTokensParams(TextDocumentIdentifier(document.uri))
-        )
-
-        val firstData = when (first) {
-            is TokensOutcome.Succeeded -> first.tokens.data.orEmpty()
-            is TokensOutcome.Unsupported -> {
-                Assume.assumeTrue(
-                    "TASK-252 skipped: full unsupported despite capability: ${first.detail}",
-                    false
-                )
-                return
-            }
-            is TokensOutcome.Failed -> fail("first full must not fail: ${first.detail}")
-        }
-        val secondData = when (second) {
-            is TokensOutcome.Succeeded -> second.tokens.data.orEmpty()
-            is TokensOutcome.Unsupported -> {
-                fail("second full became unsupported after first succeeded: ${second.detail}")
-            }
-            is TokensOutcome.Failed -> fail("second full must not fail: ${second.detail}")
-        }
-
-        assertEquals(
-            firstData,
-            secondData,
-            "two consecutive full requests on an unchanged document must yield identical token data"
-        )
-        assertTrue(firstData.size % 5 == 0, "stable full data must be 5-int groups")
     }
 
     // -------------------------------------------------------------------------

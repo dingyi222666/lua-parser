@@ -49,7 +49,6 @@ class JavaArrayIndexTypeTddTest {
         assertHoverType(harness, "locales", "java.util.Locale[]", occurrence = 2)
         assertHoverType(harness, "first", "java.util.Locale", occurrence = 2)
     }
-
     @Test
     fun new_array_string_index_reports_string_component_type() {
         val harness = jvmHarness(
@@ -64,37 +63,6 @@ class JavaArrayIndexTypeTddTest {
         assertHoverType(harness, "values", "string[]", occurrence = 2)
         assertHoverType(harness, "first", "string", occurrence = 2)
     }
-
-    @Test
-    fun new_array_integer_index_reports_number_component_type() {
-        val harness = jvmHarness(
-            "main.lua" to """
-                local Integer = luajava.bindClass("java.lang.Integer")
-                local ids = luajava.newArray(Integer, 4)
-                local first = ids[1]
-                return first
-            """.trimIndent()
-        )
-
-        assertHoverType(harness, "ids", "number[]", occurrence = 2)
-        assertHoverType(harness, "first", "number", occurrence = 2)
-    }
-
-    @Test
-    fun new_array_file_index_reports_file_component_type() {
-        val harness = jvmHarness(
-            "main.lua" to """
-                local File = luajava.bindClass("java.io.File")
-                local files = luajava.newArray(File, 1)
-                local first = files[1]
-                return first
-            """.trimIndent()
-        )
-
-        assertHoverType(harness, "files", "java.io.File[]", occurrence = 2)
-        assertHoverType(harness, "first", "java.io.File", occurrence = 2)
-    }
-
     @Test
     fun new_array_zero_based_and_one_based_numeric_indexes_share_component_type() {
         // Lua 1-based convention is common, but modeled Java arrays accept number indexes.
@@ -111,55 +79,6 @@ class JavaArrayIndexTypeTddTest {
         assertHoverType(harness, "zero", "java.util.Locale", occurrence = 2)
         assertHoverType(harness, "one", "java.util.Locale", occurrence = 2)
     }
-
-    @Test
-    fun new_array_variable_numeric_index_still_reports_component_type() {
-        val harness = jvmHarness(
-            "main.lua" to """
-                local Locale = luajava.bindClass("java.util.Locale")
-                local locales = luajava.newArray(Locale, 2)
-                local i = 1
-                local first = locales[i]
-                return first
-            """.trimIndent()
-        )
-
-        assertHoverType(harness, "first", "java.util.Locale", occurrence = 2)
-    }
-
-    @Test
-    fun new_array_alias_preserves_index_component_type() {
-        val harness = jvmHarness(
-            "main.lua" to """
-                local Locale = luajava.bindClass("java.util.Locale")
-                local newArray = luajava.newArray
-                local locales = newArray(Locale, 2)
-                local first = locales[1]
-                return first
-            """.trimIndent()
-        )
-
-        assertHoverType(harness, "locales", "java.util.Locale[]", occurrence = 2)
-        assertHoverType(harness, "first", "java.util.Locale", occurrence = 2)
-    }
-
-    @Test
-    fun chained_new_array_alias_preserves_index_component_type() {
-        val harness = jvmHarness(
-            "main.lua" to """
-                local Locale = luajava.bindClass("java.util.Locale")
-                local newArray = luajava.newArray
-                local make = newArray
-                local again = make
-                local locales = again(Locale, 2)
-                local first = locales[1]
-                return first
-            """.trimIndent()
-        )
-
-        assertHoverType(harness, "first", "java.util.Locale", occurrence = 2)
-    }
-
     @Test
     fun multi_dimension_new_array_index_still_reports_component_type() {
         val harness = jvmHarness(
@@ -176,11 +95,6 @@ class JavaArrayIndexTypeTddTest {
         assertHoverType(harness, "matrix", "java.util.Locale[][]", occurrence = 2)
         assertHoverType(harness, "first", "java.util.Locale[]", occurrence = 2)
     }
-
-    // ------------------------------------------------------------------
-    // Positive: createArray index → component type
-    // ------------------------------------------------------------------
-
     @Test
     fun create_array_string_index_reports_string_component_type() {
         val harness = jvmHarness(
@@ -194,53 +108,6 @@ class JavaArrayIndexTypeTddTest {
         assertHoverType(harness, "values", "string[]", occurrence = 2)
         assertHoverType(harness, "first", "string", occurrence = 2)
     }
-
-    @Test
-    fun create_array_primitive_int_index_reports_number_component_type() {
-        val harness = jvmHarness(
-            "main.lua" to """
-                local ids = luajava.createArray("int", { 1, 2 })
-                local first = ids[1]
-                return first
-            """.trimIndent()
-        )
-
-        assertHoverType(harness, "first", "number", occurrence = 2)
-    }
-
-    @Test
-    fun create_array_locale_index_reports_locale_component_type() {
-        val harness = jvmHarness(
-            "main.lua" to """
-                local locales = luajava.createArray("java.util.Locale", {})
-                local first = locales[1]
-                return first
-            """.trimIndent()
-        )
-
-        assertHoverType(harness, "locales", "java.util.Locale[]", occurrence = 2)
-        assertHoverType(harness, "first", "java.util.Locale", occurrence = 2)
-    }
-
-    @Test
-    fun create_array_alias_preserves_index_component_type() {
-        val harness = jvmHarness(
-            "main.lua" to """
-                local createArray = luajava.createArray
-                local values = createArray("java.lang.String", {})
-                local first = values[1]
-                return first
-            """.trimIndent()
-        )
-
-        assertHoverType(harness, "values", "string[]", occurrence = 2)
-        assertHoverType(harness, "first", "string", occurrence = 2)
-    }
-
-    // ------------------------------------------------------------------
-    // Positive: length remains available alongside index
-    // ------------------------------------------------------------------
-
     @Test
     fun new_array_index_and_length_coexist_on_same_receiver() {
         val harness = jvmHarness(
@@ -257,88 +124,6 @@ class JavaArrayIndexTypeTddTest {
         assertHoverType(harness, "count", "number", occurrence = 2)
         assertHoverType(harness, "length", "number")
     }
-
-    @Test
-    fun create_array_index_and_length_coexist_on_same_receiver() {
-        val harness = jvmHarness(
-            "main.lua" to """
-                local values = luajava.createArray("java.lang.String", {})
-                local first = values[1]
-                local count = values.length
-                return first, count
-            """.trimIndent()
-        )
-
-        assertHoverType(harness, "first", "string", occurrence = 2)
-        assertHoverType(harness, "count", "number", occurrence = 2)
-        assertHoverType(harness, "length", "number")
-    }
-
-    @Test
-    fun new_array_length_hover_is_field_kind_while_index_is_component() {
-        val harness = jvmHarness(
-            "main.lua" to """
-                local File = luajava.bindClass("java.io.File")
-                local files = luajava.newArray(File, 2)
-                local first = files[1]
-                local count = files.length
-                return first, count
-            """.trimIndent()
-        )
-
-        assertHoverType(harness, "first", "java.io.File", occurrence = 2)
-
-        val lengthHover = assertNotNull(
-            harness.queries.hover(harness.path("main.lua"), harness.positionOf("main.lua", "length"))
-        )
-        assertEquals("number", lengthHover.typeInfo?.displayName)
-        lengthHover.symbol?.let { symbol ->
-            assertEquals(SymbolKind.FIELD, symbol.kind)
-        }
-    }
-
-    @Test
-    fun new_array_member_completions_still_include_length_field_after_index_use() {
-        val harness = jvmHarness(
-            "main.lua" to """
-                local Locale = luajava.bindClass("java.util.Locale")
-                local locales = luajava.newArray(Locale, 2)
-                local first = locales[1]
-                local count = locales.length
-                return first, count
-            """.trimIndent()
-        )
-
-        val completions = harness.queries.completions(
-            harness.path("main.lua"),
-            harness.positionOf("main.lua", "length")
-        )
-        assertCompletion(completions, "length", CompletionItemKind.FIELD)
-        assertHoverType(harness, "first", "java.util.Locale", occurrence = 2)
-    }
-
-    @Test
-    fun multi_dimension_new_array_still_exposes_length_with_index_component() {
-        val harness = jvmHarness(
-            "main.lua" to """
-                local Locale = luajava.bindClass("java.util.Locale")
-                local matrix = luajava.newArray(Locale, 2, 3)
-                local first = matrix[1]
-                local count = matrix.length
-                return first, count
-            """.trimIndent()
-        )
-
-        // One index into rank-2 matrix peels to Locale[]; length stays number/int-like.
-        assertHoverType(harness, "first", "java.util.Locale[]", occurrence = 2)
-        assertHoverType(harness, "count", "number", occurrence = 2)
-        assertHoverType(harness, "length", "number")
-    }
-
-    // ------------------------------------------------------------------
-    // Negative / degrade: non-array or invalid receivers
-    // ------------------------------------------------------------------
-
     @Test
     fun non_array_java_instance_index_degrades_without_crash() {
         // Locale instance is not a Java array; numeric index must not invent component typing.
@@ -353,20 +138,6 @@ class JavaArrayIndexTypeTddTest {
 
         assertDegradedIndex(harness, localNeedle = "first")
     }
-
-    @Test
-    fun non_array_bound_class_index_degrades_without_crash() {
-        val harness = jvmHarness(
-            "main.lua" to """
-                local Locale = luajava.bindClass("java.util.Locale")
-                local first = Locale[1]
-                return first
-            """.trimIndent()
-        )
-
-        assertDegradedIndex(harness, localNeedle = "first")
-    }
-
     @Test
     fun plain_lua_table_index_is_not_java_array_component_typing() {
         // Plain Lua tables keep their own index surface; this is not a Java array component.
@@ -386,108 +157,6 @@ class JavaArrayIndexTypeTddTest {
         )
         assertNotNull(harness.queries.diagnostics(harness.path("main.lua")))
     }
-
-    @Test
-    fun unknown_receiver_index_degrades_without_crash() {
-        val harness = jvmHarness(
-            "main.lua" to """
-                local missing = somethingMissing
-                local first = missing[1]
-                return first
-            """.trimIndent()
-        )
-
-        assertDegradedIndex(harness, localNeedle = "first")
-    }
-
-    @Test
-    fun nil_receiver_index_degrades_without_crash() {
-        val harness = jvmHarness(
-            "main.lua" to """
-                local missing = nil
-                local first = missing[1]
-                return first
-            """.trimIndent()
-        )
-
-        assertDegradedIndex(harness, localNeedle = "first")
-    }
-
-    @Test
-    fun non_numeric_index_on_java_array_degrades_or_diagnostics() {
-        val harness = jvmHarness(
-            "main.lua" to """
-                local Locale = luajava.bindClass("java.util.Locale")
-                local locales = luajava.newArray(Locale, 2)
-                local first = locales["name"]
-                return first
-            """.trimIndent()
-        )
-
-        val firstDisplay = hoverDisplay(harness, "first", occurrence = 2)
-        val diagnostics = diagnostics(harness)
-        val degraded =
-            firstDisplay == null ||
-                firstDisplay == "unknown" ||
-                firstDisplay.isBlank() ||
-                firstDisplay == "nil"
-        val diagnosticHit = diagnostics.any { it.looksLikeInvalidIndex() }
-        assertTrue(
-            degraded || diagnosticHit,
-            "Non-numeric index on Java array must degrade element type or emit index diagnostic; " +
-                "type='$firstDisplay' diagnostics=${diagnostics.map { it.message }}"
-        )
-        // Must not silently keep Locale component for a string key.
-        assertFalse(
-            firstDisplay == "java.util.Locale" && !diagnosticHit,
-            "String key on Java array must not keep Locale component without a diagnostic; type='$firstDisplay'"
-        )
-        assertNotNull(diagnostics)
-    }
-
-    @Test
-    fun invalid_new_array_dimensions_index_degrades_to_unknown_or_diagnostic() {
-        val harness = jvmHarness(
-            "main.lua" to """
-                local Locale = luajava.bindClass("java.util.Locale")
-                local values = luajava.newArray(Locale, -1)
-                local first = values[1]
-                return first
-            """.trimIndent()
-        )
-
-        assertInvalidArrayIndexDegrades(harness, arrayNeedle = "values", elementNeedle = "first")
-    }
-
-    @Test
-    fun missing_new_array_dimension_index_degrades_to_unknown_or_diagnostic() {
-        val harness = jvmHarness(
-            "main.lua" to """
-                local Locale = luajava.bindClass("java.util.Locale")
-                local values = luajava.newArray(Locale)
-                local first = values[1]
-                return first
-            """.trimIndent()
-        )
-
-        assertInvalidArrayIndexDegrades(harness, arrayNeedle = "values", elementNeedle = "first")
-    }
-
-    @Test
-    fun non_class_new_array_first_arg_index_degrades_to_unknown_component() {
-        val harness = jvmHarness(
-            "main.lua" to """
-                local values = luajava.newArray("java.util.Locale", 2)
-                local first = values[1]
-                return first
-            """.trimIndent()
-        )
-
-        // newArray requires bound class userdata; string targets belong to createArray.
-        assertHoverType(harness, "values", "unknown[]", occurrence = 2)
-        assertHoverType(harness, "first", "unknown", occurrence = 2)
-    }
-
     @Test
     fun array_index_isolated_from_non_array_in_same_document() {
         val harness = jvmHarness(

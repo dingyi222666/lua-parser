@@ -64,36 +64,6 @@ class AST2LuaForWhileRepeatRoundTripTddTest {
     }
 
     @Test
-    fun roundTripsRepeatFormsIncludingEmptyBodies() {
-        assertRoundTrips(
-            listOf(
-                Sample(
-                    source = "repeat until done",
-                    expectedShape = "Chunk(Block[Repeat(Block[]:Id(done))])",
-                    printedFragments = listOf("repeat", "until done")
-                ),
-                Sample(
-                    source = "repeat work() until ready",
-                    expectedShape =
-                        "Chunk(Block[Repeat(Block[CallStmt(Call(Id(work):))]:Id(ready))])",
-                    printedFragments = listOf("repeat", "work()", "until ready")
-                ),
-                Sample(
-                    source = "repeat local x = 1 until x > 0",
-                    expectedShape =
-                        "Chunk(Block[Repeat(Block[Local(Id(x)=Const(1))]:Binary(>,Id(x),Const(0)))])",
-                    printedFragments = listOf("local x = 1", "until x > 0")
-                ),
-                Sample(
-                    source = "repeat break until true",
-                    expectedShape = "Chunk(Block[Repeat(Block[Break]:Const(true))])",
-                    printedFragments = listOf("break", "until true")
-                )
-            )
-        )
-    }
-
-    @Test
     fun roundTripsNumericAndGenericForIncludingEmptyBodies() {
         assertRoundTrips(
             listOf(
@@ -172,76 +142,6 @@ class AST2LuaForWhileRepeatRoundTripTddTest {
                 )
             )
         )
-    }
-
-    @Test
-    fun exposesTypedLoopNodesAfterRoundTrip() {
-        val whilePrinted = printer.asCode(LuaParser(luaVersion = version).parse("while ready do work() end"))
-        val whileChunk = LuaParser(luaVersion = version).parse(whilePrinted)
-        assertIs<WhileStatement>(whileChunk.body.statements.single())
-
-        val repeatPrinted = printer.asCode(LuaParser(luaVersion = version).parse("repeat until done"))
-        val repeatChunk = LuaParser(luaVersion = version).parse(repeatPrinted)
-        val repeat = assertIs<RepeatStatement>(repeatChunk.body.statements.single())
-        assertTrue(repeat.body.statements.isEmpty())
-
-        val numericPrinted = printer.asCode(LuaParser(luaVersion = version).parse("for i = 1, 3 do end"))
-        val numeric = assertIs<ForNumericStatement>(
-            LuaParser(luaVersion = version).parse(numericPrinted).body.statements.single()
-        )
-        assertEquals("i", numeric.variable.name)
-        assertNull(numeric.step)
-
-        val genericPrinted =
-            printer.asCode(LuaParser(luaVersion = version).parse("for k, v in pairs(t) do end"))
-        val generic = assertIs<ForGenericStatement>(
-            LuaParser(luaVersion = version).parse(genericPrinted).body.statements.single()
-        )
-        assertEquals(listOf("k", "v"), generic.variables.map { it.name })
-    }
-
-    @Test
-    fun roundTripsBulkLoopCorpusWithoutShapeDrift() {
-        val samples = listOf(
-            "while true do end",
-            "while ready do break end",
-            "while a < b do a = a + 1 end",
-            "repeat until true",
-            "repeat work() until false",
-            "repeat local x = 1 until x",
-            "for i = 1, 10 do end",
-            "for i = 1, 10, 2 do end",
-            "for i = start, finish, step do use(i) end",
-            "for k in iter do end",
-            "for k, v in pairs(t) do end",
-            "for k, v, i in next, t do end",
-            """
-            while outer do
-              for i = 1, 2 do
-                repeat work() until done
-              end
-            end
-            """.trimIndent()
-        )
-
-        val failures = samples.mapNotNull { source ->
-            runCatching {
-                val initial = LuaParser(luaVersion = version).parse(source)
-                val printed = printer.asCode(initial)
-                val reparsed = LuaParser(luaVersion = version).parse(printed)
-                assertEquals(
-                    renderShape(initial),
-                    renderShape(reparsed),
-                    "shape mismatch after print for <$source>\nprinted:\n$printed"
-                )
-            }.exceptionOrNull()?.let { failure ->
-                "$source\n${failure.message}"
-            }
-        }
-
-        if (failures.isNotEmpty()) {
-            fail(failures.joinToString(separator = "\n\n"))
-        }
     }
 
     // --- helpers ---

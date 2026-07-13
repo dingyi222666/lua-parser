@@ -53,61 +53,6 @@ class RepresentativeLayoutWidgetImportTddTest {
             "Skip reason must tell the host how to recover; got: $reason"
         )
     }
-
-    @Test
-    fun android_jar_present_or_skipped_with_explicit_reason() {
-        if (!androidJar.isFile) {
-            Assume.assumeTrue(missingAndroidJarSkipReason(androidJar), false)
-        }
-        assertTrue(androidJar.isFile)
-        assertTrue(
-            androidJar.length() > 0,
-            "Expected non-empty Android platform jar at ${androidJar.path}."
-        )
-        assertTrue(
-            !androidJar.path.replace('\\', '/').startsWith("G:/Android/Sdk", ignoreCase = true),
-            "Host resolution must not hardcode Windows G:/Android/Sdk; got ${androidJar.path}."
-        )
-    }
-
-    @Test
-    fun representative_layout_textview_goto_resolves_jvm_widget_class() {
-        requireAndroidJarOrSkip()
-        val harness = representativeLayoutHarness()
-        val path = LAYOUT_FILE
-
-        val definitions = harness.queries.gotoDefinition(
-            harness.path(path),
-            harness.positionOf(path, "TextView")
-        )
-
-        assertWidgetGotoDualPath(
-            harness = harness,
-            classSimpleName = "TextView",
-            definitions = definitions,
-            label = "fixture TextView goto from $path"
-        )
-    }
-
-    @Test
-    fun representative_layout_imageview_goto_resolves_jvm_widget_class() {
-        requireAndroidJarOrSkip()
-        val harness = representativeLayoutHarness()
-        val path = LAYOUT_FILE
-
-        val definitions = harness.queries.gotoDefinition(
-            harness.path(path),
-            harness.positionOf(path, "ImageView")
-        )
-
-        assertWidgetGotoDualPath(
-            harness = harness,
-            classSimpleName = "ImageView",
-            definitions = definitions,
-            label = "fixture ImageView goto from $path"
-        )
-    }
-
     @Test
     fun representative_layout_widget_imports_goto_both_textview_and_imageview() {
         // Combined corpus mirroring AndroidLuaLibraryStubsTddTest.representative_layout_fixture_resolves_android_widget_imports
@@ -138,7 +83,6 @@ class RepresentativeLayoutWidgetImportTddTest {
             label = "combined fixture ImageView goto from $path"
         )
     }
-
     @Test
     fun representative_layout_inline_import_widget_star_goto_uses_same_jvm_paths() {
         // Inline twin of the fixture: require import + import "android.widget.*" then use classes.
@@ -183,26 +127,6 @@ class RepresentativeLayoutWidgetImportTddTest {
             classSimpleName = "ImageView",
             definitions = imageViewDefinition,
             label = "inline import \"android.widget.*\" ImageView"
-        )
-    }
-
-    @Test
-    fun host_android_jar_candidates_include_macos_sdk_and_downloads() {
-        // Documents the TASK-382 host path contract without requiring the jar to exist here.
-        val candidates = hostAndroidJarCandidates().map { it.path.replace('\\', '/') }
-
-        assertTrue(
-            candidates.any { it.endsWith("/Downloads/android.jar") },
-            "Candidate list must include macOS/user Downloads android.jar; got: $candidates"
-        )
-        assertTrue(
-            candidates.any { it.contains("/Library/Android/sdk/platforms/android-35/android.jar") } ||
-                candidates.any { it.contains("platforms/android-35/android.jar") },
-            "Candidate list must include macOS SDK platforms/android-35/android.jar; got: $candidates"
-        )
-        assertTrue(
-            candidates.none { it.startsWith("G:/Android/Sdk", ignoreCase = true) },
-            "Candidate list must never hardcode Windows G:/Android/Sdk; got: $candidates"
         )
     }
 

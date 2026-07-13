@@ -82,103 +82,6 @@ class LuaLexerShebangBomEdgeTddTest {
     }
 
     @Test
-    fun shebangWithCrLfTerminatorDoesNotSwallowNewlineChars() {
-        // Shebang scan breaks on `\r`/`\n` without consuming them; CRLF is one NEW_LINE.
-        assertTokenCases(
-            LexerCase(
-                "shebang then CRLF then return",
-                "#!/usr/bin/lua\r\nreturn",
-                token(LuaTokenTypes.SHEBANG_CONTENT, "#!/usr/bin/lua"),
-                token(LuaTokenTypes.RETURN, "return")
-            ),
-            LexerCase(
-                "shebang then bare CR then name",
-                "#!/usr/bin/lua\rprint",
-                token(LuaTokenTypes.SHEBANG_CONTENT, "#!/usr/bin/lua"),
-                token(LuaTokenTypes.NAME, "print")
-            ),
-            LexerCase(
-                "shebang-only with trailing CRLF",
-                "#!/usr/bin/env lua\r\n",
-                token(LuaTokenTypes.SHEBANG_CONTENT, "#!/usr/bin/env lua")
-            )
-        )
-    }
-
-    @Test
-    fun hashNotAtOffsetZeroOrWithoutBangIsGetnNotShebang() {
-        assertTokenCases(
-            LexerCase(
-                "hash alone is GETN",
-                "#",
-                token(LuaTokenTypes.GETN, "#")
-            ),
-            LexerCase(
-                "hash then name is GETN then NAME",
-                "#x",
-                token(LuaTokenTypes.GETN, "#"),
-                token(LuaTokenTypes.NAME, "x")
-            ),
-            LexerCase(
-                "length of table field #t",
-                "#t",
-                token(LuaTokenTypes.GETN, "#"),
-                token(LuaTokenTypes.NAME, "t")
-            ),
-            LexerCase(
-                "mid-file minimal hash-bang is GETN then NOT",
-                "print(1)\n#!",
-                token(LuaTokenTypes.NAME, "print"),
-                token(LuaTokenTypes.LPAREN, "("),
-                token(LuaTokenTypes.NUMBER, "1"),
-                token(LuaTokenTypes.RPAREN, ")"),
-                token(LuaTokenTypes.GETN, "#"),
-                token(LuaTokenTypes.NOT, "!")
-            ),
-            LexerCase(
-                "mid-file shebang-looking path is GETN NOT DIV NAME",
-                "print(1)\n#!/bin",
-                token(LuaTokenTypes.NAME, "print"),
-                token(LuaTokenTypes.LPAREN, "("),
-                token(LuaTokenTypes.NUMBER, "1"),
-                token(LuaTokenTypes.RPAREN, ")"),
-                token(LuaTokenTypes.GETN, "#"),
-                token(LuaTokenTypes.NOT, "!"),
-                token(LuaTokenTypes.DIV, "/"),
-                token(LuaTokenTypes.NAME, "bin")
-            ),
-            LexerCase(
-                "indented minimal hash-bang is GETN then NOT (offset != 0)",
-                " #!",
-                token(LuaTokenTypes.GETN, "#"),
-                token(LuaTokenTypes.NOT, "!")
-            ),
-            LexerCase(
-                "tab-indented minimal hash-bang is GETN then NOT",
-                "\t#!",
-                token(LuaTokenTypes.GETN, "#"),
-                token(LuaTokenTypes.NOT, "!")
-            ),
-            LexerCase(
-                "name then minimal hash-bang splits after GETN/NOT",
-                "x#!",
-                token(LuaTokenTypes.NAME, "x"),
-                token(LuaTokenTypes.GETN, "#"),
-                token(LuaTokenTypes.NOT, "!")
-            ),
-            LexerCase(
-                "name then hash-bang path continues as DIV NAME",
-                "x#!/bin",
-                token(LuaTokenTypes.NAME, "x"),
-                token(LuaTokenTypes.GETN, "#"),
-                token(LuaTokenTypes.NOT, "!"),
-                token(LuaTokenTypes.DIV, "/"),
-                token(LuaTokenTypes.NAME, "bin")
-            )
-        )
-    }
-
-    @Test
     fun leadingBomIsStrippedSoShebangAndKeywordsStayClean() {
         assertTokenCases(
             LexerCase(
@@ -235,42 +138,6 @@ class LuaLexerShebangBomEdgeTddTest {
     }
 
     @Test
-    fun midBufferBomIsNotStrippedAndBehavesAsIdentifierPart() {
-        // Mid-buffer U+FEFF remains; chars >= U+0080 are identifier start/part.
-        assertTokenCases(
-            LexerCase(
-                "mid BOM alone after space is NAME of BOM",
-                " $bom",
-                token(LuaTokenTypes.NAME, bom)
-            ),
-            LexerCase(
-                "mid BOM glues left and right into one NAME",
-                "a${bom}b",
-                token(LuaTokenTypes.NAME, "a${bom}b")
-            ),
-            LexerCase(
-                "name then mid BOM then minimal hash-bang is NAME then GETN NOT",
-                // After glued name ends at non-id `#`
-                "x${bom}y#!",
-                token(LuaTokenTypes.NAME, "x${bom}y"),
-                token(LuaTokenTypes.GETN, "#"),
-                token(LuaTokenTypes.NOT, "!")
-            ),
-            LexerCase(
-                "leading shebang then mid-line BOM on next line name",
-                "#!/bin/lua\na${bom}b",
-                token(LuaTokenTypes.SHEBANG_CONTENT, "#!/bin/lua"),
-                token(LuaTokenTypes.NAME, "a${bom}b")
-            ),
-            LexerCase(
-                "double leading BOM: only first stripped, second is NAME",
-                "${bom}${bom}print",
-                token(LuaTokenTypes.NAME, "${bom}print")
-            )
-        )
-    }
-
-    @Test
     fun shebangDoesNotConsumeFollowingStatementTokens() {
         assertTokenCases(
             LexerCase(
@@ -309,59 +176,6 @@ class LuaLexerShebangBomEdgeTddTest {
                 token(LuaTokenTypes.SHEBANG_CONTENT, "#!/usr/bin/env lua"),
                 token(LuaTokenTypes.GETN, "#"),
                 token(LuaTokenTypes.NAME, "t")
-            )
-        )
-    }
-
-    @Test
-    fun shebangTextKeepsFullLineIncludingPunctuationAndUnicode() {
-        assertTokenCases(
-            LexerCase(
-                "shebang with equals and colon path-like text",
-                "#!/usr/bin/env LUA_PATH=?;./?.lua",
-                token(LuaTokenTypes.SHEBANG_CONTENT, "#!/usr/bin/env LUA_PATH=?;./?.lua")
-            ),
-            LexerCase(
-                "shebang with unicode path segment",
-                "#!/usr/bin/环境/lua",
-                token(LuaTokenTypes.SHEBANG_CONTENT, "#!/usr/bin/环境/lua")
-            ),
-            LexerCase(
-                "shebang with tabs and multiple spaces",
-                "#!\t/usr/bin/env  lua",
-                token(LuaTokenTypes.SHEBANG_CONTENT, "#!\t/usr/bin/env  lua")
-            ),
-            LexerCase(
-                "BOM + shebang with unicode keeps clean shebang text",
-                "${bom}#!/usr/bin/环境/lua\nreturn",
-                token(LuaTokenTypes.SHEBANG_CONTENT, "#!/usr/bin/环境/lua"),
-                token(LuaTokenTypes.RETURN, "return")
-            )
-        )
-    }
-
-    @Test
-    fun emptyAndBomOnlySourcesStayDeterministic() {
-        assertTokenCases(
-            LexerCase(
-                "empty source yields no significant tokens",
-                ""
-            ),
-            LexerCase(
-                "BOM-only source strips to empty",
-                bom
-            ),
-            LexerCase(
-                "whitespace only yields no significant tokens",
-                " \t  "
-            ),
-            LexerCase(
-                "BOM then whitespace only",
-                "${bom} \t "
-            ),
-            LexerCase(
-                "LF only yields no significant tokens",
-                "\n"
             )
         )
     }

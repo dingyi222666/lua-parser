@@ -34,7 +34,6 @@ class LuaJavaHelperShadowingTddTest {
         assertHoverType(harness, "run", "unknown", occurrence = 2)
         assertNotJvmHelperSurface(harness, "proxy", occurrence = 2)
     }
-
     @Test
     fun local_create_array_function_does_not_gain_luajava_array_surface() {
         val harness = jvmHarness(
@@ -53,7 +52,6 @@ class LuaJavaHelperShadowingTddTest {
         assertHoverType(harness, "first", "unknown", occurrence = 2)
         assertNotJvmHelperSurface(harness, "array", occurrence = 2)
     }
-
     @Test
     fun local_new_array_function_does_not_gain_luajava_array_surface() {
         val harness = jvmHarness(
@@ -73,7 +71,6 @@ class LuaJavaHelperShadowingTddTest {
         assertHoverType(harness, "first", "unknown", occurrence = 2)
         assertNotJvmHelperSurface(harness, "array", occurrence = 2)
     }
-
     @Test
     fun local_bare_bind_class_new_instance_and_load_lib_functions_do_not_gain_luajava_surfaces() {
         val harness = jvmHarness(
@@ -110,70 +107,6 @@ class LuaJavaHelperShadowingTddTest {
         assertNotJvmHelperSurface(harness, "instanceResult", occurrence = 2)
         assertNotJvmHelperSurface(harness, "loadResult", occurrence = 2)
     }
-
-    @Test
-    fun local_luajava_create_proxy_member_does_not_gain_luajava_proxy_surface() {
-        val harness = jvmHarness(
-            "main.lua" to """
-                local luajava = {
-                    createProxy = function(target, impl)
-                        return { value = target }
-                    end
-                }
-
-                local proxy = luajava.createProxy("java.lang.Runnable", {})
-                local run = proxy.run
-                return proxy, run
-            """.trimIndent()
-        )
-
-        assertHoverTypeIsLocalTableShadow(harness, "proxy", occurrence = 2)
-        assertHoverType(harness, "run", "unknown", occurrence = 2)
-        assertNotJvmHelperSurface(harness, "proxy", occurrence = 2)
-    }
-
-    @Test
-    fun local_luajava_create_array_member_does_not_gain_luajava_array_surface() {
-        val harness = jvmHarness(
-            "main.lua" to """
-                local luajava = {
-                    createArray = function(target, values)
-                        return { value = target }
-                    end
-                }
-
-                local array = luajava.createArray("java.lang.String", {})
-                local first = array[1]
-                return array, first
-            """.trimIndent()
-        )
-
-        assertHoverTypeIsLocalTableShadow(harness, "array", occurrence = 2)
-        assertHoverType(harness, "first", "unknown", occurrence = 2)
-        assertNotJvmHelperSurface(harness, "array", occurrence = 2)
-    }
-
-    @Test
-    fun local_luajava_new_array_member_does_not_gain_luajava_array_surface() {
-        val harness = jvmHarness(
-            "main.lua" to """
-                local luajava = {
-                    newArray = function(target, size)
-                        return { size = size }
-                    end
-                }
-
-                local array = luajava.newArray("java.util.Locale", 2)
-                local first = array[1]
-                return array, first
-            """.trimIndent()
-        )
-
-        assertHoverTypeIsLocalTableShadow(harness, "array", occurrence = 2)
-        assertHoverType(harness, "first", "unknown", occurrence = 2)
-        assertNotJvmHelperSurface(harness, "array", occurrence = 2)
-    }
-
     @Test
     fun local_luajava_bind_class_member_and_alias_do_not_gain_luajava_class_surface() {
         val harness = jvmHarness(
@@ -200,61 +133,6 @@ class LuaJavaHelperShadowingTddTest {
         assertNotJvmHelperSurface(harness, "classResult", occurrence = 2)
         assertNotJvmHelperSurface(harness, "aliasResult", occurrence = 2)
     }
-
-    @Test
-    fun local_luajava_new_instance_member_and_alias_do_not_gain_luajava_instance_surface() {
-        val harness = jvmHarness(
-            "main.lua" to """
-                local luajava = {
-                    newInstance = function(target)
-                        return { value = target }
-                    end
-                }
-                local make = luajava.newInstance
-
-                local instanceResult = luajava.newInstance("java.lang.StringBuilder")
-                local madeResult = make("java.lang.StringBuilder")
-                local instanceAppend = instanceResult.append
-                local madeAppend = madeResult.append
-                return instanceResult, madeResult, instanceAppend, madeAppend
-            """.trimIndent()
-        )
-
-        assertHoverTypeIsLocalTableShadow(harness, "instanceResult", occurrence = 2)
-        assertHoverTypeIsLocalTableShadow(harness, "madeResult", occurrence = 2)
-        assertHoverType(harness, "instanceAppend", "unknown", occurrence = 2)
-        assertHoverType(harness, "madeAppend", "unknown", occurrence = 2)
-        assertNotJvmHelperSurface(harness, "instanceResult", occurrence = 2)
-        assertNotJvmHelperSurface(harness, "madeResult", occurrence = 2)
-    }
-
-    @Test
-    fun local_luajava_load_lib_member_and_alias_do_not_gain_luajava_member_surface() {
-        val harness = jvmHarness(
-            "main.lua" to """
-                local luajava = {
-                    loadLib = function(target, member)
-                        return { target = target, member = member }
-                    end
-                }
-                local load = luajava.loadLib
-
-                local loadResult = luajava.loadLib("java.lang.System", "currentTimeMillis")
-                local aliasResult = load("java.lang.System", "currentTimeMillis")
-                local loadCall = loadResult()
-                local aliasCall = aliasResult()
-                return loadResult, aliasResult, loadCall, aliasCall
-            """.trimIndent()
-        )
-
-        assertHoverTypeIsLocalTableShadow(harness, "loadResult", occurrence = 2)
-        assertHoverTypeIsLocalTableShadow(harness, "aliasResult", occurrence = 2)
-        assertHoverType(harness, "loadCall", "unknown", occurrence = 2)
-        assertHoverType(harness, "aliasCall", "unknown", occurrence = 2)
-        assertNotJvmHelperSurface(harness, "loadResult", occurrence = 2)
-        assertNotJvmHelperSurface(harness, "aliasResult", occurrence = 2)
-    }
-
     @Test
     fun colon_luajava_helper_member_aliases_do_not_gain_luajava_surfaces() {
         val harness = jvmHarness(

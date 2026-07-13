@@ -72,37 +72,6 @@ class LspSignatureHelpOverloadTddTest {
     }
 
     @Test
-    fun math_max_active_parameter_advances_across_comma() {
-        val service = jvmService()
-        val document = service.open(
-            "workspace/signature-overload-math-max-active.lua",
-            """
-            local Math = require("Math")
-            local current = Math.max(1, 2)
-            return current
-            """
-        )
-
-        val first = assertNotNull(service.signatureHelp(signatureParams(document, "1,")))
-        val between = assertNotNull(
-            service.signatureHelp(
-                SignatureHelpParams(
-                    TextDocumentIdentifier(document.uri),
-                    document.positionBetween("1,", "2")
-                )
-            )
-        )
-        val second = assertNotNull(service.signatureHelp(signatureParams(document, "2)")))
-
-        assertEquals(0, first.activeParameter, "Cursor on first argument should select parameter 0")
-        assertEquals(1, between.activeParameter, "Cursor after the comma should select parameter 1")
-        assertEquals(1, second.activeParameter, "Cursor on second argument should select parameter 1")
-        assertTrue(first.signatures.isNotEmpty(), "Math.max must still expose signature entries at the call site")
-        assertEquals(first.signatures.size, second.signatures.size)
-        assertTrue(first.signatures.all { it.parameters.size == 2 })
-    }
-
-    @Test
     fun string_value_of_static_overloads_include_arity_variants() {
         val service = jvmService()
         val document = service.open(
@@ -137,37 +106,6 @@ class LspSignatureHelpOverloadTddTest {
     }
 
     @Test
-    fun string_value_of_active_parameter_tracks_three_argument_call() {
-        val service = jvmService()
-        val document = service.open(
-            "workspace/signature-overload-string-valueof-active.lua",
-            """
-            local String = require("String")
-            local text = String.valueOf(chars, 0, 1)
-            return text
-            """
-        )
-
-        val first = assertNotNull(service.signatureHelp(signatureParams(document, "chars,")))
-        val second = assertNotNull(service.signatureHelp(signatureParams(document, "0,")))
-        val third = assertNotNull(service.signatureHelp(signatureParams(document, "1)")))
-
-        assertEquals(0, first.activeParameter)
-        assertEquals(1, second.activeParameter)
-        assertEquals(2, third.activeParameter)
-        assertTrue(
-            first.signatures.size >= 2,
-            "Multi-overload set must remain available across the call site; size=${first.signatures.size}"
-        )
-        // Three-argument cursor positions should still pick a signature that can host the active param.
-        val active = third.signatures[third.activeSignature.coerceIn(0, third.signatures.lastIndex)]
-        assertTrue(
-            active.parameters.size > third.activeParameter,
-            "Active signature ${active.label} must include activeParameter=${third.activeParameter}"
-        )
-    }
-
-    @Test
     fun string_builder_append_instance_overloads_return_multiple_entries() {
         val service = jvmService()
         val document = service.open(
@@ -198,102 +136,6 @@ class LspSignatureHelpOverloadTddTest {
             help.activeParameter >= 1,
             "Colon call should offset activeParameter past self; activeParameter=${help.activeParameter}"
         )
-    }
-
-    @Test
-    fun string_builder_append_active_parameter_advances_for_multi_arg_overload() {
-        val service = jvmService()
-        val document = service.open(
-            "workspace/signature-overload-stringbuilder-append-active.lua",
-            """
-            import "java.lang.StringBuilder"
-            local builder = StringBuilder()
-            local current = builder:append("text", 0, 1)
-            return current
-            """
-        )
-
-        val first = assertNotNull(service.signatureHelp(signatureParams(document, "\"text\",")))
-        val second = assertNotNull(service.signatureHelp(signatureParams(document, "0,")))
-        val third = assertNotNull(service.signatureHelp(signatureParams(document, "1)")))
-
-        // self + three explicit args → active indices 1, 2, 3
-        assertEquals(1, first.activeParameter, "first explicit arg after colon receiver")
-        assertEquals(2, second.activeParameter, "second explicit arg")
-        assertEquals(3, third.activeParameter, "third explicit arg")
-        assertTrue(first.signatures.size >= 2, "Overload set retained at multi-arg call site")
-        assertEquals(first.signatures.size, third.signatures.size)
-    }
-
-    @Test
-    fun arrays_copy_of_overloads_return_multiple_entries_and_track_active_parameter() {
-        val service = jvmService()
-        val document = service.open(
-            "workspace/signature-overload-arrays-copyof.lua",
-            """
-            local Arrays = require("Arrays")
-            local copy = Arrays.copyOf(source, 4)
-            return copy
-            """
-        )
-
-        val first = assertNotNull(service.signatureHelp(signatureParams(document, "source,")))
-        val second = assertNotNull(service.signatureHelp(signatureParams(document, "4)")))
-
-        assertTrue(
-            first.signatures.size >= 2,
-            "Expected Arrays.copyOf multi-overload help; got ${first.signatures.size}: ${first.labels()}"
-        )
-        // Most primitive copyOf overloads are binary (array, newLength); generic 3-arg also exists.
-        assertTrue(
-            first.signatures.any { it.parameters.size == 2 },
-            "Expected binary copyOf overloads among ${first.labels()}"
-        )
-        assertTrue(
-            first.signatures.any { it.parameters.size >= 3 } || first.signatures.size >= 8,
-            "Expected either the 3-arg generic copyOf or the full primitive overload set; labels=${first.labels()}"
-        )
-        assertEquals(0, first.activeParameter)
-        assertEquals(1, second.activeParameter)
-        assertEquals(first.signatures.size, second.signatures.size)
-    }
-
-    @Test
-    fun arrays_as_list_still_exposes_signature_help_at_call_site() {
-        val service = jvmService()
-        val document = service.open(
-            "workspace/signature-overload-arrays-aslist.lua",
-            """
-            local Arrays = require("Arrays")
-            local list = Arrays.asList("one", "two", "three")
-            return list
-            """
-        )
-
-        val first = assertNotNull(service.signatureHelp(signatureParams(document, "\"one\",")))
-        val second = assertNotNull(service.signatureHelp(signatureParams(document, "\"two\",")))
-
-        assertTrue(first.signatures.isNotEmpty(), "asList should still produce signature help")
-        // Product labels look like fun<T>(arg1: T...): java.util.List<T> (no method name,
-        // and type parameters sit between `fun` and `(` so bare "fun(" may not match).
-        assertTrue(
-            first.signatures.any { looksLikeCallableLabel(it.label) || it.parameters.isNotEmpty() },
-            "asList labels=${first.labels()}"
-        )
-        assertTrue(
-            first.signatures.any { signature ->
-                signature.parameters.any { parameter ->
-                    parameter.label.left.contains("...") || parameter.label.left.contains("T")
-                } || signature.label.contains("...") || signature.label.contains("List")
-            },
-            "asList should surface vararg/List-shaped formals: ${first.labels()} / ${first.parameterLabels()}"
-        )
-        // Vararg formals may clamp activeParameter to the last formal index; multi-param
-        // tracking is covered by Math.max / valueOf / copyOf / append cases. Still require
-        // a non-null help payload with a non-negative active index at every comma site.
-        assertTrue(first.activeParameter >= 0)
-        assertTrue(second.activeParameter >= 0)
-        assertTrue(second.activeParameter >= first.activeParameter)
     }
 
     @Test

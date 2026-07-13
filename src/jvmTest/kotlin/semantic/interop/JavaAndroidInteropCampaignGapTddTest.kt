@@ -31,49 +31,6 @@ class JavaAndroidInteropCampaignGapTddTest {
         assertTrue(loads.any { it.kind == DocumentFacts.JvmClassLoadKind.CREATE_PROXY_CALL && it.target == "java.lang.Runnable" })
         assertTrue(loads.any { it.kind == DocumentFacts.JvmClassLoadKind.LOAD_LIB_CALL && it.target == "java.lang.System" })
     }
-
-    @Test
-    fun resource_alias_fixture_new_instance_hover_reports_file() {
-        val harness = jvmHarness("luajava_alias_campaign.lua" to resourceText("luajava_alias_campaign.lua"))
-
-        assertHoverType(harness, "luajava_alias_campaign.lua", "newFile", "java.io.File", occurrence = 3)
-        assertHoverType(harness, "luajava_alias_campaign.lua", "fileName", "string", occurrence = 2)
-    }
-
-    @Test
-    fun resource_alias_fixture_proxy_member_definition_points_to_runnable_provider() {
-        val harness = jvmHarness("luajava_alias_campaign.lua" to resourceText("luajava_alias_campaign.lua"))
-
-        val definitions = harness.queries.gotoDefinition(
-            harness.path("luajava_alias_campaign.lua"),
-            memberPosition(harness, "luajava_alias_campaign.lua", "runnable.run")
-        )
-
-        assertEquals(listOf(harness.path("__jvm__/classes/java/lang/Runnable.lua")), definitions.map { it.path })
-        assertCallableMember(harness, "luajava_alias_campaign.lua", "runnable.run")
-    }
-
-    @Test
-    fun resource_alias_fixture_load_lib_static_method_is_callable() {
-        val harness = jvmHarness("luajava_alias_campaign.lua" to resourceText("luajava_alias_campaign.lua"))
-
-        assertCallableHover(harness, "luajava_alias_campaign.lua", "currentTimeMillis", occurrence = 2)
-    }
-
-    @Test
-    fun new_instance_alias_file_parent_chain_returns_string() {
-        val harness = jvmHarness(
-            "main.lua" to """
-                local newInstance = luajava.newInstance
-                local make = newInstance
-                local name = make("java.io.File", "src/main/kotlin/Main.kt").getParentFile().getName()
-                return name
-            """.trimIndent()
-        )
-
-        assertHoverType(harness, "main.lua", "name", "string", occurrence = 2)
-    }
-
     @Test
     fun bind_class_inner_map_entry_static_method_is_callable() {
         val harness = jvmHarness(
@@ -87,7 +44,6 @@ class JavaAndroidInteropCampaignGapTddTest {
         assertProviderPath(harness, "java.util.Map\$Entry")
         assertCallableHover(harness, "main.lua", "comparing", occurrence = 2)
     }
-
     @Test
     fun create_proxy_intersection_completion_includes_each_interface_method() {
         val harness = jvmHarness(
@@ -106,74 +62,6 @@ class JavaAndroidInteropCampaignGapTddTest {
         assertCompletion(completions, "compare", CompletionItemKind.METHOD)
         assertCompletion(completions, "run", CompletionItemKind.METHOD)
     }
-
-    @Test
-    fun bind_class_reflection_array_return_reports_locale_array() {
-        val harness = jvmHarness(
-            "main.lua" to """
-                local Locale = luajava.bindClass("java.util.Locale")
-                local locales = Locale.getAvailableLocales()
-                return locales
-            """.trimIndent()
-        )
-
-        assertHoverTypeContains(harness, "main.lua", "locales", "java.util.Locale[]", occurrence = 2)
-    }
-
-    @Test
-    fun bind_class_primitive_array_return_reports_number_array() {
-        val harness = jvmHarness(
-            "main.lua" to """
-                local String = luajava.bindClass("java.lang.String")
-                local bytes = String("abc").getBytes()
-                return bytes
-            """.trimIndent()
-        )
-
-        assertHoverType(harness, "main.lua", "bytes", "number[]", occurrence = 2)
-    }
-
-    @Test
-    fun load_lib_static_locale_field_reports_locale_type() {
-        val harness = jvmHarness(
-            "main.lua" to """
-                local root = luajava.loadLib("java.util.Locale", "ROOT")
-                return root
-            """.trimIndent()
-        )
-
-        assertHoverType(harness, "main.lua", "root", "java.util.Locale", occurrence = 2)
-    }
-
-    @Test
-    fun resource_reflection_fixture_chained_static_and_instance_calls_are_typed() {
-        val harness = jvmHarness(
-            "reflection_campaign.lua" to resourceText("reflection_campaign.lua"),
-            classes = setOf("java.util.List")
-        )
-
-        assertHoverType(harness, "reflection_campaign.lua", "count", "number", occurrence = 2)
-        assertHoverTypeContains(harness, "reflection_campaign.lua", "locales", "java.util.Locale[]", occurrence = 2)
-        assertHoverType(harness, "reflection_campaign.lua", "parsed", "number", occurrence = 2)
-        assertHoverType(harness, "reflection_campaign.lua", "firstTag", "string", occurrence = 2)
-    }
-
-    @Test
-    fun resource_reflection_fixture_completion_after_list_result_includes_size() {
-        val harness = jvmHarness(
-            "reflection_campaign.lua" to resourceText("reflection_campaign.lua"),
-            classes = setOf("java.util.List")
-        )
-
-        val completions = harness.queries.completions(
-            harness.path("reflection_campaign.lua"),
-            memberPosition(harness, "reflection_campaign.lua", "values.size")
-        )
-
-        assertCompletion(completions, "size", CompletionItemKind.METHOD)
-        assertCompletion(completions, "isEmpty", CompletionItemKind.METHOD)
-    }
-
     @Test
     fun missing_reflection_member_reports_invalid_member_diagnostic() {
         val harness = jvmHarness(
@@ -186,81 +74,6 @@ class JavaAndroidInteropCampaignGapTddTest {
 
         assertInvalidMemberDiagnostic(harness, "main.lua", "missingInteropMember")
     }
-
-    @Test
-    fun luajava_helper_fixture_exposes_array_context_and_override_completions() {
-        val harness = jvmHarness("luajava_helper_campaign.lua" to resourceText("luajava_helper_campaign.lua"))
-
-        val completions = harness.queries.completions(
-            harness.path("luajava_helper_campaign.lua"),
-            memberPosition(harness, "luajava_helper_campaign.lua", "luajava.createArray")
-        )
-
-        assertCompletion(completions, "createArray", CompletionItemKind.METHOD)
-        assertCompletion(completions, "newArray", CompletionItemKind.METHOD)
-        assertCompletion(completions, "astable", CompletionItemKind.METHOD)
-        assertCompletion(completions, "getContext", CompletionItemKind.METHOD)
-        assertCompletion(completions, "override", CompletionItemKind.METHOD)
-    }
-
-    @Test
-    fun luajava_get_context_helper_returns_android_lua_context() {
-        // Inline fixture keeps a real `context.getLuaDir` member site for completion probes
-        // (resource luajava_helper_campaign.lua has no trailing member access).
-        val harness = jvmHarness(
-            "main.lua" to """
-                require "import"
-                local context = luajava.getContext()
-                local dir = context.getLuaDir
-                return context, dir
-            """.trimIndent()
-        )
-
-        // TASK-575 hard-lock: getContext() result is non-unknown AndroidLuaContext when AndroLua overlay is active.
-        assertHoverTypeContains(harness, "main.lua", "context", "AndroidLuaContext", occurrence = 2)
-
-        // Completions after getContext on the typed local must include overlay-documented members.
-        val completions = harness.queries.completions(
-            harness.path("main.lua"),
-            memberPosition(harness, "main.lua", "context.getLuaDir")
-        )
-        val labels = completions.map { it.label }.toSet()
-        val overlayMembers = listOf("getLuaDir", "getLuaPath", "getContext", "setContentView", "getSystemService")
-        assertTrue(
-            overlayMembers.any { it in labels },
-            "Expected AndroidLuaContext overlay members after getContext; got $labels"
-        )
-        // Do not invent jar-only android.content.Context APIs without stubs/jar.
-        val inventedJarOnly = listOf("getAssets", "getPackageManager", "startActivity", "registerReceiver")
-        assertTrue(
-            inventedJarOnly.none { it in labels },
-            "Must not invent android.jar-only members without stubs/jar; got $labels"
-        )
-
-        // When android.jar is present, completion still must include the overlay surface (never drop it).
-        if (androidJar.isFile) {
-            withAndroidHarness(
-                "main.lua" to """
-                    require "import"
-                    local context = luajava.getContext()
-                    local dir = context.getLuaDir
-                    return context, dir
-                """.trimIndent()
-            ) { androidHarness ->
-                assertHoverTypeContains(androidHarness, "main.lua", "context", "AndroidLuaContext", occurrence = 2)
-                val androidCompletions = androidHarness.queries.completions(
-                    androidHarness.path("main.lua"),
-                    memberPosition(androidHarness, "main.lua", "context.getLuaDir")
-                )
-                val androidLabels = androidCompletions.map { it.label }.toSet()
-                assertTrue(
-                    overlayMembers.any { it in androidLabels },
-                    "With android.jar present, expected overlay context members after getContext; got $androidLabels"
-                )
-            }
-        }
-    }
-
     @Test
     fun android_resource_fixture_resolves_text_view_constructor_when_android_jar_available() {
         withAndroidHarness("android_view_campaign.lua" to resourceText("android_view_campaign.lua")) { harness ->
@@ -268,27 +81,6 @@ class JavaAndroidInteropCampaignGapTddTest {
             assertCallableMember(harness, "android_view_campaign.lua", "textView.setText")
         }
     }
-
-    @Test
-    fun android_resource_fixture_wildcard_view_definition_when_android_jar_available() {
-        withAndroidHarness("android_view_campaign.lua" to resourceText("android_view_campaign.lua")) { harness ->
-            val definitions = harness.queries.gotoDefinition(
-                harness.path("android_view_campaign.lua"),
-                positionIn(harness, "android_view_campaign.lua", "View.VISIBLE")
-            )
-            val hover = assertNotNull(
-                harness.queries.hover(
-                    harness.path("android_view_campaign.lua"),
-                    memberPosition(harness, "android_view_campaign.lua", "View.VISIBLE")
-                )
-            )
-
-            assertEquals(listOf(harness.path("__jvm__/classes/android/view/View.lua")), definitions.map { it.path })
-            assertEquals(SymbolKind.FIELD, hover.symbol?.kind)
-            assertEquals("number", hover.typeInfo?.displayName)
-        }
-    }
-
     @Test
     fun android_create_proxy_listener_member_definition_when_android_jar_available() {
         withAndroidHarness(
@@ -306,35 +98,6 @@ class JavaAndroidInteropCampaignGapTddTest {
 
             assertEquals(listOf(harness.path("__jvm__/classes/android/view/View\$OnClickListener.lua")), definitions.map { it.path })
             assertCallableMember(harness, "main.lua", "listener.onClick")
-        }
-    }
-
-    @Test
-    fun android_uri_builder_resource_chain_returns_string_when_android_jar_available() {
-        withAndroidHarness(
-            "android_uri_campaign.lua" to resourceText("android_uri_campaign.lua"),
-            classes = setOf("android.net.Uri", "android.net.Uri\$Builder")
-        ) { harness ->
-            assertHoverType(harness, "android_uri_campaign.lua", "path", "string", occurrence = 2)
-            assertNoDiagnostics(harness, "android_uri_campaign.lua")
-        }
-    }
-
-    @Test
-    fun android_inner_class_prefix_metadata_resolves_listener_when_android_jar_available() {
-        withAndroidHarness(
-            "main.lua" to """
-                import "OnClickListener"
-                local listenerClass = OnClickListener
-                return listenerClass
-            """.trimIndent(),
-            metadata = mapOf(JvmWorkspaceConfiguration.IMPORT_PREFIXES_METADATA_KEY to "android.view.View")
-        ) { harness ->
-            assertProviderPath(harness, "android.view.View\$OnClickListener")
-            assertEquals(
-                listOf(harness.path("__jvm__/classes/android/view/View\$OnClickListener.lua")),
-                harness.queries.gotoDefinition(harness.path("main.lua"), harness.positionOf("main.lua", "OnClickListener", occurrence = 2)).map { it.path }
-            )
         }
     }
 

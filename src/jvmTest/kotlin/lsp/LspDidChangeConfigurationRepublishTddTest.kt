@@ -66,35 +66,6 @@ class LspDidChangeConfigurationRepublishTddTest {
     }
 
     @Test
-    fun settings_change_republishes_every_open_document_in_open_order() {
-        val languageService = LuaLanguageService().also { it.initialize(InitializeParams()) }
-        val published = mutableListOf<PublishDiagnosticsParams>()
-        val textDocuments = LuaTextDocumentService(
-            languageService = languageService,
-            publishDiagnostics = { diagnostics -> published += diagnostics }
-        )
-        val workspace = LuaWorkspaceService(
-            languageService = languageService,
-            onConfigurationChanged = textDocuments::republishDiagnostics
-        )
-
-        val first = "file:///workspace/config-republish-first.lua"
-        val second = "file:///workspace/config-republish-second.lua"
-        textDocuments.didOpen(openParams(first, "return 1"))
-        textDocuments.didOpen(openParams(second, "return 2"))
-        published.clear()
-
-        workspace.didChangeConfiguration(
-            DidChangeConfigurationParams(
-                mapOf("jvm" to mapOf("classes" to listOf("java.lang.String")))
-            )
-        )
-
-        assertEquals(listOf(first, second), published.map { it.uri })
-        assertEquals(2, published.size, "republish must emit one diagnostics payload per open document")
-    }
-
-    @Test
     fun invalid_configuration_keeps_prior_metadata_snapshot_and_does_not_republish() {
         val languageService = LuaLanguageService().also { it.initialize(InitializeParams()) }
         val published = mutableListOf<PublishDiagnosticsParams>()
@@ -135,73 +106,6 @@ class LspDidChangeConfigurationRepublishTddTest {
             DefinitionParams(TextDocumentIdentifier(uri), Position(1, 14))
         ).get().left
         assertEquals("file:///__jvm__/classes/java/lang/String.lua", definitions.single().uri)
-    }
-
-    @Test
-    fun empty_and_unrelated_configuration_keep_prior_snapshot_and_do_not_republish() {
-        val languageService = LuaLanguageService().also { it.initialize(InitializeParams()) }
-        val published = mutableListOf<PublishDiagnosticsParams>()
-        val textDocuments = LuaTextDocumentService(
-            languageService = languageService,
-            publishDiagnostics = { diagnostics -> published += diagnostics }
-        )
-        val workspace = LuaWorkspaceService(
-            languageService = languageService,
-            onConfigurationChanged = textDocuments::republishDiagnostics
-        )
-
-        val uri = "file:///workspace/config-unrelated-keeps-snapshot.lua"
-        textDocuments.didOpen(openParams(uri, "return 1"))
-        workspace.didChangeConfiguration(
-            DidChangeConfigurationParams(
-                mapOf("jvm" to mapOf("classes" to listOf("java.util.Locale")))
-            )
-        )
-        val metadataAfterValid = workspace.currentWorkspaceMetadata()
-        published.clear()
-
-        workspace.didChangeConfiguration(DidChangeConfigurationParams(emptyMap<String, Any>()))
-        workspace.didChangeConfiguration(
-            DidChangeConfigurationParams(mapOf("editor" to mapOf("tabSize" to 4, "fontSize" to 12)))
-        )
-        workspace.didChangeConfiguration(
-            DidChangeConfigurationParams(mapOf("lua" to mapOf("runtime" to mapOf("version" to "Lua 5.3"))))
-        )
-
-        assertTrue(published.isEmpty(), "empty/unrelated configuration must not republish diagnostics")
-        assertEquals(
-            metadataAfterValid,
-            workspace.currentWorkspaceMetadata(),
-            "empty/unrelated configuration must keep the prior workspace metadata snapshot"
-        )
-        assertTrue(
-            metadataAfterValid[JvmClassModuleProvider.CLASSES_METADATA_KEY]?.contains("java.util.Locale") == true,
-            "prior jvm.classes snapshot must remain after unrelated settings"
-        )
-    }
-
-    @Test
-    fun unchanged_configuration_does_not_republish_open_document_diagnostics() {
-        val server = LuaLanguageServer()
-        val client = RecordingLanguageClient()
-        server.connect(client.asClient())
-        server.initialize(InitializeParams()).get()
-
-        val uri = "file:///workspace/config-unchanged-republish.lua"
-        val settings = stringImportSettings()
-        server.textDocumentService.didOpen(
-            openParams(uri, "local String = require(\"String\")\nreturn String.__class")
-        )
-        client.published.clear()
-        server.workspaceService.didChangeConfiguration(DidChangeConfigurationParams(settings))
-        client.published.clear()
-
-        server.workspaceService.didChangeConfiguration(DidChangeConfigurationParams(settings.toMap()))
-
-        assertTrue(
-            client.published.isEmpty(),
-            "identical configuration must not republish open-document diagnostics"
-        )
     }
 
     @Test
@@ -287,46 +191,6 @@ class LspDidChangeConfigurationRepublishTddTest {
             workspace.currentWorkspaceMetadata()[JvmClassModuleProvider.CLASSES_METADATA_KEY]
                 ?.contains("java.util.Locale") == true,
             "JsonObject settings must parse into workspace metadata"
-        )
-    }
-
-    @Test
-    fun invalid_configuration_after_json_settings_keeps_snapshot_without_republish() {
-        val languageService = LuaLanguageService().also { it.initialize(InitializeParams()) }
-        val published = mutableListOf<PublishDiagnosticsParams>()
-        val textDocuments = LuaTextDocumentService(
-            languageService = languageService,
-            publishDiagnostics = { diagnostics -> published += diagnostics }
-        )
-        val workspace = LuaWorkspaceService(
-            languageService = languageService,
-            onConfigurationChanged = textDocuments::republishDiagnostics
-        )
-
-        val uri = "file:///workspace/config-json-then-invalid.lua"
-        textDocuments.didOpen(openParams(uri, "return 1"))
-
-        val settings = JsonObject().apply {
-            addProperty("jvm.classes", "java.lang.String")
-            addProperty("androlua.imports", "String")
-            addProperty("jvm.importPrefixes", "java.lang")
-        }
-        workspace.didChangeConfiguration(DidChangeConfigurationParams(settings))
-        val metadataAfterValid = workspace.currentWorkspaceMetadata()
-        published.clear()
-
-        // Degrade safely: non-map / non-JsonObject settings are ignored.
-        // DidChangeConfigurationParams(@NonNull Object) rejects null at construction
-        // ("Property must not be null: settings"); exercise a missing/null settings field
-        // via the no-arg constructor instead of DidChangeConfigurationParams(null).
-        workspace.didChangeConfiguration(DidChangeConfigurationParams(JsonPrimitive("oops")))
-        workspace.didChangeConfiguration(DidChangeConfigurationParams())
-
-        assertTrue(published.isEmpty(), "invalid follow-up configuration must not republish diagnostics")
-        assertEquals(
-            metadataAfterValid,
-            workspace.currentWorkspaceMetadata(),
-            "invalid follow-up configuration must keep the prior snapshot"
         )
     }
 

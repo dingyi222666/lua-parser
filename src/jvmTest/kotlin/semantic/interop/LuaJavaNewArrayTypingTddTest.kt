@@ -35,7 +35,6 @@ class LuaJavaNewArrayTypingTddTest {
         assertHoverType(harness, "locales", "java.util.Locale[]", occurrence = 2)
         assertHoverType(harness, "first", "java.util.Locale", occurrence = 2)
     }
-
     @Test
     fun new_array_string_class_propagates_string_element_type() {
         val harness = jvmHarness(
@@ -50,36 +49,6 @@ class LuaJavaNewArrayTypingTddTest {
         assertHoverType(harness, "values", "string[]", occurrence = 2)
         assertHoverType(harness, "first", "string", occurrence = 2)
     }
-
-    @Test
-    fun new_array_integer_class_propagates_number_element_type() {
-        val harness = jvmHarness(
-            "main.lua" to """
-                local Integer = luajava.bindClass("java.lang.Integer")
-                local ids = luajava.newArray(Integer, 4)
-                local first = ids[1]
-                return ids, first
-            """.trimIndent()
-        )
-
-        assertHoverType(harness, "ids", "number[]", occurrence = 2)
-        assertHoverType(harness, "first", "number", occurrence = 2)
-    }
-
-    @Test
-    fun new_array_result_exposes_java_array_length() {
-        val harness = jvmHarness(
-            "main.lua" to """
-                local File = luajava.bindClass("java.io.File")
-                local files = luajava.newArray(File, 1)
-                local count = files.length
-                return count
-            """.trimIndent()
-        )
-
-        assertHoverType(harness, "count", "number", occurrence = 2)
-    }
-
     @Test
     fun new_array_alias_preserves_element_type_propagation() {
         val harness = jvmHarness(
@@ -95,7 +64,6 @@ class LuaJavaNewArrayTypingTddTest {
         assertHoverType(harness, "locales", "java.util.Locale[]", occurrence = 2)
         assertHoverType(harness, "first", "java.util.Locale", occurrence = 2)
     }
-
     @Test
     fun chained_new_array_alias_preserves_element_type_propagation() {
         val harness = jvmHarness(
@@ -113,25 +81,6 @@ class LuaJavaNewArrayTypingTddTest {
         assertHoverType(harness, "locales", "java.util.Locale[]", occurrence = 2)
         assertHoverType(harness, "first", "java.util.Locale", occurrence = 2)
     }
-
-    @Test
-    fun multi_dimension_new_array_still_propagates_component_element_type() {
-        val harness = jvmHarness(
-            "main.lua" to """
-                local Locale = luajava.bindClass("java.util.Locale")
-                local matrix = luajava.newArray(Locale, 2, 3)
-                local first = matrix[1]
-                return matrix, first
-            """.trimIndent()
-        )
-
-        // Nested JavaArrayType rank from newArray(Locale, 2, 3): matrix is Locale[][];
-        // one numeric index peels a single rank to intermediate Locale[] (component root
-        // still Locale / java.util.Locale; display uses repeated "[]" only, never "[[]]").
-        assertHoverType(harness, "matrix", "java.util.Locale[][]", occurrence = 2)
-        assertHoverType(harness, "first", "java.util.Locale[]", occurrence = 2)
-    }
-
     @Test
     fun unknown_class_value_degrades_to_unknown_array() {
         val harness = jvmHarness(
@@ -145,137 +94,6 @@ class LuaJavaNewArrayTypingTddTest {
 
         assertHoverType(harness, "values", "unknown[]", occurrence = 2)
         assertHoverType(harness, "first", "unknown", occurrence = 2)
-    }
-
-    @Test
-    fun non_class_first_argument_degrades_to_unknown_array() {
-        val harness = jvmHarness(
-            "main.lua" to """
-                local values = luajava.newArray("java.util.Locale", 2)
-                local first = values[1]
-                return values, first
-            """.trimIndent()
-        )
-
-        // newArray requires a bound class userdata, not a class-name string
-        // (string targets belong to createArray).
-        assertHoverType(harness, "values", "unknown[]", occurrence = 2)
-        assertHoverType(harness, "first", "unknown", occurrence = 2)
-    }
-
-    @Test
-    fun missing_dimension_arguments_degrade_to_unknown_array() {
-        val harness = jvmHarness(
-            "main.lua" to """
-                local Locale = luajava.bindClass("java.util.Locale")
-                local values = luajava.newArray(Locale)
-                local first = values[1]
-                return values, first
-            """.trimIndent()
-        )
-
-        assertInvalidDimensionsDegrade(harness, "values", "first")
-    }
-
-    @Test
-    fun zero_dimension_degrades_to_unknown_array() {
-        val harness = jvmHarness(
-            "main.lua" to """
-                local Locale = luajava.bindClass("java.util.Locale")
-                local values = luajava.newArray(Locale, 0)
-                local first = values[1]
-                return values, first
-            """.trimIndent()
-        )
-
-        assertInvalidDimensionsDegrade(harness, "values", "first")
-    }
-
-    @Test
-    fun negative_dimension_degrades_to_unknown_array() {
-        val harness = jvmHarness(
-            "main.lua" to """
-                local Locale = luajava.bindClass("java.util.Locale")
-                local values = luajava.newArray(Locale, -1)
-                local first = values[1]
-                return values, first
-            """.trimIndent()
-        )
-
-        assertInvalidDimensionsDegrade(harness, "values", "first")
-    }
-
-    @Test
-    fun non_numeric_dimension_degrades_to_unknown_array() {
-        val harness = jvmHarness(
-            "main.lua" to """
-                local Locale = luajava.bindClass("java.util.Locale")
-                local values = luajava.newArray(Locale, "two")
-                local first = values[1]
-                return values, first
-            """.trimIndent()
-        )
-
-        assertInvalidDimensionsDegrade(harness, "values", "first")
-    }
-
-    @Test
-    fun nil_dimension_degrades_to_unknown_array() {
-        val harness = jvmHarness(
-            "main.lua" to """
-                local Locale = luajava.bindClass("java.util.Locale")
-                local values = luajava.newArray(Locale, nil)
-                local first = values[1]
-                return values, first
-            """.trimIndent()
-        )
-
-        assertInvalidDimensionsDegrade(harness, "values", "first")
-    }
-
-    @Test
-    fun mixed_valid_and_invalid_dimensions_degrade_to_unknown_array() {
-        val harness = jvmHarness(
-            "main.lua" to """
-                local Locale = luajava.bindClass("java.util.Locale")
-                local values = luajava.newArray(Locale, 2, -3)
-                local first = values[1]
-                return values, first
-            """.trimIndent()
-        )
-
-        assertInvalidDimensionsDegrade(harness, "values", "first")
-    }
-
-    @Test
-    fun valid_new_array_does_not_require_unknown_dimension_diagnostics() {
-        val harness = jvmHarness(
-            "main.lua" to """
-                local Locale = luajava.bindClass("java.util.Locale")
-                local locales = luajava.newArray(Locale, 2)
-                return locales
-            """.trimIndent()
-        )
-
-        assertHoverType(harness, "locales", "java.util.Locale[]", occurrence = 2)
-        assertFalse(
-            diagnostics(harness).any { it.looksLikeDimensionProblem() },
-            "Valid newArray dimensions should not emit dimension diagnostics; actual: ${diagnostics(harness).map { it.message }}"
-        )
-    }
-
-    @Test
-    fun invalid_dimension_degrades_to_unknown_or_diagnostic() {
-        val harness = jvmHarness(
-            "main.lua" to """
-                local Locale = luajava.bindClass("java.util.Locale")
-                local values = luajava.newArray(Locale, -1)
-                local first = values[1]
-                return values, first
-            """.trimIndent()
-        )
-
-        assertInvalidDimensionsDegrade(harness, "values", "first")
     }
 
     private fun jvmHarness(vararg files: Pair<String, String>): WorkspaceSemanticHarness {

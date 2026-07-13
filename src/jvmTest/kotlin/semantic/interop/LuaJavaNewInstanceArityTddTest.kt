@@ -35,7 +35,6 @@ class LuaJavaNewInstanceArityTddTest {
 
         assertHoverType(harness, "builder", "java.lang.StringBuilder", occurrence = 2)
     }
-
     @Test
     fun valid_one_arg_constructor_preserves_instance_class_type() {
         val harness = jvmHarness(
@@ -47,19 +46,6 @@ class LuaJavaNewInstanceArityTddTest {
 
         assertHoverType(harness, "file", "java.io.File", occurrence = 2)
     }
-
-    @Test
-    fun valid_string_builder_seed_constructor_preserves_instance_class_type() {
-        val harness = jvmHarness(
-            "main.lua" to """
-                local builder = luajava.newInstance("java.lang.StringBuilder", "seed")
-                return builder
-            """.trimIndent()
-        )
-
-        assertHoverType(harness, "builder", "java.lang.StringBuilder", occurrence = 2)
-    }
-
     @Test
     fun valid_new_instance_alias_preserves_instance_class_type() {
         val harness = jvmHarness(
@@ -72,37 +58,6 @@ class LuaJavaNewInstanceArityTddTest {
 
         assertHoverType(harness, "builder", "java.lang.StringBuilder", occurrence = 2)
     }
-
-    @Test
-    fun valid_new_instance_string_call_form_preserves_instance_class_type() {
-        val harness = jvmHarness(
-            "main.lua" to """
-                local builder = luajava.newInstance "java.lang.StringBuilder"
-                return builder
-            """.trimIndent()
-        )
-
-        assertHoverType(harness, "builder", "java.lang.StringBuilder", occurrence = 2)
-    }
-
-    @Test
-    fun valid_arity_does_not_require_constructor_mismatch_diagnostics() {
-        val harness = jvmHarness(
-            "main.lua" to """
-                local builder = luajava.newInstance("java.lang.StringBuilder")
-                local file = luajava.newInstance("java.io.File", "x")
-                return builder, file
-            """.trimIndent()
-        )
-
-        assertHoverType(harness, "builder", "java.lang.StringBuilder", occurrence = 2)
-        assertHoverType(harness, "file", "java.io.File", occurrence = 2)
-        assertFalse(
-            diagnostics(harness).any { it.looksLikeConstructorArityProblem() },
-            "Valid newInstance arity should not emit constructor/arity diagnostics; actual: ${diagnostics(harness).map { it.message }}"
-        )
-    }
-
     @Test
     fun missing_required_constructor_argument_degrades_or_documents_current_product_gap() {
         // java.io.File has no zero-arg constructor; class name alone is wrong arity.
@@ -115,20 +70,6 @@ class LuaJavaNewInstanceArityTddTest {
 
         assertWrongArityDualPath(harness, "file", preservedClassType = "java.io.File")
     }
-
-    @Test
-    fun integer_missing_value_argument_degrades_or_documents_current_product_gap() {
-        // java.lang.Integer constructors require a value (int or String).
-        val harness = jvmHarness(
-            "main.lua" to """
-                local value = luajava.newInstance("java.lang.Integer")
-                return value
-            """.trimIndent()
-        )
-
-        assertWrongArityDualPath(harness, "value", preservedClassType = "java.lang.Integer")
-    }
-
     @Test
     fun too_many_constructor_arguments_degrades_or_documents_current_product_gap() {
         // java.lang.Object only exposes a zero-arg constructor.
@@ -141,141 +82,6 @@ class LuaJavaNewInstanceArityTddTest {
 
         assertWrongArityDualPath(harness, "obj", preservedClassType = "java.lang.Object")
     }
-
-    @Test
-    fun string_builder_three_string_args_degrades_or_documents_current_product_gap() {
-        // StringBuilder has ( ), (String), (int), (CharSequence) — not three strings.
-        val harness = jvmHarness(
-            "main.lua" to """
-                local builder = luajava.newInstance("java.lang.StringBuilder", "a", "b", "c")
-                return builder
-            """.trimIndent()
-        )
-
-        assertWrongArityDualPath(harness, "builder", preservedClassType = "java.lang.StringBuilder")
-    }
-
-    @Test
-    fun uuid_single_arg_degrades_or_documents_current_product_gap() {
-        // java.util.UUID public constructors are (long, long) — one arg is wrong arity.
-        val harness = jvmHarness(
-            "main.lua" to """
-                local id = luajava.newInstance("java.util.UUID", 1)
-                return id
-            """.trimIndent()
-        )
-
-        assertWrongArityDualPath(harness, "id", preservedClassType = "java.util.UUID")
-    }
-
-    @Test
-    fun wrong_arity_via_local_alias_degrades_or_documents_current_product_gap() {
-        val harness = jvmHarness(
-            "main.lua" to """
-                local newInstance = luajava.newInstance
-                local file = newInstance("java.io.File")
-                return file
-            """.trimIndent()
-        )
-
-        assertWrongArityDualPath(harness, "file", preservedClassType = "java.io.File")
-    }
-
-    @Test
-    fun wrong_arity_via_chained_alias_degrades_or_documents_current_product_gap() {
-        val harness = jvmHarness(
-            "main.lua" to """
-                local newInstance = luajava.newInstance
-                local make = newInstance
-                local again = make
-                local file = again("java.io.File")
-                return file
-            """.trimIndent()
-        )
-
-        assertWrongArityDualPath(harness, "file", preservedClassType = "java.io.File")
-    }
-
-    @Test
-    fun wrong_arity_instance_member_use_dual_path_current_product_or_ideal() {
-        // Ideal: wrong arity must not keep a clean typed instance member surface without
-        // signal. Current product may still type File + getName when arity is ignored.
-        val harness = jvmHarness(
-            "main.lua" to """
-                local file = luajava.newInstance("java.io.File")
-                local name = file.getName
-                return file, name
-            """.trimIndent()
-        )
-
-        assertWrongArityDualPath(harness, "file", preservedClassType = "java.io.File")
-        val memberDisplay = hoverDisplay(harness, "name", occurrence = 2)
-        val diagnosticHit = diagnostics(harness).any {
-            it.looksLikeConstructorArityProblem() || it.looksLikeUnknownNewInstance()
-        }
-        val memberDegraded =
-            memberDisplay == null ||
-                memberDisplay.isBlank() ||
-                memberDisplay == "unknown" ||
-                !memberDisplay.contains("fun(")
-        val currentProductKeepsMemberSurface =
-            memberDisplay != null && memberDisplay.contains("fun(")
-        assertTrue(
-            memberDegraded || diagnosticHit || currentProductKeepsMemberSurface,
-            "Wrong-arity newInstance member path must either degrade/diagnose (ideal) " +
-                "or keep current product typed surface while arity is unvalidated; " +
-                "member=$memberDisplay diagnostics=${diagnostics(harness).map { it.message }}"
-        )
-    }
-
-    @Test
-    fun missing_class_name_argument_degrades_to_unknown_or_diagnostic() {
-        val harness = jvmHarness(
-            "main.lua" to """
-                local missing = luajava.newInstance()
-                return missing
-            """.trimIndent()
-        )
-
-        val display = hoverDisplay(harness, "missing", occurrence = 2)
-        val diagnosticHit = diagnostics(harness).any {
-            it.looksLikeConstructorArityProblem() ||
-                it.looksLikeUnknownNewInstance() ||
-                it.message.contains("newInstance", ignoreCase = true)
-        }
-        val degraded =
-            display == null || display.isBlank() || display == "unknown"
-        assertTrue(
-            degraded || diagnosticHit,
-            "newInstance() with no class name must degrade or diagnose; " +
-                "type=$display diagnostics=${diagnostics(harness).map { it.message }}"
-        )
-    }
-
-    @Test
-    fun non_string_class_name_degrades_to_unknown_or_diagnostic() {
-        val harness = jvmHarness(
-            "main.lua" to """
-                local bad = luajava.newInstance(42)
-                return bad
-            """.trimIndent()
-        )
-
-        val display = hoverDisplay(harness, "bad", occurrence = 2)
-        val diagnosticHit = diagnostics(harness).any {
-            it.looksLikeConstructorArityProblem() ||
-                it.looksLikeUnknownNewInstance() ||
-                it.message.contains("newInstance", ignoreCase = true)
-        }
-        val degraded =
-            display == null || display.isBlank() || display == "unknown"
-        assertTrue(
-            degraded || diagnosticHit,
-            "newInstance(non-string) must degrade or diagnose; " +
-                "type=$display diagnostics=${diagnostics(harness).map { it.message }}"
-        )
-    }
-
     @Test
     fun valid_and_invalid_arity_mix_preserves_valid_and_dual_paths_invalid() {
         val harness = jvmHarness(

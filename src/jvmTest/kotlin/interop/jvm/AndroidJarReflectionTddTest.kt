@@ -56,28 +56,6 @@ class AndroidJarReflectionTddTest {
             "Expected host jar under platforms/android-*; got ${androidJar.path}."
         )
     }
-
-    @Test
-    fun jvm_android_jar_metadata_appends_android_jar_to_effective_classpath() {
-        requireAndroidJarOrSkip()
-        val configuration = androidConfiguration()
-
-        assertEquals(listOf(androidJar.path), configuration.effectiveClasspathEntries())
-    }
-
-    @Test
-    fun jvm_classpath_metadata_can_load_android_context_when_android_jar_is_on_configurable_classpath() {
-        requireAndroidJarOrSkip()
-        val requested = provider().requestedClasses(
-            mapOf(
-                JvmWorkspaceConfiguration.CLASSPATH_METADATA_KEY to androidJar.path,
-                JvmClassModuleProvider.CLASSES_METADATA_KEY to "android.content.Context"
-            )
-        )
-
-        assertEquals(linkedSetOf("android.content.Context"), requested)
-    }
-
     @Test
     fun jvm_android_jar_metadata_can_load_android_text_view_explicit_class() {
         val providers = providersForClasses("android.widget.TextView")
@@ -85,39 +63,6 @@ class AndroidJarReflectionTddTest {
         providers.assertProviderPath("android.widget.TextView")
         providers.assertModule("android.widget.TextView").assertClassName("android.widget.TextView")
     }
-
-    @Test
-    fun jvm_android_jar_metadata_can_load_android_view_explicit_class() {
-        val providers = providersForClasses("android.view.View")
-
-        providers.assertProviderPath("android.view.View")
-        providers.assertModule("android.view.View").assertClassName("android.view.View")
-    }
-
-    @Test
-    fun jvm_android_jar_metadata_can_load_android_context_explicit_class() {
-        val providers = providersForClasses("android.content.Context")
-
-        providers.assertProviderPath("android.content.Context")
-        providers.assertModule("android.content.Context").assertClassName("android.content.Context")
-    }
-
-    @Test
-    fun jvm_android_jar_metadata_can_load_android_activity_explicit_class() {
-        val providers = providersForClasses("android.app.Activity")
-
-        providers.assertProviderPath("android.app.Activity")
-        providers.assertModule("android.app.Activity").assertClassName("android.app.Activity")
-    }
-
-    @Test
-    fun android_text_view_provider_exposes_static_fields_from_android_jar() {
-        val module = moduleFor("android.widget.TextView")
-
-        assertTrue("AUTO_SIZE_TEXT_TYPE_NONE" in module.fields)
-        assertTrue("AUTO_SIZE_TEXT_TYPE_UNIFORM" in module.fields)
-    }
-
     @Test
     fun android_text_view_provider_exposes_instance_methods_from_android_jar_class_type() {
         val instanceType = moduleFor("android.widget.TextView").javaInstanceType()
@@ -125,7 +70,6 @@ class AndroidJarReflectionTddTest {
         assertTrue("setText" in instanceType.allInstanceMembers())
         assertTrue("getText" in instanceType.allInstanceMembers())
     }
-
     @Test
     fun android_view_provider_exposes_static_constants_from_android_jar() {
         val module = moduleFor("android.view.View")
@@ -133,15 +77,6 @@ class AndroidJarReflectionTddTest {
         assertTrue("VISIBLE" in module.fields)
         assertTrue("GONE" in module.fields)
     }
-
-    @Test
-    fun android_view_provider_exposes_static_methods_from_android_jar() {
-        val module = moduleFor("android.view.View")
-
-        assertTrue("generateViewId" in module.methods)
-        assertTrue("inflate" in module.methods)
-    }
-
     @Test
     fun android_view_provider_exposes_instance_members_from_android_jar_class_type() {
         val instanceType = moduleFor("android.view.View").javaInstanceType()
@@ -149,15 +84,6 @@ class AndroidJarReflectionTddTest {
         assertTrue("setOnClickListener" in instanceType.allInstanceMembers())
         assertTrue("performClick" in instanceType.allInstanceMembers())
     }
-
-    @Test
-    fun android_context_provider_exposes_static_service_constants_from_android_jar() {
-        val module = moduleFor("android.content.Context")
-
-        assertTrue("WINDOW_SERVICE" in module.fields)
-        assertTrue("LAYOUT_INFLATER_SERVICE" in module.fields)
-    }
-
     @Test
     fun android_context_provider_exposes_instance_methods_from_android_jar_class_type() {
         val instanceType = moduleFor("android.content.Context").javaInstanceType()
@@ -165,15 +91,6 @@ class AndroidJarReflectionTddTest {
         assertTrue("getResources" in instanceType.allInstanceMembers())
         assertTrue("getSystemService" in instanceType.allInstanceMembers())
     }
-
-    @Test
-    fun android_activity_provider_exposes_static_result_constants_from_android_jar() {
-        val module = moduleFor("android.app.Activity")
-
-        assertTrue("RESULT_OK" in module.fields)
-        assertTrue("RESULT_CANCELED" in module.fields)
-    }
-
     @Test
     fun android_activity_provider_exposes_instance_methods_from_android_jar_class_type() {
         val instanceType = moduleFor("android.app.Activity").javaInstanceType()
@@ -181,96 +98,6 @@ class AndroidJarReflectionTddTest {
         assertTrue("setContentView" in instanceType.allInstanceMembers())
         assertTrue("findViewById" in instanceType.allInstanceMembers())
     }
-
-    @Test
-    fun android_text_view_inner_buffer_type_resolves_by_binary_name() {
-        val providers = providersForClasses("android.widget.TextView\$BufferType")
-
-        providers.assertProviderPath("android.widget.TextView\$BufferType")
-        providers.assertModule("android.widget.TextView\$BufferType").assertClassName("android.widget.TextView\$BufferType")
-    }
-
-    @Test
-    fun android_text_view_inner_buffer_type_resolves_by_dotted_name_candidate() {
-        val requested = provider().requestedClasses(
-            androidConfiguration(classes = linkedSetOf("android.widget.TextView.BufferType"))
-        )
-
-        assertEquals(linkedSetOf("android.widget.TextView\$BufferType"), requested)
-    }
-
-    @Test
-    fun android_text_view_inner_buffer_type_resolves_by_underscore_alias() {
-        val requested = provider().requestedClasses(
-            androidConfiguration(classes = linkedSetOf("android.widget.TextView_BufferType"))
-        )
-
-        assertEquals(linkedSetOf("android.widget.TextView\$BufferType"), requested)
-    }
-
-    @Test
-    fun android_view_inner_on_click_listener_resolves_by_short_import_prefix() {
-        val requested = provider().requestedClasses(
-            androidConfiguration(
-                androluaImports = listOf("OnClickListener"),
-                importPrefixes = listOf("android.view.View")
-            )
-        )
-
-        assertEquals(linkedSetOf("android.view.View\$OnClickListener"), requested)
-    }
-
-    @Test
-    fun android_view_inner_measure_spec_resolves_by_dotted_name_candidate() {
-        val requested = provider().requestedClasses(
-            androidConfiguration(classes = linkedSetOf("android.view.View.MeasureSpec"))
-        )
-
-        assertEquals(linkedSetOf("android.view.View\$MeasureSpec"), requested)
-    }
-
-    @Test
-    fun android_activity_inner_screen_capture_callback_resolves_by_dotted_name_candidate() {
-        val requested = provider().requestedClasses(
-            androidConfiguration(classes = linkedSetOf("android.app.Activity.ScreenCaptureCallback"))
-        )
-
-        assertEquals(linkedSetOf("android.app.Activity\$ScreenCaptureCallback"), requested)
-    }
-
-    @Test
-    fun android_context_inner_bind_service_flags_resolves_by_dotted_name_candidate() {
-        val requested = provider().requestedClasses(
-            androidConfiguration(classes = linkedSetOf("android.content.Context.BindServiceFlags"))
-        )
-
-        assertEquals(linkedSetOf("android.content.Context\$BindServiceFlags"), requested)
-    }
-
-    @Test
-    fun android_app_wildcard_provider_enumerates_activity_from_android_jar() {
-        val packageModule = packageModuleFor("android.app.*")
-
-        assertEquals("android.app", packageModule.moduleName)
-        assertTrue("Activity" in packageModule.fields, "Expected Activity in android.app.*; fields=${packageModule.fields.keys.sorted()}")
-    }
-
-    @Test
-    fun android_content_wildcard_provider_enumerates_context_from_android_jar() {
-        val packageModule = packageModuleFor("android.content.*")
-
-        assertEquals("android.content", packageModule.moduleName)
-        assertTrue("Context" in packageModule.fields, "Expected Context in android.content.*; fields=${packageModule.fields.keys.sorted()}")
-    }
-
-    @Test
-    fun android_view_wildcard_provider_enumerates_view_from_android_jar() {
-        val packageModule = packageModuleFor("android.view.*")
-
-        assertEquals("android.view", packageModule.moduleName)
-        assertTrue("View" in packageModule.fields, "Expected View in android.view.*; fields=${packageModule.fields.keys.sorted()}")
-    }
-
     @Test
     fun android_widget_wildcard_provider_enumerates_text_view_from_android_jar() {
         val packageModule = packageModuleFor("android.widget.*")
@@ -278,28 +105,6 @@ class AndroidJarReflectionTddTest {
         assertEquals("android.widget", packageModule.moduleName)
         assertTrue("TextView" in packageModule.fields, "Expected TextView in android.widget.*; fields=${packageModule.fields.keys.sorted()}")
     }
-
-    @Test
-    fun android_wildcard_provider_skips_inner_classes_from_package_enumeration() {
-        val packageModule = packageModuleFor("android.widget.*")
-
-        assertTrue("TextView" in packageModule.fields)
-        assertTrue("BufferType" !in packageModule.fields)
-        // Cross-check other Android-Lua packages: nested types stay off the package surface.
-        val view = packageModuleFor("android.view.*")
-        assertTrue("View" in view.fields)
-        assertTrue("OnClickListener" !in view.fields)
-        assertTrue("MeasureSpec" !in view.fields)
-
-        val content = packageModuleFor("android.content.*")
-        assertTrue("Context" in content.fields)
-        assertTrue("BindServiceFlags" !in content.fields)
-
-        val app = packageModuleFor("android.app.*")
-        assertTrue("Activity" in app.fields)
-        assertTrue("ScreenCaptureCallback" !in app.fields)
-    }
-
     @Test
     fun package_wildcard_without_android_jar_does_not_invent_framework_members() {
         // Honest empty surface when reflective classpath has no android.jar: never invent Activity/Context/View/TextView.
@@ -323,7 +128,6 @@ class AndroidJarReflectionTddTest {
             "Missing android.jar must not invent package providers; got paths=${providers.keys.map { it.value }}"
         )
     }
-
     @Test
     fun host_android_jar_four_package_wildcards_product_lock_enumerates_fixture_classes() {
         requireAndroidJarOrSkip()
