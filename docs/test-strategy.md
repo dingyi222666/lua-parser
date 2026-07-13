@@ -2,9 +2,10 @@
 
 TASK-006 established the original baseline used by the Android-Lua TDD
 campaign. The inventory below was refreshed from `src/commonTest/kotlin` and
-`src/jvmTest/kotlin` on 2026-07-13 (Monaco Button/utils TDD inventory bump;
-prior post-cull lockstep and s018 raises are historical) using the same counting
-rules as `testinventory.NewTestInventoryTddTest`. It excludes
+`src/jvmTest/kotlin` on 2026-07-14 (Monaco android_sample `build` return-type
+hover TDD inventory bump; prior Button/utils and post-cull locksteps are
+historical) using the same counting rules as
+`testinventory.NewTestInventoryTddTest`. It excludes
 `testinventory.NewTestInventoryTddTest` because that file is an accounting
 fixture, not campaign or product coverage.
 
@@ -24,9 +25,9 @@ lockstep after suite cull, not a silent drop of product coverage bars.
 | Workspace | Common | 9 | 127 | Document facts, module graphs, module exports, workspace engine behavior, overlays, legacy module environment support, Android import facts. |
 | Workspace | JVM | 15 | 104 | JVM workspace updates, query facade behavior, Android-Lua import workspace behavior, builtin overlay loading, dirty-set planning, module graph cycles, path styles, fingerprint stability, semantic workspace campaign coverage. |
 | Interop | JVM | 17 | 87 | JVM class module provider, reflection-backed workspace modeling, Java class metadata, classloader configuration, Android jar reflection, package enumeration, luajava import modeling. |
-| LSP | JVM | 57 | 599 | Language service, lifecycle diagnostics, navigation symbols, text document service, hover/completion/definition/declaration/references/signature help, shutdown/idempotency, watched files/workspace folders, Android-Lua JVM resolution paths, Monaco demo URI/`utils.`/`button.` locks. |
+| LSP | JVM | 58 | 602 | Language service, lifecycle diagnostics, navigation symbols, text document service, hover/completion/definition/declaration/references/signature help, shutdown/idempotency, watched files/workspace folders, Android-Lua JVM resolution paths, Monaco demo URI/`utils.`/`button.`/`build` return hover locks. |
 | Integration | JVM | 2 | 6 | Android-Lua corpus semantic verification across parser, workspace, and interop fixtures; mixed LuaJava integration coverage. |
-| **Total current inventory** | Common + JVM | **227** | **1708** | Current parser, semantic, workspace, interop, LSP, and integration coverage, excluding the inventory fixture. |
+| **Total current inventory** | Common + JVM | **228** | **1711** | Current parser, semantic, workspace, interop, LSP, and integration coverage, excluding the inventory fixture. |
 
 Inventory notes:
 
@@ -71,12 +72,12 @@ campaign_total = sum(@Test methods in included *TddTest.kt files)
 remaining = max(0, 500 - campaign_total)
 ```
 
-As of 2026-07-13 (Monaco Button/utils TDD inventory bump after WINFULL-29278493180;
-not a global success claim), the current source-tree accounting reports:
+As of 2026-07-14 (Monaco android_sample `build` return-type hover TDD inventory
+bump; not a global success claim), the current source-tree accounting reports:
 
 ```text
-current_campaign_files = 171
-current_campaign_total = 1270
+current_campaign_files = 172
+current_campaign_total = 1273
 remaining_to_500 = 0
 ```
 
@@ -107,8 +108,8 @@ does not import or mutate production code and can run before future
 implementation tasks are complete.
 
 Inventory fixture constants stay lockstep with the live source tree (baseline
-227/1708, campaign 171/1270) after Monaco Button/utils TDD additions on top of
-the post-cull baseline. `testinventory` remains excluded from campaign totals.
+228/1711, campaign 172/1273) after Monaco `build` return hover TDD additions on
+top of the Button/utils post-cull baseline. `testinventory` remains excluded from campaign totals.
 Area classification maps `/parser/`, `/source/`, and `/lexer/` into parser so no
 counted suite lands in `other`. Full Windows suite authority remains TASK-043 /
 windows-full-jvmtest.

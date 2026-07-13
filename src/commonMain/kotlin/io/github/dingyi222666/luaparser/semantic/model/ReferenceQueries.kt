@@ -37,6 +37,7 @@ import io.github.dingyi222666.luaparser.semantic.checker.isJavaProviderClassRefe
 import io.github.dingyi222666.luaparser.semantic.checker.javaInstanceSurface
 import io.github.dingyi222666.luaparser.semantic.checker.resolveOwningFunctionDeclaration
 import io.github.dingyi222666.luaparser.semantic.checker.withJavaCallableSurface
+import io.github.dingyi222666.luaparser.semantic.types.model.CallableType
 import io.github.dingyi222666.luaparser.semantic.types.model.ClassType
 import io.github.dingyi222666.luaparser.semantic.types.model.FunctionType
 import io.github.dingyi222666.luaparser.semantic.types.model.IntersectionType
@@ -216,6 +217,16 @@ internal class ReferenceQueries(
 
     private fun isBareWeakType(type: TypeInfo): Boolean {
         val display = type.displayName
+        // Unannotated fun(...): unknown shells lose to body-inferred returns (TextView, …).
+        if (display.endsWith(": unknown") ||
+            display.endsWith(": any") ||
+            display.contains("): unknown") ||
+            display.contains("): any")
+        ) {
+            if (display.contains("fun(") || display.contains("fun<")) {
+                return true
+            }
+        }
         return display.isBlank() ||
             display == "unknown" ||
             display == "any" ||
@@ -298,7 +309,13 @@ internal class ReferenceQueries(
 
     private fun preferredDeclarationType(declaration: BinderDeclaration): Type? {
         val declared = declaration.declaredType
-        if (declared != null && declared !== UnknownType && isPreferredRichType(declared)) {
+        // Unannotated fun(...): unknown is "rich" as a kind but must not suppress body
+        // inference that yields a concrete return (TextView / View / …).
+        if (declared != null &&
+            declared !== UnknownType &&
+            isPreferredRichType(declared) &&
+            !isUnknownReturnOnlyCallable(declared)
+        ) {
             return declared
         }
 
@@ -330,10 +347,17 @@ internal class ReferenceQueries(
 
         return when {
             inferred != null && isPreferredRichType(inferred) -> inferred
-            declared != null && declared !== UnknownType -> declared
+            declared != null && declared !== UnknownType && !isUnknownReturnOnlyCallable(declared) -> declared
             inferred != null && inferred !== UnknownType -> inferred
+            declared != null && declared !== UnknownType -> declared
             else -> null
         }
+    }
+
+    private fun isUnknownReturnOnlyCallable(type: Type): Boolean {
+        val callable = type as? CallableType ?: return false
+        return callable.callSignatures.isNotEmpty() &&
+            callable.callSignatures.all { signature -> signature.returnType == UnknownType }
     }
 
     private fun isPreferredRichType(type: Type): Boolean {

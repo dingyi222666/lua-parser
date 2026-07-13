@@ -79,9 +79,9 @@ class NewTestInventoryTddTest {
         val strategy = strategyPath.readText()
 
         assertTrue(strategyPath.exists())
-        assertTrue(strategy.contains("| **Total current inventory** | Common + JVM | **227** | **1708** |"))
-        assertTrue(strategy.contains("current_campaign_files = 171"))
-        assertTrue(strategy.contains("current_campaign_total = 1270"))
+        assertTrue(strategy.contains("| **Total current inventory** | Common + JVM | **228** | **1711** |"))
+        assertTrue(strategy.contains("current_campaign_files = 172"))
+        assertTrue(strategy.contains("current_campaign_total = 1273"))
         assertTrue(strategy.contains("remaining_to_500 = 0"))
 
         assertTrue(strategy.contains("`src/commonTest/kotlin` is included"))
@@ -192,12 +192,12 @@ class NewTestInventoryTddTest {
     private companion object {
         val repoRoot: Path = Path.of("").toAbsolutePath().normalize()
         val testAnnotationRegex = Regex("""(?m)^\s*@Test\b""")
-        // Synced to live inventory + docs/test-strategy.md (Monaco Button/utils TDD + prior cull lockstep).
+        // Synced to live inventory + docs/test-strategy.md (Monaco build-return hover TDD + prior lockstep).
         // Baseline excludes the inventory fixture; campaign is *TddTest.kt only.
-        const val expectedBaselineFiles = 227
-        const val expectedBaselineTestMethods = 1708
-        const val expectedCampaignFiles = 171
-        const val expectedCampaignTestMethods = 1270
+        const val expectedBaselineFiles = 228
+        const val expectedBaselineTestMethods = 1711
+        const val expectedCampaignFiles = 172
+        const val expectedCampaignTestMethods = 1273
 
         val expectedExcludedAnnotatedKotlinFiles = mapOf(
             "src/commonTest/kotlin/parser.common.kt" to 2,

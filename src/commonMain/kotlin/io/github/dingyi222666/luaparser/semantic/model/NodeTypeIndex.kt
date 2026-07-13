@@ -46,7 +46,14 @@ internal class NodeTypeIndex(
         val declaration = binder.declarationIndex.getDeclarations(node).firstOrNull()
         val type = when {
             declaration?.declaredType != null -> {
-                adapters.toTypeInfo(declaration.declaredType, declaration)
+                // Unannotated local/global functions bind as fun(...): unknown. Prefer body
+                // inference (TextView after `return tv`) so hover matches call-result typing.
+                val declared = declaration.declaredType
+                if (shouldPreferInferredCallable(declaration, declared)) {
+                    adapters.toTypeInfo(inferredDeclarationType(declaration), declaration)
+                } else {
+                    adapters.toTypeInfo(declared, declaration)
+                }
             }
 
             declaration != null -> {
@@ -67,6 +74,23 @@ internal class NodeTypeIndex(
         cachedNodes += node
         cachedTypes += type
         return type
+    }
+
+    /**
+     * Declared FunctionType with only-unknown returns should not freeze hover/type-at when the
+     * body can infer a concrete return (e.g. `local function build() return TextView() end`).
+     * Documented/Emmy returns keep declaredType priority.
+     */
+    private fun shouldPreferInferredCallable(declaration: BinderDeclaration, declared: Type?): Boolean {
+        if (declaration.kind != DeclarationKind.FUNCTION &&
+            declaration.kind != DeclarationKind.GLOBAL &&
+            declaration.kind != DeclarationKind.METHOD
+        ) {
+            return false
+        }
+        val callable = declared as? CallableType ?: return false
+        return callable.callSignatures.isNotEmpty() &&
+            callable.callSignatures.all { signature -> signature.returnType == UnknownType }
     }
 
     fun getInferredType(declaration: BinderDeclaration): io.github.dingyi222666.luaparser.semantic.api.TypeInfo? {

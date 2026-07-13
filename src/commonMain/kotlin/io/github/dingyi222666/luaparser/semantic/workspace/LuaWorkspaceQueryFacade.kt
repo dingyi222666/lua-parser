@@ -883,6 +883,10 @@ class LuaWorkspaceQueryFacade(
 
     private fun isBareWeakHoverType(type: TypeInfo): Boolean {
         val display = type.displayName
+        // fun(...): unknown is a weak unannotated shell — lose to inferred fun(...): TextView.
+        if (isUnknownReturnOnlyFunctionDisplay(display)) {
+            return true
+        }
         return display.isBlank() ||
             display == "unknown" ||
             display == "any" ||
@@ -890,6 +894,17 @@ class LuaWorkspaceQueryFacade(
                 !display.contains("fun(") &&
                 !display.startsWith("Array<") &&
                 type.moduleName.isNullOrBlank())
+    }
+
+    private fun isUnknownReturnOnlyFunctionDisplay(display: String): Boolean {
+        if (!display.contains("fun(") && !display.contains("fun<")) {
+            return false
+        }
+        // Match `: unknown` / `: any` as the sole return (including multi-param forms).
+        return display.endsWith(": unknown") ||
+            display.endsWith(": any") ||
+            display.contains("): unknown") ||
+            display.contains("): any")
     }
 
     private fun isPreferredHoverStructuredKind(kind: TypeInfoKind): Boolean {
