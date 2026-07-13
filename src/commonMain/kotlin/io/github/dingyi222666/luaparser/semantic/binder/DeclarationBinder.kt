@@ -36,6 +36,7 @@ import io.github.dingyi222666.luaparser.semantic.comments.FieldTagSyntax
 import io.github.dingyi222666.luaparser.semantic.comments.GenericTagSyntax
 import io.github.dingyi222666.luaparser.semantic.comments.MethodTagSyntax
 import io.github.dingyi222666.luaparser.semantic.comments.OverloadTagSyntax
+import io.github.dingyi222666.luaparser.semantic.types.model.PrimitiveType
 import io.github.dingyi222666.luaparser.semantic.types.syntax.TypeSyntax
 import io.github.dingyi222666.luaparser.semantic.types.syntax.TypeSyntaxParser
 
@@ -173,12 +174,15 @@ internal class DeclarationBinder(
         val scopeId = builder.createScope(ScopeKind.LOOP, node.range, node.body)
         builder.pushScope(scopeId)
         try {
+            // Numeric for control var is always number in Lua (for i = start, limit [, step]).
+            // Seed declaredType so hover/type-at participate in normal declaredType path.
             builder.addDeclarationWithSymbol(
                 localDeclaration(
                     id = builder.nextDeclarationId(),
                     name = node.variable.name,
                     owner = DeclarationOwner.Lexical(node.body),
-                    anchorNode = node.variable
+                    anchorNode = node.variable,
+                    declaredType = PrimitiveType.NUMBER
                 )
             )
             visitBlockNode(node.body, value)

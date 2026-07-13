@@ -2,12 +2,11 @@
 
 TASK-006 established the original baseline used by the Android-Lua TDD
 campaign. The inventory below was refreshed from `src/commonTest/kotlin` and
-`src/jvmTest/kotlin` on 2026-07-14 (Monaco greeter.hello cross-module return-type
-hover TDD inventory bump; prior `build`/Button/utils and post-cull locksteps are
-historical) using the same counting rules as
-`testinventory.NewTestInventoryTddTest`. It excludes
-`testinventory.NewTestInventoryTddTest` because that file is an accounting
-fixture, not campaign or product coverage.
+`src/jvmTest/kotlin` on 2026-07-14 (Monaco numeric for-loop control var number
+hover TDD inventory bump; prior greeter/`build`/Button locksteps are historical)
+using the same counting rules as `testinventory.NewTestInventoryTddTest`. It
+excludes `testinventory.NewTestInventoryTddTest` because that file is an
+accounting fixture, not campaign or product coverage.
 
 These inventory numbers are a point-in-time source-tree snapshot only. They do
 **not** claim that the full suite is green, that TASK-037/TASK-043 verification
@@ -25,9 +24,9 @@ lockstep after suite cull, not a silent drop of product coverage bars.
 | Workspace | Common | 9 | 127 | Document facts, module graphs, module exports, workspace engine behavior, overlays, legacy module environment support, Android import facts. |
 | Workspace | JVM | 15 | 104 | JVM workspace updates, query facade behavior, Android-Lua import workspace behavior, builtin overlay loading, dirty-set planning, module graph cycles, path styles, fingerprint stability, semantic workspace campaign coverage. |
 | Interop | JVM | 17 | 87 | JVM class module provider, reflection-backed workspace modeling, Java class metadata, classloader configuration, Android jar reflection, package enumeration, luajava import modeling. |
-| LSP | JVM | 59 | 606 | Language service, lifecycle diagnostics, navigation symbols, text document service, hover/completion/definition/declaration/references/signature help, shutdown/idempotency, watched files/workspace folders, Android-Lua JVM resolution paths, Monaco demo URI/`utils.`/`button.`/`build`/greeter.hello return hover locks. |
+| LSP | JVM | 60 | 608 | Language service, lifecycle diagnostics, navigation symbols, text document service, hover/completion/definition/declaration/references/signature help, shutdown/idempotency, watched files/workspace folders, Android-Lua JVM resolution paths, Monaco demo URI/`utils.`/`button.`/`build`/greeter.hello/numeric-for `i` hover locks. |
 | Integration | JVM | 2 | 6 | Android-Lua corpus semantic verification across parser, workspace, and interop fixtures; mixed LuaJava integration coverage. |
-| **Total current inventory** | Common + JVM | **229** | **1715** | Current parser, semantic, workspace, interop, LSP, and integration coverage, excluding the inventory fixture. |
+| **Total current inventory** | Common + JVM | **230** | **1717** | Current parser, semantic, workspace, interop, LSP, and integration coverage, excluding the inventory fixture. |
 
 Inventory notes:
 
@@ -72,12 +71,12 @@ campaign_total = sum(@Test methods in included *TddTest.kt files)
 remaining = max(0, 500 - campaign_total)
 ```
 
-As of 2026-07-14 (Monaco greeter.hello cross-module return-type hover TDD
-inventory bump; not a global success claim), the current source-tree accounting reports:
+As of 2026-07-14 (Monaco numeric for-loop control var number hover TDD inventory
+bump; not a global success claim), the current source-tree accounting reports:
 
 ```text
-current_campaign_files = 173
-current_campaign_total = 1277
+current_campaign_files = 174
+current_campaign_total = 1279
 remaining_to_500 = 0
 ```
 
@@ -108,8 +107,8 @@ does not import or mutate production code and can run before future
 implementation tasks are complete.
 
 Inventory fixture constants stay lockstep with the live source tree (baseline
-229/1715, campaign 173/1277) after Monaco greeter.hello cross-module return hover
-TDD additions on top of the Button/utils/`build` baseline. `testinventory` remains excluded from campaign totals.
+230/1717, campaign 174/1279) after Monaco numeric for-loop `i: number` TDD
+additions on top of the greeter/`build` baseline. `testinventory` remains excluded from campaign totals.
 Area classification maps `/parser/`, `/source/`, and `/lexer/` into parser so no
 counted suite lands in `other`. Full Windows suite authority remains TASK-043 /
 windows-full-jvmtest.
