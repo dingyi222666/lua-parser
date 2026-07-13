@@ -1,9 +1,8 @@
 # Windows slice progress
 
 - strategy: must-green-to-advance
-- chunkSize: 45
-- summary: success=0 failure=1 pending=4 total=5 filesDone=0
-- updatedAt: 2026-07-13T15:21:47Z
+- summary: {'total': 5, 'totalFiles': 209, 'pending': 4, 'success': 0, 'failure': 1, 'running': 0, 'filesDone': 0}
+- updatedAt: 2026-07-13T15:43:48Z
 - activeSlice: s001
 
 - [F] `s001` integration..lsp (45) failure

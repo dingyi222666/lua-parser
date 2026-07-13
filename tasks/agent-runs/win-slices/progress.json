@@ -2,7 +2,7 @@
   "version": 4,
   "strategy": "must-green-to-advance",
   "activeSlice": "s001",
-  "updatedAt": "2026-07-13T15:21:47Z",
+  "updatedAt": "2026-07-13T15:43:48Z",
   "summary": {
     "total": 5,
     "totalFiles": 209,
@@ -17,18 +17,17 @@
       "status": "failure",
       "label": "integration..lsp",
       "fileCount": 45,
-      "lastRunId": "29261717621",
-      "lastSha": "e786c7763ba3f2def37a7068fdd024c973ae73ad",
-      "updatedAt": "2026-07-13T15:21:47Z",
+      "lastRunId": "29263261935",
+      "lastSha": "02c34329a2adf4670da9b95e20b26146438d3753",
+      "updatedAt": "2026-07-13T15:43:48Z",
       "tests": 221,
-      "failures": 2,
+      "failures": 1,
       "errors": 0,
       "failedTests": [
-        "lsp.LspJavaAndroidFeatureTddTest#android_wildcard_layout_lsp_features_cover_ids_listener_and_cross_file_symbols[jvm]",
-        "lsp.LspJavaAndroidFeatureTddTest#android_import_table_lsp_features_resolve_class_static_field_and_member_methods[jvm]"
+        "lsp.LspJavaAndroidFeatureTddTest#android_wildcard_layout_lsp_features_cover_ids_listener_and_cross_file_symbols[jvm]"
       ],
-      "durationSec": 45,
-      "artifact": "results/s001-29261717621.json"
+      "durationSec": 55,
+      "artifact": "results/s001-29263261935.json"
     },
     "s002": {
       "status": "pending",
@@ -60,6 +59,15 @@
       "failures": 2,
       "durationSec": 45,
       "at": "2026-07-13T15:21:47Z"
+    },
+    {
+      "sliceId": "s001",
+      "runId": "29263261935",
+      "status": "failure",
+      "tests": 221,
+      "failures": 1,
+      "durationSec": 55,
+      "at": "2026-07-13T15:43:48Z"
     }
   ]
 }
