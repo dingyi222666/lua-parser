@@ -1,9 +1,8 @@
 # Windows slice progress
 
-- strategy: must-green-to-advance
 - summary: {'total': 5, 'totalFiles': 209, 'pending': 4, 'success': 0, 'failure': 1, 'running': 0, 'filesDone': 0}
-- updatedAt: 2026-07-13T15:43:48Z
 - activeSlice: s001
+- updatedAt: 2026-07-13T15:59:13Z
 
 - [F] `s001` integration..lsp (45) failure
 - [ ] `s002` lsp..parser.lua54 (45) pending
