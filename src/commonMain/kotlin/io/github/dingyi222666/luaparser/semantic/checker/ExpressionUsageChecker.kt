@@ -346,8 +346,14 @@ internal class ExpressionUsageChecker(
             is JavaClassType,
             is JavaInstanceType,
             is JavaArrayType -> true
-            is ClassType -> normalized.isJavaProviderClassReference()
-            is ModuleType -> normalized.isJavaBackedModule()
+            // Bare Lua stdlib module names (string/table/math/…) must not raise "Unknown Java
+            // member" when member resolution is incomplete — they are Lua modules, not Java.
+            is ClassType ->
+                normalized.isJavaProviderClassReference() &&
+                    normalized.name !in LUA_STDLIB_MODULE_NAMES
+            is ModuleType ->
+                normalized.isJavaBackedModule() &&
+                    normalized.moduleName !in LUA_STDLIB_MODULE_NAMES
             is TypeParameterType -> normalized.constraint?.let { isJavaDiagnosticSurface(it, lexicalScopeId) } == true
             is UnionType -> normalized.types.isNotEmpty() && normalized.types.all { isJavaDiagnosticSurface(it, lexicalScopeId) }
             is IntersectionType -> normalized.types.any { isJavaDiagnosticSurface(it, lexicalScopeId) }
@@ -373,5 +379,11 @@ internal class ExpressionUsageChecker(
         const val UNUSED_LOCAL_CODE = "checker.local.unused"
         const val MEMBER_MISSING_CODE = "checker.member.missing"
         const val LUAJAVA_TARGET_UNRESOLVED_CODE = "checker.luajava.target.unresolved"
+
+        /** Lua 5.3/5.4 (+ AndroLua bit32) standard library module globals. */
+        private val LUA_STDLIB_MODULE_NAMES = setOf(
+            "string", "table", "math", "io", "os", "coroutine", "debug",
+            "package", "utf8", "bit32"
+        )
     }
 }

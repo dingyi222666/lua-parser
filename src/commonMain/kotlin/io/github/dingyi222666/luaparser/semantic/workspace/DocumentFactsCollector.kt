@@ -838,6 +838,18 @@ object DocumentFactsCollector {
         val primary = deriveModuleNameFromPath(path) ?: return emptyList()
         val names = linkedSetOf(primary)
         val normalized = path.value.replace('\\', '/')
+        // Real-project / Lua package.path style: require("pkg.init") must resolve to
+        // pkg/init.lua even when the primary claim collapses init.lua → package root "pkg".
+        // Claim both forms so barrel re-export modules stay require()-able by either name.
+        if (normalized.endsWith("/init.lua") || normalized == "init.lua") {
+            val withInit = when {
+                normalized == "init.lua" -> "init"
+                else -> normalized.removeSuffix(".lua").replace('/', '.')
+            }
+            if (withInit.isNotEmpty()) {
+                names += withInit
+            }
+        }
         // Basename / package-relative aliases only for Android-Lua full-tree layouts so
         // simple harness paths (`pkg/runtime.lua`, `import.lua`) keep a single candidate.
         val isAndroidLuaTree =

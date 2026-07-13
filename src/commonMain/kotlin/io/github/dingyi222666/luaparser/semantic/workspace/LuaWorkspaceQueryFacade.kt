@@ -201,10 +201,14 @@ class LuaWorkspaceQueryFacade(
                 return listOf(requireBackedMemberLocalDefinition)
             }
         }
-        // Local AST declarations win for true locals (including shadowing of imported modules).
+        // Local AST declarations win for true locals (including shadowing of imported modules
+        // and same-name export members: `local foo = function...` must not jump only to a
+        // foreign util.lua export when the use is the file-local binding).
         // Imported MODULE aliases continue through the import-definition path below.
         // Require-backed locals already returned above when not on member access.
-        if (symbol != null && symbol.kind != SymbolKind.MODULE && symbol.kind != SymbolKind.FUNCTION) {
+        // FUNCTION/METHOD locals stay file-local here; require-backed function aliases were
+        // handled by requireBackedLocalDefinition / requireBackedMemberLocalDefinition above.
+        if (symbol != null && symbol.kind != SymbolKind.MODULE) {
             val localDeclaration = semanticFile?.let { declarationLocationForSymbol(it, path, symbol.symbolId) }
             if (localDeclaration != null) {
                 return listOf(localDeclaration)

@@ -1643,12 +1643,16 @@ class LuaLanguageService(
                 else -> return null
             }
             path.toAbsolutePath().normalize()
-        } catch (_: IllegalArgumentException) {
-            null
-        } catch (_: FileSystemNotFoundException) {
-            null
-        } catch (_: SecurityException) {
-            null
+        } catch (_: Exception) {
+            // URISyntaxException / IllegalArgumentException / FileSystemNotFoundException:
+            // unencoded spaces and other reserved characters in file URIs must not crash
+            // workspace open/watch paths; fall back to manual path extraction.
+            val fallback = normalizeLspFileUriPath(uri) ?: return null
+            try {
+                Paths.get(fallback).toAbsolutePath().normalize()
+            } catch (_: Exception) {
+                null
+            }
         }
     }
 
@@ -3728,9 +3732,13 @@ internal fun lspVirtualPathFromUri(
  *   while preserving the original document URI separately (never force `file:///...`).
  */
 internal fun normalizeLspFileUriPath(uri: String): String? {
+    // java.net.URI rejects unencoded spaces and other reserved characters with
+    // URISyntaxException (a checked Exception, not IllegalArgumentException). Editors
+    // and tests may still hand file:///.../My Screen.lua URIs; fall back to manual
+    // path extraction so didOpen/didChange/diagnostics never throw on the URI alone.
     val parsed = try {
         URI(uri)
-    } catch (_: IllegalArgumentException) {
+    } catch (_: Exception) {
         return fallbackFileUriPath(uri)
     }
 
