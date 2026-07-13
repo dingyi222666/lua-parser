@@ -779,12 +779,14 @@ class LspRealProjectMultiModuleGraphTddTest {
             )
         )
         val file = ws.file("app/shadow.lua")
-        val localDefs = ws.service.definition(definitionParams(file, "trim", occurrence = 3))
+        // Occurrences of "trim" in app/shadow.lua only:
+        // 1) local trim = function...  2) trim("x")  3) U.trim("y")
+        val localDefs = ws.service.definition(definitionParams(file, "trim", occurrence = 2))
         assertTrue(
             localDefs.any { it.uri == file.uri } || localDefs.isEmpty(),
             "local trim use should not jump only to foreign; got ${localDefs.map { it.uri }}"
         )
-        val exportDefs = ws.service.definition(definitionParams(file, "trim", occurrence = 4))
+        val exportDefs = ws.service.definition(definitionParams(file, "trim", occurrence = 3))
         assertTrue(
             exportDefs.any {
                 it.uri == ws.file("lib/util.lua").uri || it.uri.contains("util.lua") || it.uri == file.uri

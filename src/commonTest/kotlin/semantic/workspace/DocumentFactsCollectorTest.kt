@@ -371,6 +371,9 @@ class DocumentFactsCollectorTest {
         assertEquals(
             listOf(
                 "pkg.runtime" to DocumentFacts.ModuleNameCandidateSource.VIRTUAL_PATH,
+                // init.lua also claims the explicit "pkg.runtime.init" form so
+                // require("pkg.runtime.init") / require("pkg.init") style barrels resolve.
+                "pkg.runtime.init" to DocumentFacts.ModuleNameCandidateSource.VIRTUAL_PATH,
                 "pkg.runtime.override" to DocumentFacts.ModuleNameCandidateSource.LEGACY_MODULE_CALL
             ),
             facts.moduleNameCandidates.map { it.moduleName to it.source }

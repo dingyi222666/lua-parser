@@ -208,6 +208,45 @@ class LuaWorkspaceQueryFacade(
         // Require-backed locals already returned above when not on member access.
         // FUNCTION/METHOD locals stay file-local here; require-backed function aliases were
         // handled by requireBackedLocalDefinition / requireBackedMemberLocalDefinition above.
+        //
+        // Prefer a file-local VALUE declaration visible at the free-id use site before any
+        // export-handle / exportAt fallback. getSymbolAt may return a foreign export handle
+        // (same name as util.foo/util.trim) even when a shadowing local is in scope; symbolId
+        // then fails localDeclarationForSymbol and definition incorrectly jumps only to util.lua.
+        if (memberAccess == null && semanticFile != null) {
+            val freeId = node as? Identifier
+            if (freeId != null) {
+                val parent = runCatching { freeId.parent }.getOrNull()
+                val onMemberSelector = parent is MemberExpression && parent.identifier === freeId
+                if (!onMemberSelector) {
+                    val visibleLocal = visibleLocalValueDeclaration(
+                        semanticFile,
+                        freeId.name,
+                        freeId.range.start
+                    )
+                    // Keep require("mod") aliases and `local x = mod.member` rebinds on the
+                    // provider/export path above — only true non-import shadows stay file-local.
+                    val isRequireOrMemberImport =
+                        visibleLocal != null &&
+                            (
+                                requiredModuleNameForDeclaration(semanticFile, visibleLocal) != null ||
+                                    memberInitializerForLocal(visibleLocal) != null
+                                )
+                    if (
+                        visibleLocal != null &&
+                        !isRequireOrMemberImport &&
+                        visibleLocal.origin != DeclarationOrigin.BUILTIN &&
+                        (
+                            visibleLocal.kind == DeclarationKind.LOCAL ||
+                                visibleLocal.kind == DeclarationKind.FUNCTION ||
+                                visibleLocal.kind == DeclarationKind.PARAMETER
+                            )
+                    ) {
+                        declarationReferenceLocation(path, visibleLocal)?.let { return listOf(it) }
+                    }
+                }
+            }
+        }
         if (symbol != null && symbol.kind != SymbolKind.MODULE) {
             val localDeclaration = semanticFile?.let { declarationLocationForSymbol(it, path, symbol.symbolId) }
             if (localDeclaration != null) {

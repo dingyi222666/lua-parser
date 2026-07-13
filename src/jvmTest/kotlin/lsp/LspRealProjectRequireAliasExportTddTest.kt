@@ -171,7 +171,9 @@ class LspRealProjectRequireAliasExportTddTest {
                 """.trimIndent()
             )
         )
-        val labels = completionLabels(ws.service, ws.file("barrel_use.lua"), afterNeedle = "pkg.")
+        // afterNeedle must not match the require("pkg.init") string — use the unique
+        // incomplete member site on the local alias.
+        val labels = completionLabels(ws.service, ws.file("barrel_use.lua"), afterNeedle = "x = pkg.")
         assertTrue("leafRun" in labels, labels.toString())
         assertTrue("leafValue" in labels, labels.toString())
     }
@@ -552,12 +554,14 @@ class LspRealProjectRequireAliasExportTddTest {
             )
         )
         val file = ws.file("shadow.lua")
-        val localUse = ws.service.definition(definitionParams(file, "foo", occurrence = 3))
+        // Occurrences of "foo" in shadow.lua only:
+        // 1) local foo = function...  2) foo("x")  3) U.foo("y")
+        val localUse = ws.service.definition(definitionParams(file, "foo", occurrence = 2))
         assertTrue(
             localUse.any { it.uri == file.uri } || localUse.isEmpty(),
             "local foo use dual-path file-local; got ${localUse.map { it.uri }}"
         )
-        val exportUse = ws.service.definition(definitionParams(file, "foo", occurrence = 4))
+        val exportUse = ws.service.definition(definitionParams(file, "foo", occurrence = 3))
         assertTrue(
             exportUse.any { it.uri.contains("util.lua") || it.uri == file.uri },
             "U.foo dual-path; got ${exportUse.map { it.uri }}"
