@@ -160,8 +160,16 @@ class LuaTextDocumentService(
                 CompletableFuture.completedFuture(Either.forRight(CompletionList(false, mutableListOf<CompletionItem>())))
             }
         ) {
-            val path = pathFromUri(params.textDocument.uri)
-            val completionList = languageService.completion(path, params.position.line, params.position.character)
+            // Pass the client URI through unchanged. pathFromUri() strips workspace-folder
+            // prefixes incorrectly (no access to initialize-time workspaceFolderUriPrefixes),
+            // so Monaco/file:// carets resolved to an absolute FS path that missed the
+            // open-document snapshot keyed as a workspace-relative VirtualPath — empty
+            // require-alias member completions (`utils.` → items[0]).
+            val completionList = languageService.completion(
+                params.textDocument.uri,
+                params.position.line,
+                params.position.character
+            )
             CompletableFuture.completedFuture(Either.forRight(completionList))
         }
     }
@@ -336,7 +344,9 @@ class LuaTextDocumentService(
         return guardedRequest(
             quietResponse = { CompletableFuture.completedFuture(mutableListOf()) }
         ) {
-            val path = pathFromUri(params.textDocument.uri)
+            // Same URI-pass-through as completion: languageService pathOf/pathFromClientPath
+            // owns workspace-folder prefix stripping; pathFromUri() does not.
+            val path = params.textDocument.uri
             val symbols: MutableList<Either<SymbolInformation, org.eclipse.lsp4j.DocumentSymbol>> =
                 if (languageService.supportsHierarchicalDocumentSymbols()) {
                     // Client capability hierarchicalDocumentSymbolSupport == true:
@@ -532,10 +542,6 @@ class LuaTextDocumentService(
         val newline = text.indexOf('\n', lineStart)
         val end = if (newline >= 0) newline else text.length
         return if (end > lineStart && text[end - 1] == '\r') end - 1 else end
-    }
-
-    private fun pathFromUri(uri: String): String {
-        return lspVirtualPathFromUri(uri).value
     }
 
     private fun <T> nullFuture(): CompletableFuture<T> {

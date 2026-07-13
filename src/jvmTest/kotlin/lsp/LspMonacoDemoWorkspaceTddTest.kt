@@ -146,6 +146,15 @@ class LspMonacoDemoWorkspaceTddTest {
     }
 
     @Test
+    fun completion_on_utils_dot_includes_log_clamp_join() {
+        val ws = demoWorkspace(mainOverride = DEMO_MAIN_COMPLETION_UTILS)
+        val labels = completionLabels(ws.service, ws.file("main.lua"), afterNeedle = "utils.")
+        assertTrue("log" in labels, labels.toString())
+        assertTrue("clamp" in labels, labels.toString())
+        assertTrue("join" in labels, labels.toString())
+    }
+
+    @Test
     fun nested_table_field_completion_surfaces_inner_keys() {
         val ws = demoWorkspace(
             extra = mapOf(

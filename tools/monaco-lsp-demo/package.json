@@ -1,0 +1,17 @@
+{
+  "name": "lua-parser-monaco-lsp-demo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Monaco + WebSocket bridge to lua-parser JVM LSP (stdio)",
+  "main": "server.mjs",
+  "scripts": {
+    "start": "node server.mjs",
+    "demo": "node server.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}

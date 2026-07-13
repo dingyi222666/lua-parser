@@ -1,0 +1,13 @@
+
+gradle.projectsLoaded {
+  rootProject.allprojects { project ->
+    project.afterEvaluate {
+      def cfg = project.configurations.findByName('jvmRuntimeClasspath')
+      if (cfg != null) {
+        project.tasks.register('printLspClasspath') {
+          doLast { println cfg.asPath }
+        }
+      }
+    }
+  }
+}

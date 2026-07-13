@@ -641,8 +641,9 @@ class JvmClassModuleProvider(
         // When two public top-level types share a simpleName (should not happen in one package),
         // first-by-sorted-name wins; never invent names that reflection did not load.
         //
-        // Heap bound (TASK-611): package members use shallow class modules (declared surface only)
-        // so wildcards never deep-expand super/interface graphs for every android.widget type.
+        // Heap bound (TASK-611): package members use shallow class modules (no recursive
+        // super/interface graph expand). Instance surface still flattens public inherited
+        // methods/fields so Button()/button. after wildcards exposes View APIs.
         // Full deep moduleTypeFor remains for explicitly requested/bindClass class providers.
         val members = linkedMapOf<String, Type>()
         classes.forEach { clazz ->
@@ -1206,8 +1207,12 @@ class JvmClassModuleProvider(
     }
 
     /**
-     * Declared-only class module used for package-member mounts.
-     * Avoids deep super/interface expansion that OOMs multi-file android.jar wildcards.
+     * Package-member class module used for wildcard mounts (`import "android.widget.*"`).
+     *
+     * Avoids deep super/interface *graph* expansion that OOMs multi-file android.jar wildcards
+     * (TASK-611). Instance member surface still flattens [Class.getMethods]/[Class.getFields]
+     * so constructed locals (`Button()` then `button.`) expose View/TextView inherited APIs
+     * without walking empty super shells.
      */
     private fun shallowModuleTypeFor(clazz: Class<*>): ModuleType {
         val cacheKey = reflectedClassCacheKey(clazz)
@@ -1263,6 +1268,12 @@ class JvmClassModuleProvider(
         }
     }
 
+    /**
+     * Package-wildcard class type: no recursive super/interface *member* expand (TASK-611),
+     * but instance members use the full public reflection surface ([Class.getMethods] /
+     * [Class.getFields]) so inherited View APIs appear on `button.` after
+     * `import "android.widget.*"`. Super/interfaces stay name-only type references.
+     */
     private fun shallowJavaClassTypeFor(clazz: Class<*>): JavaClassType {
         val javaName = javaTypeNameFor(clazz)
         val staticFields = publicDeclaredStaticFields(clazz)
@@ -1285,7 +1296,9 @@ class JvmClassModuleProvider(
                     signatureMetadata = overloads.map { javaSignatureMetadata(it, it.genericReturnType) }
                 )
             }
-        val instanceFields = publicDeclaredInstanceFields(clazz)
+        // Flatten inherited public instance surface onto this type. Super shells are empty
+        // type refs, so allInstanceMembers() would otherwise only see Button-declared methods.
+        val instanceFields = publicInstanceFields(clazz)
             .associate { field ->
                 field.name to JavaInstanceMemberType(
                     owner = javaTypeNameFor(field.declaringClass),
@@ -1294,7 +1307,7 @@ class JvmClassModuleProvider(
                     memberKind = JavaMemberKind.FIELD
                 )
             }
-        val instanceMethods = publicDeclaredInstanceMethods(clazz)
+        val instanceMethods = publicInstanceMethods(clazz)
             .groupBy(Method::getName)
             .mapValues { (name, overloads) ->
                 JavaInstanceMemberType(
@@ -1314,7 +1327,7 @@ class JvmClassModuleProvider(
                 .filter { Modifier.isPublic(it.modifiers) }
                 .associate { it.simpleName to typeReferenceForJavaClass(it) }
                 .toSortedMap(),
-            // No recursive super/interface expand for package-member shallow providers.
+            // Name-only super/interface edges — no recursive member expand for wildcards.
             superClass = clazz.superclass?.let(::typeReferenceForJavaClass),
             interfaces = clazz.interfaces.map(::typeReferenceForJavaClass),
             typeParameters = clazz.typeParameters.map(::javaTypeParameterFor)
@@ -1329,26 +1342,10 @@ class JvmClassModuleProvider(
         }
     }
 
-    private fun publicDeclaredInstanceFields(clazz: Class<*>): List<Field> {
-        return clazz.declaredFields.filter { field ->
-            Modifier.isPublic(field.modifiers) &&
-                !Modifier.isStatic(field.modifiers) &&
-                !field.isSynthetic
-        }
-    }
-
     private fun publicDeclaredStaticMethods(clazz: Class<*>): List<Method> {
         return clazz.declaredMethods.filter { method ->
             Modifier.isPublic(method.modifiers) &&
                 Modifier.isStatic(method.modifiers) &&
-                isReflectableMethod(method)
-        }
-    }
-
-    private fun publicDeclaredInstanceMethods(clazz: Class<*>): List<Method> {
-        return clazz.declaredMethods.filter { method ->
-            Modifier.isPublic(method.modifiers) &&
-                !Modifier.isStatic(method.modifiers) &&
                 isReflectableMethod(method)
         }
     }
