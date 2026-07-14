@@ -18,6 +18,7 @@ import io.github.dingyi222666.luaparser.parser.ast.node.FunctionDeclaration
 import io.github.dingyi222666.luaparser.parser.ast.node.Identifier
 import io.github.dingyi222666.luaparser.parser.ast.node.IfClause
 import io.github.dingyi222666.luaparser.parser.ast.node.LocalStatement
+import io.github.dingyi222666.luaparser.parser.ast.node.LambdaDeclaration
 import io.github.dingyi222666.luaparser.parser.ast.node.MemberExpression
 import io.github.dingyi222666.luaparser.parser.ast.node.Range
 import io.github.dingyi222666.luaparser.parser.ast.node.RepeatStatement
@@ -34,6 +35,7 @@ import io.github.dingyi222666.luaparser.semantic.comments.DocCommentSyntax
 import io.github.dingyi222666.luaparser.semantic.comments.DocTagSyntax
 import io.github.dingyi222666.luaparser.semantic.comments.FieldTagSyntax
 import io.github.dingyi222666.luaparser.semantic.comments.GenericTagSyntax
+import io.github.dingyi222666.luaparser.semantic.comments.JavaClassTagSyntax
 import io.github.dingyi222666.luaparser.semantic.comments.MethodTagSyntax
 import io.github.dingyi222666.luaparser.semantic.comments.OverloadTagSyntax
 import io.github.dingyi222666.luaparser.semantic.types.model.PrimitiveType
@@ -84,10 +86,44 @@ internal class DeclarationBinder(
         // AST quirk: AssignmentStatement.init = LHS targets, .variables = RHS expressions.
         // Each bare free-name LHS invents an AST GLOBAL on first write (identifier-only
         // range), including multi-LHS / unbalanced multi-LHS. Commas invent no ranges.
-        // Later writes / shadowed locals / member-index LHS stay non-declarative.
-        node.init.forEach { target ->
+        // Member writes create MEMBER declarations so table/module surfaces can include
+        // fields installed with `owner.name = value`, not only `function owner.name()`.
+        val attachment = comments.getAttachment(node)
+        val documentation = attachment?.toDeclarationDocumentation()
+        val declaredTypeSyntax = if (node.init.size == 1) {
+            parseTypeSyntax(attachment?.inlineTypeText)
+        } else {
+            null
+        }
+        node.init.forEachIndexed { index, target ->
             when (target) {
                 is Identifier -> bindBareGlobalAssignmentTarget(target)
+                is MemberExpression -> {
+                    visitExpressionNode(target.base, value)
+                    val assignedValue = node.variables.getOrNull(index)
+                    val declaration = if (assignedValue is FunctionDeclaration || assignedValue is LambdaDeclaration) {
+                        methodDeclaration(
+                            id = builder.nextDeclarationId(),
+                            name = target.identifier.name,
+                            origin = DeclarationOrigin.AST,
+                            owner = DeclarationOwner.Lexical(currentLexicalOwnerNode()),
+                            anchorNode = target.identifier,
+                            documentation = documentation,
+                            declaredTypeSyntax = declaredTypeSyntax
+                        )
+                    } else {
+                        fieldDeclaration(
+                            id = builder.nextDeclarationId(),
+                            name = target.identifier.name,
+                            origin = DeclarationOrigin.AST,
+                            owner = DeclarationOwner.Lexical(currentLexicalOwnerNode()),
+                            anchorNode = target.identifier,
+                            documentation = documentation,
+                            declaredTypeSyntax = declaredTypeSyntax
+                        )
+                    }
+                    builder.addDeclarationWithSymbol(declaration)
+                }
                 else -> visitExpressionNode(target, value)
             }
         }
@@ -550,7 +586,7 @@ internal class DeclarationBinder(
                     currentOwnedTags = mutableListOf()
                 }
 
-                is GenericTagSyntax, is FieldTagSyntax, is MethodTagSyntax, is OverloadTagSyntax -> {
+                is GenericTagSyntax, is JavaClassTagSyntax, is FieldTagSyntax, is MethodTagSyntax, is OverloadTagSyntax -> {
                     if (currentClass != null) {
                         currentOwnedTags += tag
                     }

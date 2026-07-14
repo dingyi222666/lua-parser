@@ -123,7 +123,12 @@ class JavaChainedCallTddTest {
             """.trimIndent()
         )
 
-        assertHoverType(harness, "assigned", "nil", occurrence = 2)
+        assertHoverType(
+            harness,
+            "assigned",
+            "semantic.interop.JavaChainedCallTddTest.ListenerHolder",
+            occurrence = 2
+        )
         assertNoDiagnostics(harness)
     }
     @Test
@@ -166,6 +171,46 @@ class JavaChainedCallTddTest {
         )
 
         assertHoverType(harness, "text", "string", occurrence = 2)
+    }
+    @Test
+    fun imported_java_constructor_and_void_methods_support_alua_fluent_chains() {
+        val harness = jvmHarness(
+            "main.lua" to """
+                import "semantic.interop.JavaChainedCallTddTest${'$'}FluentJavaBuilder"
+
+                local drawable = FluentJavaBuilder()
+                    .setShape(1)
+                    .setCornerRadius(16)
+                    .setColor(0xffffffff)
+                    .setStroke(2, 0x1f000000)
+                local shape = drawable.getShape()
+                return drawable, shape
+            """.trimIndent()
+        )
+
+        assertHoverType(
+            harness,
+            "drawable",
+            "semantic.interop.JavaChainedCallTddTest.FluentJavaBuilder",
+            occurrence = 2
+        )
+        assertHoverType(harness, "shape", "number", occurrence = 2)
+        assertNoDiagnostics(harness)
+    }
+    @Test
+    fun lua_nil_returning_methods_do_not_receive_java_fluent_semantics() {
+        val harness = jvmHarness(
+            "main.lua" to """
+                local builder = {}
+                function builder.setShape(value)
+                    return nil
+                end
+                local result = builder.setShape(1)
+                return result
+            """.trimIndent()
+        )
+
+        assertHoverTypeAllowingUnknown(harness, "result", "nil", occurrence = 2)
     }
     @Test
     fun completion_after_file_instance_includes_javabean_property_aliases() {
@@ -376,6 +421,34 @@ class JavaChainedCallTddTest {
 
         private var listener: ValueListener? = null
         private var action: Action? = null
+    }
+
+    class FluentJavaBuilder {
+        private var shape: Int = 0
+
+        fun setShape(value: Int) {
+            shape = value
+        }
+
+        fun setCornerRadius(value: Float) {
+            cornerRadius = value
+        }
+
+        fun setColor(value: Long) {
+            color = value
+        }
+
+        fun setStroke(width: Int, color: Long) {
+            strokeWidth = width
+            strokeColor = color
+        }
+
+        fun getShape(): Int = shape
+
+        private var cornerRadius: Float = 0f
+        private var color: Long = 0L
+        private var strokeWidth: Int = 0
+        private var strokeColor: Long = 0L
     }
 
     interface ValueListener {

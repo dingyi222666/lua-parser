@@ -838,16 +838,17 @@ object DocumentFactsCollector {
         val primary = deriveModuleNameFromPath(path) ?: return emptyList()
         val names = linkedSetOf(primary)
         val normalized = path.value.replace('\\', '/')
-        // Real-project / Lua package.path style: require("pkg.init") must resolve to
-        // pkg/init.lua even when the primary claim collapses init.lua → package root "pkg".
-        // Claim both forms so barrel re-export modules stay require()-able by either name.
-        if (normalized.endsWith("/init.lua") || normalized == "init.lua") {
-            val withInit = when {
+        // Package entry files claim both their package and explicit entry module names.
+        if (normalized.endsWith("/init.lua") || normalized == "init.lua" ||
+            normalized.endsWith("/index.lua") || normalized == "index.lua"
+        ) {
+            val withEntry = when {
                 normalized == "init.lua" -> "init"
+                normalized == "index.lua" -> "index"
                 else -> normalized.removeSuffix(".lua").replace('/', '.')
             }
-            if (withInit.isNotEmpty()) {
-                names += withInit
+            if (withEntry.isNotEmpty()) {
+                names += withEntry
             }
         }
         // Basename / package-relative aliases only for Android-Lua full-tree layouts so
@@ -861,7 +862,8 @@ object DocumentFactsCollector {
         }
         val withoutExt = when {
             normalized.endsWith("/init.lua") -> normalized.removeSuffix("/init.lua")
-            normalized == "init.lua" -> ""
+            normalized.endsWith("/index.lua") -> normalized.removeSuffix("/index.lua")
+            normalized == "init.lua" || normalized == "index.lua" -> ""
             normalized.endsWith(".lua") -> normalized.removeSuffix(".lua")
             normalized.endsWith(".aly") -> normalized.removeSuffix(".aly")
             else -> normalized
@@ -897,7 +899,8 @@ object DocumentFactsCollector {
         val normalized = path.value
         return when {
             normalized.endsWith("/init.lua") -> normalized.removeSuffix("/init.lua").replace('/', '.').ifEmpty { null }
-            normalized == "init.lua" -> null
+            normalized.endsWith("/index.lua") -> normalized.removeSuffix("/index.lua").replace('/', '.').ifEmpty { null }
+            normalized == "init.lua" || normalized == "index.lua" -> null
             normalized.endsWith(".lua") -> normalized.removeSuffix(".lua").replace('/', '.')
             // Android-Lua layout modules (.aly) are require()-able without a .lua suffix.
             normalized.endsWith(".aly") -> normalized.removeSuffix(".aly").replace('/', '.')

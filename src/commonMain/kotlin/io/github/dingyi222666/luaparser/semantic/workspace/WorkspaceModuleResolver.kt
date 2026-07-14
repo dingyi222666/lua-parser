@@ -15,17 +15,23 @@ import io.github.dingyi222666.luaparser.semantic.types.model.VarargType
 internal class WorkspaceModuleResolver(
     private val snapshot: WorkspaceSnapshot
 ) {
+    private val activeProviderCache = mutableMapOf<String, WorkspaceModuleGraph.ModuleProvider?>()
+    private val importedSymbolsCache = mutableMapOf<VirtualPath, Map<String, WorkspaceImportedSymbol>>()
+
     fun activeProvider(moduleName: String): WorkspaceModuleGraph.ModuleProvider? {
         if (moduleName.isBlank()) {
             return null
         }
-        snapshot.graph.activeProviders[moduleName]?.let { return it }
+        if (moduleName in activeProviderCache) {
+            return activeProviderCache[moduleName]
+        }
         // Dotted stdlib overlay recovery (e.g. AndroLua socket.url): keep dotted module names
         // even when graph activeProviders missed or only recorded a slash alias.
-        findOverlayProvider(moduleName)?.let { return it }
         // Extra JVM providers are claimed by moduleName during graph build; if a claim was lost
         // (duplicate simple names), still recover the exact class/package provider path.
-        return findExtraClassProviderByAlias(moduleName)
+        val provider = snapshot.graph.activeProviders[moduleName]
+            ?: findOverlayProvider(moduleName)
+            ?: findExtraClassProviderByAlias(moduleName)
             ?: snapshot.extraProviders.entries.firstOrNull { (_, file) ->
                 file.moduleExportSurface?.moduleType?.moduleName == moduleName
             }?.let { (path, _) ->
@@ -38,6 +44,8 @@ internal class WorkspaceModuleResolver(
             // Free-form Android-Lua layout modules (.aly) may exist in the workspace without a
             // pre-built dependency edge (e.g. partial graph rebuilds). Recover by path/module alias.
             ?: findAlyLayoutProvider(moduleName)
+        activeProviderCache[moduleName] = provider
+        return provider
     }
 
     fun exportSurface(provider: WorkspaceModuleGraph.ModuleProvider): ModuleExportSurface? {
@@ -231,6 +239,7 @@ internal class WorkspaceModuleResolver(
     }
 
     fun importedSymbolsFor(path: VirtualPath): Map<String, WorkspaceImportedSymbol> {
+        importedSymbolsCache[path]?.let { return it }
         val facts = snapshot.files[path]?.documentFacts ?: return emptyMap()
         val imported = linkedMapOf<String, WorkspaceImportedSymbol>()
         activeImportTargets(facts).forEach { target ->
@@ -245,14 +254,14 @@ internal class WorkspaceModuleResolver(
             if (normalized.endsWith(".*")) {
                 return@forEach
             }
-            val simpleName = normalized.substringAfterLast('.').substringAfterLast('$').substringAfterLast('_')
+            val simpleName = normalized.substringAfterLast('.').substringAfterLast('/').substringAfterLast('$').substringAfterLast('_')
             if (simpleName.isNotBlank() && simpleName !in imported) {
-                importedClassSymbol(normalized)?.let { symbol ->
+                importTargetSymbol(normalized)?.let { symbol ->
                     imported[simpleName] = symbol.copy(alias = simpleName)
                 }
             }
         }
-        return imported
+        return imported.toMap().also { importedSymbolsCache[path] = it }
     }
 
     fun importedSymbolFor(path: VirtualPath, alias: String): WorkspaceImportedSymbol? {
@@ -264,11 +273,11 @@ internal class WorkspaceModuleResolver(
             if (normalized.endsWith(".*")) {
                 false
             } else {
-                val simpleName = normalized.substringAfterLast('.').substringAfterLast('$').substringAfterLast('_')
+                val simpleName = normalized.substringAfterLast('.').substringAfterLast('/').substringAfterLast('$').substringAfterLast('_')
                 simpleName == alias || normalized == alias
             }
         } ?: return null
-        return importedClassSymbol(match)?.copy(alias = alias)
+        return importTargetSymbol(match)?.copy(alias = alias)
     }
 
     fun importTargetSymbol(target: String): WorkspaceImportedSymbol? {
@@ -276,7 +285,7 @@ internal class WorkspaceModuleResolver(
         return if (normalized.endsWith(".*")) {
             importedPackageSymbol(normalized.removeSuffix(".*"))
         } else {
-            importedClassSymbol(normalized)
+            importedClassSymbol(normalized) ?: importedLuaModuleSymbol(normalized)
         }
     }
 
@@ -302,7 +311,7 @@ internal class WorkspaceModuleResolver(
         return if (normalized.endsWith(".*")) {
             packageMembers(normalized.removeSuffix(".*"))
         } else {
-            importedClassSymbol(normalized)?.let(::listOf).orEmpty()
+            importTargetSymbol(normalized)?.let(::listOf).orEmpty()
         }
     }
 
@@ -365,6 +374,31 @@ internal class WorkspaceModuleResolver(
             moduleName = surface.moduleType.moduleName,
             providerPath = provider.path,
             moduleType = surface.moduleType
+        )
+    }
+
+    private fun importedLuaModuleSymbol(importText: String): WorkspaceImportedSymbol? {
+        val normalized = normalizeImportTarget(importText)
+        if (normalized.isBlank() || normalized.endsWith(".*")) {
+            return null
+        }
+        val provider = activeProvider(normalized) ?: return null
+        if (provider.path !in snapshot.files ||
+            (!provider.path.value.endsWith(".lua") && !provider.path.value.endsWith(".aly"))
+        ) {
+            return null
+        }
+        val surface = exportSurface(provider) ?: return null
+        val alias = normalized
+            .replace('\\', '/')
+            .substringAfterLast('/')
+            .substringAfterLast('.')
+            .ifBlank { return null }
+        return WorkspaceImportedSymbol(
+            alias = alias,
+            moduleName = surface.moduleType.moduleName,
+            providerPath = provider.path,
+            moduleType = resolvedModuleType(provider.path, surface)
         )
     }
 

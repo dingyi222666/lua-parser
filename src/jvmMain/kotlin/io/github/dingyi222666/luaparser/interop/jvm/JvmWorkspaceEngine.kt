@@ -106,9 +106,10 @@ class JvmWorkspaceEngine(
             putAll(configuredImports)
             putAll(sourceImports)
         }
+        val workspaceResolver = io.github.dingyi222666.luaparser.semantic.workspace.WorkspaceModuleResolver(snapshot)
         return SemanticWorkspaceContext(
             currentPath = path,
-            workspaceResolver = io.github.dingyi222666.luaparser.semantic.workspace.WorkspaceModuleResolver(snapshot),
+            workspaceResolver = workspaceResolver,
             overlayGlobals = snapshot.builtinOverlay.globals,
             // Only base configured imports go in the context map; document source imports are
             // re-applied by SemanticWorkspaceContext.withWorkspaceImportEffects() for this path.
@@ -122,13 +123,18 @@ class JvmWorkspaceEngine(
             resolveImportTarget = { target ->
                 classModuleProvider.importedSymbolForTarget(target, resolvedConfiguration)
             },
-            unresolvedLuaJavaTargets = collectUnresolvedLuaJavaTargets(currentFacts, resolvedConfiguration)
+            unresolvedLuaJavaTargets = collectUnresolvedLuaJavaTargets(
+                currentFacts,
+                resolvedConfiguration,
+                workspaceResolver
+            )
         )
     }
 
     private fun collectUnresolvedLuaJavaTargets(
         facts: DocumentFacts?,
-        configuration: JvmWorkspaceConfiguration
+        configuration: JvmWorkspaceConfiguration,
+        workspaceResolver: io.github.dingyi222666.luaparser.semantic.workspace.WorkspaceModuleResolver
     ): List<UnresolvedLuaJavaTarget> {
         if (facts == null) {
             return emptyList()
@@ -136,7 +142,11 @@ class JvmWorkspaceEngine(
         return facts.jvmClassLoads
             .asSequence()
             .filter { it.kind in diagnosticLuaJavaClassLoadKinds }
-            .filter { classModuleProvider.importedClassName(it.target, configuration) == null }
+            .filter { fact ->
+                classModuleProvider.importedClassName(fact.target, configuration) == null &&
+                    (fact.kind != DocumentFacts.JvmClassLoadKind.IMPORT_CALL ||
+                        workspaceResolver.importTargetSymbol(fact.target) == null)
+            }
             .map { fact ->
                 UnresolvedLuaJavaTarget(
                     target = fact.target,

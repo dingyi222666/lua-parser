@@ -1,5 +1,6 @@
 package semantic.model
 
+import io.github.dingyi222666.luaparser.parser.ast.node.Position
 import io.github.dingyi222666.luaparser.semantic.api.CompletionItemKind
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -95,6 +96,30 @@ class CompletionProviderTest {
         assertTrue("value" in dotLabels)
         assertEquals("getValue", colonItems.first().label)
         assertEquals("string", colonItems.first().detail?.substringAfterLast(": "))
+    }
+
+    @Test
+    fun memberCompletionsIncludeMembersAssignedToBuiltinTables() {
+        val harness = semanticModelHarness(
+            """
+            table.addObserver = function(old, listener)
+                return {}
+            end
+            table.customValue = 42
+            local value = table.
+            """.trimIndent()
+        )
+        val start = harness.positionOf("table.", occurrence = 3)
+        val position = Position(start.line, start.column + "table.".length)
+
+        val completions = harness.model.getCompletionsAt(position)
+        val labels = completions.map { it.label }
+
+        assertTrue("addObserver" in labels, labels.toString())
+        assertTrue("customValue" in labels, labels.toString())
+        assertTrue("insert" in labels, labels.toString())
+        assertEquals(CompletionItemKind.METHOD, completions.single { it.label == "addObserver" }.kind)
+        assertEquals(CompletionItemKind.FIELD, completions.single { it.label == "customValue" }.kind)
     }
 
     @Test

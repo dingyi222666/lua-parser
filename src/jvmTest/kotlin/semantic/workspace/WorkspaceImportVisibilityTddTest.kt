@@ -40,6 +40,43 @@ class WorkspaceImportVisibilityTddTest {
     }
 
     @Test
+    fun source_level_lua_import_creates_path_scoped_global_from_last_module_segment() {
+        val harness = jvmHarness(
+            "cc/aa/index.lua" to "return { value = \"lua module\" }",
+            "imports.lua" to """
+                import "cc.aa"
+                local current = aa.value
+                return current
+            """.trimIndent(),
+            "consumer.lua" to """
+                local current = aa.value
+                return current
+            """.trimIndent()
+        )
+
+        val importedDefinition = harness.queries.gotoDefinition(
+            harness.path("imports.lua"),
+            harness.positionOf("imports.lua", "aa", occurrence = 2)
+        )
+        val leakedDefinition = harness.queries.gotoDefinition(
+            harness.path("consumer.lua"),
+            harness.positionOf("consumer.lua", "aa")
+        )
+        val hover = harness.queries.hover(
+            harness.path("imports.lua"),
+            harness.positionOf("imports.lua", "current", occurrence = 2)
+        )
+
+        assertEquals(listOf(harness.path("cc/aa/index.lua")), importedDefinition.map { it.path })
+        assertEquals("string", hover?.typeInfo?.displayName)
+        assertEquals(emptyList(), harness.queries.diagnostics(harness.path("imports.lua")))
+        assertTrue(
+            leakedDefinition.none { it.path == harness.path("cc/aa/index.lua") },
+            "Lua import globals must stay scoped to the file containing the import call."
+        )
+    }
+
+    @Test
     fun require_import_alias_activation_does_not_leak_simple_name_into_sibling_file() {
         val harness = jvmHarness(
             "imports.lua" to """

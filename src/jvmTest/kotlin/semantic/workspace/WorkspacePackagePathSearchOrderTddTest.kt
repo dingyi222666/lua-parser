@@ -106,6 +106,42 @@ class WorkspacePackagePathSearchOrderTddTest {
     }
 
     @Test
+    fun require_accepts_dotted_and_slash_names_for_direct_lua_files() {
+        val harness = WorkspaceSemanticHarness.build(
+            "a/b.lua" to "return { value = \"direct\" }",
+            "dot.lua" to "local value = require(\"a.b\")\nreturn value.value",
+            "slash.lua" to "local value = require(\"a/b\")\nreturn value.value"
+        )
+
+        assertEquals(
+            harness.path("a/b.lua"),
+            harness.queries.resolveRequire(harness.path("dot.lua"), "a.b").provider?.path
+        )
+        assertEquals(
+            harness.path("a/b.lua"),
+            harness.queries.resolveRequire(harness.path("slash.lua"), "a/b").provider?.path
+        )
+    }
+
+    @Test
+    fun require_accepts_dotted_and_slash_names_for_index_lua_files() {
+        val harness = WorkspaceSemanticHarness.build(
+            "a/b/index.lua" to "return { value = \"index\" }",
+            "dot.lua" to "local value = require(\"a.b\")\nreturn value.value",
+            "slash.lua" to "local value = require(\"a/b\")\nreturn value.value"
+        )
+
+        assertEquals(
+            harness.path("a/b/index.lua"),
+            harness.queries.resolveRequire(harness.path("dot.lua"), "a.b").provider?.path
+        )
+        assertEquals(
+            harness.path("a/b/index.lua"),
+            harness.queries.resolveRequire(harness.path("slash.lua"), "a/b").provider?.path
+        )
+    }
+
+    @Test
     fun initLuaPackageDirectoryPreferredModuleNameIsParent() {
         val harness = WorkspaceSemanticHarness.build(
             "pkg/init.lua" to "return { ready = true }",

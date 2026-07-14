@@ -88,6 +88,19 @@ object WorkspaceModuleGraphBuilder {
                 }
             }
 
+            facts.sourceImports.forEach { importFact ->
+                val provider = activeProviders[importFact.target]
+                if (provider != null && provider.path in files) {
+                    resolved += WorkspaceModuleGraph.ResolvedDependency(
+                        consumerPath = path,
+                        moduleName = importFact.target,
+                        provider = provider,
+                        range = importFact.range
+                    )
+                    reverseDependencies.getOrPut(provider.path) { linkedSetOf() } += path
+                }
+            }
+
             if (resolved.isNotEmpty()) {
                 resolvedDependencies[path] = resolved
             }
@@ -153,12 +166,14 @@ object WorkspaceModuleGraphBuilder {
             .filter { it.source == DocumentFacts.ModuleNameCandidateSource.VIRTUAL_PATH }
             .map { it.moduleName }
             .distinct()
-            .map {
-                WorkspaceModuleGraph.ModuleProvider(
-                    moduleName = it,
-                    path = path,
-                    source = WorkspaceModuleGraph.ProviderSource.VIRTUAL_PATH
-                )
+            .flatMap { moduleName ->
+                virtualPathModuleAliases(moduleName).map { alias ->
+                    WorkspaceModuleGraph.ModuleProvider(
+                        moduleName = alias,
+                        path = path,
+                        source = WorkspaceModuleGraph.ProviderSource.VIRTUAL_PATH
+                    )
+                }
             }
 
         val fromFacts = (explicit + derived).toList()
@@ -170,6 +185,10 @@ object WorkspaceModuleGraphBuilder {
         }
         // Fallback: path-derived `.aly` claim when facts omitted VIRTUAL_PATH candidates.
         return alyPathProviders(path)
+    }
+
+    private fun virtualPathModuleAliases(moduleName: String): Sequence<String> {
+        return sequenceOf(moduleName, moduleName.replace('.', '/')).distinct()
     }
 
     private fun alyPathProviders(path: VirtualPath): List<WorkspaceModuleGraph.ModuleProvider> {

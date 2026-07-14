@@ -45,6 +45,14 @@ data class ClassTagSyntax(
     override val tagName: String = "class"
 }
 
+data class JavaClassTagSyntax(
+    val className: String,
+    override val description: String = "",
+    override val range: Range? = null
+) : DocTagSyntax {
+    override val tagName: String = "java-class"
+}
+
 data class FieldTagSyntax(
     val name: String,
     val typeText: String? = null,

@@ -80,6 +80,7 @@ class DocCommentSyntaxParser(
                 "param" -> parseParamTag(content, lineInfo)
                 "return" -> parseReturnTag(content, lineInfo)
                 "class" -> parseClassTag(content, lineInfo)
+                "java-class" -> parseJavaClassTag(content, lineInfo)
                 "field" -> parseFieldTag(content, lineInfo)
                 "generic" -> parseGenericTag(content, lineInfo)
                 "alias" -> parseAliasTag(content, lineInfo)
@@ -165,6 +166,15 @@ class DocCommentSyntaxParser(
             parentName = parentName,
             declaredTypeParameters = declaredTypeParameters,
             range = tokenRange(lineInfo, name)
+        )
+    }
+
+    private fun parseJavaClassTag(content: String, lineInfo: DocLineInfo): JavaClassTagSyntax {
+        val (className, description) = splitFirstToken(content)
+        return JavaClassTagSyntax(
+            className = className,
+            description = description,
+            range = tokenRange(lineInfo, className)
         )
     }
 
@@ -354,6 +364,7 @@ class DocCommentSyntaxParser(
             is ClassTagSyntax -> tag.copy(description = mergedDescription)
             is FieldTagSyntax -> tag.copy(description = mergedDescription)
             is GenericTagSyntax -> tag.copy(description = mergedDescription)
+            is JavaClassTagSyntax -> tag.copy(description = mergedDescription)
             is MethodTagSyntax -> tag.copy(description = mergedDescription)
             is OverloadTagSyntax -> tag.copy(description = mergedDescription)
             is ParamTagSyntax -> tag.copy(description = mergedDescription)

@@ -11,6 +11,7 @@ import io.github.dingyi222666.luaparser.semantic.comments.CommentAttachPass
 import io.github.dingyi222666.luaparser.semantic.comments.DocCommentSyntaxParser
 import io.github.dingyi222666.luaparser.semantic.comments.FieldTagSyntax
 import io.github.dingyi222666.luaparser.semantic.comments.GenericTagSyntax
+import io.github.dingyi222666.luaparser.semantic.comments.JavaClassTagSyntax
 import io.github.dingyi222666.luaparser.semantic.comments.MethodTagSyntax
 import io.github.dingyi222666.luaparser.semantic.comments.OverloadTagSyntax
 import io.github.dingyi222666.luaparser.semantic.comments.ParamTagSyntax
@@ -27,6 +28,24 @@ class EmmyLuaDocRegressionTest {
 
     private val parser = LuaParser()
     private val syntaxParser = DocCommentSyntaxParser()
+
+    @Test
+    fun parsesJavaClassBindingTag() {
+        val syntax = assertNotNull(
+            syntaxParser.parse(
+                docComments(
+                    """
+                    ---@class LuaList
+                    ---@java-class java.util.ArrayList
+                    local value = {}
+                    """.trimIndent()
+                )
+            )
+        )
+
+        val tag = assertIs<JavaClassTagSyntax>(syntax.tags[1])
+        assertEquals("java.util.ArrayList", tag.className)
+    }
 
     @Test
     fun parsesCoreEmmyLuaTagsIntoExpectedModels() {

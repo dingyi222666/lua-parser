@@ -38,6 +38,7 @@ import io.github.dingyi222666.luaparser.parser.ast.node.VarargLiteral
 import io.github.dingyi222666.luaparser.parser.ast.node.WhenStatement
 import io.github.dingyi222666.luaparser.parser.ast.node.WhileStatement
 import io.github.dingyi222666.luaparser.parser.ast.node.ArrayConstructorExpression
+import io.github.dingyi222666.luaparser.parser.ast.node.AssignmentStatement
 import io.github.dingyi222666.luaparser.semantic.SemanticWorkspaceContext
 import io.github.dingyi222666.luaparser.semantic.binder.BinderDeclaration
 import io.github.dingyi222666.luaparser.semantic.binder.BinderPassResult
@@ -361,7 +362,7 @@ class ExpressionTypeEvaluator internal constructor(
         )
         resolution.returnType
             ?.hydrateJavaProviderType(workspaceContext.resolveImportTarget)
-            ?.let { return it }
+            ?.let { return aluaJavaFluentReturnType(node, context, it) }
 
         // TASK-589: chained static→instance Java calls must keep reflected intermediate
         // return types for completion/hover. Strict CallChecker assignability can reject
@@ -377,10 +378,41 @@ class ExpressionTypeEvaluator internal constructor(
                 declaration = declaration,
                 priorFailure = resolution.failureReason
             )?.hydrateJavaProviderType(workspaceContext.resolveImportTarget)
-                ?.let { return it }
+                ?.let { return aluaJavaFluentReturnType(node, context, it) }
         }
 
         return UnknownType
+    }
+
+    /**
+     * ALua keeps the Java receiver when an instance method returns Java void/null, enabling
+     * `JavaType().setA(...).setB(...)`. Lua callables and Java static calls keep their declared
+     * return types.
+     */
+    private fun aluaJavaFluentReturnType(
+        node: CallExpression,
+        context: Context,
+        returnType: Type
+    ): Type {
+        val member = effectiveCallBase(node) as? MemberExpression ?: return returnType
+        val receiverType = evaluateReferenceBaseType(member.base, context)
+            .hydrateJavaProviderType(workspaceContext.resolveImportTarget)
+        if (receiverType !is JavaInstanceType && receiverType !is JavaArrayType) {
+            return returnType
+        }
+        return when (returnType) {
+            PrimitiveType.NIL -> receiverType
+            is UnionType -> {
+                if (PrimitiveType.NIL !in returnType.types) {
+                    returnType
+                } else {
+                    unionTypeOf(returnType.types.map { type ->
+                        if (type == PrimitiveType.NIL) receiverType else type
+                    })
+                }
+            }
+            else -> returnType
+        }
     }
 
     /**
@@ -1992,8 +2024,8 @@ class ExpressionTypeEvaluator internal constructor(
             return parameterTypeOfDeclaration(declaration, context)
         }
 
-        if (declaration.kind !in setOf(DeclarationKind.FUNCTION, DeclarationKind.GLOBAL, DeclarationKind.METHOD)) {
-            declaration.declaredType?.let { return it }
+        if (declaration.kind !in setOf(DeclarationKind.FUNCTION, DeclarationKind.GLOBAL, DeclarationKind.METHOD, DeclarationKind.FIELD)) {
+            declaration.declaredType?.let { return attachVisibleAstMembersToType(declaration, it, context) }
         }
         val cacheable = context.localOverrides.isEmpty() && context.excludedDeclarations.isEmpty()
         if (cacheable) {
@@ -2005,7 +2037,11 @@ class ExpressionTypeEvaluator internal constructor(
         }
 
         return try {
-            val type = deriveDeclarationValueType(declaration, context)
+            val type = attachVisibleAstMembersToType(
+                declaration,
+                deriveDeclarationValueType(declaration, context),
+                context
+            )
             if (cacheable) {
                 declarationValueTypeCache[declaration.id] = type
             }
@@ -2022,6 +2058,7 @@ class ExpressionTypeEvaluator internal constructor(
             DeclarationKind.PARAMETER -> parameterTypeOfDeclaration(declaration, context)
             DeclarationKind.GLOBAL -> deriveGlobalDeclarationValueType(declaration, context)
             DeclarationKind.METHOD -> deriveMethodDeclarationValueType(declaration, context)
+            DeclarationKind.FIELD -> deriveFieldDeclarationValueType(declaration, context)
             DeclarationKind.MODULE -> declaration.declaredType ?: UnknownType
             else -> UnknownType
         }
@@ -2045,11 +2082,7 @@ class ExpressionTypeEvaluator internal constructor(
             excludedDeclarations = context.excludedDeclarations + declarationIdsInStatement
         )
         val baseType = resolveAssignedValueType(localStatement.variables, initializerIndex, initializerContext)
-        return if (baseType is TableType) {
-            attachVisibleAstMethodsToTable(declaration, baseType, initializerContext)
-        } else {
-            baseType
-        }
+        return baseType
     }
 
     private fun loadlayoutIdsTableType(declaration: BinderDeclaration, context: Context): Type? {
@@ -2398,11 +2431,35 @@ class ExpressionTypeEvaluator internal constructor(
     }
 
     private fun deriveMethodDeclarationValueType(declaration: BinderDeclaration, context: Context): Type {
+        assignedMemberValueType(declaration, context)?.let { inferred ->
+            val declared = declaration.declaredType as? CallableType ?: return inferred
+            val inferredCallable = inferred as? CallableType ?: return declared
+            return mergeDeclaredAndInferredCallableType(declaration, declared, inferredCallable)
+        }
         val functionNode = resolveOwningFunctionDeclaration(binder, declaration) ?: return declaration.declaredType ?: UnknownType
         val inferred = inferImplementationFunctionType(functionNode)
         val declared = declaration.declaredType as? CallableType ?: return inferred ?: UnknownType
         val inferredCallable = inferred as? CallableType ?: return enrichMethodCallableType(declaration, declared)
         return mergeDeclaredAndInferredCallableType(declaration, declared, inferredCallable)
+    }
+
+    private fun deriveFieldDeclarationValueType(declaration: BinderDeclaration, context: Context): Type {
+        return declaration.declaredType ?: assignedMemberValueType(declaration, context) ?: UnknownType
+    }
+
+    private fun assignedMemberValueType(declaration: BinderDeclaration, context: Context): Type? {
+        val member = declaration.anchorNode?.parent as? MemberExpression ?: return null
+        val assignment = member.parent as? AssignmentStatement ?: return null
+        val targetIndex = assignment.init.indexOf(member)
+        if (targetIndex < 0) {
+            return null
+        }
+        val scopeId = binder.positionQueries.getScopeAt(assignment.range.start)?.id ?: context.lexicalScopeId
+        return resolveAssignedValueType(
+            assignment.variables,
+            targetIndex,
+            context.copy(lexicalScopeId = scopeId)
+        )
     }
 
     private fun findVisibleValueDeclaration(name: String, position: Position, context: Context): BinderDeclaration? {
@@ -2710,46 +2767,62 @@ class ExpressionTypeEvaluator internal constructor(
         }
     }
 
-    private fun attachVisibleAstMethodsToTable(
+    private fun attachVisibleAstMembersToType(
         declaration: BinderDeclaration,
-        tableType: TableType,
+        baseType: Type,
         context: Context
-    ): TableType {
-        val methodDeclarations = visibleMethodDeclarationsForValue(declaration, context)
-        if (methodDeclarations.isEmpty()) {
-            return tableType
+    ): Type {
+        if (declaration.kind.namespace != DeclarationNamespace.VALUE) {
+            return baseType
         }
-
+        val memberDeclarations = visibleMemberDeclarationsForValue(declaration, context)
+        if (memberDeclarations.isEmpty()) {
+            return baseType
+        }
+        val fields = linkedMapOf<String, Type>()
         val methods = linkedMapOf<String, Type>()
-        methods.putAll(tableType.methods)
-        methodDeclarations.forEach { methodDeclaration ->
-            val methodType = typeOfDeclaration(methodDeclaration, context)
-            if (methodType != UnknownType) {
-                methods[methodDeclaration.name] = methodType
+        memberDeclarations.forEach { memberDeclaration ->
+            val memberType = typeOfDeclaration(memberDeclaration, context)
+            if (memberType != UnknownType) {
+                if (memberDeclaration.kind == DeclarationKind.METHOD) {
+                    methods[memberDeclaration.name] = memberType
+                } else {
+                    fields[memberDeclaration.name] = memberType
+                }
             }
         }
-        return tableType.copy(methods = methods)
+        return when (baseType) {
+            is TableType -> baseType.copy(
+                fields = baseType.fields + fields,
+                methods = baseType.methods + methods
+            )
+            is ModuleType -> baseType.copy(
+                fields = baseType.fields + fields,
+                methods = baseType.methods + methods
+            )
+            else -> baseType
+        }
     }
 
-    private fun visibleMethodDeclarationsForValue(
+    private fun visibleMemberDeclarationsForValue(
         declaration: BinderDeclaration,
         context: Context
     ): List<BinderDeclaration> {
-        val anchor = declaration.anchorNode as? Identifier ?: return emptyList()
+        val valueName = declaration.name
         val lexicalOwner = binder.scopeGraph.getScope(context.lexicalScopeId)?.ownerNode
         val scopedMatches = lexicalOwner?.let { owner ->
             binder.declarationIndex.declarations.filter { candidate ->
-                candidate.kind == DeclarationKind.METHOD &&
+                candidate.kind in setOf(DeclarationKind.FIELD, DeclarationKind.METHOD) &&
                     isDeclaredInLexicalOwnerChain(candidate, owner) &&
-                    isMethodBoundToBaseIdentifier(candidate, anchor.name)
+                    isMemberBoundToValueDeclaration(candidate, declaration, valueName, context)
             }
         }.orEmpty()
         if (scopedMatches.isNotEmpty()) {
             return scopedMatches
         }
         return binder.declarationIndex.declarations.filter { candidate ->
-            candidate.kind == DeclarationKind.METHOD &&
-                isMethodBoundToBaseIdentifier(candidate, anchor.name)
+            candidate.kind in setOf(DeclarationKind.FIELD, DeclarationKind.METHOD) &&
+                isMemberBoundToValueDeclaration(candidate, declaration, valueName, context)
         }
     }
 
@@ -2764,16 +2837,28 @@ class ExpressionTypeEvaluator internal constructor(
         return false
     }
 
-    private fun isMethodBoundToBaseIdentifier(declaration: BinderDeclaration, baseName: String): Boolean {
-        val anchorMember = declaration.anchorNode?.parent as? MemberExpression
+    private fun isMemberBoundToValueDeclaration(
+        memberDeclaration: BinderDeclaration,
+        valueDeclaration: BinderDeclaration,
+        baseName: String,
+        context: Context
+    ): Boolean {
+        val anchorMember = memberDeclaration.anchorNode?.parent as? MemberExpression
         val anchorBase = anchorMember?.base as? Identifier
-        if (anchorBase?.name == baseName) {
-            return true
+        if (anchorBase?.name != baseName) {
+            return false
         }
-
-        val function = resolveOwningFunctionDeclaration(binder, declaration) ?: return false
-        val identifier = function.identifier as? MemberExpression ?: return false
-        return identifier.base is Identifier && (identifier.base as Identifier).name == baseName
+        val scopeId = binder.positionQueries.getScopeAt(anchorBase.range.start)?.id ?: context.lexicalScopeId
+        val resolvedBase = findVisibleValueDeclaration(
+            anchorBase.name,
+            anchorBase.range.start,
+            context.copy(lexicalScopeId = scopeId)
+        ) ?: return false
+        return if (valueDeclaration.symbolId != null && resolvedBase.symbolId != null) {
+            valueDeclaration.symbolId == resolvedBase.symbolId
+        } else {
+            valueDeclaration.id == resolvedBase.id
+        }
     }
 
     private fun inferDeclaredFunctionValueType(functionNode: FunctionDeclaration, context: Context): Type {
