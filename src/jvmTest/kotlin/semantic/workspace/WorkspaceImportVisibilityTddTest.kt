@@ -137,6 +137,79 @@ class WorkspaceImportVisibilityTddTest {
     }
 
     @Test
+    fun lua_import_and_require_apply_provider_globals_only_to_the_consumer_file() {
+        val harness = jvmHarness(
+            "mods/util.lua" to """
+                AppUtil = {}
+
+                ---@param packageName string
+                ---@return string
+                function AppUtil.getAppApk(packageName)
+                    return packageName
+                end
+
+                ---@param text string
+                ---@return string
+                function globalHelper(text)
+                    return text
+                end
+            """.trimIndent(),
+            "import-consumer.lua" to """
+                import "mods.util"
+                local apk = AppUtil.getAppApk("demo")
+                local echoed = globalHelper("import")
+                return apk, echoed
+            """.trimIndent(),
+            "require-consumer.lua" to """
+                require "mods.util"
+                local apk = AppUtil.getAppApk("demo")
+                local echoed = globalHelper("require")
+                return apk, echoed
+            """.trimIndent(),
+            "sibling.lua" to """
+                local app = AppUtil
+                local helper = globalHelper
+                return app, helper
+            """.trimIndent()
+        )
+
+        listOf("import-consumer.lua", "require-consumer.lua").forEach { path ->
+            val appCompletions = harness.queries.completions(
+                harness.path(path),
+                harness.positionOf(path, "AppUtil")
+            )
+            val helperCompletions = harness.queries.completions(
+                harness.path(path),
+                harness.positionOf(path, "globalHelper")
+            )
+            assertEquals(CompletionItemKind.MODULE, appCompletions.single { it.label == "AppUtil" }.kind)
+            assertEquals(CompletionItemKind.FUNCTION, helperCompletions.single { it.label == "globalHelper" }.kind)
+
+            val apkHover = assertNotNull(
+                harness.queries.hover(harness.path(path), harness.positionOf(path, "apk", occurrence = 2))
+            )
+            val echoedHover = assertNotNull(
+                harness.queries.hover(harness.path(path), harness.positionOf(path, "echoed", occurrence = 2))
+            )
+            assertEquals("string", apkHover.typeInfo?.displayName)
+            assertEquals("string", echoedHover.typeInfo?.displayName)
+
+            assertEquals(
+                listOf(harness.path("mods/util.lua")),
+                harness.queries.gotoDefinition(harness.path(path), harness.positionOf(path, "globalHelper"))
+                    .map { it.path }
+            )
+        }
+
+        val siblingCompletions = harness.queries.completions(
+            harness.path("sibling.lua"),
+            harness.positionOf("sibling.lua", "AppUtil")
+        ).map { it.label }
+        assertTrue("AppUtil" !in siblingCompletions)
+        assertTrue("globalHelper" !in siblingCompletions)
+    }
+
+    @Test
     fun require_import_alias_activation_does_not_leak_simple_name_into_sibling_file() {
         val harness = jvmHarness(
             "imports.lua" to """

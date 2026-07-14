@@ -190,8 +190,8 @@ class ExpressionTypeEvaluator internal constructor(
             luaJavaLocalInitializerType(declaration, context)?.let { return it }
             return typeOfDeclaration(declaration, context)
         }
-        workspaceContext.importedSymbols[node.name]?.let { return it.moduleType }
-        workspaceContext.resolveImportedSymbol?.invoke(node.name)?.let { return it.moduleType }
+        workspaceContext.importedSymbols[node.name]?.let { return it.valueType }
+        workspaceContext.resolveImportedSymbol?.invoke(node.name)?.let { return it.valueType }
         return UnknownType
     }
 

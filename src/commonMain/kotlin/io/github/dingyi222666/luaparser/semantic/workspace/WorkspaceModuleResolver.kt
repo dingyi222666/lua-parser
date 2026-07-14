@@ -1,7 +1,13 @@
 package io.github.dingyi222666.luaparser.semantic.workspace
 
+import io.github.dingyi222666.luaparser.parser.ast.node.ExpressionNode
 import io.github.dingyi222666.luaparser.semantic.WorkspaceImportedSymbol
 import io.github.dingyi222666.luaparser.semantic.api.SymbolKind
+import io.github.dingyi222666.luaparser.semantic.binder.DeclarationKind
+import io.github.dingyi222666.luaparser.semantic.binder.DeclarationOrigin
+import io.github.dingyi222666.luaparser.semantic.checker.ExpressionTypeEvaluator
+import io.github.dingyi222666.luaparser.semantic.types.model.CallableType
+import io.github.dingyi222666.luaparser.semantic.types.model.ClassType
 import io.github.dingyi222666.luaparser.semantic.types.model.FunctionParameter
 import io.github.dingyi222666.luaparser.semantic.types.model.FunctionType
 import io.github.dingyi222666.luaparser.semantic.types.model.ModuleType
@@ -17,6 +23,7 @@ internal class WorkspaceModuleResolver(
 ) {
     private val activeProviderCache = mutableMapOf<String, WorkspaceModuleGraph.ModuleProvider?>()
     private val importedSymbolsCache = mutableMapOf<VirtualPath, Map<String, WorkspaceImportedSymbol>>()
+    private val providerGlobalSymbolsCache = mutableMapOf<VirtualPath, List<WorkspaceImportedSymbol>>()
 
     fun activeProvider(moduleName: String): WorkspaceModuleGraph.ModuleProvider? {
         if (moduleName.isBlank()) {
@@ -261,7 +268,70 @@ internal class WorkspaceModuleResolver(
                 }
             }
         }
+        dependencyGlobalSymbolsFor(path).forEach { symbol ->
+            imported[symbol.alias] = symbol
+        }
         return imported.toMap().also { importedSymbolsCache[path] = it }
+    }
+
+    private fun dependencyGlobalSymbolsFor(path: VirtualPath): List<WorkspaceImportedSymbol> {
+        val facts = snapshot.files[path]?.documentFacts ?: return emptyList()
+        val activeModules = buildSet {
+            facts.sourceImports.forEach { sourceImport ->
+                val target = normalizeImportTarget(sourceImport.target)
+                if (!target.endsWith(".*")) {
+                    add(target)
+                }
+            }
+            facts.requires.forEach { require -> add(require.moduleName) }
+        }
+        if (activeModules.isEmpty()) {
+            return emptyList()
+        }
+        return snapshot.graph.resolvedDependencies[path]
+            .orEmpty()
+            .filter { dependency -> normalizeImportTarget(dependency.moduleName) in activeModules }
+            .flatMap { dependency -> providerGlobalSymbols(dependency.provider) }
+    }
+
+    private fun providerGlobalSymbols(
+        provider: WorkspaceModuleGraph.ModuleProvider
+    ): List<WorkspaceImportedSymbol> {
+        providerGlobalSymbolsCache[provider.path]?.let { return it }
+        val file = snapshot.files[provider.path] ?: return emptyList()
+        val semanticSnapshot = file.semanticFile?.snapshot ?: return emptyList()
+        val binder = semanticSnapshot.binder
+        val evaluator = ExpressionTypeEvaluator(binder, semanticSnapshot.workspaceContext)
+        val providerModuleType = file.moduleExportSurface?.moduleType ?: ModuleType(provider.moduleName)
+        val globals = binder.declarationIndex.declarations
+            .asReversed()
+            .asSequence()
+            .filter { declaration ->
+                declaration.kind == DeclarationKind.GLOBAL && declaration.origin == DeclarationOrigin.AST
+            }
+            .distinctBy { it.name }
+            .mapNotNull { declaration ->
+                val anchor = declaration.anchorNode as? ExpressionNode ?: return@mapNotNull null
+                val valueType = evaluator.evaluate(anchor)
+                val kind = when (valueType) {
+                    is CallableType -> SymbolKind.FUNCTION
+                    is ModuleType, is TableType -> SymbolKind.MODULE
+                    is ClassType -> SymbolKind.CLASS
+                    else -> SymbolKind.VARIABLE
+                }
+                WorkspaceImportedSymbol(
+                    alias = declaration.name,
+                    moduleName = provider.moduleName,
+                    providerPath = provider.path,
+                    moduleType = providerModuleType,
+                    valueType = valueType,
+                    kind = kind,
+                    definitionRange = declaration.anchorNode?.range ?: declaration.range
+                )
+            }
+            .toList()
+        providerGlobalSymbolsCache[provider.path] = globals
+        return globals
     }
 
     fun importedSymbolFor(path: VirtualPath, alias: String): WorkspaceImportedSymbol? {

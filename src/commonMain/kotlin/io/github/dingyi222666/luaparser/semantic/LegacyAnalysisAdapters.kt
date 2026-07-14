@@ -256,8 +256,13 @@ private fun collectSyntheticGlobalAssignments(snapshot: SemanticPipelineSnapshot
         .map { imported ->
             Symbol(
                 name = imported.alias,
-                type = imported.moduleType.toLegacyType(),
-                kind = Symbol.Kind.MODULE,
+                type = imported.valueType.toLegacyType(),
+                kind = when (imported.kind) {
+                    io.github.dingyi222666.luaparser.semantic.api.SymbolKind.FUNCTION -> Symbol.Kind.FUNCTION
+                    io.github.dingyi222666.luaparser.semantic.api.SymbolKind.MODULE -> Symbol.Kind.MODULE
+                    io.github.dingyi222666.luaparser.semantic.api.SymbolKind.CLASS -> Symbol.Kind.CLASS
+                    else -> Symbol.Kind.VARIABLE
+                },
                 range = null,
                 declaration = null
             )

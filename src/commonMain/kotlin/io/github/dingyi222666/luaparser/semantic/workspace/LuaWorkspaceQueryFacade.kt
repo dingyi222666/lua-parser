@@ -23,7 +23,11 @@ import io.github.dingyi222666.luaparser.semantic.binder.DeclarationId
 import io.github.dingyi222666.luaparser.semantic.binder.DeclarationKind
 import io.github.dingyi222666.luaparser.semantic.binder.DeclarationOrigin
 import io.github.dingyi222666.luaparser.semantic.binder.DeclarationOwner
+import io.github.dingyi222666.luaparser.semantic.types.model.CallableType
+import io.github.dingyi222666.luaparser.semantic.types.model.ClassType
 import io.github.dingyi222666.luaparser.semantic.types.model.ModuleType
+import io.github.dingyi222666.luaparser.semantic.types.model.TableType
+import io.github.dingyi222666.luaparser.semantic.types.model.Type
 import io.github.dingyi222666.luaparser.semantic.model.toSymbolHandle
 
 class LuaWorkspaceQueryFacade(
@@ -2423,8 +2427,8 @@ class LuaWorkspaceQueryFacade(
             .map { symbol ->
                 CompletionItem(
                     label = symbol.alias,
-                    kind = CompletionItemKind.MODULE,
-                    detail = symbol.moduleType.displayName,
+                    kind = symbol.kind.toCompletionItemKind(),
+                    detail = symbol.valueType.displayName,
                     insertText = symbol.alias,
                     sortText = "8:0000:${symbol.alias}"
                 )
@@ -2469,22 +2473,31 @@ class LuaWorkspaceQueryFacade(
     }
 
     private fun importedSymbol(imported: WorkspaceImportedSymbol): io.github.dingyi222666.luaparser.semantic.api.Symbol {
+        val typeInfo = importedTypeInfo(imported.valueType)
         return io.github.dingyi222666.luaparser.semantic.api.Symbol(
             name = imported.alias,
-            kind = io.github.dingyi222666.luaparser.semantic.api.SymbolKind.MODULE,
+            kind = imported.kind,
             range = null,
-            type = TypeInfo(
-                displayName = imported.moduleType.name,
-                kind = TypeInfoKind.MODULE,
-                moduleName = imported.moduleType.moduleName
-            ),
-            declaredType = TypeInfo(
-                displayName = imported.moduleType.name,
-                kind = TypeInfoKind.MODULE,
-                moduleName = imported.moduleType.moduleName
-            ),
-            detail = imported.moduleType.displayName,
+            type = typeInfo,
+            declaredType = typeInfo,
+            detail = imported.valueType.displayName,
             symbolId = importedSymbolHandle(imported)
+        )
+    }
+
+    private fun importedTypeInfo(type: Type): TypeInfo {
+        val moduleType = type as? ModuleType
+        val kind = when (type) {
+            is ModuleType -> TypeInfoKind.MODULE
+            is CallableType -> TypeInfoKind.FUNCTION
+            is ClassType -> TypeInfoKind.CLASS
+            is TableType -> TypeInfoKind.TABLE
+            else -> TypeInfoKind.UNKNOWN
+        }
+        return TypeInfo(
+            displayName = type.displayName,
+            kind = kind,
+            moduleName = moduleType?.moduleName
         )
     }
 

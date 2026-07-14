@@ -1783,15 +1783,35 @@ internal class ReferenceQueries(
             .sortedBy { it.alias }
             .map { imported ->
                 VisibleDeclaration(
-                    declaration = io.github.dingyi222666.luaparser.semantic.binder.moduleDeclaration(
-                        id = io.github.dingyi222666.luaparser.semantic.binder.DeclarationId(-1000000 - imported.alias.hashCode()),
-                        name = imported.alias,
-                        origin = io.github.dingyi222666.luaparser.semantic.binder.DeclarationOrigin.BUILTIN,
-                        declaredType = imported.moduleType
-                    ),
+                    declaration = importedDeclaration(imported),
                     lexicalDepth = 0
                 )
             }
+    }
+
+    private fun importedDeclaration(imported: WorkspaceImportedSymbol): BinderDeclaration {
+        val id = io.github.dingyi222666.luaparser.semantic.binder.DeclarationId(-1000000 - imported.alias.hashCode())
+        val origin = io.github.dingyi222666.luaparser.semantic.binder.DeclarationOrigin.BUILTIN
+        return when (imported.kind) {
+            SymbolKind.FUNCTION -> io.github.dingyi222666.luaparser.semantic.binder.functionDeclaration(
+                id = id,
+                name = imported.alias,
+                origin = origin,
+                declaredType = imported.valueType
+            )
+            SymbolKind.MODULE -> io.github.dingyi222666.luaparser.semantic.binder.moduleDeclaration(
+                id = id,
+                name = imported.alias,
+                origin = origin,
+                declaredType = imported.valueType
+            )
+            else -> io.github.dingyi222666.luaparser.semantic.binder.globalDeclaration(
+                id = id,
+                name = imported.alias,
+                origin = origin,
+                declaredType = imported.valueType
+            )
+        }
     }
 
     private fun importedSymbolsAt(position: Position): Map<String, WorkspaceImportedSymbol> {
@@ -1876,11 +1896,11 @@ internal class ReferenceQueries(
     private fun toImportedSymbol(imported: WorkspaceImportedSymbol): Symbol {
         return Symbol(
             name = imported.alias,
-            kind = io.github.dingyi222666.luaparser.semantic.api.SymbolKind.MODULE,
+            kind = imported.kind,
             range = null,
-            type = adapters.toTypeInfo(imported.moduleType),
-            declaredType = adapters.toTypeInfo(imported.moduleType),
-            detail = imported.moduleType.displayName,
+            type = adapters.toTypeInfo(imported.valueType),
+            declaredType = adapters.toTypeInfo(imported.valueType),
+            detail = imported.valueType.displayName,
             symbolId = importedSymbolHandle(imported)
         )
     }
