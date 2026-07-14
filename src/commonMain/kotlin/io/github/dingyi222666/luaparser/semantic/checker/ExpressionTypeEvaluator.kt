@@ -362,6 +362,7 @@ class ExpressionTypeEvaluator internal constructor(
         )
         resolution.returnType
             ?.hydrateJavaProviderType(workspaceContext.resolveImportTarget)
+            ?.let { luaClassSelfReturnType(node, context, resolution.selectedSignature, it) }
             ?.let { return aluaJavaFluentReturnType(node, context, it) }
 
         // TASK-589: chained static→instance Java calls must keep reflected intermediate
@@ -382,6 +383,32 @@ class ExpressionTypeEvaluator internal constructor(
         }
 
         return UnknownType
+    }
+
+    /** Preserve the concrete receiver surface for Lua methods declared to return their own class. */
+    private fun luaClassSelfReturnType(
+        node: CallExpression,
+        context: Context,
+        signature: FunctionType?,
+        returnType: Type
+    ): Type {
+        val member = effectiveCallBase(node) as? MemberExpression ?: return returnType
+        if (member.indexer != ":") {
+            return returnType
+        }
+        val selfType = signature?.parameters?.firstOrNull { it.name == "self" }?.type ?: return returnType
+        val selfClassName = luaClassName(selfType) ?: return returnType
+        if (luaClassName(returnType) != selfClassName) {
+            return returnType
+        }
+        return evaluateReferenceBaseType(member.base, context)
+            .hydrateJavaProviderType(workspaceContext.resolveImportTarget)
+    }
+
+    private fun luaClassName(type: Type): String? = when (type) {
+        is ClassType -> type.name
+        is AppliedType -> type.baseName
+        else -> null
     }
 
     /**

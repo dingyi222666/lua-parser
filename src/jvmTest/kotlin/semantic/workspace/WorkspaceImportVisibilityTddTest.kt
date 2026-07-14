@@ -3,9 +3,12 @@ package semantic.workspace
 import io.github.dingyi222666.luaparser.interop.jvm.JvmClassModuleProvider
 import io.github.dingyi222666.luaparser.interop.jvm.JvmWorkspaceConfiguration
 import io.github.dingyi222666.luaparser.interop.jvm.JvmWorkspaceEngine
+import io.github.dingyi222666.luaparser.semantic.api.CompletionItemKind
+import io.github.dingyi222666.luaparser.semantic.api.SymbolKind
 import semantic.support.WorkspaceSemanticHarness
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 class WorkspaceImportVisibilityTddTest {
@@ -74,6 +77,60 @@ class WorkspaceImportVisibilityTddTest {
             leakedDefinition.none { it.path == harness.path("cc/aa/index.lua") },
             "Lua import globals must stay scoped to the file containing the import call."
         )
+    }
+
+    @Test
+    fun imported_class_self_return_keeps_ast_declared_methods_for_chained_completion() {
+        val harness = jvmHarness(
+            "model/AppListStream.lua" to """
+                ---@class AppListMode
+                ---@field GETALLAPP integer
+
+                ---@class AppListStream
+                ---@field MODE AppListMode
+                ---@type AppListStream
+                local t = {
+                    MODE = { GETALLAPP = 1 },
+                }
+
+                ---@param self AppListStream
+                ---@param mode integer
+                ---@return AppListStream
+                function t:mode(mode)
+                    return self
+                end
+
+                ---@param self AppListStream
+                ---@return table[]
+                function t:build()
+                    return {}
+                end
+
+                return t
+            """.trimIndent(),
+            "main.lua" to """
+                import "model.AppListStream"
+                local data = AppListStream
+                    :mode(AppListStream.MODE.GETALLAPP)
+                    :build()
+                return data
+            """.trimIndent()
+        )
+
+        val completions = harness.queries.completions(
+            harness.path("main.lua"),
+            harness.positionOf("main.lua", "build")
+        )
+        val buildCompletion = assertNotNull(completions.singleOrNull { it.label == "build" })
+        assertEquals(CompletionItemKind.METHOD, buildCompletion.kind)
+
+        val hover = assertNotNull(
+            harness.queries.hover(
+                harness.path("main.lua"),
+                harness.positionOf("main.lua", "build")
+            )
+        )
+        assertEquals(SymbolKind.METHOD, hover.symbol?.kind)
     }
 
     @Test
