@@ -2417,6 +2417,7 @@ class ExpressionTypeEvaluator internal constructor(
         if (declaredType != null && declaredType !is CallableType) {
             return declaredType
         }
+        globalAssignmentValueType(declaration, context)?.let { return it }
         val functionNode = functionNodeForDeclaration(declaration)
         if (functionNode == null) {
             return declaredType ?: UnknownType
@@ -2428,6 +2429,20 @@ class ExpressionTypeEvaluator internal constructor(
                 ?: evaluateFunctionDeclaration(functionNode, context)
         val inferredCallable = inferred as? CallableType ?: return declared
         return mergeDeclaredAndInferredCallableType(declaration, declared, inferredCallable, preferDeclaredReturn = true)
+    }
+
+    private fun globalAssignmentValueType(declaration: BinderDeclaration, context: Context): Type? {
+        val anchor = declaration.anchorNode ?: return null
+        val assignment = anchor.parent as? AssignmentStatement ?: return null
+        val targetIndex = assignment.init.indexOf(anchor)
+        if (targetIndex < 0) {
+            return null
+        }
+        return resolveAssignedValueType(
+            assignment.variables,
+            targetIndex,
+            context.copy(excludedDeclarations = context.excludedDeclarations + declaration.id)
+        )
     }
 
     private fun deriveMethodDeclarationValueType(declaration: BinderDeclaration, context: Context): Type {

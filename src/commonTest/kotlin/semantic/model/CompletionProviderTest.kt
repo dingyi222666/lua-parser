@@ -2,6 +2,7 @@ package semantic.model
 
 import io.github.dingyi222666.luaparser.parser.ast.node.Position
 import io.github.dingyi222666.luaparser.semantic.api.CompletionItemKind
+import io.github.dingyi222666.luaparser.semantic.api.SymbolKind
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -120,6 +121,38 @@ class CompletionProviderTest {
         assertTrue("insert" in labels, labels.toString())
         assertEquals(CompletionItemKind.METHOD, completions.single { it.label == "addObserver" }.kind)
         assertEquals(CompletionItemKind.FIELD, completions.single { it.label == "customValue" }.kind)
+    }
+
+    @Test
+    fun globalTableCompletionsIncludeAssignedFunctionsAndFields() {
+        val harness = semanticModelHarness(
+            """
+            ViewUtil = {}
+            ViewUtil.createView = function(t, n)
+                return {}
+            end
+            ViewUtil.MODE = { ROUND = 0x1f, SQUARE = 0x2f }
+            ViewUtil.CONST = { ripple = 1, ripples = 2 }
+            ViewUtil.dp2px = function(dpValue)
+                return dpValue + 0.5
+            end
+            local convert = ViewUtil.dp2px
+            local target = ViewUtil.
+            """.trimIndent()
+        )
+        val start = harness.positionOf("ViewUtil.", occurrence = 6)
+        val position = Position(start.line, start.column + "ViewUtil.".length)
+
+        val completions = harness.model.getCompletionsAt(position)
+        val byLabel = completions.associateBy { it.label }
+        val dp2px = harness.model.getSymbolAt(harness.positionOf("dp2px", occurrence = 2))
+
+        assertEquals(CompletionItemKind.METHOD, byLabel.getValue("createView").kind)
+        assertEquals(CompletionItemKind.METHOD, byLabel.getValue("dp2px").kind)
+        assertEquals(CompletionItemKind.FIELD, byLabel.getValue("MODE").kind)
+        assertEquals(CompletionItemKind.FIELD, byLabel.getValue("CONST").kind)
+        assertEquals(SymbolKind.METHOD, dp2px?.kind)
+        assertTrue(dp2px?.type?.displayName?.startsWith("fun(") == true, dp2px?.type?.displayName)
     }
 
     @Test

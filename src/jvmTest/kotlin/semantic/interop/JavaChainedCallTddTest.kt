@@ -215,7 +215,7 @@ class JavaChainedCallTddTest {
         assertHoverType(
             harness,
             "animation",
-            "semantic.interop.JavaChainedCallTddTest.FluentJavaBuilder",
+            "semantic.interop.JavaChainedCallTddTest${'$'}FluentJavaBuilder",
             occurrence = 2
         )
         assertHoverType(harness, "duration", "number", occurrence = 2)
