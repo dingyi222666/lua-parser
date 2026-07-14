@@ -1,9 +1,11 @@
 package semantic.workspace
 
 import io.github.dingyi222666.luaparser.parser.LuaVersion
+import io.github.dingyi222666.luaparser.parser.ast.node.Position
 import io.github.dingyi222666.luaparser.semantic.workspace.AnalysisProgress
 import io.github.dingyi222666.luaparser.semantic.workspace.LuaWorkspaceEngine
 import io.github.dingyi222666.luaparser.semantic.workspace.LuaWorkspaceInput
+import io.github.dingyi222666.luaparser.semantic.workspace.LuaWorkspaceQueryFacade
 import io.github.dingyi222666.luaparser.semantic.workspace.ProgressReporter
 import io.github.dingyi222666.luaparser.semantic.workspace.VirtualPath
 import io.github.dingyi222666.luaparser.semantic.workspace.WorkspaceDelta
@@ -81,6 +83,26 @@ class LuaWorkspaceEngineTest {
             setOf(VirtualPath.of("dep.lua"), VirtualPath.of("mid.lua"), VirtualPath.of("top.lua")),
             result.affectedDocuments
         )
+    }
+
+    @Test
+    fun emmy_export_type_change_dirties_and_retypes_require_consumers() {
+        val initial = build(
+            "a_main.lua" to "local provider = require(\"z_provider\")\nlocal result = provider.convert(\"value\")\nreturn result",
+            "z_provider.lua" to "local M = {}\n---@return number\nfunction M.convert(value)\n  return missing(value)\nend\nreturn M"
+        )
+
+        val result = update(
+            initial,
+            upserts = mapOf(
+                "z_provider.lua" to "local M = {}\n---@return string\nfunction M.convert(value)\n  return missing(value)\nend\nreturn M"
+            )
+        )
+        val mainPath = VirtualPath.of("a_main.lua")
+        val hover = LuaWorkspaceQueryFacade(result.snapshot).hover(mainPath, Position(2, 7))
+
+        assertEquals(setOf(VirtualPath.of("z_provider.lua"), mainPath), result.affectedDocuments)
+        assertEquals("string", hover?.typeInfo?.displayName)
     }
 
     @Test

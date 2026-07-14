@@ -5,7 +5,11 @@ import io.github.dingyi222666.luaparser.semantic.api.SymbolKind
 import io.github.dingyi222666.luaparser.semantic.types.model.FunctionParameter
 import io.github.dingyi222666.luaparser.semantic.types.model.FunctionType
 import io.github.dingyi222666.luaparser.semantic.types.model.ModuleType
+import io.github.dingyi222666.luaparser.semantic.types.model.OverloadedFunctionType
 import io.github.dingyi222666.luaparser.semantic.types.model.PrimitiveType
+import io.github.dingyi222666.luaparser.semantic.types.model.TableType
+import io.github.dingyi222666.luaparser.semantic.types.model.Type
+import io.github.dingyi222666.luaparser.semantic.types.model.UnknownType
 import io.github.dingyi222666.luaparser.semantic.types.model.VarargType
 
 internal class WorkspaceModuleResolver(
@@ -51,7 +55,7 @@ internal class WorkspaceModuleResolver(
             val surface = exportSurface(dependency.provider)
                 ?: syntheticAlyLayoutSurface(dependency.provider)
                 ?: return null
-            return ResolvedRequire(moduleName, dependency.provider, surface)
+            return resolvedRequire(moduleName, dependency.provider, surface)
         }
 
         if (moduleName == "import") {
@@ -62,18 +66,18 @@ internal class WorkspaceModuleResolver(
                 .firstOrNull { it.source == WorkspaceModuleGraph.ProviderSource.STANDARD_LIBRARY_OVERLAY }
             val overlaySurface = overlayProvider?.let(::exportSurface)
             if (overlayProvider != null && overlaySurface != null) {
-                return ResolvedRequire(moduleName, overlayProvider, overlaySurface)
+                return resolvedRequire(moduleName, overlayProvider, overlaySurface)
             }
 
             val provider = activeProvider(moduleName)
             val surface = provider?.let(::exportSurface)
             if (provider != null && surface != null) {
-                return ResolvedRequire(moduleName, provider, surface)
+                return resolvedRequire(moduleName, provider, surface)
             }
         }
 
         if (moduleName == "import" && "import" in snapshot.builtinOverlay.globals.globalNames) {
-            return ResolvedRequire(
+            return resolvedRequire(
                 moduleName = moduleName,
                 provider = WorkspaceModuleGraph.ModuleProvider(
                     moduleName = moduleName,
@@ -89,7 +93,7 @@ internal class WorkspaceModuleResolver(
         // dependency edge returned null even when the .aly file was present in the workspace.
         val provider = activeProvider(moduleName) ?: return null
         val surface = exportSurface(provider) ?: syntheticAlyLayoutSurface(provider) ?: return null
-        return ResolvedRequire(moduleName, provider, surface)
+        return resolvedRequire(moduleName, provider, surface)
     }
 
     fun exportedMember(providerPath: VirtualPath, memberName: String): ResolvedExportMember? {
@@ -100,15 +104,114 @@ internal class WorkspaceModuleResolver(
         val file = fileSnapshot(providerPath) ?: return null
         val surface = file.moduleExportSurface ?: return null
         val member = surface.members.firstOrNull { it.exportPath == exportPath } ?: return null
-        val definitionProviderPath = when (val memberType = member.type) {
-            is ModuleType -> activeProvider(memberType.moduleName)?.path ?: providerPath
+        val resolvedType = resolvedMemberType(file, member) ?: member.type
+        val definitionProviderPath = when (resolvedType) {
+            is ModuleType -> activeProvider(resolvedType.moduleName)?.path ?: providerPath
             else -> providerPath
         }
         return ResolvedExportMember(
             providerPath = providerPath,
             definitionProviderPath = definitionProviderPath,
             moduleName = surface.moduleType.moduleName,
-            member = member
+            member = member,
+            type = resolvedType
+        )
+    }
+
+    private fun resolvedRequire(
+        moduleName: String,
+        provider: WorkspaceModuleGraph.ModuleProvider,
+        surface: ModuleExportSurface
+    ): ResolvedRequire {
+        return ResolvedRequire(
+            moduleName = moduleName,
+            provider = provider,
+            surface = surface,
+            moduleType = resolvedModuleType(provider.path, surface)
+        )
+    }
+
+    private fun resolvedModuleType(providerPath: VirtualPath, surface: ModuleExportSurface): ModuleType {
+        val file = fileSnapshot(providerPath) ?: return surface.moduleType
+        val resolvedTypes = surface.members.mapNotNull { member ->
+            resolvedMemberType(file, member)?.let { member.exportPath to it }
+        }.toMap()
+        if (resolvedTypes.isEmpty()) {
+            return surface.moduleType
+        }
+        return surface.moduleType.copy(
+            fields = surface.moduleType.fields.mapValues { (name, type) ->
+                resolvedExportType(type, listOf(name), resolvedTypes)
+            },
+            methods = surface.moduleType.methods.mapValues { (name, type) ->
+                resolvedExportType(type, listOf(name), resolvedTypes)
+            }
+        )
+    }
+
+    private fun resolvedExportType(
+        structuralType: Type,
+        exportPath: List<String>,
+        resolvedTypes: Map<List<String>, Type>
+    ): Type {
+        resolvedTypes[exportPath]?.let { return it }
+        return when (structuralType) {
+            is TableType -> TableType(
+                fields = structuralType.fields.mapValues { (name, type) ->
+                    resolvedExportType(type, exportPath + name, resolvedTypes)
+                },
+                methods = structuralType.methods.mapValues { (name, type) ->
+                    resolvedExportType(type, exportPath + name, resolvedTypes)
+                },
+                indexSignature = structuralType.indexSignature
+            )
+            is ModuleType -> structuralType.copy(
+                fields = structuralType.fields.mapValues { (name, type) ->
+                    resolvedExportType(type, exportPath + name, resolvedTypes)
+                },
+                methods = structuralType.methods.mapValues { (name, type) ->
+                    resolvedExportType(type, exportPath + name, resolvedTypes)
+                }
+            )
+            else -> structuralType
+        }
+    }
+
+    private fun resolvedMemberType(
+        file: WorkspaceSnapshot.FileSnapshot,
+        member: ModuleExportSurface.MemberExport
+    ): Type? {
+        val range = member.range ?: return null
+        val binder = file.semanticFile?.snapshot?.binder ?: return null
+        val declaration = binder.declarationIndex.declarations
+            .asSequence()
+            .filter { it.name == member.name && it.declaredType != null }
+            .sortedBy { if (it.anchorNode?.range == range) 0 else 1 }
+            .firstOrNull { it.anchorNode?.range == range || it.range == range }
+            ?: return null
+        return mergeResolvedType(member.type, declaration.declaredType ?: return null)
+    }
+
+    private fun mergeResolvedType(structuralType: Type, resolvedType: Type): Type {
+        if (resolvedType is OverloadedFunctionType) {
+            return resolvedType
+        }
+        if (structuralType !is FunctionType || resolvedType !is FunctionType) {
+            return resolvedType
+        }
+        val structuralParameters = structuralType.parameters.associateBy { it.name }
+        val parameters = resolvedType.parameters.map { parameter ->
+            val structural = structuralParameters[parameter.name]
+            if (parameter.type == UnknownType && structural?.type != null) {
+                parameter.copy(type = structural.type)
+            } else {
+                parameter
+            }
+        }
+        return FunctionType(
+            parameters = parameters,
+            returnType = if (resolvedType.returnType == UnknownType) structuralType.returnType else resolvedType.returnType,
+            typeParameters = resolvedType.typeParameters
         )
     }
 
@@ -573,14 +676,16 @@ internal class WorkspaceModuleResolver(
     data class ResolvedRequire(
         val moduleName: String,
         val provider: WorkspaceModuleGraph.ModuleProvider,
-        val surface: ModuleExportSurface
+        val surface: ModuleExportSurface,
+        val moduleType: ModuleType = surface.moduleType
     )
 
     data class ResolvedExportMember(
         val providerPath: VirtualPath,
         val definitionProviderPath: VirtualPath,
         val moduleName: String,
-        val member: ModuleExportSurface.MemberExport
+        val member: ModuleExportSurface.MemberExport,
+        val type: Type
     ) {
         val handle: String = ModuleExportIdentity(providerPath, member.exportPath).asHandle()
         val kind: SymbolKind = member.kind

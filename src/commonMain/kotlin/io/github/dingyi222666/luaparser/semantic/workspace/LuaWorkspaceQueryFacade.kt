@@ -1581,7 +1581,7 @@ class LuaWorkspaceQueryFacade(
     }
 
     private fun providerPathForExport(export: WorkspaceModuleResolver.ResolvedExportMember): VirtualPath {
-        return if (export.member.type is ModuleType) {
+        return if (export.type is ModuleType) {
             resolver.classProviderForMember(export.providerPath, export.member.name)?.path
                 ?: export.definitionProviderPath
         } else {
@@ -1619,7 +1619,7 @@ class LuaWorkspaceQueryFacade(
             .distinctBy { it.name }
             .map { member ->
                 val resolvedMember = resolver.exportedMember(resolved.provider.path, member.exportPath)
-                val detail = resolvedMember?.let { enrichExportTypeDisplay(it) }
+                val detail = resolvedMember?.type?.displayName
                     ?: member.type.displayName
                 CompletionItem(
                     label = member.name,
@@ -1654,7 +1654,7 @@ class LuaWorkspaceQueryFacade(
             )
             ?: return null
         val resolved = resolveWorkspaceRequire(path, moduleName) ?: return null
-        val moduleType = resolved.surface.moduleType
+        val moduleType = resolved.moduleType
         val display = "module ${moduleType.moduleName}"
         val typeInfo = TypeInfo(
             displayName = display,
@@ -2596,24 +2596,21 @@ class LuaWorkspaceQueryFacade(
             range = export.member.range,
             type = typeInfo,
             declaredType = typeInfo,
-            detail = export.member.type.displayName,
+            detail = export.type.displayName,
             symbolId = export.handle
         )
     }
 
     private fun exportTypeInfo(export: WorkspaceModuleResolver.ResolvedExportMember): TypeInfo {
-        val memberType = export.member.type
+        val memberType = export.type
         val moduleType = memberType as? ModuleType
-        // Prefer provider-file declared/inferred FunctionType (Emmy @param/@return) when the
-        // export surface only carried param names with unknown types (Monaco cross-file hover).
-        val enrichedDisplay = enrichExportTypeDisplay(export) ?: memberType.displayName
         val isFunctionLike = export.member.kind == SymbolKind.FUNCTION ||
             export.member.kind == SymbolKind.METHOD ||
-            enrichedDisplay.contains("fun(") ||
-            enrichedDisplay.contains("fun<")
+            memberType.displayName.contains("fun(") ||
+            memberType.displayName.contains("fun<")
         return TypeInfo(
-            displayName = enrichedDisplay,
-            detail = enrichedDisplay,
+            displayName = memberType.displayName,
+            detail = memberType.displayName,
             kind = when {
                 moduleType != null -> TypeInfoKind.MODULE
                 isFunctionLike -> TypeInfoKind.FUNCTION
@@ -2622,24 +2619,6 @@ class LuaWorkspaceQueryFacade(
             },
             moduleName = moduleType?.moduleName
         )
-    }
-
-    private fun enrichExportTypeDisplay(export: WorkspaceModuleResolver.ResolvedExportMember): String? {
-        val range = export.member.range ?: return null
-        val providerModel = snapshot.files[export.definitionProviderPath]?.semanticFile?.model
-            ?: snapshot.files[export.providerPath]?.semanticFile?.model
-            ?: return null
-        // Probe the export name range; declared/inferred beat bare export FunctionType unknowns.
-        val symbol = providerModel.getSymbolAt(range.start) ?: return null
-        val declared = providerModel.getDeclaredType(symbol)?.displayName
-        val inferred = providerModel.getInferredType(symbol)?.displayName
-        val candidates = listOfNotNull(declared, inferred, symbol.declaredType?.displayName, symbol.type?.displayName)
-        return candidates.firstOrNull { candidate ->
-            candidate.contains("fun(") || candidate.contains("fun<")
-        }?.takeUnless { candidate ->
-            // Keep export surface if provider only has equally weak fun(): unknown.
-            candidate == "fun(): unknown" || candidate == "fun(): any"
-        }
     }
 
     private fun rangeContains(range: Range, position: Position): Boolean {

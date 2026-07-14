@@ -266,6 +266,28 @@ class LuaWorkspaceQueryFacadeTest {
     }
 
     @Test
+    fun require_members_use_provider_pipeline_binder_types_without_rewriting_export_surface() {
+        val harness = WorkspaceSemanticHarness.build(
+            "a_main.lua" to "local provider = require(\"z_provider\")\nlocal result = provider.convert(\"value\")\nreturn result",
+            "z_provider.lua" to "local M = {}\n---@param value string\n---@return number\nfunction M.convert(value)\n  return missing(value)\nend\nreturn M"
+        )
+
+        val mainPath = harness.path("a_main.lua")
+        val providerPath = harness.path("z_provider.lua")
+        val memberHover = harness.queries.hover(mainPath, harness.positionOf("a_main.lua", "convert"))
+        val resultHover = harness.queries.hover(mainPath, harness.positionOf("a_main.lua", "result"))
+        val structuralType = harness.snapshot.files.getValue(providerPath)
+            .moduleExportSurface
+            ?.members
+            ?.single { it.exportPath == listOf("convert") }
+            ?.type
+
+        assertEquals("fun(value: unknown): unknown", structuralType?.displayName)
+        assertEquals("fun(value: string): number", memberHover?.typeInfo?.displayName)
+        assertEquals("number", resultHover?.typeInfo?.displayName)
+    }
+
+    @Test
     fun builtin_overlay_modules_resolve_for_require_queries() {
         val harness = WorkspaceSemanticHarness.build(
             "main.lua" to "local math = require(\"math\")\nlocal current = math.abs",

@@ -181,17 +181,23 @@ open class LuaWorkspaceEngine(
         pathsToAnalyze: Set<VirtualPath>,
         previous: WorkspaceSnapshot?
     ): WorkspaceSnapshot {
-        val files = baseSnapshot.files.mapValues { (path, fileSnapshot) ->
+        val files = linkedMapOf<VirtualPath, WorkspaceSnapshot.FileSnapshot>()
+        baseSnapshot.files.forEach { (path, fileSnapshot) ->
             if (path !in pathsToAnalyze) {
-                previous?.files?.get(path)?.semanticFile?.let { existing ->
-                    return@mapValues fileSnapshot.copy(semanticFile = existing)
-                }
-                return@mapValues fileSnapshot
+                val existing = previous?.files?.get(path)?.semanticFile ?: fileSnapshot.semanticFile
+                files[path] = if (existing == null) fileSnapshot else fileSnapshot.copy(semanticFile = existing)
+            } else {
+                files[path] = fileSnapshot.copy(semanticFile = null)
             }
+        }
+
+        semanticAnalysisOrder(pathsToAnalyze, baseSnapshot.graph).forEach { path ->
+            val fileSnapshot = files[path] ?: return@forEach
             val chunk = sources[path]?.let(::parseWorkspaceSource)
                 ?: previous?.files?.get(path)?.semanticFile?.chunk
                 ?: fileSnapshot.semanticFile?.chunk
                 ?: parseWorkspaceSource("")
+            val currentSnapshot = baseSnapshot.copy(files = files.toMap())
             val semanticSnapshot = semanticPipeline.analyzeSnapshot(
                 chunk,
                 workspaceContext(
@@ -201,7 +207,7 @@ open class LuaWorkspaceEngine(
                         standardLibraryOverlayVersion = baseSnapshot.builtinOverlay.version
                     ),
                     path,
-                    baseSnapshot
+                    currentSnapshot
                 )
             )
             val semanticFile = WorkspaceSemanticFile(
@@ -214,12 +220,35 @@ open class LuaWorkspaceEngine(
                 model = semanticSnapshot.model,
                 snapshot = semanticSnapshot
             )
-            // moduleExportSurface stays from analyzeFile/ModuleExportCollector (pre-pipeline facts).
-            // CommentAttachPass runs only inside SemanticPipeline.analyzeSnapshot — do not re-attach
-            // or post-bind rewrite export FunctionTypes here.
-            fileSnapshot.copy(semanticFile = semanticFile)
+            files[path] = fileSnapshot.copy(semanticFile = semanticFile)
         }
-        return baseSnapshot.copy(files = files)
+        return baseSnapshot.copy(files = files.toMap())
+    }
+
+    private fun semanticAnalysisOrder(
+        pathsToAnalyze: Set<VirtualPath>,
+        graph: WorkspaceModuleGraph
+    ): List<VirtualPath> {
+        val visiting = mutableSetOf<VirtualPath>()
+        val visited = mutableSetOf<VirtualPath>()
+        val ordered = mutableListOf<VirtualPath>()
+
+        fun visit(path: VirtualPath) {
+            if (path !in pathsToAnalyze || path in visited || !visiting.add(path)) {
+                return
+            }
+            graph.resolvedDependencies[path]
+                .orEmpty()
+                .map { it.provider.path }
+                .sortedBy { it.value }
+                .forEach(::visit)
+            visiting -= path
+            visited += path
+            ordered += path
+        }
+
+        pathsToAnalyze.sortedBy { it.value }.forEach(::visit)
+        return ordered
     }
 
     private fun analyzeFile(path: VirtualPath, source: String): WorkspaceSnapshot.FileSnapshot {
@@ -227,7 +256,11 @@ open class LuaWorkspaceEngine(
         val facts = DocumentFactsCollector.collect(path, chunk)
         val legacyEnvironment = LegacyModuleEnvironmentPass.analyze(path, facts)
         val exportSurface = ModuleExportCollector.collect(chunk, facts, legacyEnvironment)
-        val publicFingerprint = WorkspacePublicFingerprint.from(facts, exportSurface)
+        val publicTypeAnnotations = source.lineSequence()
+            .map(String::trim)
+            .filter { it.startsWith("---@") }
+            .joinToString("\n")
+        val publicFingerprint = WorkspacePublicFingerprint.from(facts, exportSurface, publicTypeAnnotations)
 
         return WorkspaceSnapshot.FileSnapshot(
             cacheKey = workspaceFingerprintHash(source),

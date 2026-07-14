@@ -39,7 +39,8 @@ data class WorkspacePublicFingerprint(
     companion object {
         fun from(
             documentFacts: DocumentFacts?,
-            moduleExportSurface: ModuleExportSurface?
+            moduleExportSurface: ModuleExportSurface?,
+            publicTypeAnnotations: String = ""
         ): WorkspacePublicFingerprint {
             val providedModuleNames = providedModuleNamesForFacts(documentFacts)
                 .toList()
@@ -51,6 +52,9 @@ data class WorkspacePublicFingerprint(
                 append('\n')
                 append("surface=")
                 append(moduleExportSurface?.let(::serializeSurface).orEmpty())
+                append('\n')
+                append("typeAnnotations=")
+                append(publicTypeAnnotations)
             }
             return WorkspacePublicFingerprint(
                 providedModuleNames = providedModuleNames,

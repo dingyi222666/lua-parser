@@ -1289,7 +1289,7 @@ class ExpressionTypeEvaluator internal constructor(
         if (providerPath.endsWith(".aly")) {
             return CustomType("LuaLayoutSpec")
         }
-        return resolved.surface?.moduleType
+        return resolved.moduleType
     }
 
     private fun resolveLoadlayoutFamilyCall(node: CallExpression, context: Context): Type? {

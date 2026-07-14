@@ -576,6 +576,9 @@ internal class ReferenceQueries(
 
         val normalizedBase = TypeExpansion.expandForMemberSurface(baseType, lexicalScopeId, binder)
         val workspaceMember = workspaceModuleMember(expression.base, normalizedBase, expression.identifier.name)
+        val memberType = workspaceMember?.type
+            ?.hydrateJavaProviderType(workspaceContext.resolveImportTarget)
+            ?: resolvedType
         val declaration = findBackingMemberDeclaration(normalizedBase, expression.identifier.name, resolution.accessKind)
         // Prefer workspace export handles; otherwise use imported:<provider>:<member> so goto on
         // nested interface static helpers (Map$Entry.comparingByKey) still lands on the binary provider.
@@ -597,13 +600,13 @@ internal class ReferenceQueries(
             ?: owningImportedHandle
             ?: surfaceHandle
             ?: workspaceMember?.handle
-        return declaration?.let { adapters.toDeclarationSymbol(it, resolvedType, resolvedType) }
+        return declaration?.let { adapters.toDeclarationSymbol(it, memberType, memberType) }
             ?: preferredWorkspaceHandle?.let { handle ->
                 adapters.syntheticMemberSymbol(
                     name = expression.identifier.name,
                     kind = resolution.accessKind ?: MemberAccessKind.FIELD,
-                    type = resolvedType,
-                    declaredType = resolvedType,
+                    type = memberType,
+                    declaredType = memberType,
                     handleSeed = handle,
                     symbolId = handle,
                     range = workspaceMember?.member?.range
@@ -612,7 +615,7 @@ internal class ReferenceQueries(
             ?: adapters.syntheticMemberSymbol(
                 name = expression.identifier.name,
                 kind = resolution.accessKind ?: MemberAccessKind.FIELD,
-                type = resolvedType,
+                type = memberType,
                 handleSeed = "${baseType.displayName}:${expression.indexer}:${expression.identifier.name}",
                 symbolId = fallbackSymbolId
             )
@@ -1319,20 +1322,26 @@ internal class ReferenceQueries(
             is ModuleType -> buildMap {
                 normalized.fields.forEach { (name, memberType) ->
                     val workspaceMember = workspaceModuleMember(null, normalized, name)
-                    val surfaceType = if (normalized.isJavaBackedModule() && name == "__call") {
+                    val structuralType = if (normalized.isJavaBackedModule() && name == "__call") {
                         memberType.withJavaCallableSurface(resolveImportTarget = workspaceContext.resolveImportTarget)
                     } else {
                         memberType.hydrateJavaProviderType(workspaceContext.resolveImportTarget)
                     }
+                    val surfaceType = workspaceMember?.type
+                        ?.hydrateJavaProviderType(workspaceContext.resolveImportTarget)
+                        ?: structuralType
                     put(name, MemberSurface(name, surfaceType, MemberAccessKind.FIELD, syntheticRange = workspaceMember?.member?.range, syntheticHandle = workspaceMember?.handle))
                 }
                 normalized.methods.forEach { (name, memberType) ->
                     val workspaceMember = workspaceModuleMember(null, normalized, name)
-                    val surfaceType = if (normalized.isJavaBackedModule()) {
+                    val structuralType = if (normalized.isJavaBackedModule()) {
                         memberType.withJavaCallableSurface(resolveImportTarget = workspaceContext.resolveImportTarget)
                     } else {
                         memberType.hydrateJavaProviderType(workspaceContext.resolveImportTarget)
                     }
+                    val surfaceType = workspaceMember?.type
+                        ?.hydrateJavaProviderType(workspaceContext.resolveImportTarget)
+                        ?: structuralType
                     put(name, MemberSurface(name, surfaceType, MemberAccessKind.METHOD, syntheticRange = workspaceMember?.member?.range, syntheticHandle = workspaceMember?.handle))
                 }
                 // Expand static members from __class even when the reflected surface is

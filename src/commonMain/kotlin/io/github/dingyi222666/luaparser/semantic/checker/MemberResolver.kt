@@ -507,7 +507,7 @@ class MemberResolver(
 
     private fun bindMethodSignature(signature: FunctionType, receiverType: Type): FunctionType {
         val firstParameter = signature.parameters.firstOrNull()
-        if (firstParameter != null && firstParameter.type.isAssignableFrom(receiverType)) {
+        if (firstParameter?.name == "self" || firstParameter?.type?.isAssignableFrom(receiverType) == true) {
             return signature
         }
 
