@@ -198,6 +198,30 @@ class JavaChainedCallTddTest {
         assertNoDiagnostics(harness)
     }
     @Test
+    fun static_java_factory_result_supports_void_method_fluent_chains() {
+        val harness = jvmHarness(
+            "main.lua" to """
+                import "semantic.interop.JavaChainedCallTddTest${'$'}FluentJavaBuilder"
+
+                local animation = FluentJavaBuilder.ofFloat({}, "y", {30, 0})
+                    .setInterpolator(FluentJavaBuilder())
+                    .setDuration(250)
+                    .start()
+                local duration = animation.getDuration()
+                return animation, duration
+            """.trimIndent()
+        )
+
+        assertHoverType(
+            harness,
+            "animation",
+            "semantic.interop.JavaChainedCallTddTest.FluentJavaBuilder",
+            occurrence = 2
+        )
+        assertHoverType(harness, "duration", "number", occurrence = 2)
+        assertNoDiagnostics(harness)
+    }
+    @Test
     fun lua_nil_returning_methods_do_not_receive_java_fluent_semantics() {
         val harness = jvmHarness(
             "main.lua" to """
@@ -425,6 +449,7 @@ class JavaChainedCallTddTest {
 
     class FluentJavaBuilder {
         private var shape: Int = 0
+        private var duration: Long = 0
 
         fun setShape(value: Int) {
             shape = value
@@ -443,12 +468,32 @@ class JavaChainedCallTddTest {
             strokeColor = color
         }
 
+        fun setInterpolator(value: Any?) {
+            interpolator = value
+        }
+
+        fun setDuration(value: Long) {
+            duration = value
+        }
+
+        fun start() = Unit
+
         fun getShape(): Int = shape
+
+        fun getDuration(): Long = duration
 
         private var cornerRadius: Float = 0f
         private var color: Long = 0L
         private var strokeWidth: Int = 0
         private var strokeColor: Long = 0L
+        private var interpolator: Any? = null
+
+        companion object {
+            @JvmStatic
+            fun ofFloat(target: Any?, propertyName: String, values: Any?): FluentJavaBuilder {
+                return FluentJavaBuilder()
+            }
+        }
     }
 
     interface ValueListener {
