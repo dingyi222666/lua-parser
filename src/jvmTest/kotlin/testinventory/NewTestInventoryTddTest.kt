@@ -79,7 +79,7 @@ class NewTestInventoryTddTest {
         val strategy = strategyPath.readText()
 
         assertTrue(strategyPath.exists())
-        assertTrue(strategy.contains("| **Total current inventory** | Common + JVM | **230** | **1717** |"))
+        assertTrue(strategy.contains("| **Total current inventory** | Common + JVM | **230** | **1719** |"))
         assertTrue(strategy.contains("current_campaign_files = 174"))
         assertTrue(strategy.contains("current_campaign_total = 1279"))
         assertTrue(strategy.contains("remaining_to_500 = 0"))
@@ -192,10 +192,10 @@ class NewTestInventoryTddTest {
     private companion object {
         val repoRoot: Path = Path.of("").toAbsolutePath().normalize()
         val testAnnotationRegex = Regex("""(?m)^\s*@Test\b""")
-        // Synced to live inventory + docs/test-strategy.md (Monaco build-return hover TDD + prior lockstep).
+        // Synced to live inventory + docs/test-strategy.md (provider-binder require typing + prior lockstep).
         // Baseline excludes the inventory fixture; campaign is *TddTest.kt only.
         const val expectedBaselineFiles = 230
-        const val expectedBaselineTestMethods = 1717
+        const val expectedBaselineTestMethods = 1719
         const val expectedCampaignFiles = 174
         const val expectedCampaignTestMethods = 1279
 

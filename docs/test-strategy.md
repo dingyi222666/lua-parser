@@ -21,12 +21,12 @@ lockstep after suite cull, not a silent drop of product coverage bars.
 | Parser/source | JVM | 31 | 107 | Lua 5.3/5.4/AndroLua syntax, parser recovery, comments, regression fixtures, literal comments, Android-Lua grammar, AST visitor/modifier behavior, AST to Lua round trips, lexer corpora. |
 | Semantic core | Common | 7 | 77 | Pipeline integration, public model facade, completion, checker expression evaluation, module type bridge, type info shape. |
 | Semantic core | JVM | 89 | 601 | Binder, declarations, position queries, comment interop, doc comment parsing, type model/syntax/resolution, call/member/return checking, public API compatibility, Android-Lua interop semantics, LuaJava helper typing. |
-| Workspace | Common | 9 | 127 | Document facts, module graphs, module exports, workspace engine behavior, overlays, legacy module environment support, Android import facts. |
-| Workspace | JVM | 15 | 104 | JVM workspace updates, query facade behavior, Android-Lua import workspace behavior, builtin overlay loading, dirty-set planning, module graph cycles, path styles, fingerprint stability, semantic workspace campaign coverage. |
+| Workspace | Common | 9 | 128 | Document facts, module graphs, module exports, workspace engine behavior, overlays, legacy module environment support, Android import facts. |
+| Workspace | JVM | 15 | 105 | JVM workspace updates, query facade behavior, Android-Lua import workspace behavior, builtin overlay loading, dirty-set planning, module graph cycles, path styles, fingerprint stability, semantic workspace campaign coverage. |
 | Interop | JVM | 17 | 87 | JVM class module provider, reflection-backed workspace modeling, Java class metadata, classloader configuration, Android jar reflection, package enumeration, luajava import modeling. |
 | LSP | JVM | 60 | 608 | Language service, lifecycle diagnostics, navigation symbols, text document service, hover/completion/definition/declaration/references/signature help, shutdown/idempotency, watched files/workspace folders, Android-Lua JVM resolution paths, Monaco demo URI/`utils.`/`button.`/`build`/greeter.hello/numeric-for `i` hover locks. |
 | Integration | JVM | 2 | 6 | Android-Lua corpus semantic verification across parser, workspace, and interop fixtures; mixed LuaJava integration coverage. |
-| **Total current inventory** | Common + JVM | **230** | **1717** | Current parser, semantic, workspace, interop, LSP, and integration coverage, excluding the inventory fixture. |
+| **Total current inventory** | Common + JVM | **230** | **1719** | Current parser, semantic, workspace, interop, LSP, and integration coverage, excluding the inventory fixture. |
 
 Inventory notes:
 
@@ -107,8 +107,8 @@ does not import or mutate production code and can run before future
 implementation tasks are complete.
 
 Inventory fixture constants stay lockstep with the live source tree (baseline
-230/1717, campaign 174/1279) after Monaco numeric for-loop `i: number` TDD
-additions on top of the greeter/`build` baseline. `testinventory` remains excluded from campaign totals.
+230/1719, campaign 174/1279) after provider-binder require typing regressions
+on top of the Monaco greeter/`build` baseline. `testinventory` remains excluded from campaign totals.
 Area classification maps `/parser/`, `/source/`, and `/lexer/` into parser so no
 counted suite lands in `other`. Full Windows suite authority remains TASK-043 /
 windows-full-jvmtest.
