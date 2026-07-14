@@ -68,7 +68,7 @@ class WorkspaceImportVisibilityTddTest {
         )
 
         assertEquals(listOf(harness.path("cc/aa/index.lua")), importedDefinition.map { it.path })
-        assertEquals("string", hover?.typeInfo?.displayName)
+        assertEquals("\"lua module\"", hover?.typeInfo?.displayName)
         assertEquals(emptyList(), harness.queries.diagnostics(harness.path("imports.lua")))
         assertTrue(
             leakedDefinition.none { it.path == harness.path("cc/aa/index.lua") },
