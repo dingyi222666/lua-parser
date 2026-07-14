@@ -23,6 +23,7 @@ import io.github.dingyi222666.luaparser.semantic.binder.DeclarationKind
 import io.github.dingyi222666.luaparser.semantic.binder.DeclarationNamespace
 import io.github.dingyi222666.luaparser.semantic.binder.Scope
 import io.github.dingyi222666.luaparser.semantic.binder.ScopeId
+import io.github.dingyi222666.luaparser.semantic.binder.isChunkGlobalFunctionDeclaration
 import io.github.dingyi222666.luaparser.semantic.comments.AliasTagSyntax
 import io.github.dingyi222666.luaparser.semantic.comments.ClassTagSyntax
 import io.github.dingyi222666.luaparser.semantic.comments.FieldTagSyntax
@@ -1948,6 +1949,9 @@ internal class ReferenceQueries(
         // documented ranges may come from overlay virtual documents and must not gate visibility
         // against real file positions used by free-identifier completions.
         if (declaration.origin == io.github.dingyi222666.luaparser.semantic.binder.DeclarationOrigin.BUILTIN) {
+            return true
+        }
+        if (binder.isChunkGlobalFunctionDeclaration(declaration)) {
             return true
         }
         val range = declaration.range ?: return true

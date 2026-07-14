@@ -24,6 +24,7 @@ import io.github.dingyi222666.luaparser.semantic.binder.DeclarationNamespace
 import io.github.dingyi222666.luaparser.semantic.binder.DeclarationOrigin
 import io.github.dingyi222666.luaparser.semantic.binder.DeclarationOwner
 import io.github.dingyi222666.luaparser.semantic.binder.ScopeId
+import io.github.dingyi222666.luaparser.semantic.binder.isChunkGlobalFunctionDeclaration
 import io.github.dingyi222666.luaparser.semantic.checker.CallChecker
 import io.github.dingyi222666.luaparser.semantic.checker.CallResolution
 import io.github.dingyi222666.luaparser.semantic.checker.ExpressionTypeEvaluator
@@ -1029,6 +1030,9 @@ internal class SignatureHelpProvider(
     }
 
     private fun isVisibleAt(declaration: BinderDeclaration, position: Position): Boolean {
+        if (binder.isChunkGlobalFunctionDeclaration(declaration)) {
+            return true
+        }
         val range = declaration.range ?: return true
         return compare(range.start, position) <= 0
     }

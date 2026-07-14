@@ -50,6 +50,7 @@ import io.github.dingyi222666.luaparser.semantic.binder.DeclarationOwner
 import io.github.dingyi222666.luaparser.semantic.binder.DeclarationOrigin
 import io.github.dingyi222666.luaparser.semantic.binder.Scope
 import io.github.dingyi222666.luaparser.semantic.binder.ScopeId
+import io.github.dingyi222666.luaparser.semantic.binder.isChunkGlobalFunctionDeclaration
 import io.github.dingyi222666.luaparser.semantic.binder.comparePositions
 import io.github.dingyi222666.luaparser.semantic.types.model.AppliedType
 import io.github.dingyi222666.luaparser.semantic.types.model.ArrayType
@@ -2799,6 +2800,9 @@ class ExpressionTypeEvaluator internal constructor(
     }
 
     private fun isVisibleAt(declaration: BinderDeclaration, position: Position): Boolean {
+        if (binder.isChunkGlobalFunctionDeclaration(declaration)) {
+            return true
+        }
         val range = declaration.range ?: return true
         return comparePositions(range.start, position) <= 0
     }
