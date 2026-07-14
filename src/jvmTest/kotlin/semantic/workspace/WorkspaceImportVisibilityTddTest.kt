@@ -121,7 +121,10 @@ class WorkspaceImportVisibilityTddTest {
             harness.path("main.lua"),
             harness.positionOf("main.lua", "build")
         )
-        val buildCompletion = assertNotNull(completions.singleOrNull { it.label == "build" })
+        val buildCompletion = assertNotNull(
+            completions.singleOrNull { it.label == "build" },
+            "Expected build after AppListStream:mode(...); actual=${completions.map { "${it.label}:${it.kind}" }}"
+        )
         assertEquals(CompletionItemKind.METHOD, buildCompletion.kind)
 
         val hover = assertNotNull(

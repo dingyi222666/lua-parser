@@ -408,6 +408,10 @@ class ExpressionTypeEvaluator internal constructor(
     private fun luaClassName(type: Type): String? = when (type) {
         is ClassType -> type.name
         is AppliedType -> type.baseName
+        is ModuleType -> type.moduleName
+            .substringAfterLast('/')
+            .removeSuffix(".lua")
+            .substringAfterLast('.')
         else -> null
     }
 
