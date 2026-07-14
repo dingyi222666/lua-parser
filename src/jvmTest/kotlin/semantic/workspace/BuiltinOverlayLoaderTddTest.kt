@@ -204,6 +204,40 @@ class BuiltinOverlayLoaderTddTest {
     }
 
     @Test
+    fun io_open_return_exposes_file_handle_colon_methods() {
+        listOf(LuaVersion.LUA_5_3, LuaVersion.LUA_5_4).forEach { version ->
+            val harness = WorkspaceSemanticHarness.build(
+                "main.lua" to """
+                    local a = io.open('s')
+                    a:write()
+                """.trimIndent(),
+                standardLibraryOverlayVersion = version,
+                engine = JvmWorkspaceEngine(
+                    workspaceParserFactory = { LuaParser(luaVersion = version, errorRecovery = false) }
+                )
+            )
+
+            val completions = harness.queries.completions(
+                harness.path("main.lua"),
+                harness.positionOf("main.lua", "write")
+            )
+            val methods = completions.filter { it.kind == CompletionItemKind.METHOD }.map { it.label }.toSet()
+            assertTrue(
+                methods.containsAll(setOf("close", "flush", "lines", "read", "seek", "setvbuf", "write")),
+                "$version file handle methods: ${completions.map { "${it.label}:${it.kind}" }}"
+            )
+
+            val hover = assertNotNull(
+                harness.queries.hover(
+                    harness.path("main.lua"),
+                    harness.positionOf("main.lua", "write")
+                )
+            )
+            assertEquals(SymbolKind.METHOD, hover.symbol?.kind)
+        }
+    }
+
+    @Test
     fun androlua_android_framework_full_name_aliases_and_overloads_reach_workspace_queries() {
         val harness = WorkspaceSemanticHarness.build(
             "main.lua" to """

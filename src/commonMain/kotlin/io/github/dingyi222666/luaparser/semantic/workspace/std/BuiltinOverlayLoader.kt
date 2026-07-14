@@ -850,13 +850,35 @@ object BuiltinOverlayLoader {
         )
 
         val drafts = linkedMapOf<String, ClassDraft>()
+        val pendingDocLines = mutableListOf<String>()
         var activeClassName: String? = null
 
         resourceText.lineSequence().forEach { line ->
-            val tag = line.trimStart().takeIf { it.startsWith("---") }
+            val trimmedStart = line.trimStart()
+            val tag = trimmedStart.takeIf { it.startsWith("---") }
                 ?.removePrefix("---")
                 ?.trimStart()
-                ?: return@forEach
+            if (tag == null) {
+                val methodMatch = DOCUMENTED_CLASS_METHOD_REGEX.find(line)
+                if (methodMatch != null) {
+                    val className = methodMatch.groupValues[1]
+                    val methodName = methodMatch.groupValues[2]
+                    val draft = drafts[className]
+                    if (draft != null && methodName !in draft.methods) {
+                        draft.methods[methodName] = documentedFunctionType(
+                            parameterListText = methodMatch.groupValues[3],
+                            doc = parseMemberDoc(pendingDocLines)
+                        )
+                    }
+                    pendingDocLines.clear()
+                    return@forEach
+                }
+                if (line.isNotBlank() && !trimmedStart.startsWith("--")) {
+                    pendingDocLines.clear()
+                }
+                return@forEach
+            }
+            pendingDocLines += trimmedStart
 
             when {
                 tag.startsWith("@class ") -> {
@@ -2628,6 +2650,8 @@ object BuiltinOverlayLoader {
         "astable", "tostring", "instanceof", "getContext", "override"
     )
     private val DOCUMENTED_INTEGER_TYPE = PrimitiveType("integer", PrimitiveType.Kind.NUMBER)
+    private val DOCUMENTED_CLASS_METHOD_REGEX =
+        Regex("""^\s*function\s+([A-Za-z_][A-Za-z0-9_.]*):([A-Za-z_][A-Za-z0-9_]*)\s*\(([^)]*)\)""")
     private val ANDROID_FRAMEWORK_FUNCTION_REGEX =
         Regex("""^\s*function\s+([A-Za-z_][A-Za-z0-9_]*)([.:])([A-Za-z_][A-Za-z0-9_]*)\s*\(([^)]*)\)""")
 }
