@@ -210,6 +210,72 @@ class WorkspaceImportVisibilityTddTest {
     }
 
     @Test
+    fun lua_import_and_require_apply_provider_extensions_to_existing_globals_per_file() {
+        val harness = jvmHarness(
+            "mods/extensions.lua" to """
+                table.addObserver = function(old, func)
+                    func(old)
+                    return old
+                end
+            """.trimIndent(),
+            "import-consumer.lua" to """
+                import "mods.extensions"
+                local observed = table.addObserver({}, function() end)
+                return observed
+            """.trimIndent(),
+            "require-consumer.lua" to """
+                require "mods.extensions"
+                local observed = table.addObserver({}, function() end)
+                return observed
+            """.trimIndent(),
+            "sibling.lua" to """
+                local missing = table.addObserver
+                return missing
+            """.trimIndent()
+        )
+
+        val declarationHover = assertNotNull(
+            harness.queries.hover(
+                harness.path("mods/extensions.lua"),
+                harness.positionOf("mods/extensions.lua", "addObserver")
+            )
+        )
+        assertTrue(
+            declarationHover.typeInfo?.displayName?.startsWith("fun(") == true,
+            "Assigned function member hover must expose its callable type; actual=${declarationHover.typeInfo}"
+        )
+
+        listOf("import-consumer.lua", "require-consumer.lua").forEach { path ->
+            val completions = harness.queries.completions(
+                harness.path(path),
+                harness.positionOf(path, "addObserver")
+            )
+            val completion = assertNotNull(
+                completions.singleOrNull { it.label == "addObserver" },
+                "Expected imported table extension in $path; actual=${completions.map { it.label }}"
+            )
+            assertEquals(CompletionItemKind.METHOD, completion.kind)
+
+            val hover = assertNotNull(
+                harness.queries.hover(harness.path(path), harness.positionOf(path, "addObserver"))
+            )
+            assertTrue(
+                hover.typeInfo?.displayName?.startsWith("fun(") == true,
+                "Imported table extension hover must remain callable; actual=${hover.typeInfo}"
+            )
+        }
+
+        val siblingCompletions = harness.queries.completions(
+            harness.path("sibling.lua"),
+            harness.positionOf("sibling.lua", "addObserver")
+        )
+        assertTrue(
+            siblingCompletions.none { it.label == "addObserver" },
+            "A provider's global table extension must not leak into files that do not import it."
+        )
+    }
+
+    @Test
     fun require_import_alias_activation_does_not_leak_simple_name_into_sibling_file() {
         val harness = jvmHarness(
             "imports.lua" to """

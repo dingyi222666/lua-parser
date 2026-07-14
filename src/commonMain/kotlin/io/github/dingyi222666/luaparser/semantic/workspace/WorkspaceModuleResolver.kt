@@ -1,7 +1,11 @@
 package io.github.dingyi222666.luaparser.semantic.workspace
 
+import io.github.dingyi222666.luaparser.parser.ast.node.AssignmentStatement
 import io.github.dingyi222666.luaparser.parser.ast.node.ExpressionNode
+import io.github.dingyi222666.luaparser.parser.ast.node.Identifier
+import io.github.dingyi222666.luaparser.parser.ast.node.MemberExpression
 import io.github.dingyi222666.luaparser.semantic.WorkspaceImportedSymbol
+import io.github.dingyi222666.luaparser.semantic.mergeWorkspaceGlobalExtension
 import io.github.dingyi222666.luaparser.semantic.api.SymbolKind
 import io.github.dingyi222666.luaparser.semantic.binder.DeclarationKind
 import io.github.dingyi222666.luaparser.semantic.binder.DeclarationOrigin
@@ -269,7 +273,12 @@ internal class WorkspaceModuleResolver(
             }
         }
         dependencyGlobalSymbolsFor(path).forEach { symbol ->
-            imported[symbol.alias] = symbol
+            val existing = imported[symbol.alias]
+            imported[symbol.alias] = if (symbol.extendsExistingGlobal && existing?.extendsExistingGlobal == true) {
+                symbol.copy(valueType = mergeWorkspaceGlobalExtension(existing.valueType, symbol.valueType))
+            } else {
+                symbol
+            }
         }
         return imported.toMap().also { importedSymbolsCache[path] = it }
     }
@@ -330,8 +339,82 @@ internal class WorkspaceModuleResolver(
                 )
             }
             .toList()
-        providerGlobalSymbolsCache[provider.path] = globals
-        return globals
+        val extendedGlobals = providerGlobalObjectExtensions(
+            provider = provider,
+            providerModuleType = providerModuleType,
+            evaluator = evaluator,
+            declarations = binder.declarationIndex.declarations,
+            globalNames = semanticSnapshot.workspaceContext.overlayGlobals.globalNames
+        )
+        return (globals + extendedGlobals).also { providerGlobalSymbolsCache[provider.path] = it }
+    }
+
+    private fun providerGlobalObjectExtensions(
+        provider: WorkspaceModuleGraph.ModuleProvider,
+        providerModuleType: ModuleType,
+        evaluator: ExpressionTypeEvaluator,
+        declarations: List<io.github.dingyi222666.luaparser.semantic.binder.BinderDeclaration>,
+        globalNames: Set<String>
+    ): List<WorkspaceImportedSymbol> {
+        val extensionsByRoot = declarations.asSequence()
+            .filter { declaration ->
+                declaration.origin == DeclarationOrigin.AST &&
+                    declaration.kind in setOf(DeclarationKind.FIELD, DeclarationKind.METHOD)
+            }
+            .mapNotNull { declaration ->
+                val member = declaration.anchorNode?.parent as? MemberExpression ?: return@mapNotNull null
+                val root = member.base as? Identifier ?: return@mapNotNull null
+                if (root.name !in globalNames) {
+                    return@mapNotNull null
+                }
+                Triple(root, member, declaration)
+            }
+            .groupBy { (root) -> root.name }
+
+        return extensionsByRoot.mapNotNull { (rootName, entries) ->
+            val baseType = evaluator.evaluate(entries.first().first)
+            val fields = linkedMapOf<String, Type>()
+            val methods = linkedMapOf<String, Type>()
+            entries.forEach { (_, member, declaration) ->
+                val memberType = assignedMemberValueType(member, evaluator)
+                    ?: evaluator.evaluate(member).takeUnless { it === UnknownType }
+                    ?: declaration.declaredType?.takeUnless { it === UnknownType }
+                    ?: return@forEach
+                if (declaration.kind == DeclarationKind.METHOD) {
+                    methods[declaration.name] = memberType
+                } else {
+                    fields[declaration.name] = memberType
+                }
+            }
+            if (fields.isEmpty() && methods.isEmpty()) {
+                return@mapNotNull null
+            }
+            val extensionType = TableType(fields = fields, methods = methods)
+            WorkspaceImportedSymbol(
+                alias = rootName,
+                moduleName = provider.moduleName,
+                providerPath = provider.path,
+                moduleType = providerModuleType,
+                valueType = mergeWorkspaceGlobalExtension(baseType, extensionType),
+                kind = SymbolKind.MODULE,
+                definitionRange = entries.first().third.anchorNode?.range ?: entries.first().third.range,
+                extendsExistingGlobal = true
+            )
+        }
+    }
+
+    private fun assignedMemberValueType(
+        member: MemberExpression,
+        evaluator: ExpressionTypeEvaluator
+    ): Type? {
+        val assignment = member.parent as? AssignmentStatement ?: return null
+        val targetIndex = assignment.init.indexOf(member)
+        if (targetIndex < 0 || assignment.variables.isEmpty()) {
+            return null
+        }
+        val initializer = assignment.variables.getOrNull(targetIndex)
+            ?: assignment.variables.last()
+        return evaluator.evaluate(initializer).takeUnless { it === UnknownType }
     }
 
     fun importedSymbolFor(path: VirtualPath, alias: String): WorkspaceImportedSymbol? {

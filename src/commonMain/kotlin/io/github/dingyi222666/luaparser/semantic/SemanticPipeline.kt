@@ -130,7 +130,8 @@ internal data class WorkspaceImportedSymbol(
     val valueType: io.github.dingyi222666.luaparser.semantic.types.model.Type = moduleType,
     val kind: io.github.dingyi222666.luaparser.semantic.api.SymbolKind =
         io.github.dingyi222666.luaparser.semantic.api.SymbolKind.MODULE,
-    val definitionRange: Range? = null
+    val definitionRange: Range? = null,
+    val extendsExistingGlobal: Boolean = false
 )
 
 internal data class SemanticPipelineSnapshot(

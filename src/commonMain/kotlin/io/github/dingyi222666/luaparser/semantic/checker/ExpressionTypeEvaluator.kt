@@ -40,6 +40,7 @@ import io.github.dingyi222666.luaparser.parser.ast.node.WhileStatement
 import io.github.dingyi222666.luaparser.parser.ast.node.ArrayConstructorExpression
 import io.github.dingyi222666.luaparser.parser.ast.node.AssignmentStatement
 import io.github.dingyi222666.luaparser.semantic.SemanticWorkspaceContext
+import io.github.dingyi222666.luaparser.semantic.mergeWorkspaceGlobalExtension
 import io.github.dingyi222666.luaparser.semantic.binder.BinderDeclaration
 import io.github.dingyi222666.luaparser.semantic.binder.BinderPassResult
 import io.github.dingyi222666.luaparser.semantic.binder.DeclarationId
@@ -185,13 +186,19 @@ class ExpressionTypeEvaluator internal constructor(
 
     private fun evaluateIdentifier(node: Identifier, context: Context): Type {
         context.localOverrides[node.name]?.let { return it }
+        val imported = workspaceContext.importedSymbols[node.name]
+            ?: workspaceContext.resolveImportedSymbol?.invoke(node.name)
         val declaration = findVisibleValueDeclaration(node.name, node.range.start, context)
         if (declaration != null) {
             luaJavaLocalInitializerType(declaration, context)?.let { return it }
-            return typeOfDeclaration(declaration, context)
+            val declarationType = typeOfDeclaration(declaration, context)
+            return if (declaration.origin != DeclarationOrigin.AST && imported?.extendsExistingGlobal == true) {
+                mergeWorkspaceGlobalExtension(declarationType, imported.valueType)
+            } else {
+                declarationType
+            }
         }
-        workspaceContext.importedSymbols[node.name]?.let { return it.valueType }
-        workspaceContext.resolveImportedSymbol?.invoke(node.name)?.let { return it.valueType }
+        imported?.let { return it.valueType }
         return UnknownType
     }
 

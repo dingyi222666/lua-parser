@@ -1,6 +1,7 @@
 package io.github.dingyi222666.luaparser.semantic.model
 
 import io.github.dingyi222666.luaparser.parser.ast.node.BaseASTNode
+import io.github.dingyi222666.luaparser.parser.ast.node.AssignmentStatement
 import io.github.dingyi222666.luaparser.parser.ast.node.ConstantNode
 import io.github.dingyi222666.luaparser.parser.ast.node.ExpressionNode
 import io.github.dingyi222666.luaparser.parser.ast.node.FunctionDeclaration
@@ -322,13 +323,16 @@ internal class ReferenceQueries(
 
         val inferred = when (declaration.kind) {
             DeclarationKind.FUNCTION,
-            DeclarationKind.METHOD,
             DeclarationKind.GLOBAL -> {
                 val functionNode = resolveOwningFunctionDeclaration(binder, declaration)
                     ?: (declaration.anchorNode as? FunctionDeclaration)
                     ?: (declaration.anchorNode?.parent as? FunctionDeclaration)
                 functionNode?.let(evaluator::inferImplementationFunctionType)
             }
+            DeclarationKind.METHOD -> assignedMemberInitializerType(declaration)
+                ?: resolveOwningFunctionDeclaration(binder, declaration)
+                    ?.let(evaluator::inferImplementationFunctionType)
+            DeclarationKind.FIELD -> assignedMemberInitializerType(declaration)
             DeclarationKind.LOCAL -> {
                 val initializer = localDeclarationInitializer(declaration)
                 when (initializer) {
@@ -353,6 +357,18 @@ internal class ReferenceQueries(
             declared != null && declared !== UnknownType -> declared
             else -> null
         }
+    }
+
+    private fun assignedMemberInitializerType(declaration: BinderDeclaration): Type? {
+        val member = declaration.anchorNode?.parent as? MemberExpression ?: return null
+        val assignment = member.parent as? AssignmentStatement ?: return null
+        val targetIndex = assignment.init.indexOf(member)
+        if (targetIndex < 0 || assignment.variables.isEmpty()) {
+            return null
+        }
+        val initializer = assignment.variables.getOrNull(targetIndex)
+            ?: assignment.variables.last()
+        return evaluator.evaluate(initializer).takeUnless { it === UnknownType }
     }
 
     private fun isUnknownReturnOnlyCallable(type: Type): Boolean {
