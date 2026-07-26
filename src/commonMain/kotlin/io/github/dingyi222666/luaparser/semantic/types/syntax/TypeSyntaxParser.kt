@@ -160,8 +160,13 @@ object TypeSyntaxParser {
             consume('(', "Expected '(' to start function parameter list")
             val parameters = parseFunctionParameters()
             consume(')', "Expected ')' to close function parameter list")
-            consume(':', "Expected ':' before function return type")
-            val returnType = parseType(allowMultiReturn = true)
+            // The return annotation is optional: `fun(message: any)` is idiomatic in the
+            // AndroLua/EmmyLua corpus and means "returns nil".
+            val returnType = if (match(':')) {
+                parseType(allowMultiReturn = true)
+            } else {
+                NamedTypeSyntax("nil")
+            }
             return FunctionTypeSyntax(
                 parameters = parameters,
                 returnType = returnType,
@@ -216,6 +221,19 @@ object TypeSyntaxParser {
 
         private fun parseFunctionParameter(): FunctionParameterSyntax {
             skipWhitespace()
+            // Prefix vararg parameter: `fun(...)` / `fun(...: any)`. The postfix `T...` spelling
+            // below is the canonical one, but EmmyLua-style docs use the prefix form.
+            if (startsWith("...")) {
+                consumeText("...", "Expected '...' for vararg parameter")
+                skipWhitespace()
+                val type = if (match(':')) {
+                    parseType(allowMultiReturn = false, allowPostfixVararg = false)
+                } else {
+                    NamedTypeSyntax("any")
+                }
+                return FunctionParameterSyntax(name = null, type = type, vararg = true)
+            }
+
             val checkpoint = currentIndex
             if (isIdentifierStart(peek())) {
                 val name = parseIdentifier()

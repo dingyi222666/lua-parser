@@ -284,14 +284,11 @@ docs refresh did **not** re-run those filters.
   macOS android-35 / Downloads dual-path notes.
 - [android-platform-setup.md](android-platform-setup.md) — Corretto 17, SDK
   android-35 jar, skip-when-absent policy.
-- [test-strategy.md](test-strategy.md) — inventory context for LSP corpora
-  (inventory not final until TASK-043).
+- [test-strategy.md](test-strategy.md) — test scope and LSP corpus policy.
 - [serialized-verification.md](serialized-verification.md) — why workers must not
   run the Gradle filters above during parallel implementation waves.
 - [acceptance-traceability.md](acceptance-traceability.md) — AC-10 LSP lifecycle,
   shutdown, and concurrency traceability notes.
-- [test-inventory-recount-procedure.md](test-inventory-recount-procedure.md) —
-  recount procedure; inventory not final until TASK-043.
 
 ## TASK-512 refresh checklist
 

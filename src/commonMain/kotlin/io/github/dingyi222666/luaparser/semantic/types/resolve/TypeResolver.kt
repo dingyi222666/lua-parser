@@ -10,6 +10,7 @@ import io.github.dingyi222666.luaparser.semantic.binder.DeclarationOwner
 import io.github.dingyi222666.luaparser.semantic.comments.ClassTagSyntax
 import io.github.dingyi222666.luaparser.semantic.comments.FieldTagSyntax
 import io.github.dingyi222666.luaparser.semantic.comments.MethodTagSyntax
+import io.github.dingyi222666.luaparser.semantic.comments.JavaClassTagSyntax
 import io.github.dingyi222666.luaparser.semantic.comments.OverloadTagSyntax
 import io.github.dingyi222666.luaparser.semantic.comments.ParamTagSyntax
 import io.github.dingyi222666.luaparser.semantic.comments.ReturnTagSyntax
@@ -22,6 +23,7 @@ import io.github.dingyi222666.luaparser.semantic.types.model.ErrorType
 import io.github.dingyi222666.luaparser.semantic.types.model.FunctionParameter
 import io.github.dingyi222666.luaparser.semantic.types.model.FunctionType
 import io.github.dingyi222666.luaparser.semantic.types.model.IntersectionType
+import io.github.dingyi222666.luaparser.semantic.types.model.JavaArrayType
 import io.github.dingyi222666.luaparser.semantic.types.model.LiteralType
 import io.github.dingyi222666.luaparser.semantic.types.model.MultiReturnType
 import io.github.dingyi222666.luaparser.semantic.types.model.NeverType
@@ -212,6 +214,7 @@ class TypeResolver(
                 ?.parentName
                 ?.let(::parseTypeSyntax)
                 ?.let { resolveSyntax(it, context) }
+            val javaClassName = declaration.documentation.findDocTag<JavaClassTagSyntax>()?.className
             val superClass = parentType?.let { materializeParentClassSurface(it, context) }
             val classType = ClassType(
                 name = declaration.name,
@@ -219,7 +222,8 @@ class TypeResolver(
                 methods = methods,
                 superClass = superClass,
                 superType = parentType,
-                typeParameters = typeParameters
+                typeParameters = typeParameters,
+                javaClassName = javaClassName
             )
             return declaration.copy(
                 declaredType = classType,
@@ -531,6 +535,9 @@ class TypeResolver(
         val arguments = typeSyntax.arguments.map { resolveSyntax(it, context) }
         if (baseName == "table" && arguments.size == 2) {
             return TableType(indexSignature = TableType.IndexSignature(arguments[0], arguments[1]))
+        }
+        if (baseName == "JavaArray" && arguments.size == 1) {
+            return JavaArrayType(arguments.single())
         }
         return AppliedType(baseName = baseName, typeArguments = arguments)
     }

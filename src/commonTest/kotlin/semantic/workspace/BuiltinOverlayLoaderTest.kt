@@ -4,7 +4,6 @@ import io.github.dingyi222666.luaparser.parser.LuaVersion
 import io.github.dingyi222666.luaparser.semantic.api.SymbolKind
 import io.github.dingyi222666.luaparser.semantic.types.model.ArrayType
 import io.github.dingyi222666.luaparser.semantic.types.model.FunctionType
-import io.github.dingyi222666.luaparser.semantic.types.model.JavaClassType
 import io.github.dingyi222666.luaparser.semantic.types.model.JavaInstanceType
 import io.github.dingyi222666.luaparser.semantic.types.model.ModuleType
 import io.github.dingyi222666.luaparser.semantic.types.model.MultiReturnType
@@ -290,7 +289,7 @@ class BuiltinOverlayLoaderTest {
     }
 
     @Test
-    fun androlua_overlay_loads_android_framework_resource_class_providers() {
+    fun androlua_overlay_loads_android_framework_class_index_providers() {
         val androlua = load(LuaVersion.ANDROLUA_5_3)
         val lua53 = load(LuaVersion.LUA_5_3)
 
@@ -302,17 +301,12 @@ class BuiltinOverlayLoaderTest {
         val textViewClass = assertIs<JavaInstanceType>(textViewSurface.moduleType.fields.getValue("__class"))
         assertEquals("android.widget.TextView", textViewClass.javaName.canonicalName)
         assertFalse("__call" in textViewSurface.moduleType.fields)
-        assertEquals("android.view.View", assertNotNull(textViewClass.classType.superClass).javaName.canonicalName)
-        assertTrue("setVisibility" in textViewClass.allInstanceMembers())
-        assertEquals("integer", textViewSurface.moduleType.fields.getValue("AUTO_SIZE_TEXT_TYPE_NONE").displayName)
+        assertEquals(null, textViewClass.classType.superClass)
+        assertTrue(textViewClass.allInstanceMembers().isEmpty())
         val nestedBufferType = assertIs<ModuleType>(textViewSurface.moduleType.fields.getValue("BufferType"))
         val nestedBufferTypeClass = assertIs<JavaInstanceType>(nestedBufferType.fields.getValue("__class"))
         assertEquals("android.widget.TextView.BufferType", nestedBufferTypeClass.javaName.canonicalName)
-        val setTextType = assertNotNull(textViewSurface.members.singleOrNull { it.exportPath == listOf("__class", "setText") }).type.displayName
-        assertContains(setTextType, "text:")
-        assertContains(setTextType, "string")
-        assertContains(setTextType, "number")
-        assertContains(setTextType, "JavaObject")
+        assertTrue(textViewSurface.members.none { it.exportPath.size > 1 })
 
         val bufferType = assertNotNull(androlua.providerModules[VirtualPath.of("__jvm__/classes/android/widget/TextView\$BufferType.lua")])
         assertEquals("BufferType", bufferType.moduleName)
@@ -323,37 +317,21 @@ class BuiltinOverlayLoaderTest {
     }
 
     @Test
-    fun androlua_overlay_preserves_android_framework_method_overloads_and_constructors() {
+    fun androlua_android_framework_indexes_do_not_embed_methods_or_constructors() {
         val androlua = load(LuaVersion.ANDROLUA_5_3)
 
         val viewGroup = assertNotNull(androlua.providerModules[VirtualPath.of("__jvm__/classes/android/view/ViewGroup.lua")])
         val viewGroupSurface = assertNotNull(viewGroup.file.moduleExportSurface)
-        val addView = assertIs<OverloadedFunctionType>(
-            assertNotNull(viewGroupSurface.members.singleOrNull { it.exportPath == listOf("__class", "addView") }).type
-        )
-        assertEquals(2, addView.callSignatures.size)
-        assertTrue(addView.callSignatures.any { signature -> signature.parameters.map { it.name } == listOf("view") })
-        assertTrue(addView.callSignatures.any { signature -> signature.parameters.map { it.name } == listOf("view", "params") })
+        assertTrue(viewGroupSurface.members.none { it.exportPath == listOf("__class", "addView") })
 
         val layoutParams = assertNotNull(
             androlua.providerModules[VirtualPath.of("__jvm__/classes/android/widget/LinearLayout\$LayoutParams.lua")]
         )
         val layoutParamsSurface = assertNotNull(layoutParams.file.moduleExportSurface)
-        val layoutParamsClass = assertIs<JavaClassType>(layoutParamsSurface.moduleType.fields.getValue("__call"))
-        assertEquals(2, layoutParamsClass.constructors.overloads.size)
-        assertTrue(layoutParamsClass.callSignatures.any { signature ->
-            signature.parameters.map { it.name } == listOf("width", "height") &&
-                signature.returnType.displayName == "android.widget.LinearLayout.LayoutParams"
-        })
-        assertTrue(layoutParamsClass.callSignatures.any { signature ->
-            signature.parameters.map { it.name } == listOf("width", "height", "weight") &&
-                signature.returnType.displayName == "android.widget.LinearLayout.LayoutParams"
-        })
+        assertFalse("__call" in layoutParamsSurface.moduleType.fields)
         val layoutParamsInstance = assertIs<JavaInstanceType>(layoutParamsSurface.moduleType.fields.getValue("__class"))
-        assertEquals(
-            "android.view.ViewGroup.MarginLayoutParams",
-            assertNotNull(layoutParamsInstance.classType.superClass).javaName.canonicalName
-        )
+        assertTrue(layoutParamsInstance.classType.constructors.isEmpty)
+        assertEquals(null, layoutParamsInstance.classType.superClass)
         assertFalse("new" in layoutParamsInstance.allInstanceMembers())
     }
 

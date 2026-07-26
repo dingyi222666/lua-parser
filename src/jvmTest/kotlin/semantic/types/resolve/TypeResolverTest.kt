@@ -100,6 +100,7 @@ class TypeResolverTest {
             ---@field baseId integer
 
             ---@class Widget<T>: Base
+            ---@java-class java.util.ArrayList
             ---@field id integer
             ---@field value T
             ---@method Widget.render fun(self: Widget<T>, value: string): boolean
@@ -122,6 +123,7 @@ class TypeResolverTest {
         assertEquals("T", widget.fields.getValue("value").name)
         assertEquals("render", widget.methods.keys.single())
         assertEquals("T", widget.typeParameters.single().name)
+        assertEquals("java.util.ArrayList", widget.javaClassName)
 
         val indexed = assertIs<TableType>(alias(result, "Indexed").target)
         assertSame(PrimitiveType.STRING, indexed.indexSignature?.keyType)

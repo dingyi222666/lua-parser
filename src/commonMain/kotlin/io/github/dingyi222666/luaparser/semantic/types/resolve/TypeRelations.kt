@@ -12,9 +12,11 @@ import io.github.dingyi222666.luaparser.semantic.types.model.FunctionType
 import io.github.dingyi222666.luaparser.semantic.types.model.IntersectionType
 import io.github.dingyi222666.luaparser.semantic.types.model.JavaArrayType
 import io.github.dingyi222666.luaparser.semantic.types.model.JavaClassType
+import io.github.dingyi222666.luaparser.semantic.types.model.JavaContainerKind
 import io.github.dingyi222666.luaparser.semantic.types.model.JavaConstructorType
 import io.github.dingyi222666.luaparser.semantic.types.model.JavaInstanceMemberType
 import io.github.dingyi222666.luaparser.semantic.types.model.JavaInstanceType
+import io.github.dingyi222666.luaparser.semantic.types.model.javaContainerKind
 import io.github.dingyi222666.luaparser.semantic.types.model.JavaOverloadType
 import io.github.dingyi222666.luaparser.semantic.types.model.JavaPrimitiveType
 import io.github.dingyi222666.luaparser.semantic.types.model.JavaStaticMemberType
@@ -241,8 +243,8 @@ object TypeRelations {
     }
 
     private fun isJavaContainerAssignableFromLuaTable(target: JavaInstanceType, source: Type): Boolean {
-        return when (javaContainerKind(target)) {
-            JavaContainerKind.LIST -> {
+        return when (target.javaContainerKind()) {
+            JavaContainerKind.SEQUENCE -> {
                 val elementType = target.typeArguments.singleOrNull() ?: return false
                 when (source) {
                     is TableType -> isTableAssignableToJavaArrayElements(elementType, source)
@@ -265,29 +267,6 @@ object TypeRelations {
             }
             null -> false
         }
-    }
-
-    private fun javaContainerKind(target: JavaInstanceType): JavaContainerKind? {
-        val names = collectJavaBinaryNames(target.classType)
-        return when {
-            names.any { it in javaListContainerNames } -> JavaContainerKind.LIST
-            names.any { it in javaMapContainerNames } -> JavaContainerKind.MAP
-            else -> null
-        }
-    }
-
-    private fun collectJavaBinaryNames(classType: JavaClassType): Set<String> {
-        val names = linkedSetOf<String>()
-        fun visit(current: JavaClassType?) {
-            current ?: return
-            if (!names.add(current.javaName.binaryName)) {
-                return
-            }
-            visit(current.superClass)
-            current.interfaces.forEach(::visit)
-        }
-        visit(classType)
-        return names
     }
 
     private fun isTableAssignableToJavaArrayElements(elementType: Type, source: TableType): Boolean {
@@ -418,54 +397,6 @@ object TypeRelations {
             else -> true
         }
     }
-
-    private enum class JavaContainerKind {
-        LIST,
-        MAP
-    }
-
-    private val javaListContainerNames = setOf(
-        "java.util.List",
-        "java.util.Collection",
-        "java.util.AbstractCollection",
-        "java.util.AbstractList",
-        "java.util.ArrayList",
-        "java.util.LinkedList",
-        "java.util.Vector",
-        "java.util.Stack",
-        "java.util.CopyOnWriteArrayList",
-        "java.util.Set",
-        "java.util.AbstractSet",
-        "java.util.HashSet",
-        "java.util.LinkedHashSet",
-        "java.util.SortedSet",
-        "java.util.NavigableSet",
-        "java.util.TreeSet",
-        "java.util.Queue",
-        "java.util.Deque",
-        "java.util.AbstractQueue",
-        "java.util.ArrayDeque",
-        "java.util.concurrent.BlockingQueue",
-        "java.util.concurrent.BlockingDeque",
-        "java.util.concurrent.CopyOnWriteArraySet"
-    )
-
-    private val javaMapContainerNames = setOf(
-        "java.util.Map",
-        "java.util.AbstractMap",
-        "java.util.HashMap",
-        "java.util.LinkedHashMap",
-        "java.util.TreeMap",
-        "java.util.Hashtable",
-        "java.util.WeakHashMap",
-        "java.util.IdentityHashMap",
-        "java.util.SortedMap",
-        "java.util.NavigableMap",
-        "java.util.concurrent.ConcurrentMap",
-        "java.util.concurrent.ConcurrentHashMap",
-        "java.util.concurrent.ConcurrentNavigableMap",
-        "java.util.concurrent.ConcurrentSkipListMap"
-    )
 
     private fun isJavaArrayAssignable(target: JavaArrayType, source: Type): Boolean = when (source) {
         is JavaArrayType -> target.dimensions == source.dimensions && isAssignable(target.elementType, source.elementType)

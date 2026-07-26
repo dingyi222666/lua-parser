@@ -14,6 +14,21 @@ inline fun <T> equalsMore(origin: T, vararg arg: T): Boolean {
     return arg.any { it == origin }
 }
 
+/**
+ * Multiplatform stand-in for the JVM-only `Map.putIfAbsent`.
+ *
+ * Mirrors the JVM contract: stores [value] only when [key] is absent (or mapped to null) and
+ * returns the previous value, or null when the entry was written.
+ */
+fun <K, V : Any> MutableMap<K, V>.putIfAbsentCompat(key: K, value: V): V? {
+    val existing = this[key]
+    if (existing != null) {
+        return existing
+    }
+    this[key] = value
+    return null
+}
+
 
 fun parseLuaString(text: String): String {
     //char or default

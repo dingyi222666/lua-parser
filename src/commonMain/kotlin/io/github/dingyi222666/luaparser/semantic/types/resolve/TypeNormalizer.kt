@@ -91,7 +91,8 @@ object TypeNormalizer {
             superClass = type.superClass?.let { normalize(it, aliasStack) as ClassType },
             superType = type.superType?.let { normalize(it, aliasStack) },
             typeParameters = type.typeParameters.map { normalizeTypeParameter(it, aliasStack) },
-            alias = type.alias?.let { normalizeAliasPreservingNode(it, aliasStack) }
+            alias = type.alias?.let { normalizeAliasPreservingNode(it, aliasStack) },
+            javaClassName = type.javaClassName
         )
 
         is UnionType -> normalizeUnion(type.types.map { normalize(it, aliasStack) })

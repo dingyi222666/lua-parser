@@ -76,32 +76,23 @@ internal class NodePositionIndex(root: BaseASTNode) {
             }
         }
 
+        // Specificity ordering depends only on ranges, so establish it once here instead of
+        // re-sorting the matching subset on every position query.
+        collected.sortWith(
+            Comparator { a, b ->
+                val specificity = compareSpecificity(a.range, b.range)
+                if (specificity != 0) specificity else b.order.compareTo(a.order)
+            }
+        )
         entries = collected
     }
 
     fun findInnermost(position: Position): BaseASTNode? {
-        return entriesAt(position)
-            .map(Entry::node)
-            .firstOrNull()
+        return entries.firstOrNull { contains(it.range, position) }?.node
     }
 
     fun findEnclosing(position: Position): List<BaseASTNode> {
-        return entriesAt(position).map(Entry::node)
-    }
-
-    private fun entriesAt(position: Position): List<Entry> {
-        return entries
-            .asSequence()
-            .filter { contains(it.range, position) }
-            .sortedWith(Comparator { a, b ->
-                val specificity = compareSpecificity(a.range, b.range)
-                if (specificity != 0) {
-                    specificity
-                } else {
-                    b.order.compareTo(a.order)
-                }
-            })
-            .toList()
+        return entries.filter { contains(it.range, position) }.map(Entry::node)
     }
 
     private fun containsNodeRange(range: Range): Boolean {

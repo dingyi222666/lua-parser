@@ -3,7 +3,7 @@
  * Monaco LSP demo bridge:
  *  - HTTP static files + /api/*
  *  - WebSocket /lsp  (one JSON-RPC object per WS message)
- *  - Spawns JVM lua-parser LSP over stdio (Content-Length framing)
+ *  - Starts the JVM lua-parser LSP through Gradle over stdio (Content-Length framing)
  *
  * Usage (from repo root or this dir):
  *   node tools/monaco-lsp-demo/server.mjs
@@ -11,15 +11,15 @@
  *
  * Env:
  *   PORT=3099
- *   JAVA_HOME=...
+ *   JAVA_HOME=...      JDK used to run Gradle
  *   ANDROID_JAR=...   optional override
  *   LUA_PARSER_ROOT=... repo root (auto-detected)
  */
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { spawn } from 'node:child_process';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { spawn, spawnSync } from 'node:child_process';
 import { WebSocketServer } from 'ws';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -45,92 +45,129 @@ function findRepoRoot() {
 
 const REPO_ROOT = findRepoRoot();
 const PORT = Number(process.env.PORT || 3099);
-const JAVA_HOME = process.env.JAVA_HOME ||
-  '/Users/dingyi/Library/Java/JavaVirtualMachines/corretto-17.0.19/Contents/Home';
 
 function resolveAndroidJar() {
   if (process.env.ANDROID_JAR && fs.existsSync(process.env.ANDROID_JAR)) {
     return process.env.ANDROID_JAR;
   }
-  const candidates = [
-    path.join(process.env.HOME || '', 'Library/Android/sdk/platforms/android-35/android.jar'),
-    path.join(process.env.HOME || '', 'Library/Android/sdk/platforms/android-34/android.jar'),
-    '/Users/dingyi/Library/Android/sdk/platforms/android-35/android.jar',
-  ];
-  for (const c of candidates) {
-    if (c && fs.existsSync(c)) return c;
+  const sdkRoots = [
+    process.env.ANDROID_HOME,
+    process.env.ANDROID_SDK_ROOT,
+    process.env.HOME && path.join(process.env.HOME, 'Library', 'Android', 'sdk'),
+    process.env.HOME && path.join(process.env.HOME, 'Android', 'Sdk'),
+    process.env.LOCALAPPDATA && path.join(process.env.LOCALAPPDATA, 'Android', 'Sdk'),
+  ].filter(Boolean);
+  for (const sdkRoot of sdkRoots) {
+    const platforms = path.join(sdkRoot, 'platforms');
+    if (!fs.existsSync(platforms)) continue;
+    const versions = fs.readdirSync(platforms, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && /^android-\d+$/.test(entry.name))
+      .sort((a, b) => Number(b.name.slice(8)) - Number(a.name.slice(8)));
+    for (const version of versions) {
+      const candidate = path.join(platforms, version.name, 'android.jar');
+      if (fs.existsSync(candidate)) return candidate;
+    }
   }
-  return candidates[0] || '';
+  return '';
 }
 
 function fileUri(absPath) {
-  const normalized = path.resolve(absPath).split(path.sep).join('/');
-  // file:///Users/... on macOS
-  if (normalized.startsWith('/')) return 'file://' + encodeURI(normalized);
-  return 'file:///' + encodeURI(normalized.replace(/^([A-Za-z]):/, '$1:'));
+  return pathToFileURL(path.resolve(absPath)).href;
 }
 
 function listWorkspaceFiles() {
   if (!fs.existsSync(WORKSPACE_DIR)) return [];
-  return fs.readdirSync(WORKSPACE_DIR)
-    .filter((n) => n.endsWith('.lua') || n.endsWith('.aly'))
-    .sort()
-    .map((name) => {
-      const abs = path.join(WORKSPACE_DIR, name);
-      return {
-        name,
+  /** Recursive .lua/.aly under workspace (AndroLua .alp projects use subdirs). */
+  const out = [];
+  const walk = (dir, relBase = '') => {
+    for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (ent.name.startsWith('.')) continue;
+      const abs = path.join(dir, ent.name);
+      const rel = relBase ? `${relBase}/${ent.name}` : ent.name;
+      if (ent.isDirectory()) {
+        // Skip heavy binary/native trees from .alp packages
+        if (ent.name === 'libs' || ent.name === 'image' || ent.name === 'oat') continue;
+        walk(abs, rel);
+        continue;
+      }
+      if (!ent.name.endsWith('.lua') && !ent.name.endsWith('.aly')) continue;
+      out.push({
+        name: rel,
         path: abs,
         uri: fileUri(abs),
         text: fs.readFileSync(abs, 'utf8'),
-      };
-    });
+      });
+    }
+  };
+  walk(WORKSPACE_DIR);
+  return out.sort((a, b) => a.name.localeCompare(b.name));
 }
 
-function resolveJvmClasspath() {
-  const jar = path.join(REPO_ROOT, 'build/libs/luaparser-jvm-1.0.3.jar');
-  if (!fs.existsSync(jar)) {
-    throw new Error(
-      `Missing ${jar}. Run: bash ./gradlew.unix jvmJar  (from repo root)`
-    );
+function javaMajor(javaCommand) {
+  const result = spawnSync(javaCommand, ['-version'], { encoding: 'utf8' });
+  const output = `${result.stdout || ''}\n${result.stderr || ''}`;
+  const match = /version\s+"(?:1\.)?(\d+)/.exec(output);
+  return match ? Number(match[1]) : null;
+}
+
+function javaHomeCandidates(parent, suffix = '') {
+  if (!parent || !fs.existsSync(parent)) return [];
+  return fs.readdirSync(parent, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => path.join(parent, entry.name, suffix))
+    .filter((candidate) => fs.existsSync(candidate));
+}
+
+function resolveJava17Home() {
+  const executable = process.platform === 'win32' ? 'java.exe' : 'java';
+  const candidates = [];
+  if (process.env.JAVA_HOME) candidates.push(process.env.JAVA_HOME);
+
+  if (process.platform === 'darwin' && fs.existsSync('/usr/libexec/java_home')) {
+    const result = spawnSync('/usr/libexec/java_home', ['-v', '17'], { encoding: 'utf8' });
+    if (result.status === 0 && result.stdout.trim()) candidates.push(result.stdout.trim());
+    candidates.push(...javaHomeCandidates(
+      path.join(process.env.HOME || '', 'Library', 'Java', 'JavaVirtualMachines'),
+      path.join('Contents', 'Home')
+    ));
+  } else if (process.platform === 'win32') {
+    candidates.push(...javaHomeCandidates(path.join(process.env.USERPROFILE || '', '.jdks')));
+    candidates.push(...javaHomeCandidates(path.join(process.env.ProgramFiles || '', 'Java')));
+    candidates.push(...javaHomeCandidates(path.join(process.env.ProgramFiles || '', 'Eclipse Adoptium')));
+  } else {
+    candidates.push(...javaHomeCandidates('/usr/lib/jvm'));
+    candidates.push(...javaHomeCandidates(path.join(process.env.HOME || '', '.jdks')));
   }
-  // Prefer a cached classpath dump written by scripts/write-lsp-classpath.mjs
-  const cpFile = path.join(DEMO_ROOT, '.lsp-classpath');
-  if (fs.existsSync(cpFile)) {
-    const extra = fs.readFileSync(cpFile, 'utf8').trim();
-    if (extra) return [jar, ...extra.split(path.delimiter).filter(Boolean)].join(path.delimiter);
+  candidates.push(...javaHomeCandidates(path.join(process.env.HOME || '', '.sdkman', 'candidates', 'java')));
+
+  for (const candidate of [...new Set(candidates.map((home) => path.resolve(home)))]) {
+    const java = path.join(candidate, 'bin', executable);
+    if (fs.existsSync(java) && javaMajor(java) === 17) return candidate;
   }
-  // Fallback: known dependency layout from gradle caches (best-effort)
-  const home = process.env.HOME || '';
-  const g = path.join(home, '.gradle/caches/modules-2/files-2.1');
-  const findJar = (group, artifact, version) => {
-    const base = path.join(g, group, artifact, version);
-    if (!fs.existsSync(base)) return null;
-    const walk = (d) => {
-      for (const ent of fs.readdirSync(d, { withFileTypes: true })) {
-        const p = path.join(d, ent.name);
-        if (ent.isDirectory()) {
-          const hit = walk(p);
-          if (hit) return hit;
-        } else if (ent.name === `${artifact}-${version}.jar`) {
-          return p;
-        }
-      }
-      return null;
-    };
-    return walk(base);
+  if (javaMajor('java') === 17) return null;
+  throw new Error(
+    'JDK 17 is required to start the Monaco LSP demo. Set JAVA_HOME to a JDK 17 installation.'
+  );
+}
+
+function resolveGradleLaunch() {
+  const wrapper = path.join(REPO_ROOT, process.platform === 'win32' ? 'gradlew.bat' : 'gradlew');
+  if (!fs.existsSync(wrapper)) {
+    throw new Error(`Missing Gradle wrapper: ${wrapper}`);
+  }
+  const javaHome = resolveJava17Home();
+  const env = { ...process.env };
+  if (javaHome) {
+    env.JAVA_HOME = javaHome;
+    env.PATH = `${path.join(javaHome, 'bin')}${path.delimiter}${env.PATH || ''}`;
+  }
+  return {
+    command: wrapper,
+    args: ['--no-daemon', '--console=plain', '-q', 'runLuaLanguageServer'],
+    shell: process.platform === 'win32',
+    env,
+    javaHome: javaHome || env.JAVA_HOME || 'PATH java',
   };
-  const deps = [
-    findJar('org.jetbrains.kotlin', 'kotlin-stdlib', '2.2.0'),
-    findJar('org.eclipse.lsp4j', 'org.eclipse.lsp4j', '0.23.1'),
-    findJar('org.eclipse.lsp4j', 'org.eclipse.lsp4j.jsonrpc', '0.23.1'),
-    findJar('com.google.code.gson', 'gson', '2.14.0'),
-    findJar('org.jetbrains', 'annotations', '13.0'),
-    findJar('com.google.errorprone', 'error_prone_annotations', '2.48.0'),
-  ].filter(Boolean);
-  if (deps.length < 4) {
-    console.warn('[bridge] classpath deps incomplete; run npm run classpath after gradle');
-  }
-  return [jar, ...deps].join(path.delimiter);
 }
 
 /** Content-Length framed JSON-RPC reader from a stream. */
@@ -200,6 +237,9 @@ function apiInfo() {
     androidJarPresent: !!(androidJar && fs.existsSync(androidJar)),
     sampleFiles: listWorkspaceFiles().map((f) => ({ name: f.name, uri: f.uri })),
     lspMain: 'io.github.dingyi222666.luaparser.lsp.LuaLanguageServerLauncherKt',
+    lspLaunch: process.platform === 'win32'
+      ? 'gradlew.bat --no-daemon --console=plain -q runLuaLanguageServer'
+      : './gradlew --no-daemon --console=plain -q runLuaLanguageServer',
     port: PORT,
     transport: 'websocket-json (one JSON-RPC object per message) → stdio Content-Length',
   };
@@ -236,6 +276,19 @@ const server = http.createServer((req, res) => {
 });
 
 const wss = new WebSocketServer({ server, path: '/lsp' });
+const lspChildren = new Set();
+
+function stopLspChild(child) {
+  if (!child || child.exitCode != null) return;
+  try {
+    child.stdin.end();
+  } catch { /* ignore */ }
+  const forceTimer = setTimeout(() => {
+    if (child.exitCode == null) child.kill('SIGTERM');
+  }, 5000);
+  forceTimer.unref();
+  child.once('exit', () => clearTimeout(forceTimer));
+}
 
 wss.on('connection', (ws) => {
   console.log('[bridge] client connected');
@@ -250,21 +303,24 @@ wss.on('connection', (ws) => {
   };
 
   try {
-    const classpath = resolveJvmClasspath();
-    const javaBin = path.join(JAVA_HOME, 'bin', 'java');
-    const java = fs.existsSync(javaBin) ? javaBin : 'java';
-    const main = 'io.github.dingyi222666.luaparser.lsp.LuaLanguageServerLauncherKt';
-    console.log('[bridge] spawn', java, '-cp', classpath.slice(0, 80) + '…', main);
-    child = spawn(java, ['-cp', classpath, main], {
+    const launch = resolveGradleLaunch();
+    console.log('[bridge] JDK 17:', launch.javaHome);
+    console.log('[bridge] spawn', launch.command, ...launch.args);
+    child = spawn(launch.command, launch.args, {
       cwd: REPO_ROOT,
-      env: {
-        ...process.env,
-        JAVA_HOME,
-        ANDROID_HOME: process.env.ANDROID_HOME || path.join(process.env.HOME || '', 'Library/Android/sdk'),
-      },
+      env: launch.env,
+      shell: launch.shell,
       stdio: ['pipe', 'pipe', 'pipe'],
     });
-    sendStatus('spawn', 'JVM LSP started', { pid: child.pid });
+    lspChildren.add(child);
+    child.once('spawn', () => {
+      sendStatus('spawn', 'Gradle LSP task started', { pid: child.pid });
+    });
+    child.once('error', (error) => {
+      console.error('[bridge] failed to start Gradle LSP task', error);
+      sendStatus('error', String(error.message || error));
+      if (ws.readyState === ws.OPEN) ws.close();
+    });
 
     child.stdout.on('data', (chunk) => {
       for (const msg of framer.push(chunk)) {
@@ -279,6 +335,7 @@ wss.on('connection', (ws) => {
       sendStatus('stderr', text.slice(0, 2000));
     });
     child.on('exit', (code, signal) => {
+      lspChildren.delete(child);
       console.log('[bridge] lsp exit', code, signal);
       sendStatus('exit', `LSP process exited code=${code} signal=${signal}`);
       if (ws.readyState === ws.OPEN) ws.close();
@@ -307,17 +364,18 @@ wss.on('connection', (ws) => {
     if (closed) return;
     closed = true;
     console.log('[bridge] client disconnected');
-    try {
-      if (child && !child.killed) {
-        child.stdin.end();
-        child.kill('SIGTERM');
-        setTimeout(() => {
-          if (child && !child.killed) child.kill('SIGKILL');
-        }, 2000);
-      }
-    } catch { /* ignore */ }
+    stopLspChild(child);
   });
 });
+
+function shutdownBridge() {
+  wss.clients.forEach((ws) => ws.close());
+  lspChildren.forEach(stopLspChild);
+  server.close();
+}
+
+process.once('SIGINT', shutdownBridge);
+process.once('SIGTERM', shutdownBridge);
 
 server.listen(PORT, '127.0.0.1', () => {
   const info = apiInfo();

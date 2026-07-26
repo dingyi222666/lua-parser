@@ -25,20 +25,23 @@ class SemanticModelBuilder {
         val adapters = ApiAdapters(binder)
         val evaluator = ExpressionTypeEvaluator(binder, context)
         val memberResolver = MemberResolver(binder)
-        val nodePositionIndex = NodePositionIndex(chunk)
         val referenceQueries = ReferenceQueries(binder, evaluator, memberResolver, adapters, context)
-        val nodeTypeIndex = NodeTypeIndex(binder, evaluator, adapters)
-        val completionProvider = CompletionProvider(nodePositionIndex, referenceQueries, adapters)
-        val signatureHelpProvider = SignatureHelpProvider(binder, nodePositionIndex, evaluator)
+        // A workspace pass builds a model per document; the position index and the providers
+        // that depend on it are only needed for documents that actually get queried.
+        val nodePositionIndex = lazy { NodePositionIndex(chunk) }
 
         return DefaultSemanticModel(
             binder = binder,
             adapters = adapters,
             referenceQueries = referenceQueries,
             nodePositionIndex = nodePositionIndex,
-            nodeTypeIndex = nodeTypeIndex,
-            completionProvider = completionProvider,
-            signatureHelpProvider = signatureHelpProvider,
+            nodeTypeIndex = NodeTypeIndex(binder, evaluator, adapters),
+            completionProvider = lazy {
+                CompletionProvider(nodePositionIndex.value, referenceQueries, adapters)
+            },
+            signatureHelpProvider = lazy {
+                SignatureHelpProvider(binder, nodePositionIndex.value, evaluator)
+            },
             diagnostics = diagnostics
         )
     }

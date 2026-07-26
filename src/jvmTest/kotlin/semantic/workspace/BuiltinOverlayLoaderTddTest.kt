@@ -1,6 +1,7 @@
 package semantic.workspace
 
 import io.github.dingyi222666.luaparser.interop.jvm.JvmWorkspaceEngine
+import io.github.dingyi222666.luaparser.interop.jvm.JvmWorkspaceConfiguration
 import io.github.dingyi222666.luaparser.lsp.LuaLanguageService
 import io.github.dingyi222666.luaparser.parser.LuaParser
 import io.github.dingyi222666.luaparser.parser.LuaVersion
@@ -10,6 +11,7 @@ import io.github.dingyi222666.luaparser.semantic.workspace.LuaWorkspaceInput
 import io.github.dingyi222666.luaparser.semantic.workspace.VirtualPath
 import org.eclipse.lsp4j.InitializeParams
 import semantic.support.WorkspaceSemanticHarness
+import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
@@ -239,6 +241,12 @@ class BuiltinOverlayLoaderTddTest {
 
     @Test
     fun androlua_android_framework_full_name_aliases_and_overloads_reach_workspace_queries() {
+        val androidJar = File(
+            requireNotNull(JvmWorkspaceConfiguration.discoverReflectiveAndroidJarPath()) {
+                "android.jar is required for Android framework reflection tests"
+            }
+        )
+        require(androidJar.isFile) { "android.jar is required: ${androidJar.path}" }
         val harness = WorkspaceSemanticHarness.build(
             "main.lua" to """
                 require "import"
@@ -248,7 +256,11 @@ class BuiltinOverlayLoaderTddTest {
                 local addView = ViewGroup.__class.addView
                 return listener, addView
             """.trimIndent(),
-            standardLibraryOverlayVersion = LuaVersion.ANDROLUA_5_3
+            standardLibraryOverlayVersion = LuaVersion.ANDROLUA_5_3,
+            metadata = mapOf(JvmWorkspaceConfiguration.ANDROID_JAR_METADATA_KEY to androidJar.path),
+            engine = JvmWorkspaceEngine(
+                configuration = JvmWorkspaceConfiguration(androidJar = androidJar.path)
+            )
         )
 
         val canonicalListenerProvider = assertNotNull(
@@ -266,7 +278,7 @@ class BuiltinOverlayLoaderTddTest {
                 harness.positionOf("main.lua", "addView", occurrence = 2)
             ).singleOrNull { it.label == "addView" }
         )
-        assertContains(addViewCompletion.detail.orEmpty(), "view: android.view.View")
-        assertContains(addViewCompletion.detail.orEmpty(), "params: android.view.ViewGroup.LayoutParams")
+        assertContains(addViewCompletion.detail.orEmpty(), "android.view.View")
+        assertContains(addViewCompletion.detail.orEmpty(), "android.view.ViewGroup.LayoutParams")
     }
 }

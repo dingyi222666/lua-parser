@@ -57,19 +57,11 @@ OpenJDK 64-Bit Server VM Corretto-17.0.19.10.1 (build 17.0.19+10-LTS, mixed mode
 
 Default shell `java` on this host may be a newer OpenJDK (e.g. 26); verification docs still force Corretto 17 via `JAVA_HOME` as above. Project `jvmToolchain` / compile target remain JVM 11 in build files; that does not change the coordinated verification JDK.
 
-### Live source-tree inventory (docs-only; not final)
+### Test Evidence
 
-Figures match the WAVE36F / TASK-125 worker recount and sibling docs (`docs/acceptance-traceability.md`, `docs/production-readiness.md`). They are filesystem/source accounting only.
-
-| Inventory slice | Count |
-| --- | ---: |
-| Baseline `*Test.kt` files (excl. inventory fixture) | **331** |
-| Baseline `@Test` methods | **4624** |
-| Campaign `*TddTest.kt` files (excl. `testinventory`) | **272** |
-| Campaign `@Test` methods | **4109** |
-| Remaining to 500 by **source** campaign method count | **0** (4109 ≥ 500) |
-
-**Not final until TASK-043.** Mid-wave live disk may drift further (e.g. TASK-503 ledger noted campaign methods 4125 / baseline methods 4640 at a later recount). Prefer TASK-125 fixture + `docs/test-strategy.md` once review-accepted, then TASK-043 command evidence.
+Historical source recounts are retained in final acceptance ledgers where needed,
+but this baseline page does not maintain live file or annotation totals. Current
+suite authority comes from the serialized Gradle command evidence.
 
 ### What this baseline page is for now
 
@@ -82,14 +74,14 @@ Companion docs (do not edit under this task's scope):
 
 - `docs/android-platform-setup.md` — SDK discovery and skip-when-absent policy
 - `docs/final-verification.md` — pre-verification ledger (not green)
-- `docs/acceptance-traceability.md` — AC matrix + inventory open note
+- `docs/acceptance-traceability.md` — final AC matrix
 - `docs/production-readiness.md` — gap checklist and blocked chains
-- `docs/test-strategy.md` / inventory fixture — owned by TASK-125 path
+- `docs/test-strategy.md` — current test scope and verification policy
 
 ### Explicit non-claims
 
 - No claim that `./gradlew check`, `compileTestKotlinJvm`, or any full/focused suite currently passes.
-- No claim that inventory bars are review-accepted or finally reconciled.
+- No claim that source recounts establish current suite health.
 - No claim that Android-Lua, LuaJava, workspace, or LSP surfaces are release-complete.
 - TASK-184 **done** is not a substitute for TASK-043/TASK-037.
 
@@ -126,7 +118,6 @@ AM src/jvmTest/kotlin/semantic/workspace/LuaWorkspaceQueryFacadeTest.kt
 ?? docs/test-strategy.md
 ?? locks/
 ?? sh.exe.stackdump
-?? src/jvmTest/kotlin/testinventory/
 ?? tasks/
 warning: unable to access 'C:\Users\dingyi/.config/git/ignore (historical Windows path) (historical Windows path)': Permission denied
 warning: unable to access 'C:\Users\dingyi/.config/git/ignore (historical Windows path) (historical Windows path)': Permission denied
@@ -332,10 +323,7 @@ src/jvmTest/kotlin/semantic/types/syntax/TypeSyntaxRendererTest.kt
 src/jvmTest/kotlin/semantic/workspace/LuaWorkspaceEngineUpdateJvmTest.kt
 src/jvmTest/kotlin/semantic/workspace/LuaWorkspaceQueryFacadeTest.kt
 src/jvmTest/kotlin/source/AST2LuaRoundTripTest.kt
-src/jvmTest/kotlin/testinventory/NewTestInventoryTddTest.kt
 ```
-
-The `src/jvmTest/kotlin/testinventory/NewTestInventoryTddTest.kt` path was untracked and locked by `TASK-006` at TASK-001 time. Current inventory-fixture ownership is the TASK-125 path; do not treat the 2026-06-06 lock note as current.
 
 `jvmTest` parser regression resources **(historical)**:
 
@@ -376,8 +364,7 @@ JAVA_HOME=/Users/dingyi/Library/Java/JavaVirtualMachines/corretto-17.0.19/Conten
 ```bash
 export JAVA_HOME=/Users/dingyi/Library/Java/JavaVirtualMachines/corretto-17.0.19/Contents/Home
 export PATH="$JAVA_HOME/bin:$PATH"
-# Example only — TASK-043 owns serialized verification; do not run from parallel doc workers:
-# ./gradlew jvmTest --tests testinventory.NewTestInventoryTddTest
+# Example only — TASK-043 owns serialized verification; do not run broad suites from parallel doc workers.
 ```
 
 Historical Windows verification path transcripts (stale; do not use on this host):
@@ -410,11 +397,10 @@ Workers were also told to avoid these active task outputs/paths unless assigned:
 
 ```text
 docs/test-strategy.md
-src/jvmTest/kotlin/testinventory/
 docs/android-lua-library-models.md
 ```
 
-`docs/test-strategy.md` and the inventory fixture remain sensitive under the TASK-125 path. Do not edit them from this baseline-state task.
+`docs/test-strategy.md` was historically sensitive under the TASK-006 path; current edits follow normal repository ownership.
 
 Active locks observed **during TASK-001 inventory** (stale):
 
@@ -427,7 +413,6 @@ locks/files/docs__android-lua-library-models.md.lock: owner RERUN2-W004, task TA
 locks/files/tasks__TASK-004.md.lock: owner RERUN2-W004, task TASK-004
 locks/tasks/TASK-006.lock: owner RERUN-W006, task TASK-006
 locks/files/docs__test-strategy.md.lock: owner RERUN-W006, task TASK-006
-locks/files/src__jvmTest__kotlin__testinventory__NewTestInventoryTddTest.kt.lock: owner RERUN-W006, task TASK-006
 ```
 
 Completed documentation already present but untracked at the time of TASK-001 status capture:

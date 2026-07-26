@@ -75,3 +75,81 @@ fun LegacyObjectFieldSyntax.toSyntaxAst(): ObjectFieldSyntax {
         optional = optional
     )
 }
+
+/**
+ * Reverse direction: projects the canonical syntax AST onto the legacy `semantic.types.*` shape.
+ *
+ * There used to be two hand-written recursive-descent parsers for the same annotation grammar —
+ * one per AST shape — parsing the same text back to back. [TypeSyntaxParser] is now the only
+ * parser; the legacy facade re-projects its output through here, so grammar fixes land once.
+ */
+fun TypeSyntax.toLegacySyntax(): LegacyTypeSyntax {
+    return when (this) {
+        is NamedTypeSyntax -> LegacyNamedTypeSyntax(name)
+        is LiteralTypeSyntax -> LegacyLiteralTypeSyntax(value)
+        is UnionTypeSyntax -> LegacyUnionTypeSyntax(options.map { it.toLegacySyntax() })
+        is IntersectionTypeSyntax -> LegacyIntersectionTypeSyntax(types.map { it.toLegacySyntax() })
+        is ArrayTypeSyntax -> LegacyArrayTypeSyntax(elementType.toLegacySyntax())
+        is NullableTypeSyntax -> LegacyNullableTypeSyntax(innerType.toLegacySyntax())
+        is TupleTypeSyntax -> LegacyTupleTypeSyntax(elements.map { it.toLegacySyntax() })
+        is MultiReturnTypeSyntax -> LegacyMultiReturnTypeSyntax(types.map { it.toLegacySyntax() })
+        is VarargTypeSyntax -> LegacyVarargTypeSyntax(elementType.toLegacySyntax())
+        is IndexTableTypeSyntax -> LegacyIndexTypeSyntax(keyType.toLegacySyntax(), valueType.toLegacySyntax())
+
+        is GenericTypeSyntax -> LegacyGenericTypeSyntax(
+            baseName = (baseType as? NamedTypeSyntax)?.name ?: baseType.toLegacySyntax().legacyBaseName(),
+            arguments = arguments.map { it.toLegacySyntax() }
+        )
+
+        is FunctionTypeSyntax -> LegacyFunctionTypeSyntax(
+            parameters = parameters.map { parameter ->
+                LegacyFunctionParameterSyntax(
+                    name = parameter.name ?: if (parameter.vararg) "..." else null,
+                    type = parameter.type.toLegacySyntax(),
+                    optional = parameter.optional,
+                    vararg = parameter.vararg
+                )
+            },
+            // The legacy shape stores a return list; MultiReturn flattens back into it.
+            returnTypes = when (val returned = returnType) {
+                is MultiReturnTypeSyntax -> returned.types.map { it.toLegacySyntax() }
+                else -> listOf(returned.toLegacySyntax())
+            },
+            typeParameters = typeParameters.map { parameter ->
+                LegacyTypeParameterDeclarationSyntax(
+                    name = parameter.name,
+                    constraint = parameter.constraint?.toLegacySyntax()
+                )
+            }
+        )
+
+        // Legacy object types carry no indexer syntax. An indexer-only object is exactly a
+        // legacy index type; when fields are also present the fields win (legacy could not
+        // have produced such a node at all, so nothing regresses).
+        is ObjectTypeSyntax -> when {
+            fields.isEmpty() && indexers.size == 1 -> LegacyIndexTypeSyntax(
+                keyType = indexers.single().keyType.toLegacySyntax(),
+                valueType = indexers.single().valueType.toLegacySyntax()
+            )
+
+            else -> LegacyObjectTypeSyntax(
+                fields = fields.map { field ->
+                    LegacyObjectFieldSyntax(
+                        name = when (val name = field.name) {
+                            is IdentifierObjectFieldNameSyntax -> name.value
+                            is QuotedObjectFieldNameSyntax -> name.literal
+                                .removeSurrounding("\"")
+                                .removeSurrounding("'")
+                        },
+                        type = field.type.toLegacySyntax(),
+                        optional = field.optional
+                    )
+                }
+            )
+        }
+    }
+}
+
+private fun LegacyTypeSyntax.legacyBaseName(): String {
+    return (this as? LegacyNamedTypeSyntax)?.identifier ?: "table"
+}

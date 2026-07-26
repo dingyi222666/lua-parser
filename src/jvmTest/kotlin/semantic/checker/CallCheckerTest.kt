@@ -13,14 +13,20 @@ import io.github.dingyi222666.luaparser.semantic.types.model.AliasType
 import io.github.dingyi222666.luaparser.semantic.types.model.AppliedType
 import io.github.dingyi222666.luaparser.semantic.types.model.FunctionParameter
 import io.github.dingyi222666.luaparser.semantic.types.model.FunctionType
+import io.github.dingyi222666.luaparser.semantic.types.model.JavaClassType
+import io.github.dingyi222666.luaparser.semantic.types.model.JavaInstanceType
+import io.github.dingyi222666.luaparser.semantic.types.model.JavaTypeName
 import io.github.dingyi222666.luaparser.semantic.types.model.MultiReturnType
 import io.github.dingyi222666.luaparser.semantic.types.model.OverloadedFunctionType
 import io.github.dingyi222666.luaparser.semantic.types.model.PrimitiveType
+import io.github.dingyi222666.luaparser.semantic.types.model.TableType
+import io.github.dingyi222666.luaparser.semantic.types.model.TypeParameterType
 import io.github.dingyi222666.luaparser.semantic.types.model.UnknownType
 import io.github.dingyi222666.luaparser.semantic.types.resolve.TypeResolver
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertIs
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
@@ -223,6 +229,40 @@ class CallCheckerTest {
 
         assertSame(PrimitiveType.NUMBER, noArgResult.returnType)
         assertSame(PrimitiveType.STRING, stringArgResult.returnType)
+    }
+
+    @Test
+    fun genericJavaContainerOverloadInstantiatesItsTableReturn() {
+        val harness = harness("")
+        val element = TypeParameterType("T")
+        val listClass = JavaClassType(
+            javaName = JavaTypeName(packageName = "java.util", simpleNames = listOf("List")),
+            typeParameters = listOf(TypeParameterType("E"))
+        )
+        val callable = OverloadedFunctionType(
+            listOf(
+                FunctionType(
+                    parameters = listOf(FunctionParameter("object", PrimitiveType.ANY)),
+                    returnType = PrimitiveType.TABLE
+                ),
+                FunctionType(
+                    parameters = listOf(FunctionParameter("object", JavaInstanceType(listClass, listOf(element)))),
+                    returnType = TableType(
+                        indexSignature = TableType.IndexSignature(PrimitiveType.NUMBER, element)
+                    ),
+                    typeParameters = listOf(element)
+                )
+            )
+        )
+
+        val result = harness.checker.checkCall(
+            callable,
+            listOf(JavaInstanceType(listClass, listOf(PrimitiveType.STRING))),
+            harness.scopeId
+        )
+
+        val table = assertIs<TableType>(result.returnType)
+        assertSame(PrimitiveType.STRING, table.indexSignature?.valueType)
     }
 
     private fun harness(source: String): Harness {

@@ -141,7 +141,7 @@ class LuaJavaBindClassGenericSurfaceTddTest {
             displayName = hover.typeInfo?.displayName,
             fqn = "java.util.Optional",
             simpleName = "Optional",
-            expectedArgHints = listOf("T"),
+            expectedArgHints = listOf("value"),
             context = "Optional.of"
         )
     }

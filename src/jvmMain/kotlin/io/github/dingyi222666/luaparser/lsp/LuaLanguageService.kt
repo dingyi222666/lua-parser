@@ -142,6 +142,23 @@ class LuaLanguageService(
     private val engine: JvmWorkspaceEngine = JvmWorkspaceEngine()
 ) {
     private val stateLock = Any()
+
+    /**
+     * Position indexes are derived purely from a chunk, but rename/call-hierarchy walks look up
+     * one identifier per reference site and previously rebuilt the whole index each time.
+     * Remember the index for the most recent chunk; all accesses are under [stateLock].
+     */
+    private var cachedIndexChunk: ChunkNode? = null
+    private var cachedIndex: NodePositionIndex? = null
+
+    private fun positionIndexFor(chunk: ChunkNode): NodePositionIndex {
+        cachedIndex?.takeIf { cachedIndexChunk === chunk }?.let { return it }
+        return NodePositionIndex(chunk).also {
+            cachedIndexChunk = chunk
+            cachedIndex = it
+        }
+    }
+
     private var snapshot: WorkspaceSnapshot = WorkspaceSnapshot()
     private var queries: LuaWorkspaceQueryFacade = LuaWorkspaceQueryFacade(snapshot)
     private val indexedWorkspaceFiles = linkedMapOf<VirtualPath, String>()
@@ -617,7 +634,7 @@ class LuaLanguageService(
         if (chunk == null) {
             return@synchronized emptyList()
         }
-        val index = NodePositionIndex(chunk)
+        val index = positionIndexFor(chunk)
         val results = positions.map { lspPosition ->
             selectionRangeAt(index, lspPosition.toParserPosition())
         }
@@ -1402,8 +1419,25 @@ class LuaLanguageService(
         return PublishDiagnosticsParams(uri ?: uriFor(path), diagnostics)
     }
 
+    /**
+     * Parse diagnostics for [path], taken from the workspace parse.
+     *
+     * This used to re-parse the whole buffer on every keystroke, because the workspace parse
+     * discarded its recovery diagnostics. It no longer does, so the analyzed snapshot is
+     * authoritative and the re-parse only remains as a fallback for documents the snapshot has
+     * not analyzed yet.
+     *
+     * The snapshot parses leniently where this call site used to parse strictly. That is an
+     * improvement rather than a regression: on stray top-level terminators (`end`, `else`,
+     * `until`, …) the strict parser threw, which anchored the error at 1:1; recovery reports it
+     * at the position it actually occurs.
+     */
     private fun parseDiagnostics(path: VirtualPath): List<Diagnostic> {
         val source = openDocuments[path] ?: indexedWorkspaceFiles[path] ?: return emptyList()
+        val semanticFile = snapshot.files[path]?.semanticFile
+        if (semanticFile != null && semanticFile.source == source) {
+            return semanticFile.recoveryDiagnostics.map(::parseDiagnostic)
+        }
         val result = try {
             LuaParser().parseWithDiagnostics(source)
         } catch (error: IllegalStateException) {
@@ -2307,9 +2341,18 @@ class LuaLanguageService(
         return data
     }
 
+    /**
+     * AST for a document the snapshot has not analyzed yet (folding, selection ranges, call
+     * hierarchy, inlay hints — all of which want the tree, not diagnostics).
+     *
+     * Parses leniently to match how the workspace would have parsed the same buffer. Parsing
+     * strictly here meant a document that fell back to this path produced a differently shaped
+     * tree than the identical document once indexed, so e.g. folding ranges could change purely
+     * based on whether indexing had caught up.
+     */
     private fun parseChunkForFolding(source: String): ChunkNode? {
         return try {
-            LuaParser().parseWithDiagnostics(source).chunk
+            LuaParser().parseWorkspaceSnippet(source)
         } catch (_: IllegalStateException) {
             null
         } catch (_: Exception) {
@@ -2479,7 +2522,10 @@ class LuaLanguageService(
         val insertSpaces = options?.isInsertSpaces ?: true
 
         if (range == null) {
-            val formatted = formatSourceText(source, tabSize, insertSpaces) ?: return emptyList()
+            // Whole-document formatting operates on exactly the buffer the workspace analyzed,
+            // so reuse that parse instead of running a second one per format request.
+            val analyzed = snapshot.files[path]?.semanticFile?.takeIf { it.source == source }
+            val formatted = formatSourceText(source, tabSize, insertSpaces, analyzed) ?: return emptyList()
             if (formatted == source) {
                 return emptyList()
             }
@@ -2508,18 +2554,36 @@ class LuaLanguageService(
         return listOf(TextEdit(clamped, selectedFormatted))
     }
 
-    private fun formatSourceText(source: String, tabSize: Int, insertSpaces: Boolean): String? {
+    /**
+     * @param analyzed the workspace's own parse of exactly this text, when available. Range
+     *   formatting passes a substring that has no snapshot entry, so it parses here instead.
+     */
+    private fun formatSourceText(
+        source: String,
+        tabSize: Int,
+        insertSpaces: Boolean,
+        analyzed: WorkspaceSemanticFile? = null
+    ): String? {
         if (source.isEmpty()) {
             return source
         }
         // Prefer AST2Lua when the buffer parses without recovery diagnostics.
         try {
-            val parseResult = LuaParser().parseWithDiagnostics(source)
-            if (parseResult.recoveryDiagnostics.isEmpty()) {
+            val chunk: ChunkNode
+            val recoveryDiagnostics: List<LuaParserRecoveryDiagnostic>
+            if (analyzed != null) {
+                chunk = analyzed.chunk
+                recoveryDiagnostics = analyzed.recoveryDiagnostics
+            } else {
+                val parseResult = LuaParser().parseWithDiagnostics(source)
+                chunk = parseResult.chunk
+                recoveryDiagnostics = parseResult.recoveryDiagnostics
+            }
+            if (recoveryDiagnostics.isEmpty()) {
                 val printer = AST2Lua().apply {
                     indentSize = if (insertSpaces) tabSize else tabSize.coerceAtLeast(1)
                 }
-                var printed = printer.asCode(parseResult.chunk)
+                var printed = printer.asCode(chunk)
                 // AST2Lua often starts with a leading newline from visitBlock/statement.
                 printed = printed.trimStart('\n', '\r')
                 if (!insertSpaces) {
@@ -2897,7 +2961,7 @@ class LuaLanguageService(
         }
 
         // Fallback: walk chunk identifiers via NodePositionIndex when semantic file is thin.
-        val index = NodePositionIndex(chunk)
+        val index = positionIndexFor(chunk)
         return when (val node = index.findInnermost(position)) {
             is Identifier -> node
             is MemberExpression -> node.identifier.takeIf {
@@ -3016,7 +3080,7 @@ class LuaLanguageService(
     }
 
     private fun findIdentifierAtRange(chunk: ChunkNode, range: Range): Identifier? {
-        val index = NodePositionIndex(chunk)
+        val index = positionIndexFor(chunk)
         return when (val node = index.findInnermost(range.start)) {
             is Identifier -> node
             is MemberExpression -> node.identifier

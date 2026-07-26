@@ -5,17 +5,26 @@ import io.github.dingyi222666.luaparser.semantic.binder.BinderPassResult
 import io.github.dingyi222666.luaparser.semantic.binder.DeclarationKind
 import io.github.dingyi222666.luaparser.semantic.binder.ScopeId
 import io.github.dingyi222666.luaparser.semantic.types.model.CallableType
+import io.github.dingyi222666.luaparser.semantic.types.model.AppliedType
+import io.github.dingyi222666.luaparser.semantic.types.model.ArrayType
 import io.github.dingyi222666.luaparser.semantic.types.model.FunctionParameter
 import io.github.dingyi222666.luaparser.semantic.types.model.FunctionType
 import io.github.dingyi222666.luaparser.semantic.types.model.IntersectionType
+import io.github.dingyi222666.luaparser.semantic.types.model.JavaArrayType
 import io.github.dingyi222666.luaparser.semantic.types.model.JavaClassType
+import io.github.dingyi222666.luaparser.semantic.types.model.JavaInstanceType
 import io.github.dingyi222666.luaparser.semantic.types.model.ModuleType
 import io.github.dingyi222666.luaparser.semantic.types.model.OverloadedFunctionType
+import io.github.dingyi222666.luaparser.semantic.types.model.PrimitiveType
+import io.github.dingyi222666.luaparser.semantic.types.model.TableType
 import io.github.dingyi222666.luaparser.semantic.types.model.Type
 import io.github.dingyi222666.luaparser.semantic.types.model.TypeParameterType
 import io.github.dingyi222666.luaparser.semantic.types.model.UnionType
+import io.github.dingyi222666.luaparser.semantic.types.model.UnknownType
 import io.github.dingyi222666.luaparser.semantic.types.resolve.TypeExpansion
+import io.github.dingyi222666.luaparser.semantic.types.resolve.TypeSubstitutor
 import io.github.dingyi222666.luaparser.semantic.types.resolve.isAssignableFrom
+import io.github.dingyi222666.luaparser.semantic.types.resolve.unionTypeOf
 
 class CallChecker(
     private val binder: BinderPassResult
@@ -66,7 +75,7 @@ class CallChecker(
         }
 
         val compatible = callableResolution.signatures.mapIndexedNotNull { index, signature ->
-            rankSignature(signature, argumentTypes, index)
+            rankSignature(instantiateGenericSignature(signature, argumentTypes), argumentTypes, index)
         }
         if (compatible.isEmpty()) {
             return CallResolution(
@@ -185,6 +194,12 @@ class CallChecker(
             if (!isArgumentAssignable(parameter.type, argumentType)) {
                 return null
             }
+            assignabilityPenalty += when (parameter.type) {
+                PrimitiveType.ANY, PrimitiveType.UNKNOWN, UnknownType -> 10
+                is TypeParameterType -> 5
+                is UnionType -> 1
+                else -> 0
+            }
             if (parameter.type != argumentType) {
                 exactMismatchCount++
             }
@@ -225,6 +240,130 @@ class CallChecker(
                 fallbackPenalty = fallbackPenalty
             )
         )
+    }
+
+    private fun instantiateGenericSignature(signature: FunctionType, argumentTypes: List<Type>): FunctionType {
+        if (signature.typeParameters.isEmpty()) {
+            return signature
+        }
+        val typeParameterNames = signature.typeParameters.mapTo(linkedSetOf(), TypeParameterType::name)
+        val inferred = linkedMapOf<String, Type>()
+        argumentTypes.forEachIndexed { argumentIndex, argumentType ->
+            val parameter = signature.parameters.getOrNull(argumentIndex)
+                ?: signature.parameters.lastOrNull { it.vararg }
+                ?: return@forEachIndexed
+            inferGenericArguments(parameter.type, argumentType, typeParameterNames, inferred)
+        }
+        if (inferred.isEmpty()) {
+            return signature
+        }
+        val substituted = TypeSubstitutor().substitute(signature, inferred) as FunctionType
+        return FunctionType(
+            parameters = substituted.parameters,
+            returnType = substituted.returnType,
+            typeParameters = signature.typeParameters.filterNot { it.name in inferred }
+        )
+    }
+
+    private fun inferGenericArguments(
+        parameterType: Type,
+        argumentType: Type,
+        typeParameterNames: Set<String>,
+        inferred: MutableMap<String, Type>
+    ) {
+        when (parameterType) {
+            is TypeParameterType -> {
+                if (parameterType.name !in typeParameterNames) {
+                    return
+                }
+                if (parameterType.constraint?.isAssignableFrom(argumentType) == false) {
+                    return
+                }
+                val current = inferred[parameterType.name]
+                inferred[parameterType.name] = current?.let { unionTypeOf(it, argumentType) } ?: argumentType
+            }
+
+            is AppliedType -> when (argumentType) {
+                is AppliedType -> if (parameterType.baseName == argumentType.baseName) {
+                    inferGenericArgumentLists(parameterType.typeArguments, argumentType.typeArguments, typeParameterNames, inferred)
+                }
+                is JavaInstanceType -> if (parameterType.baseName.matchesJavaName(argumentType)) {
+                    inferGenericArgumentLists(parameterType.typeArguments, argumentType.typeArguments, typeParameterNames, inferred)
+                }
+                is IntersectionType -> argumentType.types.forEach {
+                    inferGenericArguments(parameterType, it, typeParameterNames, inferred)
+                }
+                else -> Unit
+            }
+
+            is JavaInstanceType -> when (argumentType) {
+                is JavaInstanceType -> if (
+                    parameterType.javaName.binaryName == argumentType.javaName.binaryName ||
+                    parameterType.copy(typeArguments = emptyList()).isAssignableFrom(argumentType)
+                ) {
+                    inferGenericArgumentLists(parameterType.typeArguments, argumentType.typeArguments, typeParameterNames, inferred)
+                }
+                is IntersectionType -> argumentType.types.forEach {
+                    inferGenericArguments(parameterType, it, typeParameterNames, inferred)
+                }
+                else -> Unit
+            }
+
+            is JavaArrayType -> when (argumentType) {
+                is JavaArrayType -> if (parameterType.dimensions == argumentType.dimensions) {
+                    inferGenericArguments(parameterType.elementType, argumentType.elementType, typeParameterNames, inferred)
+                }
+                is IntersectionType -> argumentType.types.forEach {
+                    inferGenericArguments(parameterType, it, typeParameterNames, inferred)
+                }
+                else -> Unit
+            }
+
+            is ArrayType -> when (argumentType) {
+                is ArrayType -> inferGenericArguments(parameterType.elementType, argumentType.elementType, typeParameterNames, inferred)
+                is JavaArrayType -> inferGenericArguments(parameterType.elementType, argumentType.elementType, typeParameterNames, inferred)
+                else -> Unit
+            }
+
+            is TableType -> if (argumentType is TableType) {
+                val parameterIndex = parameterType.indexSignature
+                val argumentIndex = argumentType.indexSignature
+                if (parameterIndex != null && argumentIndex != null) {
+                    inferGenericArguments(parameterIndex.keyType, argumentIndex.keyType, typeParameterNames, inferred)
+                    inferGenericArguments(parameterIndex.valueType, argumentIndex.valueType, typeParameterNames, inferred)
+                }
+            }
+
+            is UnionType -> parameterType.types.forEach {
+                inferGenericArguments(it, argumentType, typeParameterNames, inferred)
+            }
+
+            is IntersectionType -> parameterType.types.forEach {
+                inferGenericArguments(it, argumentType, typeParameterNames, inferred)
+            }
+
+            else -> Unit
+        }
+    }
+
+    private fun inferGenericArgumentLists(
+        parameterTypes: List<Type>,
+        argumentTypes: List<Type>,
+        typeParameterNames: Set<String>,
+        inferred: MutableMap<String, Type>
+    ) {
+        if (parameterTypes.size != argumentTypes.size) {
+            return
+        }
+        parameterTypes.zip(argumentTypes).forEach { (parameterType, argumentType) ->
+            inferGenericArguments(parameterType, argumentType, typeParameterNames, inferred)
+        }
+    }
+
+    private fun String.matchesJavaName(type: JavaInstanceType): Boolean {
+        return this == type.javaName.canonicalName ||
+            this == type.javaName.binaryName ||
+            this == type.javaName.simpleName
     }
 
     /**
@@ -316,4 +455,3 @@ internal object LuaJavaLoadLibArgumentDiagnostics {
     const val MESSAGE =
         "Invalid loadLib arguments: expected two non-empty string arguments (className, methodName)."
 }
-

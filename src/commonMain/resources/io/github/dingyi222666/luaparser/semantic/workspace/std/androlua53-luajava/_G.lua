@@ -14,35 +14,19 @@ local JavaArray = {}
 local JavaProxy = {}
 
 ---@class AndroidView: JavaObject
----@field performClick fun(): boolean
----@field setText fun(text: string|any)
----@field getText fun(): string
----@field setOnClickListener fun(listener: any)
----@field getWidth fun(): integer
----@field getHeight fun(): integer
----@field setVisibility fun(visibility: integer)
+---@java-class android.view.View
 local AndroidView = {}
 
 ---@class AndroidMenu: JavaObject
----@field add fun(...: any): AndroidMenuItem
----@field findItem fun(id: integer|string): AndroidMenuItem
----@field clear fun()
----@field size fun(): integer
+---@java-class android.view.Menu
 local AndroidMenu = {}
 
 ---@class AndroidMenuItem: JavaObject
----@field getTitle fun(): string
----@field setTitle fun(title: string): AndroidMenuItem
----@field setEnabled fun(enabled: boolean): AndroidMenuItem
----@field setVisible fun(visible: boolean): AndroidMenuItem
+---@java-class android.view.MenuItem
 local AndroidMenuItem = {}
 
 ---@class Bitmap: JavaObject
----@field getWidth fun(): integer
----@field getHeight fun(): integer
----@field getByteCount fun(): integer
----@field recycle fun()
----@field isRecycled fun(): boolean
+---@java-class android.graphics.Bitmap
 local Bitmap = {}
 
 ---@class LuaLayoutIds: table<string, integer|AndroidView>
@@ -74,29 +58,18 @@ local Bitmap = {}
 ---@field newActivity fun(path: string, arg?: table)
 ---@field newTask fun(src: string|function, callback?: function): JavaObject
 ---@field newThread fun(src: string|function): JavaObject
----@field setContentView fun(view: AndroidView|LuaLayoutSpec|any)
----@field getMenu fun(): AndroidMenu
----@field getSystemService fun(name: string): any
 local AndroidLuaContext = {}
 
--- Jar-independent android.content.Context surface for the AndroLua `context`
--- global (TASK-651). Keep FQCN displayName while exposing getSystemService as a
--- modeled method even when host android.jar is absent or empty.
 ---@class android.content.Context
----@field getSystemService fun(name: string): any
----@field getResources fun(): any
----@field getAssets fun(): any
----@field getPackageName fun(): string
----@field getPackageManager fun(): any
----@field startActivity fun(intent: any)
----@field startService fun(intent: any): boolean
----@field getSharedPreferences fun(name: string, mode: integer): any
+---@java-class android.content.Context
 local AndroidContentContext = {}
 
 ---@class LuaActivity: AndroidLuaContext
+---@java-class android.app.Activity
 local LuaActivity = {}
 
 ---@class LuaService: AndroidLuaContext
+---@java-class android.app.Service
 local LuaService = {}
 
 ---@type LuaActivity

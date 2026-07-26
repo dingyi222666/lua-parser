@@ -24,15 +24,9 @@ class MonacoDemoLiveUtilsDotTddTest {
     @Test
     fun live_edit_bare_utils_dot_after_did_change_surfaces_exports() {
         val root = Files.createTempDirectory("monaco-demo-live-utils-")
-        val utils = Files.readString(
-            Path.of("tools/monaco-lsp-demo/workspace/utils.lua")
-        )
-        val mainDisk = Files.readString(
-            Path.of("tools/monaco-lsp-demo/workspace/main.lua")
-        )
-        val greeter = Files.readString(
-            Path.of("tools/monaco-lsp-demo/workspace/greeter.lua")
-        )
+        val utils = utilsSource
+        val mainDisk = mainSource
+        val greeter = greeterSource
         write(root, "utils.lua", utils)
         write(root, "greeter.lua", greeter)
         write(root, "main.lua", mainDisk)
@@ -107,7 +101,7 @@ class MonacoDemoLiveUtilsDotTddTest {
     @Test
     fun live_edit_assign_utils_dot_surfaces_exports() {
         val root = Files.createTempDirectory("monaco-demo-live-utils-assign-")
-        val utils = Files.readString(Path.of("tools/monaco-lsp-demo/workspace/utils.lua"))
+        val utils = utilsSource
         write(root, "utils.lua", utils)
         val mainDisk = """
             local utils = require("utils")
@@ -155,5 +149,50 @@ class MonacoDemoLiveUtilsDotTddTest {
             }
         }
         return Position(line, offset - lineStart)
+    }
+
+    private companion object {
+        val utilsSource = """
+            local M = {}
+
+            function M.log(msg)
+                print("[utils]", msg)
+            end
+
+            function M.clamp(x, lo, hi)
+                if x < lo then return lo end
+                if x > hi then return hi end
+                return x
+            end
+
+            function M.join(items, sep)
+                return table.concat(items, sep or ", ")
+            end
+
+            return M
+        """.trimIndent() + "\n"
+
+        val greeterSource = """
+            local M = {}
+
+            function M.hello(name)
+                return "hello, " .. tostring(name)
+            end
+
+            return M
+        """.trimIndent() + "\n"
+
+        val mainSource = """
+            local utils = require("utils")
+            local greeter = require("greeter")
+
+            local function run(name)
+                local message = greeter.hello(name or "world")
+                utils.log(message)
+                return message
+            end
+
+            return { run = run }
+        """.trimIndent() + "\n"
     }
 }

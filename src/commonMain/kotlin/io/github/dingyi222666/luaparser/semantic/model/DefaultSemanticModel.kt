@@ -13,16 +13,29 @@ import io.github.dingyi222666.luaparser.semantic.binder.DeclarationId
 import io.github.dingyi222666.luaparser.semantic.binder.BinderPassResult
 import io.github.dingyi222666.luaparser.semantic.binder.SymbolId
 
+/**
+ * Lets callers that already hold a [SemanticModel] reuse its position index instead of building a
+ * second one over the same chunk. Indexing is a full-AST walk, so the workspace file and the
+ * language server share the model's copy rather than each rebuilding it.
+ */
+internal interface NodePositionIndexProvider {
+    val nodePositionIndex: NodePositionIndex
+}
+
 internal class DefaultSemanticModel(
     private val binder: BinderPassResult,
     private val adapters: ApiAdapters,
     private val referenceQueries: ReferenceQueries,
-    private val nodePositionIndex: NodePositionIndex,
+    nodePositionIndex: Lazy<NodePositionIndex>,
     private val nodeTypeIndex: NodeTypeIndex,
-    private val completionProvider: CompletionProvider,
-    private val signatureHelpProvider: SignatureHelpProvider,
+    completionProvider: Lazy<CompletionProvider>,
+    signatureHelpProvider: Lazy<SignatureHelpProvider>,
     private val diagnostics: List<Diagnostic>
-) : SemanticModel {
+) : SemanticModel, NodePositionIndexProvider {
+    override val nodePositionIndex by nodePositionIndex
+    private val completionProvider by completionProvider
+    private val signatureHelpProvider by signatureHelpProvider
+
     override fun getSymbolAt(position: Position): Symbol? {
         return referenceQueries.getSymbolAt(position, nodePositionIndex.findInnermost(position))
     }

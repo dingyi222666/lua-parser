@@ -1,6 +1,25 @@
 package io.github.dingyi222666.luaparser.interop.jvm
 
 import io.github.dingyi222666.luaparser.parser.LuaParser
+import io.github.dingyi222666.luaparser.parser.LuaVersion
+import io.github.dingyi222666.luaparser.parser.ast.node.ArrayConstructorExpression
+import io.github.dingyi222666.luaparser.parser.ast.node.AttributeIdentifier
+import io.github.dingyi222666.luaparser.parser.ast.node.CallExpression
+import io.github.dingyi222666.luaparser.parser.ast.node.ChunkNode
+import io.github.dingyi222666.luaparser.parser.ast.node.CommentStatement
+import io.github.dingyi222666.luaparser.parser.ast.node.ConstantNode
+import io.github.dingyi222666.luaparser.parser.ast.node.ExpressionNode
+import io.github.dingyi222666.luaparser.parser.ast.node.ForGenericStatement
+import io.github.dingyi222666.luaparser.parser.ast.node.ForNumericStatement
+import io.github.dingyi222666.luaparser.parser.ast.node.FunctionDeclaration
+import io.github.dingyi222666.luaparser.parser.ast.node.Identifier
+import io.github.dingyi222666.luaparser.parser.ast.node.LambdaDeclaration
+import io.github.dingyi222666.luaparser.parser.ast.node.MemberExpression
+import io.github.dingyi222666.luaparser.parser.ast.node.StringCallExpression
+import io.github.dingyi222666.luaparser.parser.ast.node.TableCallExpression
+import io.github.dingyi222666.luaparser.parser.ast.node.TableConstructorExpression
+import io.github.dingyi222666.luaparser.parser.ast.node.TableKeyString
+import io.github.dingyi222666.luaparser.parser.ast.visitor.ASTVisitor
 import io.github.dingyi222666.luaparser.semantic.SemanticWorkspaceContext
 import io.github.dingyi222666.luaparser.semantic.UnresolvedLuaJavaTarget
 import io.github.dingyi222666.luaparser.semantic.WorkspaceImportedSymbol
@@ -16,14 +35,46 @@ import io.github.dingyi222666.luaparser.semantic.workspace.WorkspaceSnapshot
  * Host android.jar discovery uses ANDROID_HOME/SDK_ROOT and well-known SDK roots; never G:/.
  */
 class JvmWorkspaceEngine(
-    private val workspaceParserFactory: () -> LuaParser = { LuaParser() },
+    private val workspaceParserFactory: (LuaVersion) -> LuaParser = { version -> LuaParser(version) },
     private val classModuleProvider: JvmClassModuleProvider = JvmClassModuleProvider(),
     private val configuration: JvmWorkspaceConfiguration = JvmWorkspaceConfiguration()
 ) : LuaWorkspaceEngine(workspaceParserFactory) {
+    /**
+     * Per-document facts + AST import targets, keyed by path and guarded by the exact source text.
+     *
+     * `extraProviders` is called with the *whole* workspace on every build and every update, so
+     * re-deriving these for untouched files made a single keystroke walk every file twice. Both
+     * products are deterministic in (path, source), so an edit only invalidates its own document.
+     */
+    private class DocumentImportFacts(
+        val source: String,
+        val facts: DocumentFacts,
+        val importTargets: Set<String>,
+        val freeClassNames: Set<String>
+    )
+
+    private val documentImportFactsCache = mutableMapOf<VirtualPath, DocumentImportFacts>()
+
+    private fun documentImportFacts(path: VirtualPath, source: String): DocumentImportFacts {
+        documentImportFactsCache[path]?.takeIf { it.source == source }?.let { return it }
+        val scan = scanDocument(parseWorkspaceSource(path, source))
+        return DocumentImportFacts(
+            source = source,
+            // Facts come from the engine-wide memo so a document is walked once, not once here
+            // and again in analyzeFile.
+            facts = documentFacts(path, source),
+            importTargets = scan.importTargets,
+            freeClassNames = scan.freeClassNames
+        ).also { documentImportFactsCache[path] = it }
+    }
+
     override fun extraProviders(input: LuaWorkspaceInput): Map<VirtualPath, WorkspaceSnapshot.FileSnapshot> {
         val baseConfiguration = configuration.overlay(JvmWorkspaceConfiguration.fromMetadata(input.metadata))
-        val documentFacts = collectDocumentFacts(input)
-        val astImportTargets = collectAstImportTargets(input)
+        // Single parse per file feeds both document facts and AST import discovery.
+        val perFile = input.files.mapValues { (path, source) -> documentImportFacts(path, source) }
+        documentImportFactsCache.keys.retainAll(input.files.keys)
+        val documentFacts = perFile.mapValues { (_, entry) -> entry.facts }
+        val astImportTargets = perFile.values.flatMapTo(linkedSetOf()) { it.importTargets }
         val resolvedConfiguration = configurationWithWildcardImportPrefixes(
             baseConfiguration,
             documentFacts,
@@ -67,35 +118,29 @@ class JvmWorkspaceEngine(
         return packageProviders + packageMemberClassProviders + classModuleProvider.providersFor(providerConfiguration)
     }
 
-    internal override fun workspaceContext(input: LuaWorkspaceInput, path: io.github.dingyi222666.luaparser.semantic.workspace.VirtualPath, snapshot: WorkspaceSnapshot): SemanticWorkspaceContext {
+    internal override fun workspaceContext(
+        input: LuaWorkspaceInput,
+        path: VirtualPath,
+        snapshot: WorkspaceSnapshot
+    ): SemanticWorkspaceContext {
         val baseConfiguration = configuration.overlay(JvmWorkspaceConfiguration.fromMetadata(input.metadata))
         // Path-scoped only: never re-parse the full multi-file workspace for each document.
         // Snapshot documentFacts from analyzeFile are authoritative; fall back to a single-path collect.
         val currentSource = input.files[path]
             ?: snapshot.files[path]?.semanticFile?.source
-        val currentFacts = snapshot.files[path]?.documentFacts
-            ?: currentSource?.let { source ->
-                DocumentFactsCollector.collect(path, parseWorkspaceSource(source))
-            }
+        // Facts and import targets were already derived for this exact source in extraProviders;
+        // reuse them instead of re-walking the document a second time per analyzed file.
+        val currentEntry = currentSource?.let { source -> documentImportFacts(path, source) }
+        val currentFacts = snapshot.files[path]?.documentFacts ?: currentEntry?.facts
         // Configured imports are workspace-wide; source imports stay scoped to the current file.
         val configuredImports = collectConfiguredImports(baseConfiguration)
-        val currentAstImportTargets = if (currentSource != null) {
-            val targets = linkedSetOf<String>()
-            collectImportTargetsFromNode(parseWorkspaceSource(currentSource), targets)
-            targets
-        } else {
-            emptySet()
-        }
+        val currentAstImportTargets = currentEntry?.importTargets.orEmpty()
         val resolvedConfiguration = configurationWithWildcardImportPrefixes(
             baseConfiguration,
             currentFacts?.let { mapOf(path to it) }.orEmpty(),
             currentAstImportTargets
         )
-        val freeClassNames = currentSource?.let { source ->
-            val names = linkedSetOf<String>()
-            collectFreeClassLikeNamesFromNode(parseWorkspaceSource(source), names)
-            names
-        }.orEmpty()
+        val freeClassNames = currentEntry?.freeClassNames.orEmpty()
         val sourceImports = collectSourceImports(
             currentFacts,
             resolvedConfiguration,
@@ -263,127 +308,83 @@ class JvmWorkspaceEngine(
         }
     }
 
-    /**
-     * Collect free UpperCamel identifiers used as class-like roots across workspace sources.
-     * Used only to mount reflective providers for Android-Lua default import-prefix fallback
-     * (Locale / File / TextView without an explicit import). Never invents non-loadable names;
-     * [JvmClassModuleProvider.importedClassName] still has to resolve each candidate.
-     */
-    private fun collectFreeClassLikeNames(input: LuaWorkspaceInput): Set<String> {
-        val names = linkedSetOf<String>()
-        input.files.values.forEach { source ->
-            collectFreeClassLikeNamesFromNode(parseWorkspaceSource(source), names)
-        }
-        return names
-    }
+    private class DocumentScan(
+        /**
+         * Import targets read straight off the AST, with a more permissive table-sequence rule
+         * than DocumentFactsCollector's range-equality check. Ensures `import({ "A", "B" })`
+         * mounts providers even when integer key ranges are non-degenerate after finishNode.
+         */
+        val importTargets: Set<String>,
+        /**
+         * Free UpperCamel identifiers used as class-like roots. Used only to mount reflective
+         * providers for the Android-Lua default import-prefix fallback (Locale / File / TextView
+         * without an explicit import). Never invents non-loadable names;
+         * [JvmClassModuleProvider.importedClassName] still has to resolve each candidate.
+         */
+        val freeClassNames: Set<String>
+    )
 
-    private fun collectFreeClassLikeNamesFromNode(
-        node: io.github.dingyi222666.luaparser.parser.ast.node.BaseASTNode,
-        names: MutableSet<String>
-    ) {
-        when (node) {
-            is io.github.dingyi222666.luaparser.parser.ast.node.Identifier -> {
-                if (isClassLikeSimpleName(node.name)) {
-                    names += node.name
-                }
-            }
-            is io.github.dingyi222666.luaparser.parser.ast.node.MemberExpression -> {
-                collectFreeClassLikeNamesFromNode(node.base, names)
-            }
-            is io.github.dingyi222666.luaparser.parser.ast.node.IndexExpression -> {
-                collectFreeClassLikeNamesFromNode(node.base, names)
-                collectFreeClassLikeNamesFromNode(node.index, names)
-            }
-            is io.github.dingyi222666.luaparser.parser.ast.node.CallExpression -> {
-                collectFreeClassLikeNamesFromNode(node.base, names)
-                node.arguments.forEach { collectFreeClassLikeNamesFromNode(it, names) }
-            }
-            is io.github.dingyi222666.luaparser.parser.ast.node.StringCallExpression -> {
-                collectFreeClassLikeNamesFromNode(node.base, names)
-                node.arguments.forEach { collectFreeClassLikeNamesFromNode(it, names) }
-            }
-            is io.github.dingyi222666.luaparser.parser.ast.node.TableCallExpression -> {
-                collectFreeClassLikeNamesFromNode(node.base, names)
-                node.arguments.forEach { collectFreeClassLikeNamesFromNode(it, names) }
-            }
-            is io.github.dingyi222666.luaparser.parser.ast.node.UnaryExpression -> {
-                collectFreeClassLikeNamesFromNode(node.arg, names)
-            }
-            is io.github.dingyi222666.luaparser.parser.ast.node.BinaryExpression -> {
-                node.left?.let { collectFreeClassLikeNamesFromNode(it, names) }
-                node.right?.let { collectFreeClassLikeNamesFromNode(it, names) }
-            }
-            is io.github.dingyi222666.luaparser.parser.ast.node.FunctionDeclaration -> {
-                node.identifier?.let { collectFreeClassLikeNamesFromNode(it, names) }
-                node.body?.let { collectFreeClassLikeNamesFromNode(it, names) }
-            }
-            is io.github.dingyi222666.luaparser.parser.ast.node.LocalStatement -> {
-                node.init.forEach { collectFreeClassLikeNamesFromNode(it, names) }
-                node.variables.forEach { collectFreeClassLikeNamesFromNode(it, names) }
-            }
-            is io.github.dingyi222666.luaparser.parser.ast.node.AssignmentStatement -> {
-                node.init.forEach { collectFreeClassLikeNamesFromNode(it, names) }
-                node.variables.forEach { collectFreeClassLikeNamesFromNode(it, names) }
-            }
-            is io.github.dingyi222666.luaparser.parser.ast.node.ReturnStatement -> {
-                node.arguments.forEach { collectFreeClassLikeNamesFromNode(it, names) }
-            }
-            else -> Unit
-        }
-        // Generic child walk for statement/block containers and remaining AST shapes.
-        // Align with real parser AST: IfStatement.causes, ElseIfClause, CallStatement.
-        when (node) {
-            is io.github.dingyi222666.luaparser.parser.ast.node.ChunkNode -> {
-                collectFreeClassLikeNamesFromNode(node.body, names)
-            }
-            is io.github.dingyi222666.luaparser.parser.ast.node.BlockNode -> {
-                node.statements.forEach { collectFreeClassLikeNamesFromNode(it, names) }
-                node.returnStatement?.let { collectFreeClassLikeNamesFromNode(it, names) }
-            }
-            is io.github.dingyi222666.luaparser.parser.ast.node.DoStatement -> {
-                collectFreeClassLikeNamesFromNode(node.body, names)
-            }
-            is io.github.dingyi222666.luaparser.parser.ast.node.WhileStatement -> {
-                collectFreeClassLikeNamesFromNode(node.condition, names)
-                collectFreeClassLikeNamesFromNode(node.body, names)
-            }
-            is io.github.dingyi222666.luaparser.parser.ast.node.RepeatStatement -> {
-                collectFreeClassLikeNamesFromNode(node.body, names)
-                collectFreeClassLikeNamesFromNode(node.condition, names)
-            }
-            is io.github.dingyi222666.luaparser.parser.ast.node.IfStatement -> {
-                node.causes.forEach { cause ->
-                    // ElseIfClause extends IfClause; ElseClause has no condition to walk.
-                    if (cause !is io.github.dingyi222666.luaparser.parser.ast.node.ElseClause) {
-                        collectFreeClassLikeNamesFromNode(cause.condition, names)
+    /**
+     * Single walk producing both AST import targets and free class-like identifiers.
+     *
+     * The two used to be separate back-to-back traversals of the same chunk. The binding-position
+     * skips below (parameters, loop variables, member names) only ever elide `Identifier` nodes,
+     * which can never contain a call, so import discovery is unaffected by sharing this traversal.
+     */
+    private fun scanDocument(chunk: ChunkNode): DocumentScan {
+        val names = linkedSetOf<String>()
+        val targets = linkedSetOf<String>()
+        chunk.accept(
+            object : ASTVisitor<Unit> {
+                override fun visitCallExpression(node: CallExpression, value: Unit) {
+                    if (isImportCallee(unwrapCallBase(node.base))) {
+                        // Compact short-call forms keep the first argument on the inner node.
+                        importTargetsOf(node.base.compactCallArguments() + node.arguments)
+                            .forEach(targets::add)
                     }
-                    collectFreeClassLikeNamesFromNode(cause.body, names)
+                    super.visitCallExpression(node, value)
                 }
-            }
-            is io.github.dingyi222666.luaparser.parser.ast.node.ForNumericStatement -> {
-                collectFreeClassLikeNamesFromNode(node.start, names)
-                collectFreeClassLikeNamesFromNode(node.end, names)
-                node.step?.let { collectFreeClassLikeNamesFromNode(it, names) }
-                collectFreeClassLikeNamesFromNode(node.body, names)
-            }
-            is io.github.dingyi222666.luaparser.parser.ast.node.ForGenericStatement -> {
-                node.iterators.forEach { collectFreeClassLikeNamesFromNode(it, names) }
-                collectFreeClassLikeNamesFromNode(node.body, names)
-            }
-            is io.github.dingyi222666.luaparser.parser.ast.node.TableConstructorExpression -> {
-                node.fields.forEach { field ->
-                    collectFreeClassLikeNamesFromNode(field.key, names)
-                    collectFreeClassLikeNamesFromNode(field.value, names)
+
+                override fun visitIdentifier(node: Identifier, value: Unit) {
+                    if (isClassLikeSimpleName(node.name)) {
+                        names += node.name
+                    }
                 }
-            }
-            is io.github.dingyi222666.luaparser.parser.ast.node.ArrayConstructorExpression -> {
-                node.values.forEach { collectFreeClassLikeNamesFromNode(it, names) }
-            }
-            is io.github.dingyi222666.luaparser.parser.ast.node.CallStatement -> {
-                collectFreeClassLikeNamesFromNode(node.expression, names)
-            }
-            else -> Unit
-        }
+
+                /** `Foo.Bar` roots at `Foo`; the member name is not a class-like root. */
+                override fun visitMemberExpression(node: MemberExpression, value: Unit) {
+                    visitExpressionNode(node.base, value)
+                }
+
+                /** Declared names/bodies only: parameter names are bindings, not class roots. */
+                override fun visitFunctionDeclaration(node: FunctionDeclaration, value: Unit) {
+                    node.identifier?.let { visitExpressionNode(it, value) }
+                    node.body?.let { visitBlockNode(it, value) }
+                }
+
+                override fun visitLambdaDeclaration(node: LambdaDeclaration, value: Unit) {
+                    visitExpressionNode(node.expression, value)
+                }
+
+                /** Loop variables are fresh bindings. */
+                override fun visitForGenericStatement(node: ForGenericStatement, value: Unit) {
+                    visitExpressionNodes(node.iterators, value)
+                    visitBlockNode(node.body, value)
+                }
+
+                override fun visitForNumericStatement(node: ForNumericStatement, value: Unit) {
+                    visitExpressionNode(node.start, value)
+                    visitExpressionNode(node.end, value)
+                    node.step?.let { visitExpressionNode(it, value) }
+                    visitBlockNode(node.body, value)
+                }
+
+                override fun visitAttributeIdentifier(identifier: AttributeIdentifier, value: Unit) = Unit
+                override fun visitCommentStatement(commentStatement: CommentStatement, value: Unit) = Unit
+            },
+            Unit
+        )
+        return DocumentScan(importTargets = targets, freeClassNames = names)
     }
 
     private fun isClassLikeSimpleName(name: String): Boolean {
@@ -418,207 +419,49 @@ class JvmWorkspaceEngine(
         }
     }
 
-    /**
-     * Collect import targets from source AST with a more permissive table-sequence rule than
-     * DocumentFactsCollector's range-equality check. Ensures import({ "A", "B" }) mounts providers
-     * even when integer key ranges are non-degenerate after finishNode.
-     */
-    private fun collectAstImportTargets(input: LuaWorkspaceInput): Set<String> {
-        val targets = linkedSetOf<String>()
-        input.files.forEach { (_, source) ->
-            val chunk = parseWorkspaceSource(source)
-            collectImportTargetsFromNode(chunk, targets)
-        }
-        return targets
-    }
-
-    private fun collectImportTargetsFromNode(
-        node: io.github.dingyi222666.luaparser.parser.ast.node.BaseASTNode,
-        targets: MutableSet<String>
-    ) {
-        when (node) {
-            is io.github.dingyi222666.luaparser.parser.ast.node.CallExpression -> {
-                val base = unwrapCallBase(node.base)
-                val callee = base as? io.github.dingyi222666.luaparser.parser.ast.node.Identifier
-                if (callee?.name == "import" || isRequireImportCall(base) || isIdentifierImportAlias(base)) {
-                    extractImportTargetsLoose(node).forEach(targets::add)
-                }
-                collectImportTargetsFromNode(node.base, targets)
-                node.arguments.forEach { collectImportTargetsFromNode(it, targets) }
-            }
-            is io.github.dingyi222666.luaparser.parser.ast.node.StringCallExpression -> {
-                val base = unwrapCallBase(node.base)
-                if (base is io.github.dingyi222666.luaparser.parser.ast.node.Identifier &&
-                    (base.name == "import" || isIdentifierImportAlias(base))
-                ) {
-                    node.arguments.mapNotNull(::stringLiteral).forEach(targets::add)
-                }
-                collectImportTargetsFromNode(node.base, targets)
-                node.arguments.forEach { collectImportTargetsFromNode(it, targets) }
-            }
-            is io.github.dingyi222666.luaparser.parser.ast.node.TableCallExpression -> {
-                val base = unwrapCallBase(node.base)
-                if (base is io.github.dingyi222666.luaparser.parser.ast.node.Identifier &&
-                    (base.name == "import" || isIdentifierImportAlias(base))
-                ) {
-                    // import { "A", "B" } short table-call form
-                    node.arguments.forEach { arg ->
-                        when (arg) {
-                            is io.github.dingyi222666.luaparser.parser.ast.node.TableConstructorExpression -> {
-                                val values = arg.fields
-                                    .filter { it !is io.github.dingyi222666.luaparser.parser.ast.node.TableKeyString }
-                                    .mapNotNull { stringLiteral(it.value) }
-                                    .ifEmpty { arg.fields.mapNotNull { stringLiteral(it.value) } }
-                                values.forEach(targets::add)
-                            }
-                            is io.github.dingyi222666.luaparser.parser.ast.node.ArrayConstructorExpression ->
-                                arg.values.mapNotNull(::stringLiteral).forEach(targets::add)
-                            else -> stringLiteral(arg)?.let(targets::add)
-                        }
-                    }
-                }
-                collectImportTargetsFromNode(node.base, targets)
-                node.arguments.forEach { collectImportTargetsFromNode(it, targets) }
-            }
-            is io.github.dingyi222666.luaparser.parser.ast.node.LocalStatement -> {
-                node.init.forEach { collectImportTargetsFromNode(it, targets) }
-                node.variables.forEach { collectImportTargetsFromNode(it, targets) }
-            }
-            is io.github.dingyi222666.luaparser.parser.ast.node.AssignmentStatement -> {
-                node.init.forEach { collectImportTargetsFromNode(it, targets) }
-                node.variables.forEach { collectImportTargetsFromNode(it, targets) }
-            }
-            is io.github.dingyi222666.luaparser.parser.ast.node.BlockNode -> {
-                node.statements.forEach { collectImportTargetsFromNode(it, targets) }
-                node.returnStatement?.let { collectImportTargetsFromNode(it, targets) }
-            }
-            is io.github.dingyi222666.luaparser.parser.ast.node.ChunkNode -> {
-                collectImportTargetsFromNode(node.body, targets)
-            }
-            is io.github.dingyi222666.luaparser.parser.ast.node.CallStatement -> {
-                collectImportTargetsFromNode(node.expression, targets)
-            }
-            is io.github.dingyi222666.luaparser.parser.ast.node.ReturnStatement -> {
-                node.arguments.forEach { collectImportTargetsFromNode(it, targets) }
-            }
-            is io.github.dingyi222666.luaparser.parser.ast.node.DoStatement -> collectImportTargetsFromNode(node.body, targets)
-            is io.github.dingyi222666.luaparser.parser.ast.node.WhileStatement -> {
-                collectImportTargetsFromNode(node.condition, targets)
-                collectImportTargetsFromNode(node.body, targets)
-            }
-            is io.github.dingyi222666.luaparser.parser.ast.node.RepeatStatement -> {
-                collectImportTargetsFromNode(node.body, targets)
-                collectImportTargetsFromNode(node.condition, targets)
-            }
-            is io.github.dingyi222666.luaparser.parser.ast.node.IfStatement -> {
-                node.causes.forEach { cause ->
-                    if (cause !is io.github.dingyi222666.luaparser.parser.ast.node.ElseClause) {
-                        collectImportTargetsFromNode(cause.condition, targets)
-                    }
-                    collectImportTargetsFromNode(cause.body, targets)
-                }
-            }
-            is io.github.dingyi222666.luaparser.parser.ast.node.ForNumericStatement -> {
-                collectImportTargetsFromNode(node.start, targets)
-                collectImportTargetsFromNode(node.end, targets)
-                node.step?.let { collectImportTargetsFromNode(it, targets) }
-                collectImportTargetsFromNode(node.body, targets)
-            }
-            is io.github.dingyi222666.luaparser.parser.ast.node.ForGenericStatement -> {
-                node.iterators.forEach { collectImportTargetsFromNode(it, targets) }
-                collectImportTargetsFromNode(node.body, targets)
-            }
-            is io.github.dingyi222666.luaparser.parser.ast.node.FunctionDeclaration -> {
-                node.body?.let { collectImportTargetsFromNode(it, targets) }
-            }
-            is io.github.dingyi222666.luaparser.parser.ast.node.MemberExpression -> collectImportTargetsFromNode(node.base, targets)
-            is io.github.dingyi222666.luaparser.parser.ast.node.IndexExpression -> {
-                collectImportTargetsFromNode(node.base, targets)
-                collectImportTargetsFromNode(node.index, targets)
-            }
-            is io.github.dingyi222666.luaparser.parser.ast.node.BinaryExpression -> {
-                node.left?.let { collectImportTargetsFromNode(it, targets) }
-                node.right?.let { collectImportTargetsFromNode(it, targets) }
-            }
-            is io.github.dingyi222666.luaparser.parser.ast.node.UnaryExpression -> collectImportTargetsFromNode(node.arg, targets)
-            is io.github.dingyi222666.luaparser.parser.ast.node.TableConstructorExpression -> {
-                node.fields.forEach { field ->
-                    collectImportTargetsFromNode(field.key, targets)
-                    collectImportTargetsFromNode(field.value, targets)
-                }
-            }
-            is io.github.dingyi222666.luaparser.parser.ast.node.ArrayConstructorExpression -> {
-                node.values.forEach { collectImportTargetsFromNode(it, targets) }
-            }
-            else -> Unit
-        }
-    }
-
-    private fun unwrapCallBase(
-        expression: io.github.dingyi222666.luaparser.parser.ast.node.ExpressionNode
-    ): io.github.dingyi222666.luaparser.parser.ast.node.ExpressionNode {
+    /** `import "x"` / `import { ... }` keep the callee under a compact short-call node. */
+    private fun unwrapCallBase(expression: ExpressionNode): ExpressionNode {
         var current = expression
         while (true) {
             current = when (current) {
-                is io.github.dingyi222666.luaparser.parser.ast.node.StringCallExpression -> current.base
-                is io.github.dingyi222666.luaparser.parser.ast.node.TableCallExpression -> current.base
+                is StringCallExpression -> current.base
+                is TableCallExpression -> current.base
                 else -> return current
             }
         }
     }
 
-    private fun isRequireImportCall(
-        expression: io.github.dingyi222666.luaparser.parser.ast.node.ExpressionNode
-    ): Boolean = false
-
-    private fun isIdentifierImportAlias(
-        expression: io.github.dingyi222666.luaparser.parser.ast.node.ExpressionNode
-    ): Boolean {
-        // Local aliases like local import = require("import") still call as Identifier("import").
-        // Additional chained aliases (load/again) are covered by DocumentFacts alias scopes; this
-        // AST pass focuses on direct import(...) and import table arguments.
-        return expression is io.github.dingyi222666.luaparser.parser.ast.node.Identifier &&
-            expression.name == "import"
+    /**
+     * Local aliases like `local import = require("import")` still call as Identifier("import").
+     * Chained aliases (load/again) are covered by DocumentFacts alias scopes; this AST pass
+     * focuses on direct import(...) and import table arguments.
+     */
+    private fun isImportCallee(expression: ExpressionNode): Boolean {
+        return expression is Identifier && expression.name == "import"
     }
 
-    private fun extractImportTargetsLoose(
-        call: io.github.dingyi222666.luaparser.parser.ast.node.CallExpression
-    ): List<String> {
-        val arguments = buildList {
-            val base = call.base
-            if (base is io.github.dingyi222666.luaparser.parser.ast.node.StringCallExpression) {
-                addAll(base.arguments)
+    private fun ExpressionNode.compactCallArguments(): List<ExpressionNode> {
+        return (this as? CallExpression)?.arguments.orEmpty()
+    }
+
+    private fun importTargetsOf(arguments: List<ExpressionNode>): List<String> {
+        return arguments.flatMap { argument ->
+            when (argument) {
+                is ArrayConstructorExpression -> argument.values.mapNotNull(::stringLiteral)
+                is TableConstructorExpression -> {
+                    // Sequence slots hold the targets; fall back to all field values when integer
+                    // keys survive parsing and the sequence filter yields nothing.
+                    argument.fields.filter { it !is TableKeyString }.mapNotNull { stringLiteral(it.value) }
+                        .ifEmpty { argument.fields.mapNotNull { stringLiteral(it.value) } }
+                }
+                else -> listOfNotNull(stringLiteral(argument))
             }
-            if (base is io.github.dingyi222666.luaparser.parser.ast.node.TableCallExpression) {
-                addAll(base.arguments)
-            }
-            addAll(call.arguments)
-        }
-        val first = arguments.firstOrNull() ?: return emptyList()
-        return when (first) {
-            is io.github.dingyi222666.luaparser.parser.ast.node.ConstantNode ->
-                if (first.constantType == io.github.dingyi222666.luaparser.parser.ast.node.ConstantNode.TYPE.STRING) {
-                    listOf(first.stringOf())
-                } else emptyList()
-            is io.github.dingyi222666.luaparser.parser.ast.node.ArrayConstructorExpression ->
-                first.values.mapNotNull(::stringLiteral)
-            is io.github.dingyi222666.luaparser.parser.ast.node.TableConstructorExpression -> {
-                val sequence = first.fields
-                    .filter { it !is io.github.dingyi222666.luaparser.parser.ast.node.TableKeyString }
-                    .mapNotNull { stringLiteral(it.value) }
-                if (sequence.isNotEmpty()) sequence else first.fields.mapNotNull { stringLiteral(it.value) }
-            }
-            else -> emptyList()
         }
     }
 
-    private fun stringLiteral(
-        expression: io.github.dingyi222666.luaparser.parser.ast.node.ExpressionNode?
-    ): String? {
-        val constant = expression as? io.github.dingyi222666.luaparser.parser.ast.node.ConstantNode ?: return null
-        return constant.takeIf {
-            it.constantType == io.github.dingyi222666.luaparser.parser.ast.node.ConstantNode.TYPE.STRING
-        }?.stringOf()
+    private fun stringLiteral(expression: ExpressionNode?): String? {
+        val constant = expression as? ConstantNode ?: return null
+        return constant.takeIf { it.constantType == ConstantNode.TYPE.STRING }?.stringOf()
     }
 
     private fun collectWildcardImportTargets(
@@ -690,12 +533,6 @@ class JvmWorkspaceEngine(
         wildcardImportPrefix(importText)?.let { return "$it.*" }
         packageNameAliasPrefix(importText)?.let { return "$it.*" }
         return null
-    }
-
-    private fun collectDocumentFacts(input: LuaWorkspaceInput): Map<VirtualPath, DocumentFacts> {
-        return input.files.mapValues { (path, source) ->
-            DocumentFactsCollector.collect(path, parseWorkspaceSource(source))
-        }
     }
 
     private fun luaJavaHelperName(kind: DocumentFacts.JvmClassLoadKind): String {

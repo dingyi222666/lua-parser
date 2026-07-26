@@ -147,64 +147,20 @@ TASK-043 remains the sole owner of serialized execution. Its baseline `required_
 | `JAVA_HOME=/Users/dingyi/Library/Java/JavaVirtualMachines/corretto-17.0.19/Contents/Home ./gradlew compileTestKotlinJvm` | Compile gate |
 | `JAVA_HOME=/Users/dingyi/Library/Java/JavaVirtualMachines/corretto-17.0.19/Contents/Home ./gradlew jvmTest --tests lsp.LspNavigationSymbolsTddTest` | Historical LSP gate retained on TASK-043 |
 
-Additional focused filters are selected by the review agent at release time from open or recently accepted tasks' `required_tests` entries (including the TASK-144/152/156 matrix above, Android-Lua suites such as `semantic.androidlua.AndroidLuaLibraryStubsTddTest` after TASK-184, inventory `testinventory.NewTestInventoryTddTest` after TASK-125/TASK-038, and any later corpus/fixture tasks). Run each selected filter as its own one-at-a-time command.
+Additional focused filters are selected by the review agent at release time from open or recently accepted tasks' `required_tests` entries (including the TASK-144/152/156 matrix above, Android-Lua suites such as `semantic.androidlua.AndroidLuaLibraryStubsTddTest` after TASK-184, and any later corpus/fixture tasks). Run each selected filter as its own one-at-a-time command.
 
 ### Full suite remains deferred to TASK-043
 
 - Do **not** treat this matrix as permission to run `./gradlew check`, full `jvmTest`, or any broad suite from a parallel worker.
-- Full-suite and campaign inventory reconciliation stay deferred to TASK-043 (and post-verification ledger tasks such as TASK-105/TASK-106 once verification is released).
+- Full-suite verification stays deferred to TASK-043 (and post-verification ledger tasks such as TASK-105/TASK-106 once verification is released).
 - Parallel workers record their focused commands in task metadata only; execution and pass/fail/infrastructure classification remain review-owned under TASK-043.
 
-## Pre-Verification Inventory Snapshot (TASK-498, post-184 / pre-043)
+## Source Accounting
 
-Read-only source-tree recount on **2026-07-12** over `src/commonTest/kotlin` and `src/jvmTest/kotlin`. Counting rules match `docs/test-inventory-recount-procedure.md` / `NewTestInventoryTddTest`: line-leading `@Test` (`^\s*@Test\b`); baseline = `*Test.kt` excluding the inventory fixture itself; campaign = `*TddTest.kt` excluding any `testinventory` path. **No Gradle, compile, or test execution** was performed for this snapshot.
-
-| Inventory slice | Live count (2026-07-12) |
-| --- | ---: |
-| Baseline `*Test.kt` files (excl. inventory fixture) | **331** |
-| Baseline `@Test` methods | **4624** |
-| Campaign `*TddTest.kt` files (excl. `testinventory`) | **272** |
-| Campaign `@Test` methods | **4109** |
-| Campaign floor for TASK-037 (new-test campaign ≥ 500 methods) | 500 |
-| Remaining to 500 by **source** campaign method count | **0** (4109 ≥ 500) |
-
-### What this snapshot is / is not
-
-| Layer | Meaning | Owner |
-| --- | --- | --- |
-| Live source-tree inventory | Filesystem `@Test` accounting only | Parallel docs / TASK-125 recount workers (read-only or fixture+strategy update) |
-| Inventory fixture bars | `NewTestInventoryTddTest` constants + `docs/test-strategy.md` must match live tree | TASK-125 (recount) then TASK-038 (compile/assert alignment if needed) |
-| Focused filter pass/fail | Local review-owned serial evidence | Review under TASK-043 locks |
-| Full suite / global green | Not started; not claimed | TASK-043 then TASK-037 |
-
-**Source count is not pass/fail evidence.** Campaign method count ≥ 500 is necessary for TASK-037's campaign floor but **not sufficient** for release.
-
-### Gate status (honest chain)
-
-| Gate | Status (as of this snapshot) | Notes |
-| --- | --- | --- |
-| TASK-184 | **done** | Android-Lua library stubs accepted (REVIEW38); unblocks pre-final inventory/trace path only |
-| TASK-115 | **done** | Pre-verification traceability draft; not final AC pass/fail |
-| TASK-164 | **done** | Final-verification ledger inventory section (still non-green) |
-| TASK-125 | **review** (not accepted green) | Worker raised bars toward live 331/4624 + campaign 272/4109; review must accept before inventory fixture is trusted |
-| TASK-038 | **ready** | Depends on TASK-125; inventory compile/assertion alignment still open |
-| TASK-043 | **blocked** | Serialized verification not released; do not start `./gradlew` from parallel workers |
-| TASK-037 / TASK-105 / TASK-106 | **blocked** chain | Final acceptance and post-verify ledgers wait on TASK-043 evidence |
-
-### Inventory vs fixture lag
-
-REVIEW41-WAVE-WAVE36E recorded inventory drift: fixture expected **313/4155** baseline and **254/3640** campaign while the live tree was already **331/4624** and **272/4109**. TASK-125's WAVE36F recount targets those live numbers. Until TASK-125 is **accepted** and any TASK-038 compile fix lands, treat fixture constants as potentially stale relative to disk even when this page's live recount matches REVIEW41/TASK-125 worker notes.
-
-Recompute live counts without Gradle:
-
-```bash
-# Read-only; do not run Gradle here
-find src/commonTest/kotlin src/jvmTest/kotlin -name '*Test.kt' -type f \
-  ! -path '*/testinventory/NewTestInventoryTddTest.kt' | wc -l
-find src/commonTest/kotlin src/jvmTest/kotlin -name '*TddTest.kt' -type f \
-  ! -path '*testinventory*' | wc -l
-# Method counts: line-leading @Test only (same rule as NewTestInventoryTddTest)
-```
+Historical campaign ledgers may contain dated filesystem recounts. They are
+audit snapshots only and are not maintained by a dedicated inventory test or by
+constants tied to `docs/test-strategy.md`. Current pass/fail authority always
+comes from the focused filters and full-suite commands owned by TASK-043.
 
 ## Task Progress Recording
 

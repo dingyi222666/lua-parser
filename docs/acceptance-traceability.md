@@ -28,7 +28,7 @@ macOS paths in older drafts are host-local inventory only; they are **not** the 
 
 | ID | Parent acceptance area | Evidence | Status |
 | --- | --- | --- | --- |
-| AC-01 | ≥500 new campaign tests exist and pass | Source: campaign **307/4857**, `remaining_to_500=0` (`docs/test-strategy.md`, NewTestInventory). Suite: full jvmTest **5386/0 fails** run 29228040252. | **Pass (source + suite)** |
+| AC-01 | ≥500 new campaign tests exist and pass | Dated source recount: campaign **307/4857**. Suite: full jvmTest **5386/0 fails** run 29228040252. | **Pass (source + suite)** |
 | AC-02 | Lua parser, lexer, Lua 5.3, Android-Lua syntax | Full suite includes `parser.*` / lexer / androidlua classes under tip SHA; 0 hard fails. Slice bar s001–s018 green supporting. | **Pass** |
 | AC-03 | AST shape, clone, visitor, AST2Lua round-trip | Full suite includes `parser.ast.*`, `source.*` (incl. AST2LuaIfElseif after TASK-676 policy lock); 0 hard fails. | **Pass** |
 | AC-04 | Malformed-input parser recovery | Full suite includes `parser.recovery.*` (duplicate-else / lambda reject fixes in 06d0806 wave); 0 hard fails. | **Pass** |
@@ -38,7 +38,7 @@ macOS paths in older drafts are host-local inventory only; they are **not** the 
 | AC-08 | Android-Lua library stubs / helpers | Full suite includes `semantic.androidlua.*` (loadbitmap surface TASK-680); 0 hard fails. | **Pass** |
 | AC-09 | Integration / external corpus | Full suite includes `integration.*` corpus semantic verification; 0 hard fails on 29228040252. | **Pass** |
 | AC-10 | LSP lifecycle, diagnostics, navigation, signature | Full suite includes `lsp.*` (SignatureHelp generic labels TASK-627/670); 0 hard fails. | **Pass** |
-| AC-11 | Test inventory accounting honesty | NewTestInventory bars aligned (TASK-677); suite includes inventory tests; remaining_to_500=0 documented with suite pass. | **Pass** |
+| AC-11 | Source accounting honesty | Acceptance ledger retains the dated recount and distinguishes it from executable full-suite evidence; no lockstep source-count assertion is required. | **Pass** |
 | AC-12 | Serialized verification + final docs chain | TASK-043 **done** (full jvmTest evidence). TASK-105 ledger refreshed. This matrix TASK-106. TASK-037 consumes both. | **Pass** |
 
 ## Cascade

@@ -122,6 +122,38 @@ data class JavaInstanceType(
     }
 }
 
+enum class JavaContainerKind {
+    SEQUENCE,
+    MAP
+}
+
+fun JavaInstanceType.javaContainerKind(): JavaContainerKind? {
+    val names = linkedSetOf<String>()
+    fun visit(current: JavaClassType?) {
+        current ?: return
+        if (!names.add(current.javaName.binaryName)) {
+            return
+        }
+        visit(current.superClass)
+        current.interfaces.forEach(::visit)
+    }
+    visit(classType)
+    return when {
+        "java.util.Map" in names -> JavaContainerKind.MAP
+        names.any { it in javaSequenceContainerNames } -> JavaContainerKind.SEQUENCE
+        else -> null
+    }
+}
+
+private val javaSequenceContainerNames = setOf(
+    "java.lang.Iterable",
+    "java.util.Collection",
+    "java.util.List",
+    "java.util.Set",
+    "java.util.Queue",
+    "java.util.Deque"
+)
+
 data class JavaSignatureMetadata(
     val isVarArgs: Boolean = false,
     val typeParameters: List<TypeParameterType> = emptyList(),

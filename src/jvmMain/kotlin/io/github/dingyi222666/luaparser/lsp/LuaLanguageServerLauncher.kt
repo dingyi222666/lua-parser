@@ -24,7 +24,7 @@ object LuaLanguageServerLauncher {
     }
 
     fun launch(input: InputStream = System.`in`, output: OutputStream = System.out): LuaLanguageServerConnection {
-        val server = LuaLanguageServer()
+        val server = LuaLanguageServer(processExit = { code -> kotlin.system.exitProcess(code) })
         val launcher = Launcher.Builder<LanguageClient>()
             .setLocalService(server)
             .setRemoteInterface(LanguageClient::class.java)

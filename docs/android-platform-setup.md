@@ -260,11 +260,11 @@ If explicit `/Users/dingyi/Library/Android/sdk/platforms/android-35/android.jar`
 6. If no Android platform jar is available, omit `jvm.androidJar`. JDK classes and external jars in `jvm.classpath` can still resolve. Curated Android-Lua static framework resources may satisfy documented framework symbols, but reflective Android SDK coverage should be treated as unavailable for that run — **skip**, do not fail host setup.
 7. Keep Android-specific tests or LSP scenarios scoped to environments where the configured or discovered `android.jar` exists; otherwise skip with a clear reason.
 
-## Pre-TASK-043 / inventory note
+## Pre-TASK-043 note
 
 - **TASK-184** product library-stub work is accepted in task metadata; this page does not re-verify those tests.
 - **TASK-043** serialized Gradle verification remains the only place for suite-level pass/fail claims; it is still `blocked` / open from the worker perspective.
-- Host path re-checks and documentation inventory on this page are **not final acceptance inventory**. Suite inventory remains frozen/review-owned (see TASK-125 / `docs/test-strategy.md` / `docs/test-inventory-recount-procedure.md`). **Inventory is not final until TASK-043.**
+- Host path re-checks on this page are not suite evidence. Test scope is documented in `docs/test-strategy.md`; pass/fail authority remains with TASK-043.
 - Do **not** claim final green acceptance from this docs task.
 
 Companion docs: `docs/jvm-reflection-classloader-design.md`, `docs/android-lua-architecture.md`, `docs/android-lua-verification.md`, `docs/java-interop-model.md`, `docs/serialized-verification.md`, `docs/final-verification.md`.

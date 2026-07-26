@@ -21,8 +21,7 @@ import kotlin.test.assertTrue
  * luajava helper method inventory used when coding with Java interop.
  *
  * Does **not** invent APIs. Locks only methods already declared on the AndroLua 5.3
- * luajava overlay ([AndroidLua53LuaJavaBuiltinOverlaySources] /
- * `androlua53-luajava/luajava.lua` / campaign fixtures):
+ * luajava overlay (`androlua53-luajava/luajava.lua` / campaign fixtures):
  *
  * | Method | Documented shape (overlay) |
  * |---|---|

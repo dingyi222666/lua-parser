@@ -273,7 +273,7 @@
     appendLog("out", summarizeMessage(obj));
   }
 
-  function request(method, params) {
+  function request(method, params, timeoutMs) {
     const id = nextId++;
     const msg = { jsonrpc: "2.0", id: id, method: method, params: params };
     return new Promise(function (resolve, reject) {
@@ -282,7 +282,7 @@
           pending.delete(id);
           reject(new Error("timeout " + method + " #" + id));
         }
-      }, 30000);
+      }, timeoutMs || 30000);
       pending.set(id, { resolve: resolve, reject: reject, method: method, timer: timer });
       try {
         sendRaw(msg);
@@ -620,13 +620,8 @@
     });
 
     if (!workspaceFiles.length && serverInfo.workspaceUri) {
-      const defaults = [
-        "main.lua",
-        "utils.lua",
-        "greeter.lua",
-        "android_sample.lua",
-        "broken.lua",
-      ];
+      // Fallback only when /api/files is empty (demo samples or alp root).
+      const defaults = ["main.lua", "init.lua", "info.lua"];
       workspaceFiles = defaults.map(function (name) {
         return {
           name: name,
@@ -1320,7 +1315,7 @@
         logSys("WebSocket open");
         setStatus("connecting", "Initializing…");
         try {
-          const result = await request("initialize", buildInitializeParams());
+          const result = await request("initialize", buildInitializeParams(), 120000);
           logSys(
             "initialized capabilities: " +
               (result && result.capabilities
@@ -1644,19 +1639,16 @@
       el.btnStart.addEventListener("click", function () {
         startLsp()
           .then(async function () {
-            // Open all samples so multi-file require works; focus main.lua
+            // The server indexed the workspace during initialize; open only the entry file.
             try {
               const files = await fetchJson(HTTP_BASE + "/api/files");
               const list = Array.isArray(files) ? files : [];
               if (list.length) {
-                for (let i = 0; i < list.length; i++) {
-                  await openDocument(list[i].uri, list[i]);
-                }
                 const main =
                   list.find(function (f) {
                     return f.name === "main.lua";
                   }) || list[0];
-                if (main) activateDocument(main.uri);
+                if (main) await openDocument(main.uri, main);
               } else {
                 const main =
                   workspaceFiles.find(function (f) {

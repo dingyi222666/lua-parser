@@ -210,6 +210,8 @@ data class WorkspacePublicFingerprint(
                 append(serializeTypeParameters(type.typeParameters, javaClassStack))
                 append(";alias=")
                 append(type.alias?.let { serializeType(it, javaClassStack) }.orEmpty())
+                append(";javaClass=")
+                append(type.javaClassName.orEmpty())
                 append(";fields=")
                 append(sortedEntries(type.fields).joinToString("|") { (name, nested) ->
                     "$name:${serializeType(nested, javaClassStack)}"

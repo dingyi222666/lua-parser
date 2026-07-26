@@ -49,3 +49,19 @@ src/main/kotlin-antlr
 
 locks
 tasks
+
+### Agent session state ###
+.claude/
+scripts/watch-agent-activity.js
+*_HANDOFF*.md
+
+### Node / demo tooling ###
+node_modules/
+tools/monaco-lsp-demo/.lsp-classpath
+
+### Local build shims and crash dumps ###
+gradlew.lf
+gradlew.unix
+gradlew.unix.tmp
+sh.exe.stackdump
+/org/

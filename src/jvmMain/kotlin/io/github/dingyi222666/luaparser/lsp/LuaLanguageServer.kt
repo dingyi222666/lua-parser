@@ -38,7 +38,8 @@ import org.eclipse.lsp4j.services.WorkspaceService
 import java.util.concurrent.CompletableFuture
 
 class LuaLanguageServer(
-    private val languageService: LuaLanguageService = LuaLanguageService(JvmWorkspaceEngine())
+    private val languageService: LuaLanguageService = LuaLanguageService(JvmWorkspaceEngine()),
+    private val processExit: (Int) -> Unit = {}
 ) : LanguageServer, LanguageClientAware {
     private enum class LifecycleState {
         CREATED,
@@ -222,10 +223,16 @@ class LuaLanguageServer(
     }
 
     override fun exit() {
-        synchronized(lifecycleLock) {
+        val exitCode = synchronized(lifecycleLock) {
+            if (lifecycleState == LifecycleState.EXITED) {
+                return@synchronized null
+            }
+            val code = if (lifecycleState == LifecycleState.SHUTDOWN) 0 else 1
             lifecycleState = LifecycleState.EXITED
             client = null
+            code
         }
+        exitCode?.let(processExit)
     }
 
     override fun getTextDocumentService(): TextDocumentService = textDocumentService

@@ -111,6 +111,7 @@ internal data class SemanticWorkspaceContext(
                 // (configured imports / unrestricted JVM target resolution for dynamic calls).
                 resolver.importTargetSymbolFor(path, target)
                     ?: fallbackResolveImportTarget?.invoke(target)
+                    ?: resolver.importTargetSymbol(target)
             }
         )
     }

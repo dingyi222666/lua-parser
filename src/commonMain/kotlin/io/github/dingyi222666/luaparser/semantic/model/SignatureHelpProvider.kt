@@ -47,6 +47,7 @@ import io.github.dingyi222666.luaparser.semantic.types.model.TypeParameterType
 import io.github.dingyi222666.luaparser.semantic.types.model.UnknownType
 import io.github.dingyi222666.luaparser.semantic.types.model.VarargType
 import io.github.dingyi222666.luaparser.semantic.types.resolve.unionTypeOf
+import io.github.dingyi222666.luaparser.util.putIfAbsentCompat
 
 internal class SignatureHelpProvider(
     private val binder: BinderPassResult,
@@ -552,14 +553,14 @@ internal class SignatureHelpProvider(
             is TypeParameterType -> {
                 val name = type.name.trim()
                 if (name.isNotEmpty()) {
-                    into.putIfAbsent(name, type)
+                    into.putIfAbsentCompat(name, type)
                 }
             }
             is FunctionType -> {
                 type.typeParameters.forEach { parameter ->
                     val name = parameter.name.trim()
                     if (name.isNotEmpty()) {
-                        into.putIfAbsent(name, parameter)
+                        into.putIfAbsentCompat(name, parameter)
                     }
                 }
                 type.parameters.forEach { collectTypeParameters(it.type, into) }

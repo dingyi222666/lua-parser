@@ -39,7 +39,11 @@ function luajava.newArray(class, ...) end
 ---@return JavaArray<any>
 function luajava.createArray(className, values) end
 
----@param object JavaObject
+---@overload fun<K, V>(object: java.util.Map<K, V>): table<K, V>
+---@overload fun<T>(object: java.util.List<T>): table<number, T>
+---@overload fun<T>(object: java.util.Collection<T>): table<number, T>
+---@overload fun<T>(object: JavaArray<T>): table<number, T>
+---@param object any
 ---@return table
 function luajava.astable(object) end
 

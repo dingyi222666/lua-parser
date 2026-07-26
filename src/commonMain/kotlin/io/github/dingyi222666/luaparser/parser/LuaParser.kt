@@ -112,12 +112,31 @@ class LuaParser(
         )
     }
 
-    fun parseWorkspaceSnippet(source: String): ChunkNode {
-        return LuaParser(luaVersion, errorRecovery = true).also {
+    fun parseWorkspaceSnippet(source: String): ChunkNode =
+        parseWorkspaceSnippetWithDiagnostics(source).chunk
+
+    /**
+     * Lenient parse for workspace/editor buffers, *keeping* the recovery diagnostics.
+     *
+     * Snippet parsing always runs with recovery on, even when this parser was configured with
+     * `errorRecovery = false`, so it delegates to a dedicated instance rather than flipping modes
+     * on `this`. That instance used to be discarded along with everything it recorded, which made
+     * [recoveryDiagnostics] permanently empty for every workspace parse — so parse errors were
+     * invisible to the workspace and consumers had to re-parse the same buffer to see them.
+     */
+    fun parseWorkspaceSnippetWithDiagnostics(source: String): LuaParseResult {
+        val snippetParser = snippetParser ?: LuaParser(luaVersion, errorRecovery = true).also {
             it.ignoreWarningMessage = true
             it.recoverIncompleteWorkspaceSnippet = true
-        }.parse(source)
+            snippetParser = it
+        }
+        // parse() calls reset(), so one instance is safely reusable across snippets.
+        val chunk = snippetParser.parse(source)
+        return LuaParseResult(chunk = chunk, recoveryDiagnostics = snippetParser.recoveryDiagnostics)
     }
+
+    /** Lazily created companion instance for [parseWorkspaceSnippetWithDiagnostics]. */
+    private var snippetParser: LuaParser? = null
 
     fun parse(lexer: LuaLexer): ChunkNode {
         reset()

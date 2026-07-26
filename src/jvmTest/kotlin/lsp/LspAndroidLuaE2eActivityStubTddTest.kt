@@ -25,10 +25,7 @@ import kotlin.test.assertTrue
 /**
  * TASK-229 — Android-Lua E2E activity/view stub fixture expansion.
  *
- * Bounded LSP E2E corpus for `activity` / `View` stub surfaces (completion + hover)
- * without waiting for full TASK-170 fixture stabilization. Product code is out of
- * scope (test-only). When the host `android.jar` is missing, jar-dependent cases
- * skip with an explicit TASK-229 reason rather than failing hard.
+ * Bounded LSP E2E corpus for reflection-backed `activity` / `View` surfaces.
  *
  * REVIEW23–28 rejection notes (activity member empty / Type: unknown / loadlayout empty):
  * - Overlay types `activity` as a named custom type (`AndroidLuaContext` /
@@ -41,9 +38,7 @@ import kotlin.test.assertTrue
  *   currently expand a member completion surface on the LSP path.
  * - Member completion/hover needles must target the *usage* site, not the earlier
  *   `---@field` / `---@method` doc token (occurrence 1 is the annotation).
- * - Full host `android.jar` + `android.widget.*` wildcards can OOM under reflection;
- *   fixtures use repository Android framework models via no-android-runtime.jar
- *   (same approach as [LspAndroidLuaE2eTddTest]) and avoid wildcard expansion.
+ * - Android framework members come from the configured host `android.jar`.
  * - `loadlayout` returns JavaObject/View-like for hover; product does not expand a
  *   usable member surface on the raw return. REVIEW28: do **not** re-annotate a
  *   constructed `TextView` with `---@type android.widget.TextView` when asserting
@@ -57,7 +52,6 @@ import kotlin.test.assertTrue
  */
 class LspAndroidLuaE2eActivityStubTddTest {
     private val androidJar = resolveAndroidJar()
-    private val noAndroidRuntimeClasspath = "src/jvmTest/resources/lsp/androidlua/no-android-runtime.jar"
 
     // -------------------------------------------------------------------------
     // Skip / discovery contract
@@ -83,7 +77,7 @@ class LspAndroidLuaE2eActivityStubTddTest {
 
     @Test
     fun activity_global_hover_surfaces_lua_activity_or_activity_stub() {
-        val service = androidService(useHostAndroidJar = false)
+        val service = androidService()
         val document = service.open(
             "workspace/activity-stub-hover.lua",
             """
@@ -109,7 +103,7 @@ class LspAndroidLuaE2eActivityStubTddTest {
         // Emmy ---@class / ---@field / ---@method (product-supported member completion
         // shape from CompletionProviderTest). Use `{}` RHS so the annotation is not
         // overridden by the activity global's empty custom-type surface.
-        val service = androidService(useHostAndroidJar = false)
+        val service = androidService()
         val document = service.open(
             "workspace/activity-stub-members.lua",
             """
@@ -145,7 +139,7 @@ class LspAndroidLuaE2eActivityStubTddTest {
 
     @Test
     fun view_instance_member_completion_includes_set_visibility_and_get_id() {
-        val service = androidService(useHostAndroidJar = false)
+        val service = androidService()
         val document = service.open(
             "workspace/view-member-completion.lua",
             """
@@ -170,7 +164,7 @@ class LspAndroidLuaE2eActivityStubTddTest {
 
     @Test
     fun text_view_member_completion_includes_set_text_from_activity_host() {
-        val service = androidService(useHostAndroidJar = false)
+        val service = androidService()
         val document = service.open(
             "workspace/textview-settext.lua",
             """
@@ -195,7 +189,7 @@ class LspAndroidLuaE2eActivityStubTddTest {
 
     @Test
     fun text_document_service_exposes_activity_and_view_stub_hover_and_completion() {
-        val languageService = androidService(useHostAndroidJar = false)
+        val languageService = androidService()
         val textDocuments = LuaTextDocumentService(languageService)
 
         val source = """
@@ -249,16 +243,9 @@ class LspAndroidLuaE2eActivityStubTddTest {
     // Helpers
     // -------------------------------------------------------------------------
 
-    /**
-     * @param useHostAndroidJar when false, use the repository no-runtime sentinel
-     *   (same as [LspAndroidLuaE2eTddTest]) so Android framework models power
-     *   View/TextView without reflecting the full host platform jar.
-     */
-    private fun androidService(useHostAndroidJar: Boolean = false): LuaLanguageService {
-        if (useHostAndroidJar) {
-            requireAndroidJarOrSkip()
-        }
-        val jarPath = if (useHostAndroidJar) androidJar.path else noAndroidRuntimeClasspath
+    private fun androidService(): LuaLanguageService {
+        requireAndroidJarOrSkip()
+        val jarPath = androidJar.path
         return LuaLanguageService(
             JvmWorkspaceEngine(
                 configuration = JvmWorkspaceConfiguration(androidJar = jarPath)

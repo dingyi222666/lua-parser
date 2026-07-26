@@ -7,7 +7,8 @@ data class ClassType(
     val superClass: ClassType? = null,
     val superType: Type? = null,
     val typeParameters: List<TypeParameterType> = emptyList(),
-    val alias: AliasType? = null
+    val alias: AliasType? = null,
+    val javaClassName: String? = null
 ) : Type {
     fun getAllFields(): Map<String, Type> = collectAllFields(mutableListOf())
 

@@ -3,11 +3,12 @@ package io.github.dingyi222666.luaparser.semantic.comments
 import io.github.dingyi222666.luaparser.parser.ast.node.CommentStatement
 import io.github.dingyi222666.luaparser.parser.ast.node.Position
 import io.github.dingyi222666.luaparser.parser.ast.node.Range
-import io.github.dingyi222666.luaparser.semantic.types.TypeAnnotationParser
+import io.github.dingyi222666.luaparser.semantic.types.syntax.indexOfTopLevelChar
+import io.github.dingyi222666.luaparser.semantic.types.syntax.splitTopLevelToken
+import io.github.dingyi222666.luaparser.semantic.types.syntax.splitTopLevelTypeText
 import io.github.dingyi222666.luaparser.semantic.types.syntax.TypeSyntaxParser
 
 class DocCommentSyntaxParser(
-    private val typeAnnotationParser: TypeAnnotationParser = TypeAnnotationParser()
 ) {
 
     fun parse(comments: List<CommentStatement>): DocCommentSyntax? {
@@ -118,7 +119,7 @@ class DocCommentSyntaxParser(
     }
 
     private fun parseReturnTag(content: String, lineInfo: DocLineInfo): ReturnTagSyntax {
-        val parts = typeAnnotationParser.splitTopLevel(content, ',')
+        val parts = splitTopLevelTypeText(content, ',')
         if (parts.isEmpty()) {
             return ReturnTagSyntax()
         }
@@ -147,7 +148,7 @@ class DocCommentSyntaxParser(
     }
 
     private fun parseClassTag(content: String, lineInfo: DocLineInfo): ClassTagSyntax {
-        val colonIndex = findTopLevelChar(content, ':')
+        val colonIndex = indexOfTopLevelChar(content, ':')
         val nameSegment = if (colonIndex == -1) content.trim() else content.substring(0, colonIndex).trim()
         val parentName = if (colonIndex == -1) null else content.substring(colonIndex + 1).trim().ifBlank { null }
         val genericStart = nameSegment.indexOf('<')
@@ -155,7 +156,7 @@ class DocCommentSyntaxParser(
         val declaredTypeParameters = if (genericStart == -1 || !nameSegment.endsWith(">")) {
             emptyList()
         } else {
-            typeAnnotationParser.splitTopLevel(
+            splitTopLevelTypeText(
                 nameSegment.substring(genericStart + 1, nameSegment.length - 1),
                 ','
             ).map { it.trim() }
@@ -198,7 +199,7 @@ class DocCommentSyntaxParser(
                 return@mapNotNull null
             }
 
-            val colonIndex = findTopLevelChar(trimmed, ':')
+            val colonIndex = indexOfTopLevelChar(trimmed, ':')
             if (colonIndex == -1) {
                 GenericParameterSyntax(name = trimmed, range = tokenRange(lineInfo, trimmed))
             } else {
@@ -306,7 +307,7 @@ class DocCommentSyntaxParser(
         }
 
         val name = trimmed.substring(0, genericStart).trim()
-        val parameters = typeAnnotationParser.splitTopLevel(
+        val parameters = splitTopLevelTypeText(
             trimmed.substring(genericStart + 1, trimmed.length - 1),
             ','
         ).mapNotNull { part ->
@@ -489,81 +490,6 @@ class DocCommentSyntaxParser(
         )
     }
 
-    private fun findTopLevelChar(text: String, target: Char): Int {
-        var state = TopLevelScanState()
-
-        text.forEachIndexed { index, char ->
-            if (!state.accept(text, index, char)) {
-                return@forEachIndexed
-            }
-
-            if (char == target && state.isTopLevel()) {
-                return index
-            }
-        }
-
-        return -1
-    }
-
-    private fun splitTopLevelToken(text: String): Pair<String, String> {
-        val trimmed = text.trim()
-        if (trimmed.isEmpty()) {
-            return "" to ""
-        }
-
-        val state = TopLevelScanState()
-        trimmed.forEachIndexed { index, char ->
-            if (!state.accept(trimmed, index, char)) {
-                return@forEachIndexed
-            }
-
-            if (char.isWhitespace() && state.isTopLevel()) {
-                return trimmed.substring(0, index) to trimmed.substring(index + 1).trim()
-            }
-        }
-
-        return trimmed to ""
-    }
-
-    private class TopLevelScanState {
-        var angleDepth = 0
-        var braceDepth = 0
-        var bracketDepth = 0
-        var parenDepth = 0
-        var inString = false
-        var stringChar = '\u0000'
-
-        fun accept(text: String, index: Int, char: Char): Boolean {
-            if (inString) {
-                if (char == stringChar && text.getOrNull(index - 1) != '\\') {
-                    inString = false
-                }
-                return false
-            }
-
-            when (char) {
-                '\'', '"' -> {
-                    inString = true
-                    stringChar = char
-                }
-
-                '<' -> angleDepth++
-                '>' -> angleDepth = (angleDepth - 1).coerceAtLeast(0)
-                '{' -> braceDepth++
-                '}' -> braceDepth = (braceDepth - 1).coerceAtLeast(0)
-                '[' -> bracketDepth++
-                ']' -> bracketDepth = (bracketDepth - 1).coerceAtLeast(0)
-                '(' -> parenDepth++
-                ')' -> parenDepth = (parenDepth - 1).coerceAtLeast(0)
-            }
-
-            return true
-        }
-
-        fun isTopLevel(): Boolean {
-            return angleDepth == 0 && braceDepth == 0 && bracketDepth == 0 && parenDepth == 0 && !inString
-        }
-    }
 
     private data class ParsedTypeText(
         val typeText: String,

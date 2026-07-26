@@ -290,7 +290,7 @@ class SemanticPipelineIntegrationTest {
         assertEquals(harness.positionOf("TValue", occurrence = 1), genericSymbol.range?.start)
         assertEquals(1, functionOwnedTypeParameters.count { it.name == "TValue" })
         assertEquals("DisplayName", harness.snapshot.model.getTypeAt(harness.localValue("label"))?.displayName)
-        assertEquals("TValue", harness.snapshot.model.getTypeAt(harness.localValue("copy"))?.displayName)
+        assertEquals("DisplayName", harness.snapshot.model.getTypeAt(harness.localValue("copy"))?.displayName)
         assertTrue("item" in lexicalLabels)
         assertTrue("read" in lexicalLabels)
         assertTrue("getName" in memberLabels)

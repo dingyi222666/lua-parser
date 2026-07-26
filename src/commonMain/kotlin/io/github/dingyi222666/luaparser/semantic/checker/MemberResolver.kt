@@ -13,8 +13,10 @@ import io.github.dingyi222666.luaparser.semantic.types.model.FunctionParameter
 import io.github.dingyi222666.luaparser.semantic.types.model.IntersectionType
 import io.github.dingyi222666.luaparser.semantic.types.model.JavaArrayType
 import io.github.dingyi222666.luaparser.semantic.types.model.JavaClassType
+import io.github.dingyi222666.luaparser.semantic.types.model.JavaContainerKind
 import io.github.dingyi222666.luaparser.semantic.types.model.JavaInstanceType
 import io.github.dingyi222666.luaparser.semantic.types.model.JavaMemberKind
+import io.github.dingyi222666.luaparser.semantic.types.model.javaContainerKind
 import io.github.dingyi222666.luaparser.semantic.types.model.ModuleType
 import io.github.dingyi222666.luaparser.semantic.types.model.OverloadedFunctionType
 import io.github.dingyi222666.luaparser.semantic.types.model.PrimitiveType
@@ -85,7 +87,7 @@ class MemberResolver(
             is ModuleType -> resolveModuleIndex(normalized, indexNode, indexType)
             is ClassType -> resolveClassIndex(normalized, indexNode)
             is JavaClassType -> resolveJavaClassIndex(normalized, indexNode)
-            is JavaInstanceType -> resolveJavaInstanceIndex(normalized, indexNode)
+            is JavaInstanceType -> resolveJavaInstanceIndex(normalized, indexNode, indexType)
             is JavaArrayType -> {
                 if (PrimitiveType.NUMBER.isAssignableFrom(indexType)) {
                     // Peel one rank: nested single-rank wrappers return elementType;
@@ -367,8 +369,32 @@ class MemberResolver(
 
     private fun resolveJavaInstanceIndex(
         instanceType: JavaInstanceType,
-        indexNode: ExpressionNode
+        indexNode: ExpressionNode,
+        indexType: Type
     ): MemberResolution {
+        when (instanceType.javaContainerKind()) {
+            JavaContainerKind.SEQUENCE -> {
+                if (PrimitiveType.NUMBER.isAssignableFrom(indexType)) {
+                    return MemberResolution(
+                        type = instanceType.typeArguments.firstOrNull() ?: PrimitiveType.ANY,
+                        accessKind = MemberAccessKind.INDEX,
+                        baseType = instanceType
+                    )
+                }
+            }
+            JavaContainerKind.MAP -> {
+                val keyType = instanceType.typeArguments.getOrNull(0)
+                val valueType = instanceType.typeArguments.getOrNull(1)
+                if (keyType != null && valueType != null && keyType.isAssignableFrom(indexType)) {
+                    return MemberResolution(
+                        type = valueType,
+                        accessKind = MemberAccessKind.INDEX,
+                        baseType = instanceType
+                    )
+                }
+            }
+            null -> Unit
+        }
         val key = stringLiteralKey(indexNode)
             ?: return MemberResolution(baseType = instanceType, failureReason = MemberFailureReason.INVALID_INDEX_TYPE)
         return resolveJavaInstanceMember(instanceType, key, includeReceiver = false)

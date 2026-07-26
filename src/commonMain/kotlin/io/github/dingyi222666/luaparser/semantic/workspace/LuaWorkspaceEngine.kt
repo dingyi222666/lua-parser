@@ -1,23 +1,63 @@
 package io.github.dingyi222666.luaparser.semantic.workspace
 
+import io.github.dingyi222666.luaparser.parser.LuaParseResult
 import io.github.dingyi222666.luaparser.parser.LuaParser
+import io.github.dingyi222666.luaparser.parser.LuaParserRecoveryDiagnostic
 import io.github.dingyi222666.luaparser.parser.LuaVersion
+import io.github.dingyi222666.luaparser.parser.ast.node.ChunkNode
+import io.github.dingyi222666.luaparser.parser.ast.node.Position
+import io.github.dingyi222666.luaparser.parser.ast.node.Range
 import io.github.dingyi222666.luaparser.semantic.SemanticPipeline
 import io.github.dingyi222666.luaparser.semantic.SemanticWorkspaceContext
 import io.github.dingyi222666.luaparser.semantic.workspace.std.BuiltinOverlayLoader
+import io.github.dingyi222666.luaparser.semantic.workspace.std.BuiltinOverlaySnapshot
 
 open class LuaWorkspaceEngine(
-    private val parserFactory: () -> LuaParser = { LuaParser() }
+    private val parserFactory: (LuaVersion) -> LuaParser = { version -> LuaParser(version) }
 ) {
     private val semanticPipeline = SemanticPipeline()
+
+    /**
+     * Grammar dialect currently in force.
+     *
+     * The workspace declares one [LuaVersion], and it has to drive *both* halves of the front end:
+     * the builtin overlay catalog and the parser. It used to only reach the overlay, so a Lua 5.4
+     * workspace got a 5.4 stdlib but an AndroLua 5.3 grammar — `local x <close>` was rejected in
+     * the very workspace that declared 5.4, and AndroLua-only syntax was silently accepted by
+     * workspaces that declared plain 5.3.
+     */
+    private var parserVersion: LuaVersion = LuaVersion.ANDROLUA_5_3
+
+    private fun useParserVersion(version: LuaVersion) {
+        if (parserVersion == version) {
+            return
+        }
+        parserVersion = version
+        // Everything memoized below was produced by the previous dialect.
+        activeParser = null
+        parsedChunks.clear()
+        documentFactsCache.clear()
+    }
+
+    /**
+     * Overlay sources are compiled-in resources and [analyzeFile] is deterministic, so the
+     * snapshot for a given version never changes over an engine's lifetime. Re-analyzing the
+     * ~65 stdlib/AndroLua overlay modules on every build/update dominated edit latency.
+     */
+    private val builtinOverlays = mutableMapOf<LuaVersion, BuiltinOverlaySnapshot>()
+
+    private fun builtinOverlay(version: LuaVersion): BuiltinOverlaySnapshot {
+        return builtinOverlays.getOrPut(version) { BuiltinOverlayLoader.load(version, ::analyzeFile) }
+    }
 
     open fun build(
         input: LuaWorkspaceInput,
         reporter: ProgressReporter = ProgressReporter.NONE
     ): WorkspaceUpdateResult {
+        useParserVersion(input.standardLibraryOverlayVersion)
         val sortedFiles = input.files.keys.sortedBy { it.value }
         val baseSnapshots = linkedMapOf<VirtualPath, WorkspaceSnapshot.FileSnapshot>()
-        val builtinOverlay = BuiltinOverlayLoader.load(input.standardLibraryOverlayVersion, ::analyzeFile)
+        val builtinOverlay = builtinOverlay(input.standardLibraryOverlayVersion)
         val extraProviders = extraProviders(input)
         val totalFiles = sortedFiles.size * 2
 
@@ -55,6 +95,7 @@ open class LuaWorkspaceEngine(
             previous = null
         )
         val affectedDocuments = sortedFiles.toSet()
+        retainCachedDocuments(input.files.keys)
         reportBindingProgress(sortedFiles, sortedFiles.size, totalFiles, reporter)
         reporter.report(AnalysisProgress(AnalysisProgress.Phase.COMPLETE, completedFiles = totalFiles, totalFiles = totalFiles))
 
@@ -75,7 +116,8 @@ open class LuaWorkspaceEngine(
         standardLibraryOverlayVersion: LuaVersion = previous.builtinOverlay.version,
         reporter: ProgressReporter = ProgressReporter.NONE
     ): WorkspaceUpdateResult {
-        val builtinOverlay = BuiltinOverlayLoader.load(standardLibraryOverlayVersion, ::analyzeFile)
+        useParserVersion(standardLibraryOverlayVersion)
+        val builtinOverlay = builtinOverlay(standardLibraryOverlayVersion)
         val nextMetadata = delta.metadata ?: previous.metadata
 
         // Merge previous snapshot sources with the delta so extraProviders and dirty
@@ -147,6 +189,7 @@ open class LuaWorkspaceEngine(
             pathsToAnalyze = dirtyPlan.affectedDocuments,
             previous = previous
         )
+        retainCachedDocuments(nextSources.keys)
         reportBindingProgress(dirtyPlan.affectedDocuments.sortedBy { it.value }, parsingTargets.size, totalFiles, reporter)
         reporter.report(AnalysisProgress(AnalysisProgress.Phase.COMPLETE, completedFiles = totalFiles, totalFiles = totalFiles))
 
@@ -191,34 +234,35 @@ open class LuaWorkspaceEngine(
             }
         }
 
+        // Analysis runs in dependency order and only ever *adds* semantic files, so the loop can
+        // share one snapshot view backed by the live `files` map instead of copying the whole map
+        // once per analyzed document (which made a workspace pass quadratic in file count).
+        val analysisSnapshot = baseSnapshot.copy(files = files)
+        val analysisInput = LuaWorkspaceInput(
+            files = sources,
+            metadata = baseSnapshot.metadata,
+            standardLibraryOverlayVersion = baseSnapshot.builtinOverlay.version
+        )
+
         semanticAnalysisOrder(pathsToAnalyze, baseSnapshot.graph).forEach { path ->
             val fileSnapshot = files[path] ?: return@forEach
-            val chunk = sources[path]?.let(::parseWorkspaceSource)
-                ?: previous?.files?.get(path)?.semanticFile?.chunk
-                ?: fileSnapshot.semanticFile?.chunk
-                ?: parseWorkspaceSource("")
-            val currentSnapshot = baseSnapshot.copy(files = files.toMap())
+            val carriedOver = previous?.files?.get(path)?.semanticFile ?: fileSnapshot.semanticFile
+            // Reuse the carried-over parse (and its diagnostics) when this pass has no source for
+            // the path; only fall back to an empty parse when there is nothing at all.
+            val parsed = sources[path]?.let { source -> parseWorkspaceResult(path, source) }
+            val chunk = parsed?.chunk ?: carriedOver?.chunk ?: parseWorkspaceSource("")
             val semanticSnapshot = semanticPipeline.analyzeSnapshot(
                 chunk,
-                workspaceContext(
-                    LuaWorkspaceInput(
-                        files = sources,
-                        metadata = baseSnapshot.metadata,
-                        standardLibraryOverlayVersion = baseSnapshot.builtinOverlay.version
-                    ),
-                    path,
-                    currentSnapshot
-                )
+                workspaceContext(analysisInput, path, analysisSnapshot)
             )
             val semanticFile = WorkspaceSemanticFile(
                 path = path,
-                source = sources[path]
-                    ?: previous?.files?.get(path)?.semanticFile?.source
-                    ?: fileSnapshot.semanticFile?.source
-                    ?: "",
+                source = sources[path] ?: carriedOver?.source ?: "",
                 chunk = chunk,
                 model = semanticSnapshot.model,
-                snapshot = semanticSnapshot
+                snapshot = semanticSnapshot,
+                recoveryDiagnostics = parsed?.recoveryDiagnostics
+                    ?: carriedOver?.recoveryDiagnostics.orEmpty()
             )
             files[path] = fileSnapshot.copy(semanticFile = semanticFile)
         }
@@ -251,9 +295,35 @@ open class LuaWorkspaceEngine(
         return ordered
     }
 
+    /**
+     * Document facts keyed by path and guarded by the exact source text.
+     *
+     * Facts are derived deterministically from (path, source) but are needed by several layers in
+     * one pass (`analyzeFile` here, provider discovery in the JVM engine). Memoizing them keeps
+     * that to a single AST walk per document revision instead of one walk per consumer.
+     */
+    private val documentFactsCache = mutableMapOf<VirtualPath, Pair<String, DocumentFacts>>()
+
+    protected fun documentFacts(path: VirtualPath, source: String): DocumentFacts {
+        documentFactsCache[path]?.let { (cachedSource, facts) ->
+            if (cachedSource == source) {
+                return facts
+            }
+        }
+        val facts = DocumentFactsCollector.collect(path, parseWorkspaceSource(path, source))
+        documentFactsCache[path] = source to facts
+        return facts
+    }
+
+    /** Drops per-path caches for documents that left the workspace. */
+    private fun retainCachedDocuments(paths: Set<VirtualPath>) {
+        parsedChunks.keys.retainAll(paths)
+        documentFactsCache.keys.retainAll(paths)
+    }
+
     private fun analyzeFile(path: VirtualPath, source: String): WorkspaceSnapshot.FileSnapshot {
-        val chunk = parseWorkspaceSource(source)
-        val facts = DocumentFactsCollector.collect(path, chunk)
+        val chunk = parseWorkspaceSource(path, source)
+        val facts = documentFacts(path, source)
         val legacyEnvironment = LegacyModuleEnvironmentPass.analyze(path, facts)
         val exportSurface = ModuleExportCollector.collect(chunk, facts, legacyEnvironment)
         val publicTypeAnnotations = source.lineSequence()
@@ -272,10 +342,77 @@ open class LuaWorkspaceEngine(
         )
     }
 
-    protected fun parseWorkspaceSource(source: String) = try {
-        parserFactory().parseWorkspaceSnippet(source)
-    } catch (_: IllegalStateException) {
-        parserFactory().parseWorkspaceSnippet("")
+    /**
+     * A single workspace pass previously parsed the same document several times (facts
+     * collection, provider discovery, then per-document context). Parsing is deterministic, so
+     * remember the latest chunk per path and reuse it while the source is unchanged.
+     *
+     * Keyed by path rather than by source text: AST nodes carry mutable `parent`/`range`, so
+     * two distinct documents that happen to hold identical text must never share a chunk.
+     */
+    private val parsedChunks = mutableMapOf<VirtualPath, Pair<String, LuaParseResult>>()
+
+    protected fun parseWorkspaceSource(path: VirtualPath, source: String): ChunkNode =
+        parseWorkspaceResult(path, source).chunk
+
+    /** Cached parse for [path], including the recovery diagnostics the chunk was produced with. */
+    private fun parseWorkspaceResult(path: VirtualPath, source: String): LuaParseResult {
+        parsedChunks[path]?.let { (cachedSource, result) ->
+            if (cachedSource == source) {
+                return result
+            }
+        }
+        val result = parseWorkspaceResult(source)
+        parsedChunks[path] = source to result
+        return result
+    }
+
+    protected fun parseWorkspaceSource(source: String): ChunkNode = parseWorkspaceResult(source).chunk
+
+    /**
+     * One reusable parser per dialect. `parse()` resets all per-parse state, so allocating a
+     * fresh parser (plus the inner snippet parser it wraps) on every keystroke was pure waste.
+     */
+    private var activeParser: LuaParser? = null
+
+    private fun activeParser(): LuaParser =
+        activeParser ?: parserFactory(parserVersion).also { activeParser = it }
+
+    private fun parseWorkspaceResult(source: String): LuaParseResult {
+        val parser = activeParser()
+        return try {
+            parser.parseWorkspaceSnippetWithDiagnostics(source)
+        } catch (error: IllegalStateException) {
+            // Error recovery itself gave up. Fall back to an empty document so analysis can still
+            // run, but keep the failure visible as a diagnostic rather than silently reporting a
+            // clean file.
+            LuaParseResult(
+                chunk = parser.parseWorkspaceSnippetWithDiagnostics("").chunk,
+                recoveryDiagnostics = listOf(parseFailureDiagnostic(error.message))
+            )
+        }
+    }
+
+    /**
+     * Turns a parser failure message into a positioned diagnostic.
+     *
+     * Messages are formatted `(line,column): detail`; when that prefix is absent the diagnostic
+     * anchors at the start of the document.
+     */
+    private fun parseFailureDiagnostic(message: String?): LuaParserRecoveryDiagnostic {
+        val text = message.orEmpty().ifEmpty { "Failed to parse source" }
+        val match = PARSE_FAILURE_LOCATION.find(text)
+        val line = match?.groupValues?.get(1)?.toIntOrNull() ?: 1
+        val column = match?.groupValues?.get(2)?.toIntOrNull() ?: 1
+        val detail = match?.groupValues?.get(3)?.takeIf(String::isNotBlank) ?: text
+        return LuaParserRecoveryDiagnostic(
+            message = detail,
+            range = Range(Position(line, column), Position(line, column + 1))
+        )
+    }
+
+    private companion object {
+        val PARSE_FAILURE_LOCATION = Regex("""^\((\d+),\s*(\d+)\):\s*(.*)$""", RegexOption.DOT_MATCHES_ALL)
     }
 
     private fun reportBindingProgress(

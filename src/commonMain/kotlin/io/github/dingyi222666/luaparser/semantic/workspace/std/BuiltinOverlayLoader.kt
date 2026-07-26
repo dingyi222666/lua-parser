@@ -3,8 +3,6 @@ package io.github.dingyi222666.luaparser.semantic.workspace.std
 import io.github.dingyi222666.luaparser.parser.LuaVersion
 import io.github.dingyi222666.luaparser.parser.ast.node.Range
 import io.github.dingyi222666.luaparser.semantic.api.SymbolKind
-import io.github.dingyi222666.luaparser.semantic.types.TypeAnnotationParser
-import io.github.dingyi222666.luaparser.semantic.types.bridges.toModelType
 import io.github.dingyi222666.luaparser.semantic.types.model.AppliedType
 import io.github.dingyi222666.luaparser.semantic.types.model.ArrayType
 import io.github.dingyi222666.luaparser.semantic.types.model.ClassType
@@ -12,13 +10,9 @@ import io.github.dingyi222666.luaparser.semantic.types.model.CustomType
 import io.github.dingyi222666.luaparser.semantic.types.model.FunctionParameter
 import io.github.dingyi222666.luaparser.semantic.types.model.FunctionType
 import io.github.dingyi222666.luaparser.semantic.types.model.IntersectionType
+import io.github.dingyi222666.luaparser.semantic.types.model.JavaArrayType
 import io.github.dingyi222666.luaparser.semantic.types.model.JavaClassType
-import io.github.dingyi222666.luaparser.semantic.types.model.JavaConstructorType
-import io.github.dingyi222666.luaparser.semantic.types.model.JavaInstanceMemberType
 import io.github.dingyi222666.luaparser.semantic.types.model.JavaInstanceType
-import io.github.dingyi222666.luaparser.semantic.types.model.JavaMemberKind
-import io.github.dingyi222666.luaparser.semantic.types.model.JavaOverloadSet
-import io.github.dingyi222666.luaparser.semantic.types.model.JavaStaticMemberType
 import io.github.dingyi222666.luaparser.semantic.types.model.JavaTypeName
 import io.github.dingyi222666.luaparser.semantic.types.model.LiteralType
 import io.github.dingyi222666.luaparser.semantic.types.model.ModuleType
@@ -48,6 +42,8 @@ import io.github.dingyi222666.luaparser.semantic.types.syntax.QuotedObjectFieldN
 import io.github.dingyi222666.luaparser.semantic.types.syntax.TupleTypeSyntax
 import io.github.dingyi222666.luaparser.semantic.types.syntax.TypeSyntax
 import io.github.dingyi222666.luaparser.semantic.types.syntax.TypeSyntaxParser
+import io.github.dingyi222666.luaparser.semantic.types.syntax.indexOfTopLevelChar
+import io.github.dingyi222666.luaparser.semantic.types.syntax.splitTopLevelTypeText
 import io.github.dingyi222666.luaparser.semantic.types.syntax.UnionTypeSyntax
 import io.github.dingyi222666.luaparser.semantic.types.syntax.VarargTypeSyntax
 import io.github.dingyi222666.luaparser.semantic.workspace.ModuleExportSurface
@@ -55,6 +51,7 @@ import io.github.dingyi222666.luaparser.semantic.workspace.VirtualPath
 import io.github.dingyi222666.luaparser.semantic.workspace.WorkspacePublicFingerprint
 import io.github.dingyi222666.luaparser.semantic.workspace.WorkspaceSnapshot
 import io.github.dingyi222666.luaparser.semantic.workspace.workspaceFingerprintHash
+import io.github.dingyi222666.luaparser.util.putIfAbsentCompat
 
 object BuiltinOverlayLoader {
     fun load(
@@ -130,9 +127,18 @@ object BuiltinOverlayLoader {
         )
     }
 
+    /**
+     * Standalone globals are derived purely from compiled-in overlay resources, but they sit in
+     * default-argument position on [SemanticWorkspaceContext] and [BinderPass], so a naive
+     * implementation rebuilt the whole catalog on every context/evaluator construction.
+     */
+    private val standaloneGlobalsByVersion: Map<LuaVersion, Lazy<BuiltinOverlaySnapshot.GlobalsSnapshot>> =
+        LuaVersion.entries.associateWith { version ->
+            lazy { load(version) { _, _ -> WorkspaceSnapshot.FileSnapshot() }.globals }
+        }
+
     fun standaloneGlobals(version: LuaVersion = LuaVersion.LUA_5_3): BuiltinOverlaySnapshot.GlobalsSnapshot {
-        val overlay = load(version) { _, _ -> WorkspaceSnapshot.FileSnapshot() }
-        return overlay.globals
+        return standaloneGlobalsByVersion.getValue(version).value
     }
 
     private fun documentedModuleSource(moduleName: String, resourceText: String): String {
@@ -144,7 +150,7 @@ object BuiltinOverlayLoader {
     }
 
     private fun rawModuleSource(resource: RawProviderModuleResource): String {
-        return readTextOrFallback(resource.resourcePath, resource.fallbackSource).trim()
+        return BuiltinOverlayResourceAccess.readText(resource.resourcePath).trim()
     }
 
     private fun mergeRawModuleSurface(
@@ -164,15 +170,8 @@ object BuiltinOverlayLoader {
         }
     }
 
-    private fun readTextOrFallback(resourcePath: String, fallbackSource: String): String {
-        return runCatching { BuiltinOverlayResourceAccess.readText(resourcePath) }
-            .getOrElse { fallbackSource }
-    }
-
     private fun globalsSource(catalog: Catalog): String {
-        val source = catalog.globalsResourcePath
-            ?.let { resourcePath -> readTextOrFallback(resourcePath, fallbackGlobalsSource(catalog)) }
-            ?: fallbackGlobalsSource(catalog)
+        val source = BuiltinOverlayResourceAccess.readText(catalog.globalsResourcePath)
         val compatibilitySource = catalog.compatibilityGlobalsSource.trim()
         val declaredSource = listOf(source, compatibilitySource).filter(String::isNotBlank).joinToString("\n")
         val missingGlobals = catalog.globalNames.filterNot { name -> globalNameDeclared(declaredSource, name) }
@@ -196,17 +195,6 @@ object BuiltinOverlayLoader {
     private fun globalNameDeclared(source: String, name: String): Boolean {
         val escapedName = Regex.escape(name)
         return Regex("""(?m)^\s*(?:function\s+$escapedName\s*\(|$escapedName\s*=)""").containsMatchIn(source)
-    }
-
-    private fun fallbackGlobalsSource(catalog: Catalog): String {
-        return buildString {
-            catalog.globalNames.forEach { name ->
-                append(name)
-                append(" = ")
-                append(name)
-                append('\n')
-            }
-        }.trim()
     }
 
     private fun documentedGlobalsSurface(
@@ -414,7 +402,7 @@ object BuiltinOverlayLoader {
                 val assignmentType = providerModuleTypes[name]
                     ?: doc.inlineType
                     ?: documentedAssignmentType(assignmentMatch.groupValues[2])
-                membersByPath.putIfAbsent(
+                membersByPath.putIfAbsentCompat(
                     exportPath,
                     StandardMemberDescriptor(
                         name = name,
@@ -434,7 +422,7 @@ object BuiltinOverlayLoader {
         }
 
         analyzedSurface?.members.orEmpty().forEach { member ->
-            membersByPath.putIfAbsent(
+            membersByPath.putIfAbsentCompat(
                 member.exportPath,
                 StandardMemberDescriptor(
                     name = member.name,
@@ -561,8 +549,8 @@ object BuiltinOverlayLoader {
         importModuleType.methods.forEach { (name, type) -> helperMethods[name] = type }
         // __call is the env_import installer returned by require "import".
         importModuleType.fields["__call"]?.let { callType ->
-            helperMethods.putIfAbsent("env_import", callType)
-            helperMethods.putIfAbsent("import", callType)
+            helperMethods.putIfAbsentCompat("env_import", callType)
+            helperMethods.putIfAbsentCompat("import", callType)
         }
         importModuleType.fields["env_import"]?.let { helperMethods["env_import"] = it }
         // Prefer dedicated env_import signature for free-id hover/call typing.
@@ -577,7 +565,7 @@ object BuiltinOverlayLoader {
                 else -> null
             } ?: importModuleType.methods[helperName]
             if (callType != null) {
-                helperMethods.putIfAbsent(helperName, callType)
+                helperMethods.putIfAbsentCompat(helperName, callType)
             }
         }
 
@@ -701,7 +689,7 @@ object BuiltinOverlayLoader {
         // Also collect @field members under short aliases (---@class socket.url with local url).
         nameAliases.filter { it != moduleName }.forEach { alias ->
             documentedClassFieldMembers(alias, resourceText, analyzedByPath).forEach { descriptor ->
-                membersByPath.putIfAbsent(
+                membersByPath.putIfAbsentCompat(
                     descriptor.exportPath,
                     descriptor.copy(type = hydrateDocumentedType(descriptor.type, documentedClassTypes))
                 )
@@ -768,7 +756,7 @@ object BuiltinOverlayLoader {
         }
 
         analyzedSurface?.members.orEmpty().forEach { member ->
-            membersByPath.putIfAbsent(
+            membersByPath.putIfAbsentCompat(
                 member.exportPath,
                 StandardMemberDescriptor(
                     name = member.name,
@@ -845,6 +833,7 @@ object BuiltinOverlayLoader {
             val name: String,
             val superTypeNames: List<String>,
             val typeParameters: List<TypeParameterType>,
+            var javaClassName: String? = null,
             val fields: MutableMap<String, Type> = linkedMapOf(),
             val methods: MutableMap<String, Type> = linkedMapOf()
         )
@@ -891,7 +880,7 @@ object BuiltinOverlayLoader {
                     val superTypes = classText.substringAfter(':', missingDelimiterValue = "")
                         .trim()
                         .takeIf(String::isNotEmpty)
-                        ?.let { TypeAnnotationParser().splitTopLevel(it, ',') }
+                        ?.let { splitTopLevelTypeText(it, ',') }
                         .orEmpty()
                         .map { documentedClassName(it.trim()) }
                         .filter { it.isNotEmpty() && it !in ANDROID_FRAMEWORK_UNMODELED_SUPER_TYPES }
@@ -901,6 +890,11 @@ object BuiltinOverlayLoader {
                         typeParameters = documentedClassTypeParameters(classText)
                     )
                     activeClassName = name
+                }
+
+                tag.startsWith("@java-class ") -> {
+                    val className = activeClassName ?: return@forEach
+                    drafts[className]?.javaClassName = tag.removePrefix("@java-class").trim().ifBlank { null }
                 }
 
                 tag.startsWith("@field ") -> {
@@ -1004,7 +998,8 @@ object BuiltinOverlayLoader {
                 methods = sortedTypeMap(draft.methods),
                 superClass = superClasses.firstOrNull(),
                 superType = superClasses.drop(1).firstOrNull(),
-                typeParameters = draft.typeParameters
+                typeParameters = draft.typeParameters,
+                javaClassName = draft.javaClassName
             )
             stack.remove(name)
             cache[name] = classType
@@ -1067,34 +1062,6 @@ object BuiltinOverlayLoader {
             .trim()
             .substringBefore(' ')
             .substringBefore('<')
-    }
-
-    private fun androidFrameworkClassDeclaration(
-        classText: String,
-        indexedClassNames: Set<String>
-    ): AndroidFrameworkClassDeclaration {
-        return AndroidFrameworkClassDeclaration(
-            binaryName = normalizeAndroidFrameworkDocumentedClassName(
-                className = documentedClassName(classText),
-                indexedClassNames = indexedClassNames
-            ),
-            declaredSuperTypes = documentedClassSuperTypes(classText, indexedClassNames),
-            typeParameters = documentedClassTypeParameters(classText)
-        )
-    }
-
-    private fun documentedClassSuperTypes(classText: String, indexedClassNames: Set<String>): List<String> {
-        val superText = classText.substringAfter(':', missingDelimiterValue = "").trim()
-        if (superText.isEmpty()) {
-            return emptyList()
-        }
-        return TypeAnnotationParser().splitTopLevel(superText, ',')
-            .mapNotNull { superTypeText ->
-                val superTypeName = documentedClassName(superTypeText.trim())
-                    .takeIf { it.isNotEmpty() && it !in ANDROID_FRAMEWORK_UNMODELED_SUPER_TYPES }
-                    ?: return@mapNotNull null
-                normalizeAndroidFrameworkDocumentedClassName(superTypeName, indexedClassNames)
-            }
     }
 
     private fun documentedClassTypeParameters(classText: String): List<TypeParameterType> {
@@ -1261,12 +1228,12 @@ object BuiltinOverlayLoader {
     }
 
     private fun parseGenericParameters(typeText: String): List<TypeParameterType> {
-        return TypeAnnotationParser().splitTopLevel(typeText, ',').mapNotNull { part ->
+        return splitTopLevelTypeText(typeText, ',').mapNotNull { part ->
             val normalized = part.trim()
             if (normalized.isEmpty()) {
                 return@mapNotNull null
             }
-            val colonIndex = findTopLevelChar(normalized, ':')
+            val colonIndex = indexOfTopLevelChar(normalized, ':')
             val name = if (colonIndex == -1) normalized else normalized.substring(0, colonIndex).trim()
             if (name.isEmpty()) {
                 return@mapNotNull null
@@ -1284,7 +1251,7 @@ object BuiltinOverlayLoader {
         parseDocumentedCompleteType(typeText, genericParameters)?.let { type ->
             return type
         }
-        val parts = TypeAnnotationParser().splitTopLevel(typeText, ',')
+        val parts = splitTopLevelTypeText(typeText, ',')
         val returnTypes = parts.mapNotNull { parseDocumentedType(it, genericParameters) }
         return when (returnTypes.size) {
             0 -> null
@@ -1299,24 +1266,18 @@ object BuiltinOverlayLoader {
             return null
         }
 
-        parseDocumentedCompleteType(normalized, genericParameters)?.let { return it }
-        parseDocumentedTypePrefix(normalized, genericParameters)?.let { return it }
-        val parser = TypeAnnotationParser()
-        return runCatching {
-            val prefix = parser.parseTypePrefix(normalized)
-            parser.resolve(prefix.syntax).toModelType()
-        }.getOrNull()
+        // Two attempts, not four: a complete parse, then a longest-prefix parse for annotations
+        // with a trailing prose description. Both go through the one annotation grammar.
+        return parseDocumentedCompleteType(normalized, genericParameters)
+            ?: parseDocumentedTypePrefix(normalized, genericParameters)
     }
 
+    /**
+     * Whole-text parse. Returns null only when the text is not a complete type annotation:
+     * [resolveDocumentedTypeSyntax] is total over the syntax hierarchy, so a successful parse
+     * always resolves.
+     */
     private fun parseDocumentedCompleteType(
-        typeText: String,
-        genericParameters: List<TypeParameterType>
-    ): Type? {
-        parseDocumentedTypeSyntax(typeText, genericParameters)?.let { return it }
-        return runCatching { TypeAnnotationParser().parse(typeText).toModelType() }.getOrNull()
-    }
-
-    private fun parseDocumentedTypeSyntax(
         typeText: String,
         genericParameters: List<TypeParameterType>
     ): Type? {
@@ -1404,10 +1365,11 @@ object BuiltinOverlayLoader {
         val baseName = (syntax.baseType as? NamedTypeSyntax)?.name
             ?: resolveDocumentedTypeSyntax(syntax.baseType, genericParameters).displayName
         val arguments = syntax.arguments.map { resolveDocumentedTypeSyntax(it, genericParameters) }
-        return if (baseName == "table" && arguments.size == 2) {
-            TableType(indexSignature = TableType.IndexSignature(arguments[0], arguments[1]))
-        } else {
-            AppliedType(baseName = baseName, typeArguments = arguments)
+        return when {
+            baseName == "table" && arguments.size == 2 ->
+                TableType(indexSignature = TableType.IndexSignature(arguments[0], arguments[1]))
+            baseName == "JavaArray" && arguments.size == 1 -> JavaArrayType(arguments.single())
+            else -> AppliedType(baseName = baseName, typeArguments = arguments)
         }
     }
 
@@ -1459,44 +1421,6 @@ object BuiltinOverlayLoader {
         }
     }
 
-    private fun findTopLevelChar(text: String, target: Char): Int {
-        var angleDepth = 0
-        var braceDepth = 0
-        var bracketDepth = 0
-        var parenDepth = 0
-        var inString = false
-        var stringChar = '\u0000'
-
-        text.forEachIndexed { index, char ->
-            if (inString) {
-                if (char == stringChar && text.getOrNull(index - 1) != '\\') {
-                    inString = false
-                }
-                return@forEachIndexed
-            }
-
-            when (char) {
-                '\'', '"' -> {
-                    inString = true
-                    stringChar = char
-                }
-
-                '<' -> angleDepth++
-                '>' -> angleDepth = (angleDepth - 1).coerceAtLeast(0)
-                '{' -> braceDepth++
-                '}' -> braceDepth = (braceDepth - 1).coerceAtLeast(0)
-                '[' -> bracketDepth++
-                ']' -> bracketDepth = (bracketDepth - 1).coerceAtLeast(0)
-                '(' -> parenDepth++
-                ')' -> parenDepth = (parenDepth - 1).coerceAtLeast(0)
-                target -> if (angleDepth == 0 && braceDepth == 0 && bracketDepth == 0 && parenDepth == 0) {
-                    return index
-                }
-            }
-        }
-
-        return -1
-    }
 
     private data class StandardMemberDescriptor(
         val name: String,
@@ -1588,7 +1512,6 @@ object BuiltinOverlayLoader {
             rawProviderModuleResources = linkedMapOf(
                 "luajava" to RawProviderModuleResource(
                     resourcePath = ANDROLUA_LUAJAVA_RESOURCE,
-                    fallbackSource = AndroidLua53LuaJavaBuiltinOverlaySources.luajavaSource,
                     syntheticSurface = luajavaSurface
                 )
             ).also { it.putAll(androluaModules) },
@@ -1649,10 +1572,7 @@ object BuiltinOverlayLoader {
     }
 
     private fun androluaLuaJavaSurface(): ModuleExportSurface {
-        val resourceText = readTextOrFallback(
-            resourcePath = ANDROLUA_LUAJAVA_RESOURCE,
-            fallbackSource = AndroidLua53LuaJavaBuiltinOverlaySources.luajavaSource
-        ).trim()
+        val resourceText = BuiltinOverlayResourceAccess.readText(ANDROLUA_LUAJAVA_RESOURCE).trim()
         return mergeRawModuleSurface(
             moduleName = "luajava",
             resourceText = resourceText,
@@ -1918,7 +1838,6 @@ object BuiltinOverlayLoader {
         surface: ModuleExportSurface
     ): RawProviderModuleResource = RawProviderModuleResource(
         resourcePath = ANDROLUA_RESOURCE_ROOT + relativePath,
-        fallbackSource = androidLuaFallbackSource(relativePath),
         syntheticSurface = surface
     )
 
@@ -1939,17 +1858,9 @@ object BuiltinOverlayLoader {
                         }
                     }
                 }
-            val documentedClasses = androidFrameworkDocumentedClasses(entry.modelResource, indexedClassNames)
-                .associateBy { it.binaryName }
             indexedClassNames.forEach { className ->
-                classModels[className] = documentedClasses[className] ?: AndroidFrameworkClassModel(
-                    binaryName = className,
-                    constructors = emptyList(),
-                    fields = emptyMap(),
-                    staticMethods = emptyMap(),
-                    methods = emptyMap(),
-                    declaredSuperTypes = emptyList(),
-                    typeParameters = emptyList()
+                classModels[className] = AndroidFrameworkClassModel(
+                    binaryName = className
                 )
             }
         }
@@ -2022,13 +1933,12 @@ object BuiltinOverlayLoader {
             .filter { line -> line.isNotEmpty() && !line.startsWith("#") }
             .mapIndexed { index, line ->
                 val parts = line.split('|').map(String::trim)
-                require(parts.size == 3 && parts.none(String::isEmpty)) {
+                require(parts.size == 2 && parts.none(String::isEmpty)) {
                     "Invalid Android framework manifest row ${index + 1}: '$line'."
                 }
                 AndroidFrameworkManifestEntry(
                     packageName = parts[0],
-                    classIndexResource = resources.resolve(parts[1]),
-                    modelResource = resources.resolve(parts[2])
+                    classIndexResource = resources.resolve(parts[1])
                 )
             }
             .toList()
@@ -2052,105 +1962,6 @@ object BuiltinOverlayLoader {
             .toCollection(linkedSetOf())
     }
 
-    private fun androidFrameworkDocumentedClasses(
-        modelResource: String,
-        indexedClassNames: Set<String>
-    ): List<AndroidFrameworkClassModel> {
-        val models = mutableListOf<AndroidFrameworkClassModel>()
-        val modelText = readRequiredText(modelResource)
-        val fieldsByClass = linkedMapOf<String, MutableMap<String, Type>>()
-        val staticMethodsByClass = linkedMapOf<String, MutableMap<String, Type>>()
-        val methodsByClass = linkedMapOf<String, MutableMap<String, Type>>()
-        val constructorsByClass = linkedMapOf<String, MutableList<FunctionType>>()
-        val classDeclarations = linkedMapOf<String, AndroidFrameworkClassDeclaration>()
-        val pendingDocLines = mutableListOf<String>()
-        var activeClassName: String? = null
-
-        modelText.lineSequence().forEach { line ->
-            val trimmedStart = line.trimStart()
-            if (trimmedStart.startsWith("---")) {
-                val tag = trimmedStart.removePrefix("---").trimStart()
-                pendingDocLines += trimmedStart
-                if (tag.startsWith("@class ")) {
-                    val declaration = androidFrameworkClassDeclaration(
-                        classText = tag.removePrefix("@class").trim(),
-                        indexedClassNames = indexedClassNames
-                    )
-                    val className = declaration.binaryName
-                    require(className in indexedClassNames) {
-                        "Android framework model '$modelResource' documents class '$className' outside its manifest index."
-                    }
-                    classDeclarations[className] = declaration
-                    activeClassName = className
-                    fieldsByClass.getOrPut(className) { linkedMapOf() }
-                    staticMethodsByClass.getOrPut(className) { linkedMapOf() }
-                    methodsByClass.getOrPut(className) { linkedMapOf() }
-                    constructorsByClass.getOrPut(className) { mutableListOf() }
-                } else if (tag.startsWith("@field ")) {
-                    val className = activeClassName
-                    val field = parseDocumentedField(tag.removePrefix("@field").trim())
-                    if (className != null && field != null) {
-                        fieldsByClass.getOrPut(className) { linkedMapOf() }[field.name] = field.type
-                    }
-                }
-                return@forEach
-            }
-
-            val functionMatch = ANDROID_FRAMEWORK_FUNCTION_REGEX.find(line)
-            if (functionMatch != null) {
-                val localName = functionMatch.groupValues[1]
-                val separator = functionMatch.groupValues[2]
-                val memberName = functionMatch.groupValues[3]
-                val parameterList = functionMatch.groupValues[4]
-                val className = activeClassName ?: androidFrameworkClassNameForLocal(localName)
-                if (className != null) {
-                    val doc = parseMemberDoc(pendingDocLines)
-                    val type = documentedFunctionType(parameterList, doc)
-                    if (separator == ":" && memberName == "new") {
-                        constructorsByClass.getOrPut(className) { mutableListOf() }
-                            .addAll(functionSignatures(type))
-                    } else {
-                        val target = if (separator == ":") {
-                            methodsByClass.getOrPut(className) { linkedMapOf() }
-                        } else {
-                            staticMethodsByClass.getOrPut(className) { linkedMapOf() }
-                        }
-                        target.mergeDocumentedFunction(memberName, type)
-                    }
-                }
-                pendingDocLines.clear()
-                return@forEach
-            }
-
-            if (line.isNotBlank() && !trimmedStart.startsWith("--")) {
-                pendingDocLines.clear()
-            }
-        }
-
-        (fieldsByClass.keys + staticMethodsByClass.keys + methodsByClass.keys + constructorsByClass.keys + classDeclarations.keys)
-            .sorted()
-            .forEach { className ->
-                val declaration = classDeclarations[className]
-                models += AndroidFrameworkClassModel(
-                    binaryName = className,
-                    constructors = constructorsByClass[className].orEmpty(),
-                    fields = sortedTypeMap(fieldsByClass[className].orEmpty()),
-                    staticMethods = sortedTypeMap(staticMethodsByClass[className].orEmpty()),
-                    methods = sortedTypeMap(methodsByClass[className].orEmpty()),
-                    declaredSuperTypes = declaration?.declaredSuperTypes.orEmpty(),
-                    typeParameters = declaration?.typeParameters.orEmpty()
-                )
-            }
-        return models
-    }
-
-    private fun androidFrameworkClassNameForLocal(localName: String): String? {
-        return localName
-            .takeIf { it.isNotBlank() }
-            ?.replace(Regex("([a-z])([A-Z])"), "$1.$2")
-            ?.let(::normalizeAndroidFrameworkIndexedClassName)
-    }
-
     private fun androidFrameworkClassModuleType(
         classModel: AndroidFrameworkClassModel,
         classModels: Map<String, AndroidFrameworkClassModel>,
@@ -2160,13 +1971,9 @@ object BuiltinOverlayLoader {
     ): ModuleType {
         val classType = classTypes.getValue(classModel.binaryName)
         val fields = linkedMapOf<String, Type>("__class" to JavaInstanceType(classType))
-        if (classModel.constructors.isNotEmpty()) {
-            fields["__call"] = classType
-        }
         return ModuleType(
             moduleName = moduleName,
             fields = fields.also { fields ->
-                fields.putAll(classModel.fields)
                 androidFrameworkImmediateInnerClassNames(classModel.binaryName, classModels.keys).forEach { innerClass ->
                     fields[androidFrameworkSimpleAlias(innerClass)] = androidFrameworkClassModuleType(
                         classModel = classModels.getValue(innerClass),
@@ -2175,8 +1982,7 @@ object BuiltinOverlayLoader {
                         classTypes = classTypes
                     )
                 }
-            },
-            methods = classModel.staticMethods
+            }
         )
     }
 
@@ -2188,46 +1994,12 @@ object BuiltinOverlayLoader {
             val classModel = classModels.getValue(className)
             val javaName = androidFrameworkJavaTypeName(classModel.binaryName)
             if (!stack.add(className)) {
-                return JavaClassType(javaName = javaName, typeParameters = classModel.typeParameters)
+                return JavaClassType(javaName = javaName)
             }
-            val resolvedSuperTypes = classModel.declaredSuperTypes.mapNotNull { superType ->
-                resolveAndroidFrameworkClassName(superType, classModels.keys)
-            }.filter { superType -> superType != className }
             val classType = JavaClassType(
                 javaName = javaName,
-                constructors = JavaOverloadSet(
-                    classModel.constructors.map { signature ->
-                        JavaConstructorType(owner = javaName, signature = signature)
-                    }
-                ),
-                staticMembers = classModel.fields.mapValues { (name, type) ->
-                    JavaStaticMemberType(
-                        owner = javaName,
-                        memberName = name,
-                        valueType = type,
-                        memberKind = JavaMemberKind.FIELD
-                    )
-                } + classModel.staticMethods.mapValues { (name, type) ->
-                    JavaStaticMemberType(
-                        owner = javaName,
-                        memberName = name,
-                        valueType = type,
-                        memberKind = JavaMemberKind.METHOD
-                    )
-                },
-                instanceMembers = classModel.methods.mapValues { (name, type) ->
-                    JavaInstanceMemberType(
-                        owner = javaName,
-                        memberName = name,
-                        valueType = type,
-                        memberKind = JavaMemberKind.METHOD
-                    )
-                },
                 innerClasses = androidFrameworkImmediateInnerClassNames(classModel.binaryName, classModels.keys)
-                    .associate { innerClass -> androidFrameworkSimpleAlias(innerClass) to build(innerClass, stack) },
-                superClass = resolvedSuperTypes.firstOrNull()?.let { build(it, stack) },
-                interfaces = resolvedSuperTypes.drop(1).map { build(it, stack) },
-                typeParameters = classModel.typeParameters
+                    .associate { innerClass -> androidFrameworkSimpleAlias(innerClass) to build(innerClass, stack) }
             )
             stack.remove(className)
             cache[className] = classType
@@ -2403,46 +2175,6 @@ object BuiltinOverlayLoader {
             ?: classPart.replace('_', '$')
     }
 
-    private fun normalizeAndroidFrameworkDocumentedClassName(
-        className: String,
-        indexedClassNames: Set<String>
-    ): String {
-        val normalized = normalizeAndroidFrameworkIndexedClassName(className)
-        if (normalized in indexedClassNames) {
-            return normalized
-        }
-        return candidateAndroidFrameworkBinaryClassNames(normalized)
-            .firstOrNull { it in indexedClassNames }
-            ?: normalized
-    }
-
-    private fun resolveAndroidFrameworkClassName(className: String, allClassNames: Set<String>): String? {
-        val normalized = normalizeAndroidFrameworkIndexedClassName(className)
-        if (normalized in allClassNames) {
-            return normalized
-        }
-        return candidateAndroidFrameworkBinaryClassNames(normalized).firstOrNull { it in allClassNames }
-    }
-
-    private fun candidateAndroidFrameworkBinaryClassNames(className: String): List<String> {
-        val separatorIndexes = className.indices.filter { className[it] == '.' }
-        return buildSet {
-            add(className)
-            if (separatorIndexes.isNotEmpty()) {
-                val combinations = 1 shl separatorIndexes.size
-                for (mask in 1 until combinations) {
-                    val chars = className.toCharArray()
-                    separatorIndexes.forEachIndexed { index, separator ->
-                        if ((mask and (1 shl index)) != 0) {
-                            chars[separator] = '$'
-                        }
-                    }
-                    add(String(chars))
-                }
-            }
-        }.toList()
-    }
-
     private fun sortedTypeMap(types: Map<String, Type>): Map<String, Type> {
         return types.entries
             .sortedBy { it.key }
@@ -2484,12 +2216,6 @@ object BuiltinOverlayLoader {
     private fun tableAny(): TableType = TableType(
         indexSignature = TableType.IndexSignature(PrimitiveType.STRING, PrimitiveType.ANY)
     )
-
-    private fun androidLuaFallbackSource(relativePath: String): String = """
-        -- Android-Lua model fallback for $relativePath.
-        local M = {}
-        return M
-    """.trimIndent()
 
     private fun lua54Catalog() = Catalog(
         normalizedVersion = LuaVersion.LUA_5_4,
@@ -2544,7 +2270,7 @@ object BuiltinOverlayLoader {
     private data class Catalog(
         val normalizedVersion: LuaVersion,
         val versionSegment: String,
-        val globalsResourcePath: String? = null,
+        val globalsResourcePath: String,
         val providerModuleResourcePaths: Map<String, String>,
         val rawProviderModuleResources: Map<String, RawProviderModuleResource> = emptyMap(),
         val androidFrameworkResources: AndroidFrameworkResources? = null,
@@ -2555,7 +2281,6 @@ object BuiltinOverlayLoader {
 
     private data class RawProviderModuleResource(
         val resourcePath: String,
-        val fallbackSource: String,
         val syntheticSurface: ModuleExportSurface? = null
     )
 
@@ -2568,24 +2293,11 @@ object BuiltinOverlayLoader {
 
     private data class AndroidFrameworkManifestEntry(
         val packageName: String,
-        val classIndexResource: String,
-        val modelResource: String
+        val classIndexResource: String
     )
 
     private data class AndroidFrameworkClassModel(
-        val binaryName: String,
-        val constructors: List<FunctionType>,
-        val fields: Map<String, Type>,
-        val staticMethods: Map<String, Type>,
-        val methods: Map<String, Type>,
-        val declaredSuperTypes: List<String>,
-        val typeParameters: List<TypeParameterType>
-    )
-
-    private data class AndroidFrameworkClassDeclaration(
-        val binaryName: String,
-        val declaredSuperTypes: List<String>,
-        val typeParameters: List<TypeParameterType>
+        val binaryName: String
     )
 
     private const val ANDROLUA_RESOURCE_ROOT =
@@ -2652,6 +2364,4 @@ object BuiltinOverlayLoader {
     private val DOCUMENTED_INTEGER_TYPE = PrimitiveType("integer", PrimitiveType.Kind.NUMBER)
     private val DOCUMENTED_CLASS_METHOD_REGEX =
         Regex("""^\s*function\s+([A-Za-z_][A-Za-z0-9_.]*):([A-Za-z_][A-Za-z0-9_]*)\s*\(([^)]*)\)""")
-    private val ANDROID_FRAMEWORK_FUNCTION_REGEX =
-        Regex("""^\s*function\s+([A-Za-z_][A-Za-z0-9_]*)([.:])([A-Za-z_][A-Za-z0-9_]*)\s*\(([^)]*)\)""")
 }

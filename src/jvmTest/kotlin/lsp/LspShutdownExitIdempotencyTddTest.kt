@@ -89,6 +89,30 @@ class LspShutdownExitIdempotencyTddTest {
     }
 
     @Test
+    fun launcher_exit_handler_receives_success_once_after_shutdown() {
+        val exitCodes = mutableListOf<Int>()
+        val server = LuaLanguageServer(processExit = exitCodes::add)
+        server.initialize(InitializeParams()).get()
+        server.shutdown().get()
+
+        server.exit()
+        server.exit()
+
+        assertEquals(listOf(0), exitCodes)
+    }
+
+    @Test
+    fun launcher_exit_handler_receives_failure_without_shutdown() {
+        val exitCodes = mutableListOf<Int>()
+        val server = LuaLanguageServer(processExit = exitCodes::add)
+        server.initialize(InitializeParams()).get()
+
+        server.exit()
+
+        assertEquals(listOf(1), exitCodes)
+    }
+
+    @Test
     fun post_shutdown_requests_are_refused_across_repeated_shutdown_calls() {
         val server = LuaLanguageServer()
         server.initialize(InitializeParams()).get()

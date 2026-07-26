@@ -1,6 +1,7 @@
 package io.github.dingyi222666.luaparser.semantic.checker
 
 import io.github.dingyi222666.luaparser.semantic.WorkspaceImportedSymbol
+import io.github.dingyi222666.luaparser.semantic.types.model.AppliedType
 import io.github.dingyi222666.luaparser.semantic.types.model.ArrayType
 import io.github.dingyi222666.luaparser.semantic.types.model.CallableType
 import io.github.dingyi222666.luaparser.semantic.types.model.ClassType
@@ -52,7 +53,7 @@ internal fun ModuleType.javaClassSurface(): JavaClassType? {
 internal fun ModuleType.isJavaBackedModule(): Boolean = fields.containsKey("__class")
 
 internal fun ClassType.isJavaProviderClassReference(): Boolean {
-    return name.contains('.') || name.contains('$')
+    return javaClassName != null || name.contains('.') || name.contains('$')
 }
 
 /**
@@ -125,6 +126,7 @@ internal fun JavaInstanceType.allReadableInstanceJavaBeanProperties(): List<Java
 
 internal fun Type.hydrateJavaProviderType(resolveImportTarget: JavaImportResolver): Type {
     return when (this) {
+        is AppliedType -> hydrateAppliedJavaProviderType(resolveImportTarget)
         is ClassType -> hydrateJavaClassType(resolveImportTarget)
         is CustomType -> hydrateCustomJavaProviderType(resolveImportTarget)
         is JavaClassType -> hydrateJavaClassReference(resolveImportTarget)
@@ -156,6 +158,18 @@ internal fun Type.hydrateJavaProviderType(resolveImportTarget: JavaImportResolve
         is UnionType -> UnionType(types.mapTo(linkedSetOf()) { it.hydrateJavaProviderType(resolveImportTarget) })
         is IntersectionType -> IntersectionType(types.mapTo(linkedSetOf()) { it.hydrateJavaProviderType(resolveImportTarget) })
         else -> this
+    }
+}
+
+private fun AppliedType.hydrateAppliedJavaProviderType(resolveImportTarget: JavaImportResolver): Type {
+    val hydratedArguments = typeArguments.map { it.hydrateJavaProviderType(resolveImportTarget) }
+    val imported = resolveImportTarget?.invoke(baseName)
+    val instance = imported?.moduleType?.javaInstanceSurface()
+        ?.hydrateJavaProviderType(resolveImportTarget)
+    return if (instance is JavaInstanceType) {
+        instance.copy(typeArguments = hydratedArguments)
+    } else {
+        copy(typeArguments = hydratedArguments)
     }
 }
 
@@ -418,117 +432,59 @@ private data class JavaListenerSignature(
 )
 
 private fun ClassType.hydrateJavaClassType(resolveImportTarget: JavaImportResolver): Type {
-    if (!isJavaProviderClassReference()) {
-        return this
-    }
-    if (fields.isNotEmpty() || methods.isNotEmpty() || superClass != null || superType != null) {
-        return this
-    }
-
-    val imported = resolveImportTarget?.invoke(name)
-    imported?.moduleType?.javaInstanceSurface()?.let { surface ->
-        return ensureAndroidContentContextMembers(surface, name)
-    }
-    // TASK-651: empty ClassType FQCN shells (context global) must keep getSystemService
-    // when host android.jar is missing instead of collapsing to a memberless type.
-    return documentedAndroidContentContextShell(name) ?: this
-}
-
-/**
- * Android-Lua stub aliases such as `AndroidView`, `AndroidMenu`, and bare `Bitmap`
- * are modeled as CustomType names in overlays. When a workspace import resolver can
- * map those aliases onto Java providers, prefer the reflected/instance surface so
- * members such as `performClick` / `getWidth` / `add` resolve.
- */
-private fun CustomType.hydrateCustomJavaProviderType(resolveImportTarget: JavaImportResolver): Type {
-    val candidates = androidLuaCustomTypeImportCandidates(name)
-    if (candidates.isEmpty()) {
-        return this
-    }
-    for (candidate in candidates) {
-        val imported = resolveImportTarget?.invoke(candidate) ?: continue
-        imported.moduleType.javaInstanceSurface()
-            ?.hydrateJavaProviderType(resolveImportTarget)
-            ?.let { surface -> return ensureAndroidContentContextMembers(surface, candidate) }
-    }
-    // TASK-651: jar-independent android.content.Context surface for AndroLua `context`.
-    return documentedAndroidContentContextShell(name)
-        ?: candidates.asSequence().mapNotNull(::documentedAndroidContentContextShell).firstOrNull()
-        ?: this
-}
-
-private fun androidLuaCustomTypeImportCandidates(name: String): List<String> {
-    return when (name) {
-        "AndroidView" -> listOf("android.view.View", "View")
-        "AndroidMenu" -> listOf("android.view.Menu", "Menu")
-        "AndroidMenuItem" -> listOf("android.view.MenuItem", "MenuItem")
-        "Bitmap" -> listOf("android.graphics.Bitmap", "Bitmap")
-        "Drawable" -> listOf(
-            "android.graphics.drawable.Drawable",
-            "android.graphics.Drawable",
-            "Drawable"
-        )
-        "android.content.Context", "Context" -> listOf("android.content.Context", "Context")
-        else -> if (name.contains('.')) listOf(name) else emptyList()
-    }
-}
-
-/**
- * Prefer reflected members when present; otherwise seed the compact AndroLua Context
- * surface so context.getSystemService stays METHOD/fun without host android.jar.
- */
-private fun ensureAndroidContentContextMembers(surface: Type, typeName: String): Type {
-    if (!isAndroidContentContextName(typeName)) {
-        return surface
-    }
-    val instance = surface as? JavaInstanceType ?: return surface
-    if (instance.allInstanceMembers().containsKey("getSystemService")) {
-        return instance
-    }
-    return documentedAndroidContentContextShell("android.content.Context") ?: surface
-}
-
-private fun isAndroidContentContextName(name: String): Boolean {
-    return name == "android.content.Context" ||
-        name == "Context" ||
-        name.endsWith(".Context") && name.contains("android.content")
-}
-
-/**
- * Compact jar-independent android.content.Context instance shell (TASK-651).
- * Members are plain FunctionType values so hover displayName contains "fun".
- */
-private fun documentedAndroidContentContextShell(typeName: String): JavaInstanceType? {
-    if (!isAndroidContentContextName(typeName)) {
-        return null
-    }
-    val javaName = JavaTypeName(packageName = "android.content", simpleNames = listOf("Context"))
-    fun method(name: String, returnType: Type = PrimitiveType.ANY): Pair<String, JavaInstanceMemberType> {
-        return name to JavaInstanceMemberType(
-            owner = javaName,
-            memberName = name,
-            valueType = FunctionType(
-                parameters = emptyList(),
-                returnType = returnType
-            ),
-            memberKind = JavaMemberKind.METHOD
-        )
-    }
-    return JavaInstanceType(
-        classType = JavaClassType(
-            javaName = javaName,
-            instanceMembers = linkedMapOf(
-                method("getSystemService"),
-                method("getResources"),
-                method("getAssets"),
-                method("getPackageName", PrimitiveType.STRING),
-                method("getPackageManager"),
-                method("startActivity", PrimitiveType.NIL),
-                method("startService", PrimitiveType.BOOLEAN),
-                method("getSharedPreferences")
+    val targetName = javaClassName ?: name.takeIf { it.contains('.') || it.contains('$') } ?: return this
+    val reflected = resolveImportTarget?.invoke(targetName)
+        ?.moduleType
+        ?.javaInstanceSurface()
+        ?.hydrateJavaProviderType(resolveImportTarget)
+        as? JavaInstanceType
+        ?: return this
+    val owner = reflected.classType.javaName
+    val declaredMembers = buildMap {
+        getAllFields().forEach { (memberName, memberType) ->
+            put(
+                memberName,
+                JavaInstanceMemberType(
+                    owner = owner,
+                    memberName = memberName,
+                    valueType = memberType,
+                    memberKind = JavaMemberKind.FIELD
+                )
             )
-        )
+        }
+        getAllMethods().forEach { (memberName, memberType) ->
+            put(
+                memberName,
+                JavaInstanceMemberType(
+                    owner = owner,
+                    memberName = memberName,
+                    valueType = memberType,
+                    memberKind = JavaMemberKind.METHOD
+                )
+            )
+        }
+    }
+    return reflected.copy(
+        classType = reflected.classType.copy(
+            instanceMembers = reflected.classType.instanceMembers + declaredMembers
+        ),
+        javaName = if (javaClassName != null && name != targetName) {
+            JavaTypeName(simpleNames = listOf(name))
+        } else {
+            reflected.javaName
+        }
     )
+}
+
+private fun CustomType.hydrateCustomJavaProviderType(resolveImportTarget: JavaImportResolver): Type {
+    if (!name.contains('.') && !name.contains('$')) {
+        return this
+    }
+    return resolveImportTarget?.invoke(name)
+        ?.moduleType
+        ?.javaInstanceSurface()
+        ?.hydrateJavaProviderType(resolveImportTarget)
+        ?: this
 }
 
 private fun JavaClassType.hydrateJavaClassReference(resolveImportTarget: JavaImportResolver): JavaClassType {
@@ -632,16 +588,49 @@ private fun javaMetadataReturnType(
     signatureMetadata: JavaSignatureMetadata?,
     resolveImportTarget: JavaImportResolver
 ): Type? {
-    val typeName = signatureMetadata?.genericReturnTypeName
-        ?.let(::normalizeJavaMetadataTypeName)
-        ?: return null
-    primitiveJavaMetadataType(typeName)?.let { return it }
-    val arrayElementName = typeName.removeSuffix("[]").takeIf { it.length != typeName.length }
+    val typeName = signatureMetadata?.genericReturnTypeName ?: return null
+    return javaMetadataType(typeName, resolveImportTarget)
+}
+
+private fun javaMetadataType(typeName: String, resolveImportTarget: JavaImportResolver): Type? {
+    val normalized = normalizeJavaMetadataTypeName(typeName)
+    val arrayElementName = normalized.removeSuffix("[]").takeIf { it.length != normalized.length }
     if (arrayElementName != null) {
-        return javaMetadataReferenceType(arrayElementName, resolveImportTarget)
-            ?.let { JavaArrayType(it) }
+        return javaMetadataType(arrayElementName, resolveImportTarget)?.let { JavaArrayType(it) }
     }
-    return javaMetadataReferenceType(typeName, resolveImportTarget)
+    val genericStart = normalized.indexOf('<')
+    if (genericStart >= 0 && normalized.endsWith('>')) {
+        val baseName = normalized.substring(0, genericStart).trim()
+        val arguments = splitJavaMetadataTypeArguments(
+            normalized.substring(genericStart + 1, normalized.length - 1)
+        ).map { javaMetadataType(it, resolveImportTarget) ?: return null }
+        val baseType = javaMetadataReferenceType(baseName, resolveImportTarget) ?: return null
+        return if (baseType is JavaInstanceType && arguments.isNotEmpty()) {
+            baseType.copy(typeArguments = arguments)
+        } else {
+            baseType
+        }
+    }
+    primitiveJavaMetadataType(normalized)?.let { return it }
+    return javaMetadataReferenceType(normalized, resolveImportTarget)
+}
+
+private fun splitJavaMetadataTypeArguments(typeArguments: String): List<String> {
+    val result = mutableListOf<String>()
+    var depth = 0
+    var start = 0
+    typeArguments.forEachIndexed { index, char ->
+        when (char) {
+            '<' -> depth++
+            '>' -> depth--
+            ',' -> if (depth == 0) {
+                result += typeArguments.substring(start, index).trim()
+                start = index + 1
+            }
+        }
+    }
+    result += typeArguments.substring(start).trim()
+    return result.filter(String::isNotEmpty)
 }
 
 private fun primitiveJavaMetadataType(typeName: String): Type? {
@@ -682,10 +671,6 @@ private fun normalizeJavaMetadataTypeName(typeName: String): String {
     }
     while (normalized.startsWith("? super ")) {
         normalized = normalized.removePrefix("? super ").trim()
-    }
-    val genericStart = normalized.indexOf('<')
-    if (genericStart >= 0) {
-        normalized = normalized.substring(0, genericStart)
     }
     return normalized.trim()
 }

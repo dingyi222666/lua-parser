@@ -122,7 +122,6 @@ Keep fixture policy explicit:
 
 - Small synthetic Lua snippets belong in focused parser or semantic tests.
 - External Android-Lua source remains read-only and is selected through the corpus manifest.
-- Test inventory accounting excludes infrastructure fixtures such as `testinventory.NewTestInventoryTddTest.kt`.
 
 ## Semantic Usage
 

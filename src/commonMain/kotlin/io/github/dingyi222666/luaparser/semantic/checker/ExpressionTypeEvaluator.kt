@@ -1493,9 +1493,9 @@ class ExpressionTypeEvaluator internal constructor(
     }
 
     /**
-     * Documented Android-Lua host context members from the AndroLua overlay (_G /
-     * AndroidLua53LuaJavaBuiltinOverlaySources). Used only when the binder did not
-     * seed a ClassType — never invents android.jar-only APIs.
+     * Documented Android-Lua host context members from the AndroLua overlay
+     * (`androlua5.3/_G.lua`). Used only when the binder did not seed a ClassType —
+     * never invents android.jar-only APIs.
      */
     private fun documentedAndroidLuaContextShell(): ClassType {
         fun stringFn(vararg params: String): FunctionType = FunctionType(
@@ -2169,7 +2169,9 @@ class ExpressionTypeEvaluator internal constructor(
     private fun loadlayoutRootUsageIndex(): Map<String, List<TableConstructorExpression>> {
         loadlayoutRootUsageIndex?.let { return it }
         val collected = linkedMapOf<String, MutableList<TableConstructorExpression>>()
-        val visited = IdentityHashSet()
+        // AST nodes use reference equality (no equals/hashCode overrides), so a plain set is
+        // identity-based already.
+        val visited = hashSetOf<BaseASTNode>()
         val nodesRemaining = intArrayOf(LOADLAYOUT_COLLECT_NODE_BUDGET)
         binder.scopeGraph.rootScope.ownerNode?.let { root ->
             collectLoadlayoutRootUsages(root, collected, visited, nodesRemaining)
@@ -2197,7 +2199,7 @@ class ExpressionTypeEvaluator internal constructor(
     private fun collectLoadlayoutRootUsages(
         node: BaseASTNode,
         output: MutableMap<String, MutableList<TableConstructorExpression>>,
-        visited: IdentityHashSet,
+        visited: MutableSet<BaseASTNode>,
         nodesRemaining: IntArray
     ) {
         if (nodesRemaining[0] <= 0) {
@@ -2305,7 +2307,7 @@ class ExpressionTypeEvaluator internal constructor(
         @Suppress("UNUSED_PARAMETER")
         val _ctx = context
         val fields = linkedMapOf<String, Type>()
-        val tableVisited = IdentityHashSet()
+        val tableVisited = hashSetOf<BaseASTNode>()
         var nodesVisited = 0
         var depth = 0
         fun walk(node: TableConstructorExpression, inheritedClassType: Type?) {
@@ -3325,21 +3327,4 @@ class ExpressionTypeEvaluator internal constructor(
         )
     }
 
-    /**
-     * Identity-based set for AST node walks. identityHashCode alone can collide; buckets
-     * store live references and use === so the same object is never re-entered.
-     */
-    private class IdentityHashSet {
-        private val buckets = HashMap<Int, MutableList<Any>>()
-
-        fun add(node: Any): Boolean {
-            val code = System.identityHashCode(node)
-            val bucket = buckets.getOrPut(code) { mutableListOf() }
-            if (bucket.any { it === node }) {
-                return false
-            }
-            bucket.add(node)
-            return true
-        }
-    }
 }
