@@ -313,6 +313,17 @@ wss.on('connection', (ws) => {
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     lspChildren.add(child);
+    // A pending stdin write can complete (EPIPE) after the JVM LSP exits on client
+    // disconnect; without an 'error' listener Node treats it as fatal.
+    child.stdin.on('error', (error) => {
+      console.error('[bridge] lsp stdin error', error.code || error.message);
+    });
+    child.stdout.on('error', (error) => {
+      console.error('[bridge] lsp stdout error', error.code || error.message);
+    });
+    child.stderr.on('error', (error) => {
+      console.error('[bridge] lsp stderr error', error.code || error.message);
+    });
     child.once('spawn', () => {
       sendStatus('spawn', 'Gradle LSP task started', { pid: child.pid });
     });
