@@ -21,6 +21,7 @@ import io.github.dingyi222666.luaparser.semantic.types.model.Type
 import io.github.dingyi222666.luaparser.semantic.types.model.TypeParameterType
 import io.github.dingyi222666.luaparser.semantic.types.model.UnionType
 import io.github.dingyi222666.luaparser.semantic.types.model.UnknownType
+import io.github.dingyi222666.luaparser.semantic.types.model.VarargType
 import io.github.dingyi222666.luaparser.semantic.types.resolve.TypeExpansion
 import io.github.dingyi222666.luaparser.semantic.types.resolve.TypeSubstitutor
 import io.github.dingyi222666.luaparser.semantic.types.resolve.isAssignableFrom
@@ -192,7 +193,17 @@ class CallChecker(
                 ?: parameters.lastOrNull { it.vararg }
                 ?: return null
             if (!isArgumentAssignable(parameter.type, argumentType)) {
-                return null
+                if (!isLuaTableForVarargSlot(parameter, argumentType)) {
+                    return null
+                }
+                // LuaJava converts a simple Lua table into the Java array/vararg slot at
+                // runtime; keep the signature viable behind precise element matches.
+                assignabilityPenalty += 1
+                exactMismatchCount++
+                if (parameter.vararg) {
+                    fallbackPenalty += 2
+                }
+                return@forEachIndexed
             }
             assignabilityPenalty += when (parameter.type) {
                 PrimitiveType.ANY, PrimitiveType.UNKNOWN, UnknownType -> 10
@@ -408,6 +419,19 @@ class CallChecker(
         return parameterType.isAssignableFrom(argumentType) ||
             parameterType.isJavaListenerAssignableFrom(argumentType) ||
             parameterType.isJavaContainerAssignableFrom(argumentType)
+    }
+
+    /**
+     * LuaJava converts a simple Lua table argument into the Java vararg component array
+     * (`float...` / `T...`), so a [TableType] argument stays viable on a vararg slot even
+     * when element types cannot be statically verified. Fixed `T[]` parameters keep the
+     * conservative TASK-658 container gate; precise element matches keep lower scores.
+     */
+    private fun isLuaTableForVarargSlot(parameter: FunctionParameter, argumentType: Type): Boolean {
+        if (argumentType !is TableType) {
+            return false
+        }
+        return parameter.vararg || parameter.type is VarargType
     }
 
     private data class Candidate(

@@ -635,7 +635,7 @@ class ExpressionTypeEvaluator internal constructor(
             val parameter = signature.parameters.getOrNull(argumentIndex)
                 ?: signature.parameters.lastOrNull { it.vararg }
                 ?: return false
-            if (!isSoftJavaCallArgument(parameter.type, argumentType)) {
+            if (!isSoftJavaCallArgument(parameter, argumentType)) {
                 return false
             }
         }
@@ -647,7 +647,8 @@ class ExpressionTypeEvaluator internal constructor(
      * Mirrors common interop coercions (string/number/boolean/table containers/Object)
      * without inventing parameter types beyond the reflected signature surface.
      */
-    private fun isSoftJavaCallArgument(parameterType: Type, argumentType: Type): Boolean {
+    private fun isSoftJavaCallArgument(parameter: FunctionParameter, argumentType: Type): Boolean {
+        val parameterType = parameter.type
         if (parameterType.isAssignableFrom(argumentType) ||
             parameterType.isJavaListenerAssignableFrom(argumentType) ||
             parameterType.isJavaContainerAssignableFrom(argumentType)
@@ -656,6 +657,11 @@ class ExpressionTypeEvaluator internal constructor(
         }
         if (argumentType is UnknownType || parameterType is UnknownType) {
             // Soft unknown: keep arity fallback viable without inventing members later.
+            return true
+        }
+        if ((parameter.vararg || parameterType is VarargType) && isLuaTableShapedArgument(argumentType)) {
+            // LuaJava converts a simple Lua table argument into the vararg component array
+            // (ObjectAnimator.ofFloat(target, name, float...) called with {30, 0}).
             return true
         }
         return when {
