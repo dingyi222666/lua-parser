@@ -2383,6 +2383,108 @@ class ExpressionTypeEvaluator internal constructor(
         return key is ConstantNode && key.constantType == ConstantNode.TYPE.INTERGER
     }
 
+    /**
+     * Resolve the enclosing Android view class for [target] by walking the layout table tree
+     * from [root], mirroring [layoutIdFields] class tracking: each table's first positional
+     * identifier that looks like a view class becomes the current class for the table and its
+     * nested tables. Returns null when [target] is unreachable from [root].
+     */
+    fun layoutPropertyClassAt(root: TableConstructorExpression, target: TableConstructorExpression): Type? {
+        val visited = hashSetOf<BaseASTNode>()
+        var budget = LAYOUT_COMPLETION_NODE_BUDGET
+        fun walk(node: TableConstructorExpression, inherited: Type?): Type? {
+            if (budget <= 0 || !visited.add(node)) {
+                return null
+            }
+            budget--
+            var currentClass = inherited
+            node.fields.forEach { field ->
+                val keyName = staticTableKeyName(field)
+                if (isLayoutArrayField(field, keyName) && currentClass === inherited) {
+                    val value = field.value
+                    if (value is Identifier && isLikelyAndroidViewClassName(value.name)) {
+                        currentClass = resolveLayoutViewClassType(value.name)
+                    }
+                }
+            }
+            if (node === target) {
+                return currentClass
+            }
+            node.fields.forEach { field ->
+                val value = field.value
+                if (value is TableConstructorExpression) {
+                    walk(value, currentClass)?.let { return it }
+                }
+            }
+            return null
+        }
+        return walk(root, null)
+    }
+
+    /**
+     * Lua property names usable inside an AndroLua layout table for [classType]
+     * (loadlayout semantics: property `k` applies `view.setCap(k)(value)`).
+     *
+     * Sources, grounded in the Android-Lua `loadlayout.lua` runtime:
+     * - Bean properties derived from the reflected `set*` instance methods of the class
+     *   (setTextColor -> textColor, setAdapter -> adapter, setRadius -> radius).
+     * - Runtime-special keys loadlayout handles explicitly: id, style, onClick, src
+     *   (image-bearing views), items (adapter views).
+     * - LayoutParams keys applied before setters: layout_width/height, margins,
+     *   layout_weight, layout_gravity, layout_x/y.
+     */
+    fun layoutPropertySuggestions(classType: Type): List<LuaLayoutPropertySuggestion> {
+        val members = (classType as? JavaInstanceType)?.allInstanceMembers().orEmpty()
+        val suggestions = linkedMapOf<String, String>()
+        members.values.forEach { member ->
+            if (member.memberKind != JavaMemberKind.METHOD || !member.memberName.startsWith("set")) {
+                return@forEach
+            }
+            val property = member.memberName.decapitalizeLuaProperty()
+            if (property.isEmpty() || property in suggestions) {
+                return@forEach
+            }
+            val signatures = (member.valueType as? CallableType)?.callSignatures.orEmpty()
+            val first = signatures.firstOrNull { it.parameters.isNotEmpty() } ?: return@forEach
+            suggestions[property] = first.parameters.joinToString(", ") { it.type.displayName }
+        }
+        // Never suggest internal plumbing keys loadlayout manages itself.
+        suggestions.remove("layoutParams")
+        suggestions.remove("id")
+
+        val result = mutableListOf(LuaLayoutPropertySuggestion("id", LAYOUT_ID_DETAIL))
+        val memberNames = members.keys
+        if ("setImageBitmap" in memberNames || "setImageResource" in memberNames) {
+            result += LuaLayoutPropertySuggestion("src", LAYOUT_SRC_DETAIL)
+        }
+        if ("setAdapter" in memberNames) {
+            result += LuaLayoutPropertySuggestion("items", LAYOUT_ITEMS_DETAIL)
+        }
+        result += LuaLayoutPropertySuggestion("style", LAYOUT_STYLE_DETAIL)
+        result += LuaLayoutPropertySuggestion("onClick", LAYOUT_ON_CLICK_DETAIL)
+        suggestions.forEach { (label, detail) ->
+            result += LuaLayoutPropertySuggestion(label, detail)
+        }
+        LAYOUT_PARAM_SUGGESTIONS.forEach { (label, detail) ->
+            result += LuaLayoutPropertySuggestion(label, detail)
+        }
+        return result
+    }
+
+    private fun String.decapitalizeLuaProperty(): String {
+        if (length < 4) {
+            return ""
+        }
+        val body = substring(3)
+        if (body.isEmpty()) {
+            return ""
+        }
+        if (body.length > 1 && body[0].isUpperCase() && body[1].isUpperCase()) {
+            return body
+        }
+        return body.replaceFirstChar { it.lowercaseChar() }
+    }
+
     private fun resolveLayoutViewClassType(className: String): Type {
         layoutViewClassTypeCache[className]?.let { return it }
         val candidates = listOf(
@@ -3283,6 +3385,30 @@ class ExpressionTypeEvaluator internal constructor(
         private const val LOADLAYOUT_ID_TABLE_NODE_BUDGET = 512
         private const val LOADLAYOUT_ID_TABLE_MAX_DEPTH = 32
         private const val LOADLAYOUT_PARENT_WALK_LIMIT = 64
+        private const val LAYOUT_COMPLETION_NODE_BUDGET = 1_024
+
+        private const val LAYOUT_ID_DETAIL = "view id, also registered into the loadlayout root/ids table"
+        private const val LAYOUT_SRC_DETAIL = "image path or resource for image-bearing views"
+        private const val LAYOUT_ITEMS_DETAIL = "adapter items: table, function, or resource name"
+        private const val LAYOUT_STYLE_DETAIL = "style resource or ?attr reference"
+        private const val LAYOUT_ON_CLICK_DETAIL = "function(view) click callback"
+        private const val LAYOUT_PARAM_DETAIL = "ViewGroup.LayoutParams key"
+
+        private val LAYOUT_PARAM_SUGGESTIONS = listOf(
+            "layout_width" to "-1(fill/match) / -2(wrap) / \"24dp\"",
+            "layout_height" to "-1(fill/match) / -2(wrap) / \"24dp\"",
+            "layout_margin" to "all-side margin, number or \"8dp\"",
+            "layout_marginLeft" to LAYOUT_PARAM_DETAIL,
+            "layout_marginTop" to LAYOUT_PARAM_DETAIL,
+            "layout_marginRight" to LAYOUT_PARAM_DETAIL,
+            "layout_marginBottom" to LAYOUT_PARAM_DETAIL,
+            "layout_marginStart" to LAYOUT_PARAM_DETAIL,
+            "layout_marginEnd" to LAYOUT_PARAM_DETAIL,
+            "layout_weight" to "LinearLayout weight",
+            "layout_gravity" to "gravity in parent (left|top|center...)",
+            "layout_x" to "absolute x offset",
+            "layout_y" to "absolute y offset"
+        )
 
         private val LAYOUT_SPEC_KEYS = setOf(
             "id",
@@ -3334,3 +3460,12 @@ class ExpressionTypeEvaluator internal constructor(
     }
 
 }
+
+/**
+ * One Lua property key suggested inside an AndroLua layout table (loadlayout context).
+ * [detail] is a short human-readable value hint shown next to the completion label.
+ */
+data class LuaLayoutPropertySuggestion(
+    val label: String,
+    val detail: String?
+)
