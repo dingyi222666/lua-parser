@@ -377,16 +377,17 @@ class LuaLanguageService(
         // Prefer collapsed preferredHoverType surface (FunctionType/ClassType/MODULE) over bare
         // unknown symbol detail so multi-doc Android-Lua import hovers stay non-empty/rich.
         val preferredTypeDisplay = preferredLspHoverTypeDisplay(
-            primary = result.typeInfo?.displayName,
+            primary = result.callableDisplayName ?: result.typeInfo?.displayName,
             secondary = result.symbol?.declaredType?.displayName ?: result.symbol?.type?.displayName,
             tertiary = result.symbol?.detail
         )
         val content = buildHoverContent(
             name = result.symbol?.name,
             detail = result.symbol?.detail?.takeUnless { detail ->
-                preferredTypeDisplay != null &&
-                    (detail == "unknown" || detail == "any") &&
-                    preferredTypeDisplay != detail
+                result.callableDisplayName != null ||
+                    (preferredTypeDisplay != null &&
+                        (detail == "unknown" || detail == "any") &&
+                        preferredTypeDisplay != detail)
             },
             typeDisplayName = preferredTypeDisplay
         ) ?: return@synchronized null
@@ -2861,7 +2862,12 @@ class LuaLanguageService(
         val parts = buildList {
             name?.let { add("**$it**") }
             detail?.takeIf { it.isNotBlank() && it != typeDisplayName }?.let(::add)
-            typeDisplayName?.takeIf { it.isNotBlank() }?.let { add("Type: `$it`") }
+            typeDisplayName?.takeIf { it.isNotBlank() }?.let {
+                add(
+                    if ('\n' in it) "Type:\n```lua\n$it\n```"
+                    else "Type: `$it`"
+                )
+            }
         }
         return parts.takeIf { it.isNotEmpty() }?.joinToString("\n\n")
     }

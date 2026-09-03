@@ -27,10 +27,16 @@ interface SemanticModel {
 
     fun getSignatureHelpAt(position: Position): SignatureHelp?
 
+    fun getCallableHoverAt(position: Position): CallableHoverInfo? = null
+
     fun getDiagnostics(): List<Diagnostic>
 
     fun getScopeAt(position: Position): Scope?
 }
+
+data class CallableHoverInfo(
+    val displayName: String
+)
 
 object EmptySemanticModel : SemanticModel {
     override fun getSymbolAt(position: Position): Symbol? = null
@@ -46,6 +52,8 @@ object EmptySemanticModel : SemanticModel {
     override fun getCompletionsAt(position: Position): List<CompletionItem> = emptyList()
 
     override fun getSignatureHelpAt(position: Position): SignatureHelp? = null
+
+    override fun getCallableHoverAt(position: Position): CallableHoverInfo? = null
 
     override fun getDiagnostics(): List<Diagnostic> = emptyList()
 

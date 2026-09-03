@@ -71,6 +71,10 @@ internal class DefaultSemanticModel(
         return signatureHelpProvider.getSignatureHelpAt(position)
     }
 
+    override fun getCallableHoverAt(position: Position): CallableHoverInfo? {
+        return signatureHelpProvider.getCallableHoverAt(position)
+    }
+
     override fun getDiagnostics(): List<Diagnostic> = diagnostics
 
     override fun getScopeAt(position: Position): Scope? {

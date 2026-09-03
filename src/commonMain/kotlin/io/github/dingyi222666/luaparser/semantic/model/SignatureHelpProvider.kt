@@ -124,6 +124,89 @@ internal class SignatureHelpProvider(
         )
     }
 
+    fun getCallableHoverAt(position: Position): CallableHoverInfo? {
+        val member = nodePositionIndex.findEnclosing(position)
+            .filterIsInstance<MemberExpression>()
+            .firstOrNull { contains(it.identifier.range, position) }
+            ?: return null
+        val lexicalScopeId = binder.positionQueries.getScopeAt(member.range.start)?.id
+            ?: binder.scopeGraph.rootScope.id
+        val declaration = callableDeclaration(member)
+        val callableType = evaluateCallableType(member, lexicalScopeId, declaration)
+            ?: return null
+        val callableResolution = callChecker.resolveCallable(
+            callableType,
+            lexicalScopeId,
+            declaration
+        ).takeIf { it.isSuccess } ?: return null
+        val signatures = callableResolution.signatures
+        if (signatures.isEmpty()) {
+            return null
+        }
+
+        val selected = enclosingCallForMember(member)?.let { call ->
+            callChecker.checkCall(
+                callableType,
+                argumentTypesForResolution(call, lexicalScopeId),
+                lexicalScopeId,
+                declaration
+            )
+        }?.takeIf { it.isSuccess && !it.ambiguous }
+            ?.selectedSignature
+
+        return CallableHoverInfo(
+            displayName = selected?.displayName ?: compactOverloadDisplay(signatures)
+        )
+    }
+
+    private fun enclosingCallForMember(member: MemberExpression): CallExpression? {
+        var current: BaseASTNode = member
+        while (true) {
+            val parent = runCatching { current.parent }.getOrNull() ?: return null
+            if (parent is CallExpression) {
+                return parent.takeIf { callableBase(it) === member }
+            }
+            if (parent !is MemberExpression) {
+                return null
+            }
+            current = parent
+        }
+    }
+
+    private fun compactOverloadDisplay(signatures: List<FunctionType>): String {
+        val distinct = signatures.distinctBy(FunctionType::displayName)
+        if (distinct.size <= 1) {
+            return distinct.firstOrNull()?.displayName.orEmpty()
+        }
+        val first = distinct.first()
+        val sameShape = distinct.all { signature ->
+            signature.parameters.size == first.parameters.size &&
+                signature.returnType.displayName == first.returnType.displayName &&
+                signature.parameters.zip(first.parameters).all { (parameter, expected) ->
+                    parameter.name == expected.name &&
+                        parameter.optional == expected.optional &&
+                        parameter.vararg == expected.vararg
+                }
+        }
+        if (sameShape) {
+            val differingParameters = first.parameters.indices.filter { index ->
+                distinct.map { it.parameters[index].type.displayName }.distinct().size > 1
+            }
+            // Independently unioning several varying slots would invent correlated combinations.
+            if (differingParameters.size <= 1) {
+                val mergedParameters = first.parameters.mapIndexed { index, parameter ->
+                    parameter.copy(type = unionTypeOf(distinct.map { it.parameters[index].type }))
+                }
+                return FunctionType(
+                    parameters = mergedParameters,
+                    returnType = first.returnType,
+                    typeParameters = first.typeParameters
+                ).displayName
+            }
+        }
+        return distinct.joinToString("\n", transform = FunctionType::displayName)
+    }
+
     /**
      * Map CallChecker-selected [CallResolution.selectedSignature] onto the multi-signature
      * help list. Prefer exact identity/equality, then label, then parameter-shape so

@@ -154,7 +154,8 @@ class LuaWorkspaceQueryFacade(
             path = path,
             position = position,
             symbol = symbol,
-            typeInfo = preferred
+            typeInfo = preferred,
+            callableDisplayName = model.getCallableHoverAt(position)?.displayName
         )
     }
 
