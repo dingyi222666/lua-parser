@@ -770,7 +770,8 @@
   // ---------------------------------------------------------------------------
 
   function languageIdFor(name) {
-    if (/\.lua$/i.test(name)) return "lua";
+    // AndroLua layout modules (.aly) are Lua table files — highlight them as Lua.
+    if (/\.(lua|aly)$/i.test(name)) return "lua";
     return "plaintext";
   }
 
