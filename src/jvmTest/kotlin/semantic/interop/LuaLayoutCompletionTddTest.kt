@@ -253,6 +253,62 @@ class LuaLayoutCompletionTddTest {
         )
     }
 
+    @Test
+    fun empty_and_mid_string_values_suggest_domains() {
+        if (!androidJar.isFile) {
+            return
+        }
+        val source = """
+            local tab = {}
+            local view = loadlayout({
+              LinearLayout,
+              layout_width = "",
+              layout_gravity = "",
+              orientation = "verti",
+              gravity = "left|",
+            }, tab)
+            return view
+        """.trimIndent()
+        val harness = harness("main.lua" to source)
+
+        fun posInsideQuotes(keyName: String): io.github.dingyi222666.luaparser.parser.ast.node.Position {
+            val keyIndex = source.indexOf(keyName)
+            check(keyIndex >= 0) { "missing $keyName" }
+            val openQuote = source.indexOf("\"", keyIndex) + 1
+            var line = 1
+            var column = 1
+            for (i in 0 until openQuote) {
+                if (source[i] == '\n') {
+                    line++
+                    column = 1
+                } else {
+                    column++
+                }
+            }
+            return io.github.dingyi222666.luaparser.parser.ast.node.Position(line, column)
+        }
+
+        val widthValues = harness.queries
+            .completions(harness.path("main.lua"), posInsideQuotes("layout_width"))
+            .map { it.label }
+        assertEquals(
+            listOf("wrap", "fill", "match", "-1", "-2"),
+            widthValues.take(5),
+            "Expected AndroLua size constants first for layout_width; actual: $widthValues"
+        )
+
+        val gravityValues = harness.queries
+            .completions(harness.path("main.lua"), posInsideQuotes("layout_gravity"))
+            .map { it.label }
+        assertTrue("center" in gravityValues, "Expected gravity tokens; actual: $gravityValues")
+
+        val orientationValues = harness.queries
+            .completions(harness.path("main.lua"), posInsideQuotes("orientation"))
+            .map { it.label }
+        assertTrue("vertical" in orientationValues && "horizontal" in orientationValues,
+            "Expected orientation tokens; actual: $orientationValues")
+    }
+
     private fun harness(vararg files: Pair<String, String>): WorkspaceSemanticHarness {
         return WorkspaceSemanticHarness.build(
             *files,

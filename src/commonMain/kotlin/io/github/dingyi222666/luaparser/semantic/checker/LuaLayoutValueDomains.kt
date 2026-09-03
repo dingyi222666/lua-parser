@@ -19,8 +19,10 @@ internal object LuaLayoutValueDomains {
     )
 
     private val SIZE_VALUES = listOf(
-        "-1", "-2", "match_parent", "fill_parent", "wrap_content", "match", "fill",
-        "wrap", "8dp", "16dp", "50%w", "50%h", "100%w", "100%h"
+        // AndroLua-idiomatic short forms first (loadlayout's toint accepts all aliases).
+        "wrap", "fill", "match", "-1", "-2",
+        "wrap_content", "fill_parent", "match_parent",
+        "8dp", "16dp", "50%w", "50%h", "100%w", "100%h"
     )
 
     private val DICT: Map<String, List<String>> = buildMap {

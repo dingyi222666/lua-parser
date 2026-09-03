@@ -5,6 +5,7 @@ import io.github.dingyi222666.luaparser.parser.ast.node.CallExpression
 import io.github.dingyi222666.luaparser.parser.ast.node.ConstantNode
 import io.github.dingyi222666.luaparser.parser.ast.node.Identifier
 import io.github.dingyi222666.luaparser.parser.ast.node.Position
+import io.github.dingyi222666.luaparser.parser.ast.node.Range
 import io.github.dingyi222666.luaparser.parser.ast.node.TableConstructorExpression
 import io.github.dingyi222666.luaparser.parser.ast.node.TableKey
 import io.github.dingyi222666.luaparser.parser.ast.node.TableKeyString
@@ -19,8 +20,12 @@ import io.github.dingyi222666.luaparser.semantic.checker.ExpressionTypeEvaluator
  * runtime (property `k` applies `view.setCap(k)(value)`), so the suggestions are derived from
  * the reflected `set*` methods of the enclosing view class plus the runtime-special keys.
  *
- * Returns null whenever the position is not a layout-table key context, letting callers fall
- * back to the regular completion pipeline.
+ * String literals are completed too: property values use the loadlayout value domains
+ * (`orientation="vert|"` → vertical/horizontal, layout sizes → wrap/fill/-1/-2/%w/%h…), and
+ * `require("…")` / `import "…"` strings offer workspace module names.
+ *
+ * Returns null whenever the position is not a layout-table or modeled-string context, letting
+ * callers fall back to the regular completion pipeline.
  */
 internal class LuaLayoutCompletionProvider(
     private val nodePositionIndex: NodePositionIndex,
@@ -28,10 +33,10 @@ internal class LuaLayoutCompletionProvider(
 ) {
     fun getCompletionsAt(position: Position): List<CompletionItem>? {
         val innermost = nodePositionIndex.findInnermost(position)
-        stringLiteralCompletions(innermost)?.let { return it }
-        val enclosingTables = nodePositionIndex.findEnclosing(position)
-            .filterIsInstance<TableConstructorExpression>()
-            .toMutableList()
+        val enclosing = nodePositionIndex.findEnclosing(position)
+        stringLiteralCompletions(innermost, enclosing, position)?.let { return it }
+
+        val enclosingTables = enclosing.filterIsInstance<TableConstructorExpression>().toMutableList()
         val innermostTable = innermost as? TableConstructorExpression
         if (innermostTable != null) {
             enclosingTables += innermostTable
@@ -56,45 +61,60 @@ internal class LuaLayoutCompletionProvider(
     }
 
     /**
-     * String-literal completion: layout-table property values use the loadlayout value
-     * domains (`orientation="vert|"` → vertical/horizontal, `layout_width` → wrap/match/%w…),
-     * and `require("…")` / `import "…"` strings anywhere in Lua code offer workspace module
-     * names. Null when the caret is not in a modeled string context.
+     * String-literal completion, two shapes:
+     * - the innermost node is a STRING constant (`gravity = "left|"` with content) — complete
+     *   from its table-key value domain or the require/import module list;
+     * - the constant carries no indexed node because the literal is EMPTY (`layout_width=""`):
+     *   empty-string nodes fall under the index's `start < end` node filter, so detect via an
+     *   enclosing [TableKey] whose string value range covers the caret.
      */
-    private fun stringLiteralCompletions(innermost: BaseASTNode?): List<CompletionItem>? {
-        val constant = innermost as? ConstantNode ?: return null
-        if (constant.constantType != ConstantNode.TYPE.STRING) {
-            return null
-        }
-        val parent = runCatching { constant.parent }.getOrNull() ?: return null
-        return when (parent) {
-            is TableKey -> {
-                if (parent.value !== constant) {
-                    return null
-                }
-                val key = tableKeyName(parent) ?: return null
-                val values = evaluator.layoutValueSuggestionsForKey(key)
-                values.takeIf { it.isNotEmpty() }?.map { value ->
-                    CompletionItem(
-                        label = value,
-                        kind = CompletionItemKind.KEYWORD,
-                        insertText = value,
-                        sortText = value
-                    )
-                }
-            }
+    private fun stringLiteralCompletions(
+        innermost: BaseASTNode?,
+        enclosing: List<BaseASTNode>,
+        position: Position
+    ): List<CompletionItem>? {
+        if (innermost is ConstantNode && innermost.constantType == ConstantNode.TYPE.STRING) {
+            val parent = runCatching { innermost.parent }.getOrNull()
+            when (parent) {
+                is TableKey ->
+                    if (parent.value === innermost) {
+                        valueDomainCompletions(tableKeyName(parent))?.let { return it }
+                    }
 
-            is CallExpression -> moduleArgumentCompletions(parent, constant)
-            else -> null
+                is CallExpression ->
+                    if (innermost in parent.arguments) {
+                        moduleArgumentCompletions(parent)?.let { return it }
+                    }
+            }
+        }
+        // Empty-string value: recover through the enclosing key node.
+        val enclosingKey = enclosing.filterIsInstance<TableKey>().firstOrNull { keyNode ->
+            val value = keyNode.value as? ConstantNode
+            value != null &&
+                value.constantType == ConstantNode.TYPE.STRING &&
+                rangeContains(value.range, position)
+        }
+        if (enclosingKey != null) {
+            valueDomainCompletions(tableKeyName(enclosingKey))?.let { return it }
+        }
+        return null
+    }
+
+    private fun valueDomainCompletions(key: String?): List<CompletionItem>? {
+        val values = evaluator.layoutValueSuggestionsForKey(key ?: return null)
+        return values.takeIf { it.isNotEmpty() }?.map { value ->
+            CompletionItem(
+                label = value,
+                kind = CompletionItemKind.KEYWORD,
+                insertText = value,
+                sortText = value
+            )
         }
     }
 
-    private fun moduleArgumentCompletions(
-        call: CallExpression,
-        constant: ConstantNode
-    ): List<CompletionItem>? {
+    private fun moduleArgumentCompletions(call: CallExpression): List<CompletionItem>? {
         val base = call.base as? Identifier ?: return null
-        if (base.name !in MODULE_NAME_FUNCTIONS || constant !in call.arguments) {
+        if (base.name !in MODULE_NAME_FUNCTIONS) {
             return null
         }
         val names = evaluator.workspaceModuleCompletionNames()
@@ -119,6 +139,14 @@ internal class LuaLayoutCompletionProvider(
 
             else -> null
         }
+    }
+
+    private fun rangeContains(range: Range, position: Position): Boolean {
+        val afterStart = range.start.line < position.line ||
+            (range.start.line == position.line && range.start.column <= position.column)
+        val beforeEnd = range.end.line > position.line ||
+            (range.end.line == position.line && range.end.column > position.column)
+        return afterStart && beforeEnd
     }
 
     /**
