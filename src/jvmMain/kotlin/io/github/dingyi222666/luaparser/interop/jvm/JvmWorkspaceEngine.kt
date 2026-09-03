@@ -26,6 +26,7 @@ import io.github.dingyi222666.luaparser.semantic.WorkspaceImportedSymbol
 import io.github.dingyi222666.luaparser.semantic.workspace.DocumentFacts
 import io.github.dingyi222666.luaparser.semantic.workspace.DocumentFactsCollector
 import io.github.dingyi222666.luaparser.semantic.workspace.LuaWorkspaceEngine
+import io.github.dingyi222666.luaparser.semantic.workspace.LuaLayoutPropertiesMetadata
 import io.github.dingyi222666.luaparser.semantic.workspace.LuaWorkspaceInput
 import io.github.dingyi222666.luaparser.semantic.workspace.VirtualPath
 import io.github.dingyi222666.luaparser.semantic.workspace.WorkspaceSnapshot
@@ -172,7 +173,8 @@ class JvmWorkspaceEngine(
                 currentFacts,
                 resolvedConfiguration,
                 workspaceResolver
-            )
+            ),
+            layoutPropertyExtensions = LuaLayoutPropertiesMetadata.parse(snapshot.metadata)
         )
     }
 

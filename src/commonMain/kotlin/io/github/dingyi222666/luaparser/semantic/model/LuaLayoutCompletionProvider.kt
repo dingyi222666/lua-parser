@@ -38,11 +38,11 @@ internal class LuaLayoutCompletionProvider(
             return null
         }
         val outermost = enclosingTables.last()
-        val classType = enclosingTables.firstNotNullOfOrNull { table ->
+        val match = enclosingTables.firstNotNullOfOrNull { table ->
             evaluator.layoutPropertyClassAt(outermost, table)
                 ?: evaluator.layoutPropertyClassAt(table, table)
         } ?: return null
-        return evaluator.layoutPropertySuggestions(classType).map { suggestion ->
+        return evaluator.layoutPropertySuggestions(match).map { suggestion ->
             CompletionItem(
                 label = suggestion.label,
                 kind = CompletionItemKind.FIELD,

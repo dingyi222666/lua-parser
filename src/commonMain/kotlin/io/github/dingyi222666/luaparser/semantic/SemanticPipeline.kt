@@ -16,6 +16,7 @@ import io.github.dingyi222666.luaparser.semantic.workspace.VirtualPath
 import io.github.dingyi222666.luaparser.semantic.workspace.WorkspaceModuleResolver
 import io.github.dingyi222666.luaparser.semantic.workspace.std.BuiltinOverlayLoader
 import io.github.dingyi222666.luaparser.semantic.workspace.std.BuiltinOverlaySnapshot
+import io.github.dingyi222666.luaparser.semantic.checker.LuaLayoutPropertySuggestion
 import io.github.dingyi222666.luaparser.semantic.types.resolve.TypeResolver
 
 /**
@@ -85,7 +86,11 @@ internal data class SemanticWorkspaceContext(
     val importedSymbols: Map<String, WorkspaceImportedSymbol> = emptyMap(),
     val resolveImportedSymbol: ((String) -> WorkspaceImportedSymbol?)? = null,
     val resolveImportTarget: ((String) -> WorkspaceImportedSymbol?)? = null,
-    val unresolvedLuaJavaTargets: List<UnresolvedLuaJavaTarget> = emptyList()
+    val unresolvedLuaJavaTargets: List<UnresolvedLuaJavaTarget> = emptyList(),
+    // Embedder-extended layout properties for loadlayout completions, keyed by the class
+    // name written in the layout table (or its Java simple name). Sourced from workspace
+    // metadata `lua.layout.properties` via LuaLayoutPropertiesMetadata.parse.
+    val layoutPropertyExtensions: Map<String, List<LuaLayoutPropertySuggestion>> = emptyMap()
 ) {
     fun withWorkspaceImportEffects(): SemanticWorkspaceContext {
         val path = currentPath ?: return this

@@ -2389,10 +2389,10 @@ class ExpressionTypeEvaluator internal constructor(
      * identifier that looks like a view class becomes the current class for the table and its
      * nested tables. Returns null when [target] is unreachable from [root].
      */
-    fun layoutPropertyClassAt(root: TableConstructorExpression, target: TableConstructorExpression): Type? {
+    fun layoutPropertyClassAt(root: TableConstructorExpression, target: TableConstructorExpression): LuaLayoutClassMatch? {
         val visited = hashSetOf<BaseASTNode>()
         var budget = LAYOUT_COMPLETION_NODE_BUDGET
-        fun walk(node: TableConstructorExpression, inherited: Type?): Type? {
+        fun walk(node: TableConstructorExpression, inherited: LuaLayoutClassMatch?): LuaLayoutClassMatch? {
             if (budget <= 0 || !visited.add(node)) {
                 return null
             }
@@ -2402,8 +2402,11 @@ class ExpressionTypeEvaluator internal constructor(
                 val keyName = staticTableKeyName(field)
                 if (isLayoutArrayField(field, keyName) && currentClass === inherited) {
                     val value = field.value
-                    if (value is Identifier && isLikelyAndroidViewClassName(value.name)) {
-                        currentClass = resolveLayoutViewClassType(value.name)
+                    if (value is Identifier && isLayoutClassIdentifier(value.name)) {
+                        currentClass = LuaLayoutClassMatch(
+                            sourceName = value.name,
+                            type = resolveLayoutViewClassType(value.name)
+                        )
                     }
                 }
             }
@@ -2421,8 +2424,13 @@ class ExpressionTypeEvaluator internal constructor(
         return walk(root, null)
     }
 
+    /** A view-class identifier that resolves for layout completions: known view names or embedder-extended classes. */
+    private fun isLayoutClassIdentifier(name: String): Boolean {
+        return isLikelyAndroidViewClassName(name) || name in workspaceContext.layoutPropertyExtensions
+    }
+
     /**
-     * Lua property names usable inside an AndroLua layout table for [classType]
+     * Lua property names usable inside an AndroLua layout table for [match]
      * (loadlayout semantics: property `k` applies `view.setCap(k)(value)`).
      *
      * Sources, grounded in the Android-Lua `loadlayout.lua` runtime:
@@ -2430,11 +2438,13 @@ class ExpressionTypeEvaluator internal constructor(
      *   (setTextColor -> textColor, setAdapter -> adapter, setRadius -> radius).
      * - Runtime-special keys loadlayout handles explicitly: id, style, onClick, src
      *   (image-bearing views), items (adapter views).
+     * - Embedder-provided extensions keyed by the class name written in the layout table
+     *   (workspace metadata `lua.layout.properties`), matched by source or Java simple name.
      * - LayoutParams keys applied before setters: layout_width/height, margins,
      *   layout_weight, layout_gravity, layout_x/y.
      */
-    fun layoutPropertySuggestions(classType: Type): List<LuaLayoutPropertySuggestion> {
-        val members = (classType as? JavaInstanceType)?.allInstanceMembers().orEmpty()
+    fun layoutPropertySuggestions(match: LuaLayoutClassMatch): List<LuaLayoutPropertySuggestion> {
+        val members = (match.type as? JavaInstanceType)?.allInstanceMembers().orEmpty()
         val suggestions = linkedMapOf<String, String>()
         members.values.forEach { member ->
             if (member.memberKind != JavaMemberKind.METHOD || !member.memberName.startsWith("set")) {
@@ -2465,10 +2475,24 @@ class ExpressionTypeEvaluator internal constructor(
         suggestions.forEach { (label, detail) ->
             result += LuaLayoutPropertySuggestion(label, detail)
         }
+        val known = result.mapTo(hashSetOf()) { it.label }
+        layoutPropertyExtensionEntries(match).forEach { extension ->
+            if (extension.label !in known) {
+                result += extension
+            }
+        }
         LAYOUT_PARAM_SUGGESTIONS.forEach { (label, detail) ->
             result += LuaLayoutPropertySuggestion(label, detail)
         }
         return result
+    }
+
+    private fun layoutPropertyExtensionEntries(match: LuaLayoutClassMatch): List<LuaLayoutPropertySuggestion> {
+        val extensions = workspaceContext.layoutPropertyExtensions
+        return extensions[match.sourceName]
+            ?: (match.type as? JavaInstanceType)?.javaName?.simpleNames?.lastOrNull()
+                ?.let(extensions::get)
+            ?: emptyList()
     }
 
     private fun String.decapitalizeLuaProperty(): String {
@@ -3468,4 +3492,13 @@ class ExpressionTypeEvaluator internal constructor(
 data class LuaLayoutPropertySuggestion(
     val label: String,
     val detail: String?
+)
+
+/**
+ * The view class in force at a layout-table position: [sourceName] is the identifier as
+ * written in the layout table (extension lookup key), [type] is the resolved class surface.
+ */
+data class LuaLayoutClassMatch(
+    val sourceName: String,
+    val type: Type
 )

@@ -214,7 +214,8 @@ open class LuaWorkspaceEngine(
         return SemanticWorkspaceContext(
             currentPath = path,
             workspaceResolver = WorkspaceModuleResolver(snapshot),
-            overlayGlobals = snapshot.builtinOverlay.globals
+            overlayGlobals = snapshot.builtinOverlay.globals,
+            layoutPropertyExtensions = LuaLayoutPropertiesMetadata.parse(snapshot.metadata)
         )
     }
 

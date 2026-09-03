@@ -5,6 +5,7 @@ import io.github.dingyi222666.luaparser.interop.jvm.JvmWorkspaceEngine
 import semantic.support.WorkspaceSemanticHarness
 import java.io.File
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
@@ -114,6 +115,79 @@ class LuaLayoutCompletionTddTest {
         val labels = completionLabels(harness, "option")
         assertTrue("print" in labels, "Plain table context must keep lexical completions; actual: $labels")
         assertFalse("layout_width" in labels, "Layout keys must not leak into plain tables; actual: $labels")
+    }
+
+    @Test
+    fun aly_layout_file_gets_property_completions() {
+        if (!androidJar.isFile) {
+            return
+        }
+        val harness = WorkspaceSemanticHarness.build(
+            "popup.aly" to """
+                {
+                  LinearLayout,
+                  layout_width = "-1",
+                  id = "rootv",
+                  {
+                    TextView,
+                    textCol
+                  },
+                }
+            """.trimIndent(),
+            metadata = mapOf(
+                JvmWorkspaceConfiguration.ANDROID_JAR_METADATA_KEY to androidJar.path
+            ),
+            engine = JvmWorkspaceEngine()
+        )
+
+        val labels = harness.queries.completions(
+            harness.path("popup.aly"),
+            harness.positionOf("popup.aly", "textCol")
+        ).map { it.label }
+        assertTrue("textColor" in labels, "Expected TextView properties inside .aly file; actual: $labels")
+        assertTrue("id" in labels, "Expected 'id' special key inside .aly file; actual: $labels")
+        assertTrue("layout_width" in labels, "Expected LayoutParams keys inside .aly file; actual: $labels")
+    }
+
+    @Test
+    fun metadata_extensions_add_custom_class_properties() {
+        if (!androidJar.isFile) {
+            return
+        }
+        val harness = WorkspaceSemanticHarness.build(
+            "main.lua" to """
+                local tab = {}
+                local view = loadlayout({
+                  LinearLayout,
+                  {
+                    LuaRecyclerView,
+                    refre
+                  },
+                }, tab)
+                return view
+            """.trimIndent(),
+            metadata = mapOf(
+                JvmWorkspaceConfiguration.ANDROID_JAR_METADATA_KEY to androidJar.path,
+                "lua.layout.properties" to """
+                    # project-defined custom views
+                    LuaRecyclerView: refresh|pull-to-refresh callback(function), loadMore|load-more callback(function)
+                """.trimIndent()
+            ),
+            engine = JvmWorkspaceEngine()
+        )
+
+        val completions = harness.queries.completions(
+            harness.path("main.lua"),
+            harness.positionOf("main.lua", "refre")
+        )
+        val labels = completions.map { it.label }
+        assertTrue("refresh" in labels, "Expected extended 'refresh' property; actual: $labels")
+        assertTrue("loadMore" in labels, "Expected extended 'loadMore' property; actual: $labels")
+        assertEquals(
+            "pull-to-refresh callback(function)",
+            completions.first { it.label == "refresh" }.detail,
+            "Extended property detail must surface"
+        )
     }
 
     private fun harness(vararg files: Pair<String, String>): WorkspaceSemanticHarness {
