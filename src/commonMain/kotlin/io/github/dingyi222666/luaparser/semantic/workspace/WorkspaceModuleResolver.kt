@@ -25,9 +25,34 @@ import io.github.dingyi222666.luaparser.semantic.types.model.VarargType
 internal class WorkspaceModuleResolver(
     private val snapshot: WorkspaceSnapshot
 ) {
+    private companion object {
+        private const val COMPLETION_MODULE_NAME_LIMIT = 300
+    }
+
     private val activeProviderCache = mutableMapOf<String, WorkspaceModuleGraph.ModuleProvider?>()
     private val importedSymbolsCache = mutableMapOf<VirtualPath, Map<String, WorkspaceImportedSymbol>>()
     private val providerGlobalSymbolsCache = mutableMapOf<VirtualPath, List<WorkspaceImportedSymbol>>()
+
+    /**
+     * Real workspace module names for require / import string-literal completions: user
+     * `.lua` / `.aly` files only (synthetic `__` providers excluded), offered both dotted
+     * (`mods.util`) and basename (`util`) forms, capped for payload size.
+     */
+    fun completionModuleNames(): List<String> {
+        return snapshot.files.keys.asSequence()
+            .map { it.value }
+            .filter { path ->
+                (path.endsWith(".lua") || path.endsWith(".aly")) && !path.startsWith("__")
+            }
+            .flatMap { path ->
+                val base = path.removeSuffix(".lua").removeSuffix(".aly")
+                listOf(base.substringAfterLast('/'), base.replace('/', '.'))
+            }
+            .filter(String::isNotBlank)
+            .distinct()
+            .take(COMPLETION_MODULE_NAME_LIMIT)
+            .toList()
+    }
 
     fun activeProvider(moduleName: String): WorkspaceModuleGraph.ModuleProvider? {
         if (moduleName.isBlank()) {

@@ -190,6 +190,69 @@ class LuaLayoutCompletionTddTest {
         )
     }
 
+    @Test
+    fun layout_value_string_literals_suggest_domains() {
+        if (!androidJar.isFile) {
+            return
+        }
+        val harness = harness(
+            "main.lua" to """
+                local tab = {}
+                local view = loadlayout({
+                  LinearLayout,
+                  layout_width = "wr",
+                  orientation = "verti",
+                  layout_marginTop = "8dp",
+                  {
+                    ListView,
+                    id = "poplist",
+                  },
+                }, tab)
+                return view
+            """.trimIndent()
+        )
+
+        val widthValues = completionLabels(harness, "wr")
+        assertTrue("wrap_content" in widthValues, "Expected wrap_content for layout_width; actual: $widthValues")
+        assertTrue("match_parent" in widthValues, "Expected match_parent for layout_width; actual: $widthValues")
+        assertTrue("50%w" in widthValues, "Expected percent widths; actual: $widthValues")
+
+        val orientationValues = completionLabels(harness, "verti")
+        assertTrue("vertical" in orientationValues, "Expected vertical; actual: $orientationValues")
+        assertTrue("horizontal" in orientationValues, "Expected horizontal; actual: $orientationValues")
+    }
+
+    @Test
+    fun require_and_import_strings_suggest_workspace_modules() {
+        if (!androidJar.isFile) {
+            return
+        }
+        val harness = harness(
+            "main.lua" to """
+                local util = require("ut
+                import "mo
+                local view = loadlayout({
+                  LinearLayout,
+                }, {})
+                return util, view
+            """.trimIndent(),
+            "mods/util.lua" to """
+                return {}
+            """.trimIndent()
+        )
+
+        val requireValues = completionLabels(harness, "ut")
+        assertTrue(
+            "util" in requireValues || "mods.util" in requireValues,
+            "Expected workspace module names in require string; actual: $requireValues"
+        )
+        val importValues = completionLabels(harness, "mo")
+        assertTrue(
+            "mods" in importValues || "mods.util" in importValues,
+            "Expected workspace module names in import string; actual: $importValues"
+        )
+    }
+
     private fun harness(vararg files: Pair<String, String>): WorkspaceSemanticHarness {
         return WorkspaceSemanticHarness.build(
             *files,

@@ -2495,6 +2495,21 @@ class ExpressionTypeEvaluator internal constructor(
             ?: emptyList()
     }
 
+    /**
+     * Valid string-literal values for a layout-table property key, grounded in the
+     * Android-Lua `loadlayout.lua` runtime converters (`toint` keyword maps, `checkint`
+     * pipe flags, `checkType` units, `checkPercent` %w/%h, boolean strings). Empty when the
+     * key has no modeled value domain (free-form keys like id/text/src).
+     */
+    fun layoutValueSuggestionsForKey(key: String): List<String> {
+        return LuaLayoutValueDomains.forKey(key)
+    }
+
+    /** Workspace module names usable as require / import string arguments. */
+    fun workspaceModuleCompletionNames(): List<String> {
+        return workspaceContext.workspaceResolver?.completionModuleNames().orEmpty()
+    }
+
     private fun String.decapitalizeLuaProperty(): String {
         if (length < 4) {
             return ""
@@ -3411,6 +3426,23 @@ class ExpressionTypeEvaluator internal constructor(
         private const val LOADLAYOUT_PARENT_WALK_LIMIT = 64
         private const val LAYOUT_COMPLETION_NODE_BUDGET = 1_024
 
+        private val LAYOUT_SPEC_KEYS = setOf(
+            "id",
+            "onClick",
+            "onLongClick",
+            "onItemClick",
+            "onCheckedChanged",
+            "layout_width",
+            "layout_height",
+            "layout_weight",
+            "layout_margin",
+            "layout_gravity",
+            "padding",
+            "text",
+            "src",
+            "background"
+        )
+
         private const val LAYOUT_ID_DETAIL = "view id, also registered into the loadlayout root/ids table"
         private const val LAYOUT_SRC_DETAIL = "image path or resource for image-bearing views"
         private const val LAYOUT_ITEMS_DETAIL = "adapter items: table, function, or resource name"
@@ -3432,23 +3464,6 @@ class ExpressionTypeEvaluator internal constructor(
             "layout_gravity" to "gravity in parent (left|top|center...)",
             "layout_x" to "absolute x offset",
             "layout_y" to "absolute y offset"
-        )
-
-        private val LAYOUT_SPEC_KEYS = setOf(
-            "id",
-            "onClick",
-            "onLongClick",
-            "onItemClick",
-            "onCheckedChanged",
-            "layout_width",
-            "layout_height",
-            "layout_weight",
-            "layout_margin",
-            "layout_gravity",
-            "padding",
-            "text",
-            "src",
-            "background"
         )
 
         private val KNOWN_ANDROID_VIEW_SIMPLE_NAMES = setOf(

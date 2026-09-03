@@ -1,6 +1,7 @@
 package io.github.dingyi222666.luaparser.semantic.model
 
 import io.github.dingyi222666.luaparser.parser.ast.node.BaseASTNode
+import io.github.dingyi222666.luaparser.parser.ast.node.CallExpression
 import io.github.dingyi222666.luaparser.parser.ast.node.ConstantNode
 import io.github.dingyi222666.luaparser.parser.ast.node.Identifier
 import io.github.dingyi222666.luaparser.parser.ast.node.Position
@@ -27,6 +28,7 @@ internal class LuaLayoutCompletionProvider(
 ) {
     fun getCompletionsAt(position: Position): List<CompletionItem>? {
         val innermost = nodePositionIndex.findInnermost(position)
+        stringLiteralCompletions(innermost)?.let { return it }
         val enclosingTables = nodePositionIndex.findEnclosing(position)
             .filterIsInstance<TableConstructorExpression>()
             .toMutableList()
@@ -50,6 +52,72 @@ internal class LuaLayoutCompletionProvider(
                 insertText = suggestion.label,
                 sortText = "${sortGroup(suggestion.label)}:${suggestion.label}"
             )
+        }
+    }
+
+    /**
+     * String-literal completion: layout-table property values use the loadlayout value
+     * domains (`orientation="vert|"` → vertical/horizontal, `layout_width` → wrap/match/%w…),
+     * and `require("…")` / `import "…"` strings anywhere in Lua code offer workspace module
+     * names. Null when the caret is not in a modeled string context.
+     */
+    private fun stringLiteralCompletions(innermost: BaseASTNode?): List<CompletionItem>? {
+        val constant = innermost as? ConstantNode ?: return null
+        if (constant.constantType != ConstantNode.TYPE.STRING) {
+            return null
+        }
+        val parent = runCatching { constant.parent }.getOrNull() ?: return null
+        return when (parent) {
+            is TableKey -> {
+                if (parent.value !== constant) {
+                    return null
+                }
+                val key = tableKeyName(parent) ?: return null
+                val values = evaluator.layoutValueSuggestionsForKey(key)
+                values.takeIf { it.isNotEmpty() }?.map { value ->
+                    CompletionItem(
+                        label = value,
+                        kind = CompletionItemKind.KEYWORD,
+                        insertText = value,
+                        sortText = value
+                    )
+                }
+            }
+
+            is CallExpression -> moduleArgumentCompletions(parent, constant)
+            else -> null
+        }
+    }
+
+    private fun moduleArgumentCompletions(
+        call: CallExpression,
+        constant: ConstantNode
+    ): List<CompletionItem>? {
+        val base = call.base as? Identifier ?: return null
+        if (base.name !in MODULE_NAME_FUNCTIONS || constant !in call.arguments) {
+            return null
+        }
+        val names = evaluator.workspaceModuleCompletionNames()
+        return names.takeIf { it.isNotEmpty() }?.map { name ->
+            CompletionItem(
+                label = name,
+                kind = CompletionItemKind.MODULE,
+                insertText = name,
+                sortText = name
+            )
+        }
+    }
+
+    private fun tableKeyName(field: TableKey): String? {
+        return when (val key = field.key) {
+            is Identifier -> key.name
+            is ConstantNode -> when (key.constantType) {
+                ConstantNode.TYPE.STRING -> key.stringOf()
+                ConstantNode.TYPE.INTERGER -> key.rawValue.toString().toIntOrNull()?.toString()
+                else -> null
+            }
+
+            else -> null
         }
     }
 
@@ -108,5 +176,9 @@ internal class LuaLayoutCompletionProvider(
         "id" -> "0"
         "layout_width", "layout_height" -> "2"
         else -> "1"
+    }
+
+    private companion object {
+        private val MODULE_NAME_FUNCTIONS = setOf("require", "import")
     }
 }

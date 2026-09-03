@@ -16,6 +16,7 @@ import io.github.dingyi222666.luaparser.semantic.api.Diagnostic
 import io.github.dingyi222666.luaparser.semantic.api.SignatureHelp
 import io.github.dingyi222666.luaparser.semantic.api.SymbolKind
 import io.github.dingyi222666.luaparser.semantic.api.TypeInfo
+import io.github.dingyi222666.luaparser.semantic.checker.LuaLayoutValueDomains
 import io.github.dingyi222666.luaparser.semantic.api.TypeInfoKind
 import io.github.dingyi222666.luaparser.semantic.WorkspaceImportedSymbol
 import io.github.dingyi222666.luaparser.semantic.binder.BinderDeclaration
@@ -34,6 +35,9 @@ class LuaWorkspaceQueryFacade(
     private val snapshot: WorkspaceSnapshot
 ) {
     private val resolver = WorkspaceModuleResolver(snapshot)
+
+    private val moduleCallBeforeQuote = Regex("\\b(?:require|import)\\s*\\(?$")
+    private val tableKeyBeforeQuote = Regex("([A-Za-z_][A-Za-z0-9_]*)\\s*=\\s*$")
 
     fun diagnostics(path: VirtualPath): List<Diagnostic> {
         return snapshot.files[path]?.semanticFile?.model?.getDiagnostics().orEmpty()
@@ -73,6 +77,9 @@ class LuaWorkspaceQueryFacade(
 
     fun completions(path: VirtualPath, position: Position): List<CompletionItem> {
         val semanticFile = snapshot.files[path]?.semanticFile
+        if (semanticFile != null) {
+            unterminatedStringCompletions(semanticFile, position)?.let { return it }
+        }
         val baseCompletions = semanticFile?.model?.getCompletionsAt(position).orEmpty()
         if (semanticFile == null) {
             return baseCompletions
@@ -2394,6 +2401,70 @@ class LuaWorkspaceQueryFacade(
         }
         return memberCompletionRangeContains(expression.range, position) ||
             rangeContains(expression.identifier.range, position)
+    }
+
+    /**
+     * Mid-typing string literals (`import "mo`, `orientation = "verti`) are unterminated, so
+     * the lexer produces no STRING token and AST-based completion cannot see them. Detect the
+     * open quote from the raw source line instead and answer from the same value domains the
+     * AST path uses: workspace module names after require/import, layout value domains after
+     * a `key = "` prefix. Null when the caret is not inside an unterminated single-line quote.
+     */
+    private fun unterminatedStringCompletions(
+        semanticFile: WorkspaceSemanticFile,
+        position: Position
+    ): List<CompletionItem>? {
+        val line = semanticFile.source.lines().getOrNull(position.line - 1) ?: return null
+        val column = position.column - 1
+        if (column < 0 || column > line.length) {
+            return null
+        }
+        val prefix = line.substring(0, column)
+        var openQuote: Char? = null
+        var openIndex = -1
+        var index = 0
+        while (index < prefix.length) {
+            when (val ch = prefix[index]) {
+                '\\' -> index++
+                '"', '\'' -> {
+                    if (openQuote == ch) {
+                        openQuote = null
+                    } else if (openQuote == null) {
+                        openQuote = ch
+                        openIndex = index
+                    }
+                }
+            }
+            index++
+        }
+        if (openQuote == null) {
+            return null
+        }
+        val before = prefix.substring(0, openIndex).trimEnd()
+        return when {
+            moduleCallBeforeQuote.containsMatchIn(before) ->
+                resolver.completionModuleNames().map { name ->
+                    CompletionItem(
+                        label = name,
+                        kind = CompletionItemKind.MODULE,
+                        insertText = name,
+                        sortText = name
+                    )
+                }
+
+            else -> {
+                val key = tableKeyBeforeQuote.find(before)?.groupValues?.get(1)
+                val values = key?.let { LuaLayoutValueDomains.forKey(it) }.orEmpty()
+                values.map { value ->
+                    CompletionItem(
+                        label = value,
+                        kind = CompletionItemKind.KEYWORD,
+                        insertText = value,
+                        sortText = value
+                    )
+                }.ifEmpty { null }
+            }
+        }
     }
 
     private fun memberAccessAt(node: BaseASTNode?, position: Position): MemberExpression? {
