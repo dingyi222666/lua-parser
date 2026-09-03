@@ -68,7 +68,7 @@ class BuiltinOverlayLoaderTddTest {
             harness.positionOf("main.lua", "abs")
         )
         val absCompletion = assertNotNull(completions.singleOrNull { it.label == "abs" })
-        assertEquals(CompletionItemKind.FIELD, absCompletion.kind)
+        assertEquals(CompletionItemKind.FUNCTION, absCompletion.kind)
         assertEquals("fun(x: number): number", absCompletion.detail)
 
         val hover = assertNotNull(

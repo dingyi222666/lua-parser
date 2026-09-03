@@ -1628,13 +1628,32 @@ class LuaWorkspaceQueryFacade(
                     ?: member.type.displayName
                 CompletionItem(
                     label = member.name,
-                    kind = member.kind.toCompletionItemKind(),
+                    kind = exportMemberCompletionKind(member, detail),
                     detail = detail,
                     insertText = member.name,
                     sortText = "0:0000:${member.name}"
                 )
             }
             .toList()
+    }
+
+    /**
+     * Export members keep [SymbolKind.FIELD] at collection time even when the field value is
+     * a function (`function M.f()` / table-literal function values). For completions a
+     * callable display must surface as [CompletionItemKind.FUNCTION] so LSP clients never
+     * render callables with the plain text/value icon; METHOD/FUNCTION kinds pass through.
+     */
+    private fun exportMemberCompletionKind(
+        member: ModuleExportSurface.MemberExport,
+        detail: String?
+    ): CompletionItemKind {
+        val base = member.kind.toCompletionItemKind()
+        if (base == CompletionItemKind.METHOD || base == CompletionItemKind.FUNCTION) {
+            return base
+        }
+        val callable = detail != null &&
+            (detail.trim().startsWith("fun(") || detail.contains(" -> "))
+        return if (callable) CompletionItemKind.FUNCTION else base
     }
 
     /**

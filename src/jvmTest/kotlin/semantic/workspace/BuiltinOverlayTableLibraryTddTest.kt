@@ -82,7 +82,11 @@ class BuiltinOverlayTableLibraryTddTest {
                 completions.singleOrNull { it.label == name },
                 "Expected completion for table.$name; labels=${completions.map { it.label }}"
             )
-            assertTrue(item.kind == CompletionItemKind.FIELD || item.kind == CompletionItemKind.METHOD)
+            assertTrue(
+                item.kind == CompletionItemKind.FIELD ||
+                    item.kind == CompletionItemKind.METHOD ||
+                    item.kind == CompletionItemKind.FUNCTION
+            )
             val hover = assertNotNull(harness.queries.hover(main, pos))
             assertNotNull(hover.symbol)
             assertTrue(hover.symbol?.kind == SymbolKind.FIELD || hover.symbol?.kind == SymbolKind.METHOD)

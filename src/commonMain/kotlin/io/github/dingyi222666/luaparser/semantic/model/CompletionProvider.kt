@@ -195,6 +195,7 @@ internal class CompletionProvider(
     }
 
     private fun memberCompletionKind(symbol: Symbol): CompletionItemKind {
+        val display = symbol.declaredType?.displayName ?: symbol.type?.displayName
         return when (symbol.kind) {
             SymbolKind.METHOD -> CompletionItemKind.METHOD
             SymbolKind.FUNCTION -> CompletionItemKind.FUNCTION
@@ -203,19 +204,24 @@ internal class CompletionProvider(
             SymbolKind.TYPE_ALIAS -> CompletionItemKind.TYPE_ALIAS
             SymbolKind.PARAMETER -> CompletionItemKind.PARAMETER
             // Explicit FIELD, plus value-kind fallthrough for field-like member surfaces
-            // (LOCAL/VARIABLE-backed Java static members and JavaBean aliases).
+            // (LOCAL/VARIABLE-backed Java static members and JavaBean aliases). A callable
+            // display (Lua function stored in a table/module field) is a function to call,
+            // so it must not complete as a field/value icon.
             SymbolKind.FIELD,
             SymbolKind.LOCAL,
-            SymbolKind.VARIABLE -> CompletionItemKind.FIELD
-            // Soft dual-path: unknown synthetic members still prefer FIELD when the
-            // declared/type display looks non-callable (static field reads), else adapters.
-            SymbolKind.UNKNOWN -> {
-                val display = symbol.declaredType?.displayName ?: symbol.type?.displayName
-                if (display != null && !looksCallableDisplay(display)) {
-                    CompletionItemKind.FIELD
+            SymbolKind.VARIABLE ->
+                if (display != null && looksCallableDisplay(display)) {
+                    CompletionItemKind.FUNCTION
                 } else {
-                    adapters.completionKind(symbol)
+                    CompletionItemKind.FIELD
                 }
+            // Soft dual-path: unknown synthetic members complete as FIELD for value reads,
+            // FUNCTION when their type display is callable, and only fall back to the
+            // adapter (TEXT) with no display evidence at all.
+            SymbolKind.UNKNOWN -> when {
+                display != null && looksCallableDisplay(display) -> CompletionItemKind.FUNCTION
+                display != null -> CompletionItemKind.FIELD
+                else -> adapters.completionKind(symbol)
             }
         }
     }
