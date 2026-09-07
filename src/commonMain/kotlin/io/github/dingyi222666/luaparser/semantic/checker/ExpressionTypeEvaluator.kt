@@ -136,6 +136,7 @@ class ExpressionTypeEvaluator internal constructor(
     // surfaces from android.jar are large and must not be rebuilt on every call/local.
     private val androidLuaHydratedSurfaceCache = mutableMapOf<String, Type>()
     private val layoutViewClassTypeCache = mutableMapOf<String, Type>()
+    private val layoutSuggestionsCache = mutableMapOf<String, List<LuaLayoutPropertySuggestion>>()
     private val loadlayoutIdsTableTypeCache = mutableMapOf<DeclarationId, Type>()
     // One-shot loadlayout(…, ids) → layout-table index for the whole binder root.
     private var loadlayoutRootUsageIndex: Map<String, List<TableConstructorExpression>>? = null
@@ -659,9 +660,11 @@ class ExpressionTypeEvaluator internal constructor(
             // Soft unknown: keep arity fallback viable without inventing members later.
             return true
         }
-        if ((parameter.vararg || parameterType is VarargType) && isLuaTableShapedArgument(argumentType)) {
+        if ((parameter.vararg || parameterType is VarargType) && argumentType is TableType) {
             // LuaJava converts a simple Lua table argument into the vararg component array
-            // (ObjectAnimator.ofFloat(target, name, float...) called with {30, 0}).
+            // (ObjectAnimator.ofFloat(target, name, float...) called with {30, 0}). Kept in
+            // lockstep with CallChecker.isLuaTableForVarargSlot so the soft chain-recovery
+            // path never invents a return type for a call the strict checker rejects.
             return true
         }
         return when {
@@ -2444,6 +2447,7 @@ class ExpressionTypeEvaluator internal constructor(
      *   layout_weight, layout_gravity, layout_x/y.
      */
     fun layoutPropertySuggestions(match: LuaLayoutClassMatch): List<LuaLayoutPropertySuggestion> {
+        layoutSuggestionsCache[match.sourceName]?.let { return it }
         val members = (match.type as? JavaInstanceType)?.allInstanceMembers().orEmpty()
         val suggestions = linkedMapOf<String, String>()
         members.values.forEach { member ->
@@ -2484,6 +2488,9 @@ class ExpressionTypeEvaluator internal constructor(
         LAYOUT_PARAM_SUGGESTIONS.forEach { (label, detail) ->
             result += LuaLayoutPropertySuggestion(label, detail)
         }
+        // allInstanceMembers() walks the full reflected hierarchy; cache the derived list
+        // per class so repeated keystrokes do not re-enumerate it.
+        layoutSuggestionsCache[match.sourceName] = result
         return result
     }
 
@@ -2515,7 +2522,8 @@ class ExpressionTypeEvaluator internal constructor(
             return ""
         }
         val body = substring(3)
-        if (body.isEmpty()) {
+        if (body.isEmpty() || !body[0].isUpperCase()) {
+            // setup()/setts() are not bean setters; require SetXxx shape.
             return ""
         }
         if (body.length > 1 && body[0].isUpperCase() && body[1].isUpperCase()) {
@@ -2526,10 +2534,13 @@ class ExpressionTypeEvaluator internal constructor(
 
     private fun resolveLayoutViewClassType(className: String): Type {
         layoutViewClassTypeCache[className]?.let { return it }
+        // The written identifier binds to the document's active imports first (AndroLua
+        // semantics); stock android.widget/android.view packages are the fallback, so a
+        // project class shadowing a platform simple name is not silently replaced.
         val candidates = listOf(
+            className,
             "android.widget.$className",
-            "android.view.$className",
-            className
+            "android.view.$className"
         )
         for (candidate in candidates) {
             val imported = workspaceContext.resolveImportTarget?.invoke(candidate)

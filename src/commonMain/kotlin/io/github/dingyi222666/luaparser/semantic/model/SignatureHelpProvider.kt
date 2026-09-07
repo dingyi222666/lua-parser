@@ -57,6 +57,8 @@ internal class SignatureHelpProvider(
     private val callChecker = CallChecker(binder)
     private val memberResolver = MemberResolver(binder)
 
+    private val hoverParentWalkLimit = 64
+
     fun getSignatureHelpAt(position: Position): SignatureHelp? {
         val call = enclosingCallExpression(position) ?: return null
         if (!isWithinCallArguments(call, position)) {
@@ -161,7 +163,9 @@ internal class SignatureHelpProvider(
 
     private fun enclosingCallForMember(member: MemberExpression): CallExpression? {
         var current: BaseASTNode = member
-        while (true) {
+        var hops = 0
+        while (hops < hoverParentWalkLimit) {
+            hops++
             val parent = runCatching { current.parent }.getOrNull() ?: return null
             if (parent is CallExpression) {
                 return parent.takeIf { callableBase(it) === member }
@@ -171,6 +175,7 @@ internal class SignatureHelpProvider(
             }
             current = parent
         }
+        return null
     }
 
     private fun compactOverloadDisplay(signatures: List<FunctionType>): String {

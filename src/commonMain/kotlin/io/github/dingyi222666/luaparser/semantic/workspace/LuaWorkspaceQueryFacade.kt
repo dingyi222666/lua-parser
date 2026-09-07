@@ -37,7 +37,7 @@ class LuaWorkspaceQueryFacade(
     private val resolver = WorkspaceModuleResolver(snapshot)
 
     private val moduleCallBeforeQuote = Regex("\\b(?:require|import)\\s*\\(?$")
-    private val tableKeyBeforeQuote = Regex("([A-Za-z_][A-Za-z0-9_]*)\\s*=\\s*$")
+    private val tableKeyBeforeQuote = Regex("(?:^|[,{])\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*=\\s*$")
 
     fun diagnostics(path: VirtualPath): List<Diagnostic> {
         return snapshot.files[path]?.semanticFile?.model?.getDiagnostics().orEmpty()
@@ -2518,13 +2518,26 @@ class LuaWorkspaceQueryFacade(
             .map { symbol ->
                 CompletionItem(
                     label = symbol.alias,
-                    kind = symbol.kind.toCompletionItemKind(),
+                    kind = importedCompletionKind(symbol),
                     detail = symbol.valueType.displayName,
                     insertText = symbol.alias,
                     sortText = "8:0000:${symbol.alias}"
                 )
             }
             .toList()
+    }
+
+    /**
+     * Import-surface kinds mirror the member rule: an unknown-kind symbol whose value is a
+     * callable display completes as FUNCTION so callables never degrade to the text icon.
+     */
+    private fun importedCompletionKind(symbol: WorkspaceImportedSymbol): CompletionItemKind {
+        val base = symbol.kind.toCompletionItemKind()
+        if (base != CompletionItemKind.TEXT) {
+            return base
+        }
+        val callable = symbol.valueType.displayName.trim().startsWith("fun(")
+        return if (callable) CompletionItemKind.FUNCTION else base
     }
 
     private fun mergeCompletions(

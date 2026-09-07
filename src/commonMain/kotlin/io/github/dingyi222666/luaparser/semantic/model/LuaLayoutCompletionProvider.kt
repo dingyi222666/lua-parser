@@ -39,7 +39,9 @@ internal class LuaLayoutCompletionProvider(
         val enclosingTables = enclosing.filterIsInstance<TableConstructorExpression>().toMutableList()
         val innermostTable = innermost as? TableConstructorExpression
         if (innermostTable != null) {
-            enclosingTables += innermostTable
+            // Keep innermost-first ordering; enclosingTables.last() must stay the outermost
+            // table so layoutPropertyClassAt walks the full class chain down to the caret.
+            enclosingTables.add(0, innermostTable)
         }
         if (enclosingTables.isEmpty() || !isPropertyKeyContext(innermost, enclosingTables.first())) {
             return null
@@ -181,8 +183,9 @@ internal class LuaLayoutCompletionProvider(
             // the view class slot, not a property.
             return !isClassSlot(parent, innermostTable)
         }
-        // Named-key value position: a string value being typed is not a key context.
-        return innermost !is ConstantNode || innermost.constantType != ConstantNode.TYPE.STRING
+        // Named-key value position (`gravity = cen|`, `onClick = handl|`): completing a
+        // value expression, not a key — keep the regular completion pipeline.
+        return false
     }
 
     private fun isClassSlot(field: TableKey, table: TableConstructorExpression): Boolean {

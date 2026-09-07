@@ -4,6 +4,7 @@ import com.google.gson.JsonElement
 import com.google.gson.JsonObject
 import com.google.gson.JsonPrimitive
 import io.github.dingyi222666.luaparser.interop.jvm.JvmWorkspaceConfiguration
+import io.github.dingyi222666.luaparser.semantic.workspace.LuaLayoutPropertiesMetadata
 import org.eclipse.lsp4j.DidChangeConfigurationParams
 import org.eclipse.lsp4j.DidChangeWatchedFilesParams
 import org.eclipse.lsp4j.DidChangeWorkspaceFoldersParams
@@ -116,7 +117,6 @@ class LuaWorkspaceService(
         if (!settings.hasWorkspaceConfiguration()) {
             return null
         }
-        val metadata = mutableMapOf<String, String>()
         val jvmSettings = settings.sectionMap("jvm")
         val androluaSettings = settings.sectionMap("androlua")
 
@@ -133,7 +133,24 @@ class LuaWorkspaceService(
             androidJar = androidJar,
             importPrefixes = importPrefixes.distinct()
         )
-        return configuration.applyToMetadata(metadata)
+        // applyToMetadata copies into a fresh map and returns it; the layout extension key
+        // rides on that result.
+        val metadata = configuration.applyToMetadata(mutableMapOf()).toMutableMap()
+        // AndroLua layout completion extensions: pass the raw multi-line spec through to
+        // LuaLayoutPropertiesMetadata.parse (ClassName: prop|detail, ...). Accepts a flat
+        // "lua.layout.properties" string or a nested lua { layoutProperties } section.
+        val layoutProperties = settings.stringValue("lua.layout.properties")
+            ?: run {
+                val luaSection = settings.sectionMap("lua")
+                luaSection.stringValue("layoutProperties")
+                    ?: luaSection.stringList("layoutProperties")?.joinToString("\n")
+            }
+        if (!layoutProperties.isNullOrBlank()) {
+            metadata[LuaLayoutPropertiesMetadata.METADATA_KEY] = layoutProperties
+        }
+        // Preserve the null contract: no recognized configuration key means "no metadata
+        // snapshot", which callers distinguish from an empty snapshot.
+        return metadata.takeIf { it.isNotEmpty() }
     }
 
     private fun Map<*, *>.hasWorkspaceConfiguration(): Boolean {
@@ -225,7 +242,8 @@ class LuaWorkspaceService(
             "androlua.imports",
             "jvm.classpath",
             "jvm.androidJar",
-            "jvm.importPrefixes"
+            "jvm.importPrefixes",
+            "lua.layout.properties"
         )
         val JVM_CONFIGURATION_KEYS = setOf("classes", "classpath", "androidJar", "importPrefixes")
         val ANDROLUA_CONFIGURATION_KEYS = setOf("imports")

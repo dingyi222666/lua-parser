@@ -65,3 +65,6 @@ gradlew.unix
 gradlew.unix.tmp
 sh.exe.stackdump
 /org/
+tools/monaco-lsp-demo/workspace/libs/
+tools/monaco-lsp-demo/workspace/image/
+tools/monaco-lsp-demo/workspace/.using

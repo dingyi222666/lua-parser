@@ -224,32 +224,53 @@ class LuaLayoutCompletionTddTest {
 
     @Test
     fun require_and_import_strings_suggest_workspace_modules() {
+        // Module-name completion is jar-independent; no android gate here.
+        val harness = WorkspaceSemanticHarness.build(
+            "main.lua" to """
+                local u = require("ut
+                import "mo
+                return u
+            """.trimIndent(),
+            "mods/util.lua" to """
+                return {}
+            """.trimIndent(),
+            engine = JvmWorkspaceEngine()
+        )
+
+        // The caret sits inside the unterminated require string ("ut"), not on a lexical
+        // identifier — assert module names without lexical fallback masking a regression.
+        val requireValues = completionLabels(harness, "ut")
+        assertTrue("util" in requireValues, "Expected basename module 'util'; actual: $requireValues")
+        assertTrue("mods.util" in requireValues, "Expected dotted module 'mods.util'; actual: $requireValues")
+
+        val importValues = completionLabels(harness, "mo")
+        assertTrue("util" in importValues, "Expected basename module 'util'; actual: $importValues")
+        assertTrue("mods.util" in importValues, "Expected dotted module 'mods.util'; actual: $importValues")
+    }
+
+    @Test
+    fun class_slot_caret_keeps_regular_completions() {
         if (!androidJar.isFile) {
             return
         }
         val harness = harness(
             "main.lua" to """
-                local util = require("ut
-                import "mo
+                local tab = {}
                 local view = loadlayout({
-                  LinearLayout,
-                }, {})
-                return util, view
-            """.trimIndent(),
-            "mods/util.lua" to """
-                return {}
+                  ListV
+                }, tab)
+                return view
             """.trimIndent()
         )
 
-        val requireValues = completionLabels(harness, "ut")
-        assertTrue(
-            "util" in requireValues || "mods.util" in requireValues,
-            "Expected workspace module names in require string; actual: $requireValues"
+        val labels = completionLabels(harness, "ListV")
+        assertFalse(
+            "adapter" in labels,
+            "Class-slot caret must not yield view properties; actual: $labels"
         )
-        val importValues = completionLabels(harness, "mo")
         assertTrue(
-            "mods" in importValues || "mods.util" in importValues,
-            "Expected workspace module names in import string; actual: $importValues"
+            "print" in labels,
+            "Class-slot caret must keep lexical completions; actual: $labels"
         )
     }
 

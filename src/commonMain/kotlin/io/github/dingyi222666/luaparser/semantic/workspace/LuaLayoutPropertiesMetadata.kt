@@ -45,7 +45,14 @@ object LuaLayoutPropertiesMetadata {
                         .ifEmpty { null })
                 }
             if (suggestions.isNotEmpty()) {
-                result[className] = suggestions
+                // Merge duplicate class lines instead of silently replacing, and also file
+                // under the simple name so `com.project.MyBanner: ...` matches a table that
+                // writes the bare identifier.
+                result[className] = (result[className].orEmpty() + suggestions).distinct()
+                val simpleName = className.substringAfterLast('.')
+                if (simpleName != className && simpleName.isNotBlank()) {
+                    result[simpleName] = (result[simpleName].orEmpty() + suggestions).distinct()
+                }
             }
         }
         return result
