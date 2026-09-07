@@ -39,6 +39,31 @@ Browser (Monaco)  --WS JSON-RPC-->  Node bridge  --stdio Content-Length-->  JVM 
 2. Hover identifiers, Ctrl/Cmd-click definitions, type `.` / `:` for completion
 3. Open other project files from the sidebar as needed
 
+### AndroLua layout (.aly) completions
+
+`.aly` files and `loadlayout({...}, ids)` tables are layout-aware:
+
+- Property keys come from the enclosing view class (`adapter` on `ListView`,
+  `textSize`/`textColor` on `TextView`, `radius`/`cardElevation` on `CardView`) plus the
+  loadlayout special keys (`id`, `style`, `onClick`, `src`, `items`) and LayoutParams keys.
+- String values complete from loadlayout's value domains: `orientation = ""` offers
+  `vertical`/`horizontal`; `layout_width = ""` offers `wrap`, `fill`, `match`, `-1`, `-2`,
+  dp and `%w`/`%h` sizes; `gravity`/`inputType`/`scaleType`/... have their token lists.
+- `require("...")` / `import "..."` strings complete workspace module names.
+- `id = "name"` registers a typed view field on the ids table (`tab.poplist`).
+
+### Custom view properties (embedders)
+
+Workspace/LSP configuration key `lua.layout.properties` extends completions for
+project-defined views, one class per line:
+
+```
+LuaRecyclerView: refresh|pull-to-refresh callback, loadMore|load-more callback
+com.project.MyBanner: autoScroll|boolean
+```
+
+FQCN keys are also matched by simple name.
+
 Env overrides: `PORT`, `JAVA_HOME`, `ANDROID_JAR`, `LUA_PARSER_ROOT`.
 
 Run `npm run smoke` to build/start the real Gradle LSP path, initialize the full

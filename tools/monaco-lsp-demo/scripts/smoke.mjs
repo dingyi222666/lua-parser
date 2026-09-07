@@ -149,7 +149,7 @@ function runProtocol(info, files) {
         notify('textDocument/didOpen', {
           textDocument: {
             uri: entry.uri,
-            languageId: entry.name.endsWith('.lua') ? 'lua' : 'plaintext',
+            languageId: /\.(lua|aly)$/i.test(entry.name) ? 'lua' : 'plaintext',
             version: 1,
             text: entry.text,
           },
@@ -186,6 +186,40 @@ function runProtocol(info, files) {
           throw new Error(
             `Dynamic table completion missing custom/builtin members: ${completionLabels.join(', ')}`
           );
+        }
+
+        // AndroLua layout (.aly) file: must open as a parsed Lua document, and an empty
+        // property string must offer the loadlayout value domain (regression for the
+        // quickSuggestions/empty-string completion path).
+        const alyEntry = files.find((file) => file.name.endsWith('.aly'));
+        if (alyEntry && typeof alyEntry.text === 'string') {
+          notify('textDocument/didOpen', {
+            textDocument: {
+              uri: alyEntry.uri,
+              languageId: 'lua',
+              version: 1,
+              text: alyEntry.text,
+            },
+          });
+          const probeText = `${alyEntry.text}\nlocal probe = loadlayout({ LinearLayout, orientation = "" }, {})\n`;
+          const quoteIndex = probeText.lastIndexOf('orientation = ""') + 'orientation = "'.length;
+          notify('textDocument/didOpen', {
+            textDocument: {
+              uri: alyEntry.uri.replace(/\.aly$/, '.probe.aly'),
+              languageId: 'lua',
+              version: 1,
+              text: probeText,
+            },
+          });
+          const valueCompletion = await request('textDocument/completion', {
+            textDocument: { uri: alyEntry.uri.replace(/\.aly$/, '.probe.aly') },
+            position: positionAt(probeText, quoteIndex),
+          }, 60000);
+          const valueItems = (Array.isArray(valueCompletion) ? valueCompletion : valueCompletion?.items || [])
+            .map((item) => item.label);
+          if (!valueItems.includes('vertical') || !valueItems.includes('horizontal')) {
+            throw new Error(`Layout string-value completion missing orientation tokens: ${valueItems.join(', ')}`);
+          }
         }
 
         await request('shutdown', null, 30000);

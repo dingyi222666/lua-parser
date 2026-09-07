@@ -1089,7 +1089,7 @@
 
     providerDisposables.push(
       monacoApi.languages.registerCompletionItemProvider(selector, {
-        triggerCharacters: [".", ":"],
+        triggerCharacters: [".", ":", "\""],
         provideCompletionItems: async function (model, position, context) {
           if (!lspReady) return { suggestions: [] };
           try {
@@ -1125,6 +1125,31 @@
               startColumn: word.startColumn,
               endColumn: word.endColumn,
             };
+            // Word ranges stop at "." / "%", so inserting dotted module names
+            // ("views.MyTabLayout") or percent sizes ("50%w") into a partially typed
+            // fragment would duplicate the prefix. Extend the replacement range across
+            // those continuation characters on both sides of the caret.
+            const lineContent = model.getLineContent(position.lineNumber);
+            let startColumn = word.startColumn;
+            while (startColumn > 1 && /[.%]/.test(lineContent.charAt(startColumn - 2))) {
+              startColumn -= 1;
+              while (startColumn > 1 && /[\w]/.test(lineContent.charAt(startColumn - 2))) {
+                startColumn -= 1;
+              }
+            }
+            let endColumn = word.endColumn;
+            while (endColumn < lineContent.length && /[.%]/.test(lineContent.charAt(endColumn - 1))) {
+              endColumn += 1;
+              while (endColumn < lineContent.length && /[\w]/.test(lineContent.charAt(endColumn - 1))) {
+                endColumn += 1;
+              }
+            }
+            const defaultRangeWithContinuation = {
+              startLineNumber: position.lineNumber,
+              endLineNumber: position.lineNumber,
+              startColumn: startColumn,
+              endColumn: endColumn,
+            };
             const suggestions = items.map(function (item, index) {
               const labelObj = item.label;
               const label =
@@ -1138,7 +1163,7 @@
               const itemRange =
                 item.textEdit && item.textEdit.range
                   ? rangeFromLsp(item.textEdit.range)
-                  : defaultRange;
+                  : defaultRangeWithContinuation;
               const text =
                 item.textEdit && item.textEdit.newText != null
                   ? item.textEdit.newText
@@ -1625,6 +1650,11 @@
       padding: { top: 8 },
       fixedOverflowWidgets: true,
       wordBasedSuggestions: "off",
+      // AndroLua layout values live inside string literals ("orientation = \"vert
+      // Monaco defaults to quickSuggestions.strings = "off", which would silently
+      // disable every string-literal completion the language server offers.
+      quickSuggestions: { other: true, comments: false, strings: true },
+      suggestSelection: "first",
     });
 
     registerProviders();
