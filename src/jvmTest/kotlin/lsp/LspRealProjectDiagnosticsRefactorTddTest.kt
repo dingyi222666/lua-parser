@@ -41,6 +41,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
@@ -315,9 +316,11 @@ class LspRealProjectDiagnosticsRefactorTddTest {
     }
 
     @Test
-    fun initialize_advertises_code_action_quick_fix_kind() {
+    fun code_action_is_not_advertised_until_collector_implements_quick_fixes() {
         val caps = LuaLanguageService().initialize(InitializeParams()).capabilities
-        assertNotNull(caps.codeActionProvider)
+        // Adversarial audit: the collector returns an empty list; advertising a lightbulb
+        // that can never produce an action violates the fail-closed policy.
+        assertNull(caps.codeActionProvider)
     }
 
     // -------------------------------------------------------------------------

@@ -170,7 +170,16 @@ open class LuaWorkspaceEngine(
             graph = WorkspaceModuleGraphBuilder.build(nextFiles, builtinOverlay, extraProviders)
         )
         val dirtyPlan = WorkspaceDirtySetPlanner.plan(previous, baseSnapshot)
-        val totalFiles = parsingTargets.size + dirtyPlan.affectedDocuments.size
+        // A metadata change (layout completion extensions, JVM class/import configuration)
+        // is baked into every per-document model at analysis time, so a metadata-only delta
+        // must re-analyze the whole workspace, not just text-dirtied files.
+        val metadataChanged = nextMetadata != previous.metadata
+        val pathsToAnalyze = if (metadataChanged) {
+            dirtyPlan.affectedDocuments + nextSources.keys
+        } else {
+            dirtyPlan.affectedDocuments
+        }
+        val totalFiles = parsingTargets.size + pathsToAnalyze.size
 
         parsingTargets.forEachIndexed { index, path ->
             reporter.report(
@@ -186,11 +195,11 @@ open class LuaWorkspaceEngine(
         val snapshot = attachSemanticState(
             baseSnapshot = baseSnapshot,
             sources = nextSources,
-            pathsToAnalyze = dirtyPlan.affectedDocuments,
+            pathsToAnalyze = pathsToAnalyze,
             previous = previous
         )
         retainCachedDocuments(nextSources.keys)
-        reportBindingProgress(dirtyPlan.affectedDocuments.sortedBy { it.value }, parsingTargets.size, totalFiles, reporter)
+        reportBindingProgress(pathsToAnalyze.sortedBy { it.value }, parsingTargets.size, totalFiles, reporter)
         reporter.report(AnalysisProgress(AnalysisProgress.Phase.COMPLETE, completedFiles = totalFiles, totalFiles = totalFiles))
 
         return WorkspaceUpdateResult(
@@ -199,7 +208,7 @@ open class LuaWorkspaceEngine(
             publicSurfaceChangedFiles = dirtyPlan.publicSurfaceChangedFiles,
             activeProviderChangedModuleNames = dirtyPlan.activeProviderChangedModuleNames,
             filesWithRequireResolutionChanged = dirtyPlan.filesWithRequireResolutionChanged,
-            affectedDocuments = dirtyPlan.affectedDocuments,
+            affectedDocuments = pathsToAnalyze,
             affectedModuleNames = dirtyPlan.affectedModuleNames
         )
     }

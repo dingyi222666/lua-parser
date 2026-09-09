@@ -762,7 +762,7 @@ internal class WorkspaceModuleResolver(
             val pathModule = alyModuleNameFromPath(path)
             pathModule == moduleName ||
                 candidates.any { candidate ->
-                    value == candidate || value.endsWith("/$candidate") || value.endsWith(candidate)
+                    value == candidate || value.endsWith("/$candidate")
                 }
         } ?: return null
         return WorkspaceModuleGraph.ModuleProvider(

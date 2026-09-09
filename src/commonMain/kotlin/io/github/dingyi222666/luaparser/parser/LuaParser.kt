@@ -998,6 +998,7 @@ class LuaParser(
 
     //    switch exp do {case explist [then] block} [default block] end
     private fun parseSwitchStatement(parent: BaseASTNode): SwitchStatement {
+        markLocation()
         expectToken(LuaTokenTypes.SWITCH) { "<switch> expected near ${lexerText(true)}" }
         markLocation()
         val result = SwitchStatement()
@@ -1054,6 +1055,7 @@ class LuaParser(
 
     // [default block]
     private fun parseSwitchDefaultCaseStatement(parent: BaseASTNode): DefaultCause {
+        markLocation()
         expectToken(LuaTokenTypes.DEFAULT) { "<default> expected near ${lexerText(true)}" }
         markLocation()
         val result = DefaultCause()
@@ -1075,6 +1077,7 @@ class LuaParser(
     // Case body is a normal block terminated by case/default/end (see isBlockTerminator).
     // Shape: Case(conditions:Block[...]) nested under Switch(condition:cases) — no extra wrappers.
     private fun parseSwitchCaseStatement(parent: BaseASTNode): CaseCause {
+        markLocation()
         expectToken(LuaTokenTypes.CASE) { "<case> expected near ${lexerText(true)}" }
         markLocation()
         val result = CaseCause()
@@ -1121,6 +1124,7 @@ class LuaParser(
 
     //      when exp (varlist ‘=’ explist| functioncall) | [else (varlist ‘=’ explist | functioncall)]
     private fun parseWhenStatement(parent: BaseASTNode): WhenStatement {
+        markLocation()
         expectToken(LuaTokenTypes.WHEN) { "<when> expected near '${lexerText()}'" }
         markLocation()
         val result = WhenStatement()
@@ -2740,7 +2744,7 @@ class LuaParser(
             }
             .getOrElse {
                 result.bad = true
-                Identifier("")
+                Identifier("").also { it.parent = result }
             }
         result.parent = parent
         return result

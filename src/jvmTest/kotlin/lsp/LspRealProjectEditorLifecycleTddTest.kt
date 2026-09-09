@@ -37,6 +37,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
@@ -86,7 +87,11 @@ class LspRealProjectEditorLifecycleTddTest {
         assertNotNull(caps.foldingRangeProvider)
         assertNotNull(caps.selectionRangeProvider)
         assertNotNull(caps.renameProvider)
-        assertNotNull(caps.codeActionProvider)
+        // Adversarial audit: onTypeFormatting reformatted the whole buffer on every d/n
+        // keystroke and the codeAction collector was permanently empty — both capabilities
+        // are intentionally NOT advertised (fail-closed policy).
+        assertNull(caps.documentOnTypeFormattingProvider)
+        assertNull(caps.codeActionProvider)
         assertNotNull(caps.documentFormattingProvider)
     }
 

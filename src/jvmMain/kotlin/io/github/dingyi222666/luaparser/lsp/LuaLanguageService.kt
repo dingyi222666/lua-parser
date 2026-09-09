@@ -589,13 +589,17 @@ class LuaLanguageService(
     fun documentHighlights(params: DocumentHighlightParams): List<DocumentHighlight> = synchronized(stateLock) {
         val path = pathOf(params.textDocument)
         val semanticFile = snapshot.files[path]?.semanticFile
-        queries.documentHighlights(path, params.position.toParserPosition()).map { location ->
-            val tightened = tightenDocumentHighlightLocation(semanticFile, path, location)
-            DocumentHighlight(
-                tightened.range.toLspRange(),
-                documentHighlightKindFor(semanticFile, path, tightened)
-            )
-        }
+        queries.documentHighlights(path, params.position.toParserPosition())
+            // DocumentHighlight has no URI: cross-file locations (require-backed members)
+            // would render as garbage ranges inside this document.
+            .filter { it.path == path }
+            .map { location ->
+                val tightened = tightenDocumentHighlightLocation(semanticFile, path, location)
+                DocumentHighlight(
+                    tightened.range.toLspRange(),
+                    documentHighlightKindFor(semanticFile, path, tightened)
+                )
+            }
     }
 
 
@@ -1716,17 +1720,10 @@ class LuaLanguageService(
                 SEMANTIC_TOKENS_LEGEND,
                 SemanticTokensServerFull(/* delta = */ true)
             )
-            // TASK-274: onTypeFormatting for Lua block keywords (end / then).
-            documentOnTypeFormattingProvider = DocumentOnTypeFormattingOptions(
-                "d",
-                listOf("n", "\n")
-            )
-            // TASK-542: advertise code actions (quickfix) for published diagnostics.
-            codeActionProvider = Either.forRight(
-                CodeActionOptions(listOf(CodeActionKind.QuickFix)).apply {
-                    resolveProvider = false
-                }
-            )
+            // TASK-274 onTypeFormatting is intentionally NOT advertised: the handler
+            // reformats the whole document on any 'd'/'n' keystroke (adversarial audit).
+            // TASK-542 codeAction is intentionally NOT advertised: the collector always
+            // returns an empty list (adversarial audit).
             // TASK-543: advertise parameter-name inlay hints for call arguments.
             inlayHintProvider = Either.forLeft(true)
             // TASK-544: advertise full-document and range formatting once product is live.

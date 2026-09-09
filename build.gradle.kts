@@ -89,6 +89,7 @@ kotlin {
     jvm {
         compilerOptions {
             jvmTarget.set(JvmTarget.JVM_11)
+            freeCompilerArgs.add("-Xjvm-default=all-compatibility")
         }
     }
 
@@ -129,8 +130,10 @@ kotlin {
 
         jvmMain {
             dependencies {
-                implementation("org.eclipse.lsp4j:org.eclipse.lsp4j:0.23.1")
-                implementation("org.eclipse.lsp4j:org.eclipse.lsp4j.jsonrpc:0.23.1")
+                // api(): lsp4j types are part of the public LuaLanguageService surface
+                // (Hover, CompletionList, ...), so embedders need them at compile time.
+                api("org.eclipse.lsp4j:org.eclipse.lsp4j:0.23.1")
+                api("org.eclipse.lsp4j:org.eclipse.lsp4j.jsonrpc:0.23.1")
             }
         }
 

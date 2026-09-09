@@ -9,6 +9,7 @@ import org.eclipse.lsp4j.DefinitionParams
 import org.eclipse.lsp4j.DidChangeConfigurationParams
 import org.eclipse.lsp4j.DidChangeTextDocumentParams
 import org.eclipse.lsp4j.DidChangeWatchedFilesParams
+import org.eclipse.lsp4j.DidChangeWorkspaceFoldersParams
 import org.eclipse.lsp4j.DidCloseTextDocumentParams
 import org.eclipse.lsp4j.DidOpenTextDocumentParams
 import org.eclipse.lsp4j.DidSaveTextDocumentParams
@@ -173,6 +174,12 @@ class LuaLanguageServer(
         override fun didChangeWatchedFiles(params: DidChangeWatchedFilesParams) {
             if (acceptsMessages()) {
                 workspaceDelegate.didChangeWatchedFiles(params)
+            }
+        }
+
+        override fun didChangeWorkspaceFolders(params: DidChangeWorkspaceFoldersParams) {
+            if (acceptsMessages()) {
+                workspaceDelegate.didChangeWorkspaceFolders(params)
             }
         }
 

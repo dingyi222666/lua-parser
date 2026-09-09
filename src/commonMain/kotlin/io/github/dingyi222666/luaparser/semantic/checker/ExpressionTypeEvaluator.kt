@@ -3087,7 +3087,9 @@ class ExpressionTypeEvaluator internal constructor(
                 vararg = parameterNode.name == "..." || parameterType is VarargType
             )
         }
-        val varargType = parameters.lastOrNull { it.vararg }?.type ?: context.varargType
+        // A nested non-vararg function owns no `...`; never inherit the enclosing vararg
+        // element type (that `...` belongs to the outer function's scope).
+        val varargType = parameters.lastOrNull { it.vararg }?.type ?: VarargType(UnknownType)
         val childContext = buildFunctionBodyContext(functionNode, parameters, context.lexicalScopeId, varargType)
         return evaluateFunctionDeclaration(functionNode, childContext)
     }
