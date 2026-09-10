@@ -1315,11 +1315,13 @@ internal class ReferenceQueries(
                 .hydrateJavaProviderType(workspaceContext.resolveImportTarget)
         val members = getMembers(baseType, lexicalScopeId)
         return if (expression.indexer == ":") {
-            // `obj:` is a method call site: a FIELD whose value is not callable (JavaBean
-            // property aliases such as File.path / File.name, plain data fields) cannot be
-            // invoked, so it is dropped here. Callable field surfaces (Lua functions stored
-            // in table/module fields, `fun(...)` typed @field) stay, as does every METHOD.
-            // The `.` surface below keeps the full member list including the aliases.
+            // `obj:` is a method call site: a FIELD whose value is KNOWN to be non-callable
+            // (JavaBean property aliases such as File.path / File.name, plain data fields)
+            // cannot be invoked, so it is dropped here. Callable field surfaces (Lua
+            // functions stored in table/module fields, `fun(...)` typed @field) stay, as
+            // does every METHOD — and so does every field whose type is unknown/absent,
+            // because unknown does not imply non-callable. The `.` surface below keeps the
+            // full member list including the aliases.
             members
                 .filterNot { symbol -> symbol.kind == SymbolKind.FIELD && !hasCallableMemberDisplay(symbol) }
                 .sortedWith(compareBy<Symbol>({ if (it.kind == io.github.dingyi222666.luaparser.semantic.api.SymbolKind.METHOD) 0 else 1 }, { it.name }))
@@ -1332,6 +1334,10 @@ internal class ReferenceQueries(
      * Same `fun(` display heuristic the hover / completion-kind paths use to decide that a
      * member's value is callable, applied to the member-completion surface. A
      * [TypeInfoKind.FUNCTION] type info counts as callable even when the display differs.
+     *
+     * Unknown / absent / `any` typed members count as POTENTIALLY callable (unknown is not
+     * a callability signal), so they stay in the `:` surface; only a KNOWN non-callable
+     * display is filtered.
      */
     private fun hasCallableMemberDisplay(symbol: Symbol): Boolean {
         if (symbol.declaredType?.kind == TypeInfoKind.FUNCTION || symbol.type?.kind == TypeInfoKind.FUNCTION) {
@@ -1340,7 +1346,12 @@ internal class ReferenceQueries(
         val display = symbol.declaredType?.displayName
             ?: symbol.type?.displayName
             ?: symbol.detail
-            ?: return false
+            // Absent type information carries no callability signal: keep the member.
+            ?: return true
+        if (display.isBlank() || display == "unknown" || display == "any") {
+            // Coarse unknown / any surfaces are not "known non-callable" either.
+            return true
+        }
         return display.contains("fun(") || display.contains("fun<")
     }
 

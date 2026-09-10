@@ -21,7 +21,10 @@ import kotlin.test.assertTrue
  * - `f:` offers `getName`-style methods but no field-only labels (`path`, `name`).
  * - `f.` still offers the bean aliases next to the methods (unchanged surface).
  * - Lua functions stored in table fields remain reachable through `:` because their
- *   `fun(` display marks them callable; plain data fields are dropped.
+ *   `fun(` display marks them callable; fields with a KNOWN non-callable type (plain
+ *   data fields) are dropped.
+ * - A field whose type is Unknown / absent is NOT dropped: unknown does not mean
+ *   non-callable, so it stays in the `:` surface (regression follow-up).
  *
  * Test-only. Verification is review-owned (TASK-043). Workers must not run Gradle.
  */
@@ -88,6 +91,32 @@ class LspColonMemberCompletionCallableOnlyTddTest {
         assertTrue("describe" in dotLabels, "dot surface keeps function fields; got $dotLabels")
     }
 
+    @Test
+    fun colon_completion_keeps_unknown_typed_fields() {
+        val service = plainService()
+        val uri = "file:///workspace/colon-unknown-field.lua"
+        service.didOpen(
+            DidOpenTextDocumentParams(TextDocumentItem(uri, "lua", 1, UNKNOWN_FIELD_SOURCE))
+        )
+
+        // `handler` is assigned an unknown-typed value, so its member surface display is
+        // "unknown" — no callability signal. Caret on `handler` in `local r = t:handler()`
+        // (character 12) and on `count` in `local c = t.count` (character 12).
+        val colonLabels = service.completion(uri, 1, 12).items.map { it.label }
+        val dotLabels = service.completion(uri, 2, 12).items.map { it.label }
+
+        assertTrue(
+            "handler" in colonLabels,
+            "unknown-typed field must NOT be filtered from the colon surface; got $colonLabels"
+        )
+        assertTrue("handler" in dotLabels, "dot surface keeps every member; got $dotLabels")
+        assertFalse(
+            "count" in colonLabels,
+            "a field with a KNOWN non-callable type stays dropped; got $colonLabels"
+        )
+        assertTrue("count" in dotLabels, "dot surface keeps data fields; got $dotLabels")
+    }
+
     // --- helpers -----------------------------------------------------------------
 
     private fun jvmService(): LuaLanguageService {
@@ -129,5 +158,15 @@ class LspColonMemberCompletionCallableOnlyTddTest {
                 "end\n" +
                 "local r = widget:reset()\n" +
                 "local c = widget.count"
+
+        /**
+         * `handler` is assigned an unknown-typed value (unresolvable global) so its field
+         * surface display is "unknown"; `count` is a known number data field.
+         * Line 2 caret target `handler` starts at character 12; line 3 `count` at 12.
+         */
+        private const val UNKNOWN_FIELD_SOURCE =
+            "local t = { handler = missingGlobal, count = 1 }\n" +
+                "local r = t:handler()\n" +
+                "local c = t.count"
     }
 }

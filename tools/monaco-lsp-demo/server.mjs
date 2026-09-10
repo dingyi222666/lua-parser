@@ -280,6 +280,11 @@ const lspChildren = new Set();
 
 function stopLspChild(child) {
   if (!child || child.exitCode != null) return;
+  // Flag the shared session as dying BEFORE the graceful stop finishes so a racing
+  // reconnect can never join (or re-initialize) a child that is on its way out.
+  if (sharedLsp && sharedLsp.child === child) {
+    sharedLsp.shuttingDown = true;
+  }
   try {
     child.stdin.end();
   } catch { /* ignore */ }
@@ -290,12 +295,26 @@ function stopLspChild(child) {
   child.once('exit', () => clearTimeout(forceTimer));
 }
 
-// One JVM LSP process is shared across all connected clients: `gradlew
+// POLICY: a single active client owns the JVM LSP process. `gradlew
 // runLuaLanguageServer` holds the Gradle project lock for its whole runtime, so a
-// second concurrent spawn deadlocks until the first client disconnects. Subsequent
-// clients get their `initialize` answered from the first client's cached result, and
-// the process stops only when the LAST client disconnects.
+// second concurrent spawn deadlocks until the first client disconnects — and sharing
+// one LSP across several browser tabs would need full JSON-RPC id muxing because every
+// tab starts its ids at 1 (unrewritten responses would hand tab A tab B's results).
+// Full muxing was rejected as both more code and less robust; instead, additional
+// connections receive a `$/bridge` "busy" status and a closed socket. The child stops
+// when its owning client disconnects; `shuttingDown` (set in stopLspChild / 'exit')
+// keeps a reconnecting client out of the dying child during the graceful-stop window.
 let sharedLsp = null;
+
+function sendToClient(msg) {
+  if (!sharedLsp || !sharedLsp.client) return;
+  if (sharedLsp.client.readyState !== sharedLsp.client.OPEN) return;
+  sharedLsp.client.send(JSON.stringify(msg));
+}
+
+function bridgeStatus(type, message, extra = {}) {
+  sendToClient({ jsonrpc: '2.0', method: '$/bridge', params: { type, message, ...extra } });
+}
 
 wss.on('connection', (ws) => {
   console.log('[bridge] client connected');
@@ -306,88 +325,95 @@ wss.on('connection', (ws) => {
     }
   };
 
-  if (sharedLsp && sharedLsp.child.exitCode == null) {
-    sharedLsp.clients.add(ws);
-    sendStatus('spawn', 'Reusing running Gradle LSP task', { pid: sharedLsp.child.pid });
-  } else {
-    try {
-      const launch = resolveGradleLaunch();
-      console.log('[bridge] JDK 17:', launch.javaHome);
-      console.log('[bridge] spawn', launch.command, ...launch.args);
-      const child = spawn(launch.command, launch.args, {
-        cwd: REPO_ROOT,
-        env: launch.env,
-        shell: launch.shell,
-        stdio: ['pipe', 'pipe', 'pipe'],
-      });
-      lspChildren.add(child);
-      sharedLsp = { child, clients: new Set([ws]), framer: new LspFramer(), initializeResult: null };
-      // A pending stdin write can complete (EPIPE) after the JVM LSP exits; without an
-      // 'error' listener Node treats it as fatal.
-      child.stdin.on('error', (error) => {
-        console.error('[bridge] lsp stdin error', error.code || error.message);
-      });
-      child.stdout.on('error', (error) => {
-        console.error('[bridge] lsp stdout error', error.code || error.message);
-      });
-      child.stderr.on('error', (error) => {
-        console.error('[bridge] lsp stderr error', error.code || error.message);
-      });
-      child.once('spawn', () => {
-        broadcastStatus('spawn', 'Gradle LSP task started', { pid: child.pid });
-      });
-      child.once('error', (error) => {
-        console.error('[bridge] failed to start Gradle LSP task', error);
-        broadcastStatus('error', String(error.message || error));
-      });
-      child.stdout.on('data', (chunk) => {
-        for (const msg of sharedLsp.framer.push(chunk)) {
-          if (msg.id != null && !msg.method && sharedLsp.initializePendingId === msg.id) {
-            // Cache the first client's initialize result for later clients.
-            sharedLsp.initializeResult = msg.result;
-            sharedLsp.initializePendingId = null;
-          }
-          broadcast(msg);
-        }
-      });
-      child.stderr.on('data', (chunk) => {
-        const text = chunk.toString('utf8');
-        process.stderr.write('[lsp-stderr] ' + text);
-        broadcastStatus('stderr', text.slice(0, 2000));
-      });
-      child.on('exit', (code, signal) => {
+  if (sharedLsp) {
+    const ownerConnected = sharedLsp.client && sharedLsp.client.readyState === sharedLsp.client.OPEN;
+    sendStatus(
+      'busy',
+      ownerConnected
+        ? 'Another editor holds the language server; this tab cannot attach'
+        : 'Language server is shutting down; reconnect in a moment'
+    );
+    ws.close();
+    return;
+  }
+
+  try {
+    const launch = resolveGradleLaunch();
+    console.log('[bridge] JDK 17:', launch.javaHome);
+    console.log('[bridge] spawn', launch.command, ...launch.args);
+    const child = spawn(launch.command, launch.args, {
+      cwd: REPO_ROOT,
+      env: launch.env,
+      shell: launch.shell,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    lspChildren.add(child);
+    sharedLsp = { child, client: ws, framer: new LspFramer(), shuttingDown: false };
+    // A pending stdin write can complete (EPIPE) after the JVM LSP exits; without an
+    // 'error' listener Node treats it as fatal.
+    child.stdin.on('error', (error) => {
+      console.error('[bridge] lsp stdin error', error.code || error.message);
+    });
+    child.stdout.on('error', (error) => {
+      console.error('[bridge] lsp stdout error', error.code || error.message);
+    });
+    child.stderr.on('error', (error) => {
+      console.error('[bridge] lsp stderr error', error.code || error.message);
+    });
+    child.once('spawn', () => {
+      bridgeStatus('spawn', 'Gradle LSP task started', { pid: child.pid });
+    });
+    child.once('error', (error) => {
+      console.error('[bridge] failed to start Gradle LSP task', error);
+      bridgeStatus('error', String(error.message || error));
+      if (child.pid == null) {
+        // Never actually spawned (ENOENT and friends): release the single-client slot so
+        // a client retry spawns a fresh child instead of talking to a dead pipe.
         lspChildren.delete(child);
-        console.log('[bridge] lsp exit', code, signal);
-        broadcastStatus('exit', `LSP process exited code=${code} signal=${signal}`);
-        sharedLsp = null;
+        if (sharedLsp && sharedLsp.child === child) sharedLsp = null;
         for (const client of wss.clients) {
           if (client.readyState === client.OPEN) client.close();
         }
-      });
-    } catch (e) {
-      console.error('[bridge] failed to spawn LSP', e);
-      sendStatus('error', String(e.message || e));
-      ws.close();
-      return;
-    }
+      }
+    });
+    // Responses route ONLY to the owning socket — with one client there is exactly one
+    // id namespace, so no rewriting is needed and cross-tab result leaks are impossible.
+    child.stdout.on('data', (chunk) => {
+      for (const msg of sharedLsp.framer.push(chunk)) {
+        sendToClient(msg);
+      }
+    });
+    child.stderr.on('data', (chunk) => {
+      const text = chunk.toString('utf8');
+      process.stderr.write('[lsp-stderr] ' + text);
+      bridgeStatus('stderr', text.slice(0, 2000));
+    });
+    child.on('exit', (code, signal) => {
+      lspChildren.delete(child);
+      console.log('[bridge] lsp exit', code, signal);
+      if (sharedLsp && sharedLsp.child === child) {
+        sharedLsp.shuttingDown = true;
+        bridgeStatus('exit', `LSP process exited code=${code} signal=${signal}`);
+        sharedLsp = null;
+      }
+      for (const client of wss.clients) {
+        if (client.readyState === client.OPEN) client.close();
+      }
+    });
+  } catch (e) {
+    console.error('[bridge] failed to spawn LSP', e);
+    sendStatus('error', String(e.message || e));
+    ws.close();
+    return;
   }
 
   const lsp = sharedLsp;
 
   ws.on('message', (data) => {
-    if (!lsp || !lsp.child || !lsp.child.stdin.writable) return;
+    if (!lsp || lsp.shuttingDown || !lsp.child || !lsp.child.stdin.writable) return;
     let text = Buffer.isBuffer(data) ? data.toString('utf8') : String(data);
     try {
       const obj = JSON.parse(text);
-      if (obj.method === 'initialize' && lsp.initializeResult) {
-        // Second+ client on the shared process: answer from the cached result instead of
-        // re-initializing the single LSP instance.
-        ws.send(JSON.stringify({ jsonrpc: '2.0', id: obj.id, result: lsp.initializeResult }));
-        return;
-      }
-      if (obj.method === 'initialize') {
-        lsp.initializePendingId = obj.id;
-      }
       lsp.child.stdin.write(frameMessage(obj));
     } catch {
       // if client sent Content-Length frame, write as-is
@@ -396,35 +422,12 @@ wss.on('connection', (ws) => {
   });
 
   ws.on('close', () => {
-    lsp.clients.delete(ws);
-    if (lsp.clients.size === 0) {
-      console.log('[bridge] last client disconnected; stopping LSP');
-      stopLspChild(lsp.child);
-    } else {
-      console.log(`[bridge] client disconnected; ${lsp.clients.size} client(s) remain`);
-    }
+    if (sharedLsp !== lsp) return;
+    if (lsp.client === ws) lsp.client = null;
+    console.log('[bridge] owning client disconnected; stopping LSP');
+    stopLspChild(lsp.child);
   });
 });
-
-function broadcast(msg) {
-  const payload = JSON.stringify(msg);
-  if (!sharedLsp) return;
-  for (const client of sharedLsp.clients) {
-    if (client.readyState === client.OPEN) {
-      client.send(payload);
-    }
-  }
-}
-
-function broadcastStatus(type, message, extra = {}) {
-  const payload = JSON.stringify({ jsonrpc: '2.0', method: '$/bridge', params: { type, message, ...extra } });
-  if (!sharedLsp) return;
-  for (const client of sharedLsp.clients) {
-    if (client.readyState === client.OPEN) {
-      client.send(payload);
-    }
-  }
-}
 
 function shutdownBridge() {
   wss.clients.forEach((ws) => ws.close());

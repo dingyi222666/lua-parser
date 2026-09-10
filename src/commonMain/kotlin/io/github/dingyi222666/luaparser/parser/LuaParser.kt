@@ -1604,6 +1604,13 @@ class LuaParser(
         // that token because parseExpStatement's peek() pushed it back.
         advance()
 
+        // Structured recovery warning for a missing RHS (`n +=` at EOF / before a
+        // statement keyword) — mirrors parseLocalVarList (TASK-580); without it the
+        // missing-expression placeholder parses silently.
+        if (errorRecovery && !isExpressionStart(peek())) {
+            warning("<expression> expected near '${lexerText()}'")
+        }
+
         val rhs = parseExpressionOrMissing(result)
         val binary = BinaryExpression().apply {
             this.parent = result

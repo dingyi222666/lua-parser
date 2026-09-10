@@ -96,7 +96,11 @@ object TypeRelations {
                 isAssignable(normalizedTarget.valueType, normalizedSource.valueType)
             is JavaOverloadType -> isCallableAssignable(normalizedTarget, normalizedSource)
             is JavaArrayType -> isJavaArrayAssignable(normalizedTarget, normalizedSource)
-            is CustomType -> normalizedSource is CustomType && normalizedTarget.name == normalizedSource.name
+            is CustomType -> when (normalizedSource) {
+                is CustomType -> normalizedTarget.name == normalizedSource.name
+                is ClassType -> normalizedTarget.name == normalizedSource.name
+                else -> false
+            }
             is AliasType, is UnionType, is IntersectionType -> false
             is TypeParameterType -> false
             UnknownType, ErrorType, NeverType -> false
@@ -190,6 +194,11 @@ object TypeRelations {
     }
 
     private fun isClassAssignable(target: ClassType, source: Type): Boolean {
+        // CustomType is a nominal placeholder (e.g. from doc comments) that denotes a class
+        // by name; accept it for a raw (non-generic) class target with the same name.
+        if (source is CustomType) {
+            return target.name == source.name && target.typeParameters.isEmpty()
+        }
         val sourceClass = source as? ClassType ?: return false
         val matched = isSameOrSubclass(target, sourceClass) ?: return false
         if (target.typeParameters.size != matched.typeParameters.size) {
@@ -523,7 +532,7 @@ object TypeRelations {
         return true
     }
 
-    private fun parameterListsCompatible(target: List<FunctionParameter>, source: List<FunctionParameter>): Boolean {
+    internal fun parameterListsCompatible(target: List<FunctionParameter>, source: List<FunctionParameter>): Boolean {
         // Signature-vs-signature: the source must SERVE AS the target — it has to accept
         // every call the target can make (arity containment) and each target argument must
         // flow INTO the source parameter (contravariance). Extra source params/optionals
@@ -535,10 +544,10 @@ object TypeRelations {
         }
         val targetHasVararg = target.any { it.vararg }
         val sourceHasVararg = source.any { it.vararg }
-        if (targetHasVararg && !sourceHasVararg) {
-            return false
-        }
-        if (!sourceHasVararg && source.size < target.size) {
+        // A non-vararg source CAN serve a vararg target: Lua drops extra call arguments,
+        // so the index loop below merely requires every target slot past the source's
+        // length to be optional or vararg. Never pre-reject on the missing source vararg.
+        if (!targetHasVararg && !sourceHasVararg && source.size < target.size) {
             return false
         }
 
@@ -546,15 +555,34 @@ object TypeRelations {
             val targetParameter = target[index]
             val sourceParameter = source.getOrNull(index)
                 ?: source.lastOrNull { it.vararg }
-                ?: return targetParameter.optional
+                // The source has no slot for this target parameter (e.g. a trailing target
+                // vararg); Lua callers simply pass fewer arguments, so only optional or
+                // vararg target slots remain servable.
+                ?: return targetParameter.optional || targetParameter.vararg
             // Contravariant: a handler whose parameter is NARROWER than the target's
             // cannot serve it (fun(value: "x") cannot serve fun(value: string)).
             if (!isAssignable(sourceParameter.type, targetParameter.type)) {
-                return false
+                // Java object parameters are BIVARIANT: Android listeners receive a
+                // superview at runtime while Lua handlers annotate the concrete widget
+                // (a handler param `Button` serves an interface param `View`). Primitives
+                // and literals above keep strict contravariance.
+                if (!isJavaObjectParameterType(sourceParameter.type) ||
+                    !isJavaObjectParameterType(targetParameter.type) ||
+                    !isAssignable(targetParameter.type, sourceParameter.type)
+                ) {
+                    return false
+                }
             }
         }
 
         return true
+    }
+
+    private fun isJavaObjectParameterType(type: Type): Boolean {
+        return when (TypeNormalizer.normalize(type)) {
+            is ClassType, is JavaInstanceType -> true
+            else -> false
+        }
     }
 
     private fun isSameOrSubclass(target: ClassType, source: ClassType): ClassType? {
@@ -594,7 +622,9 @@ object TypeRelations {
     private fun javaNumericRank(kind: JavaPrimitiveType.Kind): Int? = when (kind) {
         JavaPrimitiveType.Kind.BYTE -> 1
         JavaPrimitiveType.Kind.SHORT -> 2
-        JavaPrimitiveType.Kind.CHAR -> 2
+        // CHAR is unsigned 16-bit: byte -> char and char -> short reinterpret bits,
+        // so char participates in no numeric widening chain.
+        JavaPrimitiveType.Kind.CHAR -> null
         JavaPrimitiveType.Kind.INT -> 3
         JavaPrimitiveType.Kind.LONG -> 4
         JavaPrimitiveType.Kind.FLOAT -> 5

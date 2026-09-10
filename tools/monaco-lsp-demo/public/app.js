@@ -106,6 +106,13 @@
 
   let logLineCount = 0;
   let lspReady = false;
+  /**
+   * Set when the bridge refuses the connection (single-active-client policy:
+   * another editor already holds the language server, or the child is shutting
+   * down). Shown in the status bar because the refused socket closes right after.
+   * @type {string | null}
+   */
+  let bridgeRejection = null;
 
   /** @type {Array<{ dispose: Function }>} */
   let providerDisposables = [];
@@ -345,7 +352,11 @@
         onPublishDiagnostics(params);
         break;
       case "$/bridge":
-        if (params.type === "error" || params.type === "stderr") {
+        if (params.type === "busy") {
+          bridgeRejection = params.message || "Another editor holds the language server";
+          setStatus("error", bridgeRejection);
+          logSys("[bridge] " + bridgeRejection);
+        } else if (params.type === "error" || params.type === "stderr") {
           logErr("[bridge] " + (params.message || ""));
         } else {
           logSys("[bridge] " + (params.type || "") + ": " + (params.message || ""));
@@ -1336,6 +1347,7 @@
 
     await new Promise(function (resolve, reject) {
       let settled = false;
+      bridgeRejection = null;
       try {
         socket = new WebSocket(WS_URL);
       } catch (e) {
@@ -1395,7 +1407,12 @@
         logSys("WebSocket closed code=" + ev.code + " reason=" + (ev.reason || ""));
         lspReady = false;
         setConnectingUi(false, false);
-        setStatus(ev.code === 1000 ? "" : "error", "Disconnected");
+        // A refused connection closes right after the `$/bridge` busy status; keep
+        // that reason visible instead of flashing generic "Disconnected".
+        setStatus(
+          ev.code === 1000 && !bridgeRejection ? "" : "error",
+          bridgeRejection || "Disconnected"
+        );
         pending.forEach(function (p) {
           if (p.timer) clearTimeout(p.timer);
           p.reject(new Error("WebSocket closed"));

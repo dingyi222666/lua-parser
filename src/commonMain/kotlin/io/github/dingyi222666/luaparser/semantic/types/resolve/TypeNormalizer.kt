@@ -55,9 +55,10 @@ object TypeNormalizer {
 
         is OverloadedFunctionType -> {
             val normalizedSignatures = type.callSignatures.map { normalize(it, aliasStack) as FunctionType }
-            when (normalizedSignatures.size) {
-                1 -> normalizedSignatures.single()
-                else -> OverloadedFunctionType(normalizedSignatures)
+            val dedupedSignatures = dedupeOverloadSignatures(normalizedSignatures)
+            when (dedupedSignatures.size) {
+                1 -> dedupedSignatures.single()
+                else -> OverloadedFunctionType(dedupedSignatures)
             }
         }
 
@@ -110,6 +111,7 @@ object TypeNormalizer {
         is JavaConstructorType -> JavaConstructorType(
             owner = type.owner,
             signature = normalize(type.signature, aliasStack) as FunctionType,
+            signatureMetadata = type.signatureMetadata,
             visibility = type.visibility
         )
         is JavaStaticMemberType -> JavaStaticMemberType(
@@ -117,19 +119,22 @@ object TypeNormalizer {
             memberName = type.memberName,
             valueType = normalize(type.valueType, aliasStack),
             memberKind = type.memberKind,
-            visibility = type.visibility
+            visibility = type.visibility,
+            signatureMetadata = type.signatureMetadata
         )
         is JavaInstanceMemberType -> JavaInstanceMemberType(
             owner = type.owner,
             memberName = type.memberName,
             valueType = normalize(type.valueType, aliasStack),
             memberKind = type.memberKind,
-            visibility = type.visibility
+            visibility = type.visibility,
+            signatureMetadata = type.signatureMetadata
         )
         is JavaOverloadType -> JavaOverloadType(
             javaName = type.javaName,
             overloadName = type.overloadName,
-            callSignatures = type.callSignatures.map { normalize(it, aliasStack) as FunctionType }
+            callSignatures = type.callSignatures.map { normalize(it, aliasStack) as FunctionType },
+            signatureMetadata = type.signatureMetadata
         )
         is JavaArrayType -> JavaArrayType(
             elementType = normalize(type.elementType, aliasStack),
@@ -140,6 +145,26 @@ object TypeNormalizer {
         is TypeParameterType -> normalizeTypeParameter(type, aliasStack)
         is CustomType -> type
         UnknownType, ErrorType, NeverType -> type
+    }
+
+    /**
+     * Collapses a normalized overload set, keeping the first-declared survivor of each
+     * equivalence group: exact structural duplicates are dropped, and a later signature is
+     * dropped when an earlier KEPT signature already serves every call it can accept
+     * (equal return type, and the later arguments all flow into the earlier parameters).
+     */
+    private fun dedupeOverloadSignatures(signatures: List<FunctionType>): List<FunctionType> {
+        val kept = mutableListOf<FunctionType>()
+        for (signature in signatures) {
+            val isDuplicated = signature in kept || kept.any { earlier ->
+                earlier.returnType == signature.returnType &&
+                    TypeRelations.parameterListsCompatible(signature.parameters, earlier.parameters)
+            }
+            if (!isDuplicated) {
+                kept += signature
+            }
+        }
+        return kept
     }
 
     private fun normalizeJavaClass(type: JavaClassType, aliasStack: MutableList<AliasType>): JavaClassType {
