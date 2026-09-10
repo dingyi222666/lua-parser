@@ -4,7 +4,6 @@ import "android.view.*"
 
 
 --独家扩展函数 by dingyi
---qq 2960586094
 
 
 

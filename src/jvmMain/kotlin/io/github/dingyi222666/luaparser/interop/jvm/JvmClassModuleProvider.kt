@@ -587,7 +587,29 @@ class JvmClassModuleProvider(
     ): ClassLoader? {
         val pathPrefix = importTarget.pathPrefix ?: return fallback
         val entry = configuration.prefixedImportClasspathEntry(pathPrefix) ?: return fallback
-        return URLClassLoader(arrayOf(entry.toURI().toURL()), fallback)
+        return cachedImportTargetClassLoader(entry, fallback) ?: fallback
+    }
+
+    /**
+     * Cached loader for prefixed import targets (`/path/to.jar:com.example.Foo`).
+     *
+     * Leak bound (adversarial audit): this path used to construct a fresh, uncached,
+     * never-closed [URLClassLoader] on every import resolution, leaking one loader (plus
+     * every class it defined) per resolve and thrashing the reflected-class caches, which
+     * key on loader identity. Loaders are now cached per (entry path, parent identity) in
+     * [classLoaderCache] — the same policy as [classLoaderFor] and
+     * [classLoaderForPackageEnumeration] — so the same jar path never produces a duplicate
+     * loader for the same parent chain. Entries are intentionally never closed, including
+     * when a provider instance is discarded: classes defined by these loaders may still be
+     * live in cached module types and provider snapshots.
+     */
+    internal fun cachedImportTargetClassLoader(entry: File, parent: ClassLoader): ClassLoader? {
+        val cacheKey = classLoaderCacheKey("importTarget", parent, listOf(entry))
+        classLoaderCache[cacheKey]?.let { return it }
+        val loader = runCatching { URLClassLoader(arrayOf(entry.toURI().toURL()), parent) }.getOrNull()
+            ?: return null
+        classLoaderCache[cacheKey] = loader
+        return loader
     }
 
     private fun isWildcardImport(importText: String): Boolean {
@@ -998,12 +1020,22 @@ class JvmClassModuleProvider(
         return entries.distinctBy { it.absolutePath }
     }
 
-    private fun shouldSoftFallbackToHostAndroidJar(configuration: JvmWorkspaceConfiguration): Boolean {
+    internal fun shouldSoftFallbackToHostAndroidJar(configuration: JvmWorkspaceConfiguration): Boolean {
         val configuredJar = configuration.androidJar?.trim()?.takeIf(String::isNotEmpty)
         if (configuredJar.isNullOrBlank()) {
-            // reflectionClasspathEntries already discovers when androidJar is blank; keep a
-            // defensive host mount if discovery returned nothing earlier.
-            return true
+            // Host-jar substitution guard (adversarial audit): with no jvm.androidJar, the
+            // host SDK jar is already mounted through the documented discovery inside
+            // reflectionClasspathEntries(). This soft fallback therefore stays deliberate —
+            // it applies only when the configuration actually carries JVM interop settings
+            // (classpath entries, classes, or imports). A fully empty configuration must
+            // not silently mount whatever host SDK jar happens to exist on the current
+            // machine. Nondeterminism risk: which host jar (if any) discovery finds is
+            // host-dependent (macOS ~/Library/Android/sdk vs Windows %LOCALAPPDATA% vs
+            // none), so blank-jar surfaces differ across hosts; tests and workspaces that
+            // need a stable surface must pin jvm.androidJar explicitly.
+            return configuration.classpathEntries.isNotEmpty() ||
+                configuration.classes.isNotEmpty() ||
+                configuration.androluaImports.isNotEmpty()
         }
         if (File(configuredJar).isFile) {
             return false
@@ -1203,7 +1235,34 @@ class JvmClassModuleProvider(
     private fun moduleTypeFor(clazz: Class<*>): ModuleType {
         val cacheKey = reflectedClassCacheKey(clazz)
         moduleTypeCache[cacheKey]?.let { return it }
-        return moduleTypeFor(clazz, emptySet(), 0).also { moduleTypeCache[cacheKey] = it }
+        // Reflection robustness (adversarial audit): a single jar method/field referencing a
+        // missing type makes getMethods/getFields/generic-type resolution throw
+        // NoClassDefFoundError. That must never propagate out of providersFor and abort the
+        // whole workspace update — degrade this one class to a member-less cheap shell
+        // (mirroring the shallow path in packageModuleTypeFor) and keep every other mounted
+        // surface. No diagnostics channel is reachable from this provider, so the
+        // degradation is intentionally silent; the failure mode is documented here.
+        return runCatching { moduleTypeFor(clazz, emptySet(), 0) }
+            .getOrElse { shellModuleTypeFor(clazz) }
+            .also { moduleTypeCache[cacheKey] = it }
+    }
+
+    /**
+     * Member-less cheap shell for classes whose deep reflective expansion failed
+     * (NoClassDefFoundError / linkage errors from a broken jar entry).
+     *
+     * Mirrors the shallow fallback in [packageModuleTypeFor]: the module keeps only the
+     * `__class` instance shell backed by a name-only [JavaClassType] (no members, no
+     * constructors, no hierarchy), so the import/bindClass module and its provider path
+     * still resolve without inventing members reflection cannot see.
+     */
+    internal fun shellModuleTypeFor(clazz: Class<*>): ModuleType {
+        val shellClassType = runCatching { typeReferenceForJavaClass(clazz) }
+            .getOrElse { JavaClassType(javaName = javaTypeNameFor(clazz)) }
+        return ModuleType(
+            moduleName = clazz.simpleName,
+            fields = linkedMapOf("__class" to JavaInstanceType(shellClassType))
+        )
     }
 
     /**
@@ -1404,7 +1463,13 @@ class JvmClassModuleProvider(
     }
 
     private fun javaClassTypeFor(clazz: Class<*>): JavaClassType {
-        return javaClassTypeFor(clazz, emptySet(), 0)
+        // Same robustness contract as moduleTypeFor(Class<*>): one unresolvable referenced
+        // type must degrade to a name-only type reference instead of crashing the caller.
+        return runCatching { javaClassTypeFor(clazz, emptySet(), 0) }
+            .getOrElse {
+                runCatching { typeReferenceForJavaClass(clazz) }
+                    .getOrElse { JavaClassType(javaName = javaTypeNameFor(clazz)) }
+            }
     }
 
     private fun javaClassTypeFor(
@@ -1677,98 +1742,90 @@ class JvmClassModuleProvider(
         return output.sortedWith(compareBy<ModuleExportSurface.MemberExport>({ it.exportPath.size }, { it.name }))
     }
 
-    private fun classMembers(type: Type, exportPathPrefix: List<String> = listOf("__class")): List<ModuleExportSurface.MemberExport> {
+    internal fun classMembers(type: Type, exportPathPrefix: List<String> = listOf("__class")): List<ModuleExportSurface.MemberExport> {
         val output = mutableListOf<ModuleExportSurface.MemberExport>()
+        // O(n) dedupe (adversarial audit): a HashSet of already-exported export paths
+        // replaces the previous O(n^2) `output.none { ... }` linear rescan. Keyed by the
+        // full export path (not just the member name) so differently prefixed surfaces that
+        // reuse a name never collide. First occurrence wins, preserving the previous
+        // precedence: static members, then inner classes, then instance members.
+        val exportedPaths = HashSet<List<String>>()
+        fun addExport(name: String, kind: io.github.dingyi222666.luaparser.semantic.api.SymbolKind, memberType: Type) {
+            val exportPath = exportPathPrefix + name
+            if (!exportedPaths.add(exportPath)) {
+                return
+            }
+            output += ModuleExportSurface.MemberExport(
+                name = name,
+                exportPath = exportPath,
+                kind = kind,
+                type = memberType,
+                range = null
+            )
+        }
         if (type is JavaInstanceType) {
             // Nested / interface static helpers (Map$Entry.comparingByKey) live on the class
             // surface. Export them under __class so workspace export lookup, goto, and
             // fingerprint can resolve binary-name bindClass mounts without inventing members.
             type.classType.allStaticMembers().forEach { (name, member) ->
-                output += ModuleExportSurface.MemberExport(
-                    name = name,
-                    exportPath = exportPathPrefix + name,
-                    kind = symbolKindForJavaMember(member.memberKind, member.valueType),
-                    type = member.valueType,
-                    range = null
+                addExport(
+                    name,
+                    symbolKindForJavaMember(member.memberKind, member.valueType),
+                    member.valueType
                 )
             }
             type.classType.allInnerClasses().forEach { (name, innerClass) ->
-                output += ModuleExportSurface.MemberExport(
-                    name = name,
-                    exportPath = exportPathPrefix + name,
-                    kind = io.github.dingyi222666.luaparser.semantic.api.SymbolKind.CLASS,
-                    type = innerClass,
-                    range = null
-                )
+                addExport(name, io.github.dingyi222666.luaparser.semantic.api.SymbolKind.CLASS, innerClass)
             }
             type.allInstanceMembers().forEach { (name, member) ->
                 // Prefer static METHOD exports when names collide with instance members.
-                if (output.none { it.exportPath == exportPathPrefix + name }) {
-                    output += ModuleExportSurface.MemberExport(
-                        name = name,
-                        exportPath = exportPathPrefix + name,
-                        kind = symbolKindForJavaMember(member.memberKind, member.valueType),
-                        type = member.valueType,
-                        range = null
-                    )
-                }
+                addExport(
+                    name,
+                    symbolKindForJavaMember(member.memberKind, member.valueType),
+                    member.valueType
+                )
             }
-            return output
-        }
-
-        if (type is JavaClassType) {
+        } else if (type is JavaClassType) {
             type.allStaticMembers().forEach { (name, member) ->
-                output += ModuleExportSurface.MemberExport(
-                    name = name,
-                    exportPath = exportPathPrefix + name,
-                    kind = symbolKindForJavaMember(member.memberKind, member.valueType),
-                    type = member.valueType,
-                    range = null
+                addExport(
+                    name,
+                    symbolKindForJavaMember(member.memberKind, member.valueType),
+                    member.valueType
                 )
             }
             type.allInnerClasses().forEach { (name, innerClass) ->
-                output += ModuleExportSurface.MemberExport(
-                    name = name,
-                    exportPath = exportPathPrefix + name,
-                    kind = io.github.dingyi222666.luaparser.semantic.api.SymbolKind.CLASS,
-                    type = innerClass,
-                    range = null
-                )
+                addExport(name, io.github.dingyi222666.luaparser.semantic.api.SymbolKind.CLASS, innerClass)
             }
             type.allInstanceMembers().forEach { (name, member) ->
-                if (output.none { it.exportPath == exportPathPrefix + name }) {
-                    output += ModuleExportSurface.MemberExport(
-                        name = name,
-                        exportPath = exportPathPrefix + name,
-                        kind = symbolKindForJavaMember(member.memberKind, member.valueType),
-                        type = member.valueType,
-                        range = null
-                    )
-                }
+                addExport(
+                    name,
+                    symbolKindForJavaMember(member.memberKind, member.valueType),
+                    member.valueType
+                )
             }
-            return output
+        } else {
+            val classType = type as? ClassType ?: return emptyList()
+            classType.getAllFields().forEach { (name, memberType) ->
+                addExport(name, io.github.dingyi222666.luaparser.semantic.api.SymbolKind.FIELD, memberType)
+            }
+            classType.getAllMethods().forEach { (name, memberType) ->
+                addExport(name, io.github.dingyi222666.luaparser.semantic.api.SymbolKind.METHOD, memberType)
+            }
         }
-
-        val classType = type as? ClassType ?: return emptyList()
-        classType.getAllFields().forEach { (name, memberType) ->
-            output += ModuleExportSurface.MemberExport(
-                name = name,
-                exportPath = exportPathPrefix + name,
-                kind = io.github.dingyi222666.luaparser.semantic.api.SymbolKind.FIELD,
-                type = memberType,
-                range = null
-            )
-        }
-        classType.getAllMethods().forEach { (name, memberType) ->
-            output += ModuleExportSurface.MemberExport(
-                name = name,
-                exportPath = exportPathPrefix + name,
-                kind = io.github.dingyi222666.luaparser.semantic.api.SymbolKind.METHOD,
-                type = memberType,
-                range = null
-            )
-        }
+        // Bounded export surface (adversarial audit): a hard per-class cap is applied AFTER
+        // deterministic sorting — alphabetical by (export path depth, member name, joined
+        // path), the same comparator family as moduleMembers' final sort — so truncation
+        // deterministically keeps the alphabetically first [MAX_CLASS_EXPORT_MEMBERS]
+        // members and the final module export order is unchanged for under-cap classes.
         return output
+            .sortedWith(
+                compareBy<ModuleExportSurface.MemberExport>(
+                    { it.exportPath.size },
+                    { it.name },
+                    { it.exportPath.joinToString("/") }
+                )
+            )
+            .take(MAX_CLASS_EXPORT_MEMBERS)
     }
 
     private fun symbolKindForJavaMember(
@@ -1889,6 +1946,14 @@ class JvmClassModuleProvider(
         // Bounded well below the test maxHierarchyDepth guard (33) while covering JDK chains
         // such as ArrayList -> List -> Collection -> Iterable and AbstractList -> Object.
         private const val MAX_HIERARCHY_SKELETON_DEPTH = 16
+        /**
+         * Hard per-class cap on exported `__class` members (adversarial audit: Android
+         * framework types such as Context expand to ~250 members and were previously
+         * unbounded). Applied after deterministic alphabetical sorting in [classMembers],
+         * so exactly the alphabetically first members survive truncation. Internal for the
+         * robustness test corpus; treat as a product heap bound, not a tuning knob.
+         */
+        internal const val MAX_CLASS_EXPORT_MEMBERS = 400
         const val UNSUPPORTED_PREFIXED_IMPORT_CODE = "jvm.import.prefixed.unsupported"
 
         const val CLASSES_METADATA_KEY = "jvm.classes"

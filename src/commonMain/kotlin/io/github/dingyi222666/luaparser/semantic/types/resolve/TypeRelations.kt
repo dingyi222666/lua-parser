@@ -532,6 +532,16 @@ object TypeRelations {
         return true
     }
 
+    /**
+     * Strict contravariance for OVERLOAD DELETION: earlier overload `earlier` can be
+     * deleted in favor of `later` only when every later parameter accepts every value
+     * the earlier one would receive (strict contravariance, no vararg-drop or bivariant
+     * relaxation — those are assignment-policy relaxations, not deletion safety).
+     */
+    internal fun isAssignableForOverloadSubsumption(earlierParameterType: Type, laterParameterType: Type): Boolean {
+        return isAssignable(earlierParameterType, laterParameterType)
+    }
+
     internal fun parameterListsCompatible(target: List<FunctionParameter>, source: List<FunctionParameter>): Boolean {
         // Signature-vs-signature: the source must SERVE AS the target — it has to accept
         // every call the target can make (arity containment) and each target argument must
@@ -614,17 +624,24 @@ object TypeRelations {
     }
 
     private fun isNumericJavaWidening(target: JavaPrimitiveType.Kind, source: JavaPrimitiveType.Kind): Boolean {
+        // JLS 5.1.2: byte/short -> char requires an explicit cast; char widens to
+        // int/long/float/double like the rest of the linear chain.
+        if (target == JavaPrimitiveType.Kind.CHAR && source != JavaPrimitiveType.Kind.CHAR) {
+            return false
+        }
         val sourceRank = javaNumericRank(source) ?: return false
         val targetRank = javaNumericRank(target) ?: return false
+        if (source == JavaPrimitiveType.Kind.CHAR && targetRank < 3) {
+            // char -> byte/short requires a cast; char widens only to int and above.
+            return false
+        }
         return sourceRank <= targetRank
     }
 
     private fun javaNumericRank(kind: JavaPrimitiveType.Kind): Int? = when (kind) {
         JavaPrimitiveType.Kind.BYTE -> 1
         JavaPrimitiveType.Kind.SHORT -> 2
-        // CHAR is unsigned 16-bit: byte -> char and char -> short reinterpret bits,
-        // so char participates in no numeric widening chain.
-        JavaPrimitiveType.Kind.CHAR -> null
+        JavaPrimitiveType.Kind.CHAR -> 2
         JavaPrimitiveType.Kind.INT -> 3
         JavaPrimitiveType.Kind.LONG -> 4
         JavaPrimitiveType.Kind.FLOAT -> 5

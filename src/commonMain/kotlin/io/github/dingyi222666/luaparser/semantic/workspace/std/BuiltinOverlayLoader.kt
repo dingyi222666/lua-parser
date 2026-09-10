@@ -1075,9 +1075,31 @@ object BuiltinOverlayLoader {
     }
 
     private fun parseDocumentedField(fieldText: String): DocumentedField? {
+        if (fieldText.startsWith("[")) {
+            // Index-style field (e.g. ---@field [string] AndroidView|integer). The
+            // documented class models (ClassType) have no index-signature slot, so the
+            // field is kept with a normalized "[key]" name and its key type recorded in
+            // DocumentedField.indexKeyType instead of being silently dropped. Call sites
+            // currently surface it as a regular named field; full index-signature
+            // plumbing is a known limitation.
+            val keyText = fieldText.substringAfter('[', "").substringBefore(']').trim()
+            if (keyText.isEmpty()) {
+                return null
+            }
+            val typeAndDescription = fieldText.substringAfter(']', "").trim()
+            if (typeAndDescription.isEmpty()) {
+                return null
+            }
+            val type = parseDocumentedType(typeAndDescription) ?: return null
+            return DocumentedField(
+                name = "[$keyText]",
+                type = type,
+                indexKeyType = parseDocumentedType(keyText)
+            )
+        }
         val nameToken = fieldText.substringBefore(' ').trim()
         val typeAndDescription = fieldText.substringAfter(' ', "").trim()
-        if (nameToken.isEmpty() || typeAndDescription.isEmpty() || nameToken.startsWith("[")) {
+        if (nameToken.isEmpty() || typeAndDescription.isEmpty()) {
             return null
         }
         val fieldName = nameToken.removeSuffix("?")
@@ -1440,7 +1462,12 @@ object BuiltinOverlayLoader {
 
     private data class DocumentedField(
         val name: String,
-        val type: Type
+        val type: Type,
+        // Key type of an index-style ---@field [key] value declaration, or null for
+        // plain named fields. Kept for future index-signature plumbing; ClassType
+        // currently has no index-signature slot, so such fields surface under their
+        // normalized "[key]" name.
+        val indexKeyType: Type? = null
     )
 
     private data class ParameterDoc(
@@ -1616,7 +1643,7 @@ object BuiltinOverlayLoader {
             androidLuaModule("modules/check.lua", "check", methods = listOf("check", "uncheck")),
             androidLuaModule("modules/console.lua", "console", methods = listOf("build", "build_aly")),
             androidLuaModule("modules/ftp.lua", "ftp", methods = listOf("put", "get", "command")),
-            androidLuaModule("modules/hex.lua", "hex", methods = listOf("encode", "decode", "dump", "smart_dump", "pack", "smart_pack")),
+            androidLuaModule("modules/hex.lua", "hex", methods = listOf("dump", "smart_dump", "pack", "smart_pack")),
             androidLuaModule(
                 "modules/http.lua",
                 "http",

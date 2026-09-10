@@ -52,7 +52,7 @@ function assert(v, message) end
 --- running (i.e., not stopped).
 ---@overload fun():any
 ---@param opt string
----@param arg string
+---@param arg number
 ---@return any
 function collectgarbage(opt, arg) end
 
@@ -62,9 +62,9 @@ function collectgarbage(opt, arg) end
 --- (`stdin`). Returns all values returned by the chunk. In case of errors,
 --- `dofile` propagates the error to its caller (that is, `dofile` does not run
 --- in protected mode).
----@overload fun():table
+---@overload fun():any...
 ---@param filename string
----@return table
+---@return any...
 function dofile(filename) end
 
 ---
@@ -197,10 +197,10 @@ function pairs(t) end
 --- boolean), which is true if the call succeeds without errors. In such case,
 --- `pcall` also returns all results from the call, after this first result. In
 --- case of any error, `pcall` returns **false** plus the error message.
----@overload fun(f:fun():any):boolean|table
+---@overload fun(f:fun():any):boolean, any...
 ---@param f fun():any
----@param arg1 table
----@return boolean|table
+---@param arg1 any
+---@return boolean, any...
 function pcall(f, arg1, ...) end
 
 ---

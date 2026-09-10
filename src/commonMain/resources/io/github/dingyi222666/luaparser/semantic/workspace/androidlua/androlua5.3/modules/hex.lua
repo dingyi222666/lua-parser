@@ -4,14 +4,6 @@
 local hex = {}
 
 ---@param value string
----@return string
-function hex.encode(value) end
-
----@param value string
----@return string
-function hex.decode(value) end
-
----@param value string
 ---@param delimiter? string
 ---@param stx? string
 ---@param etx? string

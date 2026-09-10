@@ -58,6 +58,9 @@ local Bitmap = {}
 ---@field newActivity fun(path: string, arg?: table)
 ---@field newTask fun(src: string|function, callback?: function): JavaObject
 ---@field newThread fun(src: string|function): JavaObject
+---@field setContentView fun(view: AndroidView|LuaLayoutSpec|any)
+---@field getMenu fun(): AndroidMenu
+---@field getSystemService fun(name: string): any
 local AndroidLuaContext = {}
 
 ---@class android.content.Context

@@ -52,7 +52,7 @@ function assert(v, message) end
 --- running (i.e., not stopped).
 ---@overload fun():any
 ---@param opt string
----@param arg string
+---@param arg number
 ---@return any
 function collectgarbage(opt, arg) end
 
@@ -62,9 +62,9 @@ function collectgarbage(opt, arg) end
 --- (`stdin`). Returns all values returned by the chunk. In case of errors,
 --- `dofile` propagates the error to its caller (that is, `dofile` does not run
 --- in protected mode).
----@overload fun():table
+---@overload fun():any...
 ---@param filename string
----@return table
+---@return any...
 function dofile(filename) end
 
 ---
@@ -198,10 +198,10 @@ function pairs(t) end
 --- boolean), which is true if the call succeeds without errors. In such case,
 --- `pcall` also returns all results from the call, after this first result. In
 --- case of any error, `pcall` returns **false** plus the error message.
----@overload fun(f:fun():any):boolean|table
+---@overload fun(f:fun():any):boolean, any...
 ---@param f fun():any
----@param arg1 table
----@return boolean|table
+---@param arg1 any
+---@return boolean, any...
 function pcall(f, arg1, ...) end
 
 ---
@@ -228,6 +228,12 @@ function rawequal(v1, v2) end
 ---@return any
 function rawget(table, index) end
 
+--- Returns the length of the object `v`, which must be a table or a string, without
+--- invoking any metamethod. Returns an integer number.
+---@param v string|table
+---@return number
+function rawlen(v) end
+
 ---
 --- Sets the real value of `table[index]` to `value`, without invoking the
 --- `__newindex` metamethod. `table` must be a table, `index` any value
@@ -236,6 +242,40 @@ function rawget(table, index) end
 ---@param index any
 ---@param value any
 function rawset(table, index, value) end
+
+---
+--- Loads the given module. The function starts by looking into the
+--- 'package.loaded' table to determine whether `modname` is already
+--- loaded. If it is, then `require` returns the value stored at
+--- `package.loaded[modname]`. Otherwise, it tries to find a *loader* for
+--- the module.
+---
+--- To find a loader, `require` is guided by the `package.searchers` sequence.
+--- By changing this sequence, we can change how `require` looks for a module.
+--- The following explanation is based on the default configuration for
+--- `package.searchers`.
+---
+--- First `require` queries `package.preload[modname]`. If it has a value,
+--- this value (which should be a function) is the loader. Otherwise `require`
+--- searches for a Lua loader using the path stored in `package.path`. If
+--- that also fails, it searches for a C loader using the path stored in
+--- `package.cpath`. If that also fails, it tries an *all-in-one* loader (see
+--- `package.loaders`).
+---
+--- Once a loader is found, `require` calls the loader with a two argument:
+--- `modname` and an extra value dependent on how it got the loader. (If the
+--- loader came from a file, this extra value is the file name.) If the loader
+--- returns any non-nil value, require assigns the returned value to
+--- `package.loaded[modname]`. If the loader does not return a non-nil value and
+--- has not assigned any value to `package.loaded[modname]`, then `require`
+--- assigns true to this entry. In any case, require returns the final value of
+--- `package.loaded[modname]`.
+---
+--- If there is any error loading or running the module, or if it cannot find
+--- any loader for the module, then `require` raises an error.
+---@param modname string
+---@return any
+function require(modname) end
 
 ---
 --- If `index` is a number, returns all arguments after argument number

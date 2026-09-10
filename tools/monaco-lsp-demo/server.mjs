@@ -272,10 +272,16 @@ const server = http.createServer((req, res) => {
     return;
   }
   res.writeHead(200, { 'Content-Type': mime(filePath) });
-  fs.createReadStream(filePath).pipe(res);
+  const stream = fs.createReadStream(filePath);
+  stream.on('error', () => {
+    try {
+      res.destroy();
+    } catch { /* client already gone */ }
+  });
+  stream.pipe(res);
 });
 
-const wss = new WebSocketServer({ server, path: '/lsp' });
+const wss = new WebSocketServer({ server, path: '/lsp', maxPayload: 4 * 1024 * 1024 });
 const lspChildren = new Set();
 
 function stopLspChild(child) {
@@ -291,7 +297,11 @@ function stopLspChild(child) {
   const forceTimer = setTimeout(() => {
     if (child.exitCode == null) child.kill('SIGTERM');
   }, 5000);
+  const killTimer = setTimeout(() => {
+    if (child.exitCode == null) child.kill('SIGKILL');
+  }, 10000);
   forceTimer.unref();
+  killTimer.unref();
   child.once('exit', () => clearTimeout(forceTimer));
 }
 

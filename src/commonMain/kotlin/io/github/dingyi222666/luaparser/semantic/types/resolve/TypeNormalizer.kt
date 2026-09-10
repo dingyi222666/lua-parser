@@ -158,13 +158,29 @@ object TypeNormalizer {
         for (signature in signatures) {
             val isDuplicated = signature in kept || kept.any { earlier ->
                 earlier.returnType == signature.returnType &&
-                    TypeRelations.parameterListsCompatible(signature.parameters, earlier.parameters)
+                    subsumesOverload(earlier.parameters, signature.parameters)
             }
             if (!isDuplicated) {
                 kept += signature
             }
         }
         return kept
+    }
+
+    /**
+     * STRICT subsumption for overload deletion — deliberately NOT the call-site-relaxed
+     * [TypeRelations.parameterListsCompatible], whose vararg/bivariance relaxations are
+     * valid for "can this handler be assigned" but unsound for "can this overload be
+     * deleted": dropping a vararg sibling makes variadic calls NO_MATCHING_SIGNATURE, and
+     * bivariant class params would delete overloads that later calls still match.
+     */
+    private fun subsumesOverload(earlier: List<FunctionParameter>, later: List<FunctionParameter>): Boolean {
+        if (earlier.size != later.size) {
+            return false
+        }
+        return earlier.zip(later).all { (earlierParameter, laterParameter) ->
+            TypeRelations.isAssignableForOverloadSubsumption(earlierParameter.type, laterParameter.type)
+        }
     }
 
     private fun normalizeJavaClass(type: JavaClassType, aliasStack: MutableList<AliasType>): JavaClassType {

@@ -1381,7 +1381,8 @@
           }
         } catch (e) {
           logErr("initialize failed: " + (e.message || e));
-          setStatus("error", "Initialize failed");
+          // A bridge busy rejection already wrote the real reason; keep it visible.
+          setStatus("error", bridgeRejection || "Initialize failed");
           setConnectingUi(false, false);
           lspReady = false;
           try {

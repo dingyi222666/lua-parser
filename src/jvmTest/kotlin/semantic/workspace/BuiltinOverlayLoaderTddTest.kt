@@ -112,7 +112,7 @@ class BuiltinOverlayLoaderTddTest {
             )
         )
         assertEquals(SymbolKind.FIELD, gmatchHover.symbol?.kind)
-        assertEquals("fun(s: string, pattern: string): fun(): string, table", gmatchHover.typeInfo?.displayName)
+        assertEquals("fun(s: string, pattern: string): fun(): string...", gmatchHover.typeInfo?.displayName)
     }
 
     @Test
