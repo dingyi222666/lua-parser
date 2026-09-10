@@ -1547,12 +1547,93 @@ class LuaParser(
         return result
     }
 
+    /**
+     * AndroLua C-style compound assignment tokens (`+=` `-=` `*=` `/=` `//=`)
+     * mapped to the plain binary operator used by the desugared RHS. The lexer
+     * emits no MOD_ASSIGN (and no bitwise-assign forms), so `%=` and friends keep
+     * their historical malformed-statement treatment.
+     */
+    private fun compoundAssignmentOperator(tokenTypes: LuaTokenTypes): ExpressionOperator? {
+        return when (tokenTypes) {
+            LuaTokenTypes.ADD_ASSIGN -> ExpressionOperator.ADD
+            LuaTokenTypes.SUB_ASSIGN -> ExpressionOperator.MINUS
+            LuaTokenTypes.MUL_ASSIGN -> ExpressionOperator.MULT
+            LuaTokenTypes.DIV_ASSIGN -> ExpressionOperator.DIV
+            LuaTokenTypes.DOUBLE_DIV_ASSIGN -> ExpressionOperator.DOUBLE_DIV
+            else -> null
+        }
+    }
+
+    // target ::= Name | prefixexp '.' Name | prefixexp '[' exp ']'
+    private fun isCompoundAssignmentTarget(expression: ExpressionNode): Boolean {
+        return expression is Identifier ||
+                expression is MemberExpression ||
+                expression is IndexExpression
+    }
+
+    /**
+     * AndroLua C-style compound assignment (`n += 1`, `n -= 1`, `n *= 2`, `n /= 2`,
+     * `n //= 2`) desugars into the equivalent plain assignment whose single RHS value is
+     * a [BinaryExpression] over a clone of the target (`n += 1` → `n = n + 1`).
+     *
+     * Layout note: in this codebase [AssignmentStatement] field naming is printer-reversed —
+     * AST2Lua prints `init` first, then `=`, then `variables` — so the target list goes into
+     * [AssignmentStatement.init] and the desugared value into
+     * [AssignmentStatement.variables], exactly the shape [parseAssignmentStatement] builds
+     * for the equivalent plain assignment.
+     *
+     * The compound operator token MUST be consumed with [advance] before the RHS is
+     * parsed: the *_ASSIGN tokens are not expression starts, so leaving one current makes
+     * [parseExpressionOrMissing] insert a recovery [ExpressionNode.Companion.ExpressionNodeSupport]
+     * placeholder (a diagnostic under errorRecovery, a hard error in strict mode), and
+     * AST2Lua later fails on that placeholder with
+     * "Unsupported expression node: ExpressionNodeSupport".
+     */
+    private fun parseCompoundAssignmentStatement(
+        parent: BaseASTNode,
+        target: ExpressionNode,
+        operator: ExpressionOperator
+    ): AssignmentStatement {
+        val result = AssignmentStatement()
+        result.parent = parent
+
+        target.parent = result
+        result.init.add(target)
+
+        // Consume the compound operator (`+=` etc.); the current lookahead is exactly
+        // that token because parseExpStatement's peek() pushed it back.
+        advance()
+
+        val rhs = parseExpressionOrMissing(result)
+        val binary = BinaryExpression().apply {
+            this.parent = result
+            left = target.clone().also { clonedTarget ->
+                clonedTarget.parent = this
+            }
+            this.operator = operator
+            right = rhs
+            rhs.parent = this
+        }
+        // The desugared value spans from the target (left operand), not from the
+        // operator token. Does not touch the locations stack: parseExpStatement's
+        // statement mark is popped by parseBlockNode's finishNode(stat).
+        finishNodeSpanning(binary, target.range.start)
+
+        result.variables.add(binary)
+        return result
+    }
+
     //  stat -> func | assignment
     private fun parseExpStatement(parent: BaseASTNode): StatementNode {
         peek { markLocation() }
         val suffix = parsePrefixExp(parent)
 
         val peekToken = peek()
+
+        val compoundOperator = compoundAssignmentOperator(peekToken)
+        if (compoundOperator != null && isCompoundAssignmentTarget(suffix)) {
+            return parseCompoundAssignmentStatement(parent, suffix, compoundOperator)
+        }
 
         return if (suffix is Identifier || equalsMore(peekToken, LuaTokenTypes.ASSIGN, LuaTokenTypes.COMMA)) {
             if (suffix is Identifier && !equalsMore(peekToken, LuaTokenTypes.ASSIGN, LuaTokenTypes.COMMA)) {

@@ -4,6 +4,7 @@ import io.github.dingyi222666.luaparser.parser.ast.node.AssignmentStatement
 import io.github.dingyi222666.luaparser.parser.ast.node.AttributeIdentifier
 import io.github.dingyi222666.luaparser.parser.ast.node.CallExpression
 import io.github.dingyi222666.luaparser.parser.ast.node.ChunkNode
+import io.github.dingyi222666.luaparser.parser.ast.node.ConstantNode
 import io.github.dingyi222666.luaparser.parser.ast.node.ExpressionNode
 import io.github.dingyi222666.luaparser.parser.ast.node.ForGenericStatement
 import io.github.dingyi222666.luaparser.parser.ast.node.ForNumericStatement
@@ -73,6 +74,10 @@ internal class ExpressionUsageChecker(
                 diagnostic = Diagnostic(
                     range = target.range,
                     message = "Unresolved LuaJava target '${target.target}' for ${target.helperName}.",
+                    // WARNING, not ERROR: hosts without android.jar / the target class on the
+                    // classpath still run this code fine on-device (e.g. bindClass on an
+                    // Android-only class), so a hard error would flag valid programs.
+                    severity = DiagnosticSeverity.WARNING,
                     code = LUAJAVA_TARGET_UNRESOLVED_CODE
                 )
             )
@@ -181,7 +186,7 @@ internal class ExpressionUsageChecker(
                 key = "index:${node.index.range.start.line}:${node.index.range.start.column}:${baseType.displayName}",
                 diagnostic = Diagnostic(
                     range = node.index.range,
-                    message = "Unknown Java member on ${baseType.displayName}.",
+                    message = "Unknown Java member '${indexKeyText(node.index)}' on ${baseType.displayName}.",
                     code = MEMBER_MISSING_CODE
                 )
             )
@@ -280,11 +285,27 @@ internal class ExpressionUsageChecker(
                     diagnostic = Diagnostic(
                         range = declaration.range,
                         message = "Unused local '${declaration.name}'.",
-                        severity = DiagnosticSeverity.WARNING,
+                        // INFO, not WARNING: unused locals are editor hints, not defects. The
+                        // LSP publish surface maps this to lsp Information and only publishes
+                        // it while the analyzed snapshot matches the current buffer.
+                        severity = DiagnosticSeverity.INFO,
                         code = UNUSED_LOCAL_CODE
                     )
                 )
             }
+    }
+
+    /**
+     * Human-readable key text for index-access diagnostics: string keys are unquoted
+     * (matching the member-path message shape), other constants render by value, and
+     * non-constant index expressions fall back to a stable placeholder.
+     */
+    private fun indexKeyText(node: ExpressionNode): String {
+        val constant = node as? ConstantNode ?: return "<expression>"
+        return when (constant.constantType) {
+            ConstantNode.TYPE.STRING -> constant.stringOf()
+            else -> constant.rawValue.toString()
+        }
     }
 
     private fun markLocalRead(node: Identifier) {

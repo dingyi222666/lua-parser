@@ -1413,31 +1413,35 @@ class LuaLanguageService(
     private fun publishDiagnostics(path: VirtualPath, uri: String? = null): PublishDiagnosticsParams {
         // Parse/recovery diagnostics are always LSP Error (lua-parse).
         //
-        // Two soft-noise sources break didChange / didOpen Error hard-locks and
-        // repair-clears if left mixed into the published multiset:
-        // 1) Recovery partial ASTs bind Identifier("") and can still produce
-        //    unused-local Warnings ("Unused local ''") unless suppressed upstream.
-        // 2) Parse-valid buffers may still carry unused-local Warnings (e.g. range
-        //    renames that leave a return of the old name, or a repair that adds an
-        //    unused local). Those Warnings are useful in the semantic model but
-        //    must not dilute LSP parse/lifecycle publish hard-locks that require
-        //    invalid → Error-only and repair/valid → empty.
-        //
-        // Policy for the LSP publish surface:
-        // - Always omit unused-local checker diagnostics (code checker.local.unused).
-        // - When parse recovery diagnostics exist, also drop any remaining non-Error
-        //   semantic diagnostics so invalid sources hard-lock to Error only.
+        // Soft-noise policy for the LSP publish surface:
+        // 1) Recovery partial ASTs bind Identifier("") and could produce "Unused local ''"
+        //    noise; blank/underscore names are already suppressed upstream
+        //    (ExpressionUsageChecker.isIgnoredLocalName).
+        // 2) Unused-local checker diagnostics (code checker.local.unused) are published as
+        //    LSP Information — but only while the analyzed snapshot reflects the current
+        //    buffer text (same staleness guard as [parseDiagnostics]). A stale analysis must
+        //    not inject positional soft noise into didChange / didOpen Error hard-locks or
+        //    repair-clears windows.
+        // 3) When parse recovery diagnostics exist, non-Error semantic diagnostics
+        //    (unused-local Information included) are dropped so invalid sources hard-lock
+        //    to Error only and repair/valid stays empty.
+        val buffer = openDocuments[path] ?: indexedWorkspaceFiles[path]
+        val bufferAnalyzed = snapshot.files[path]?.semanticFile?.let { semanticFile ->
+            buffer != null && semanticFile.source == buffer
+        } == true
         val parse = parseDiagnostics(path)
         val semantic = queries.diagnostics(path)
             .asSequence()
-            .filter { diagnostic -> diagnostic.code != UNUSED_LOCAL_DIAGNOSTIC_CODE }
+            .filter { diagnostic -> diagnostic.code != UNUSED_LOCAL_DIAGNOSTIC_CODE || bufferAnalyzed }
             .map { diagnostic ->
                 Diagnostic().apply {
                     message = diagnostic.message
                     severity = diagnostic.severity.toLspSeverity()
                     code = diagnostic.code?.let { Either.forLeft<String, Int>(it) }
-                    range = diagnostic.range?.toLspRange()
-                        ?: Range(Position(1, 1), Position(1, 1)).toLspRange()
+                    range = diagnostic.range
+                        ?.takeIf { range -> range.start != range.end }
+                        ?.toLspRange()
+                        ?: fallbackDiagnosticRange(buffer)
                 }
             }
             .let { mapped ->
@@ -1459,6 +1463,25 @@ class LuaLanguageService(
             )
         }
         return PublishDiagnosticsParams(uri ?: uriFor(path), diagnostics)
+    }
+
+    /**
+     * Fallback anchor for semantic diagnostics without a usable range (null or zero-width):
+     * a 1-character span on the first token of the document's first non-blank line, so
+     * clients render a visible marker instead of a zero-width range at the document head.
+     * Falls back to a 1-character span at the head when no source is available / blank.
+     */
+    private fun fallbackDiagnosticRange(source: String?): org.eclipse.lsp4j.Range {
+        source.orEmpty().lineSequence().forEachIndexed { lineIndex, lineText ->
+            val column = lineText.indexOfFirst { char -> !char.isWhitespace() }
+            if (column >= 0) {
+                return org.eclipse.lsp4j.Range(
+                    org.eclipse.lsp4j.Position(lineIndex, column),
+                    org.eclipse.lsp4j.Position(lineIndex, column + 1)
+                )
+            }
+        }
+        return org.eclipse.lsp4j.Range(org.eclipse.lsp4j.Position(0, 0), org.eclipse.lsp4j.Position(0, 1))
     }
 
     /**
