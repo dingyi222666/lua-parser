@@ -1,5 +1,6 @@
 package io.github.dingyi222666.luaparser.semantic.binder
 
+import io.github.dingyi222666.luaparser.parser.ast.node.Position
 import io.github.dingyi222666.luaparser.parser.ast.node.AssignmentStatement
 import io.github.dingyi222666.luaparser.parser.ast.node.AttributeIdentifier
 import io.github.dingyi222666.luaparser.parser.ast.node.BaseASTNode
@@ -58,6 +59,13 @@ internal class DeclarationBinder(
         super<ASTVisitor>.visitStatementNode(node, value)
     }
 
+    /**
+     * Local names become visible only after the whole LocalStatement ends
+     * (`visibleFrom` = statement end). In Lua a local's scope begins at the first
+     * statement after its declaration, so the initializer still sees the outer
+     * binding: `do local x = x + 1 end` must resolve the RHS `x` to the outer `x`,
+     * and `local x = 1` must not offer `x` for a completion on its own initializer.
+     */
     override fun visitLocalStatement(node: LocalStatement, value: Unit) {
         val attachment = comments.getAttachment(node)
         val documentation = attachment?.toDeclarationDocumentation()
@@ -75,6 +83,14 @@ internal class DeclarationBinder(
                     anchorNode = identifier,
                     documentation = documentation,
                     declaredTypeSyntax = declaredTypeSyntaxes.getOrNull(index)
+                ).copy(
+                    // Anchor at the end of the initializer expression: the new local is
+                    // offered from there onward, while the initializer itself (`local x = 1`
+                    // caret on `1`, or the RHS `outer` in `local inner = outer`) still
+                    // resolves to the outer binding per Lua scoping.
+                    visibleFrom = node.variables.lastOrNull()?.range?.end
+                        ?.let { end -> Position(end.line, (end.column - 1).coerceAtLeast(1)) }
+                        ?: node.range.end
                 )
             )
         }

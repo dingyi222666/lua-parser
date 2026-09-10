@@ -1122,8 +1122,23 @@ internal class SignatureHelpProvider(
         if (binder.isChunkGlobalFunctionDeclaration(declaration)) {
             return true
         }
+        // AST-invented chunk globals are position-independent (environment-table semantics):
+        // a bare-name write later in the file resolves reads above it. DOC_COMMENT /
+        // SYNTHETIC / BUILTIN origins keep their existing gating.
+        if (
+            declaration.kind == DeclarationKind.GLOBAL &&
+            declaration.origin == DeclarationOrigin.AST
+        ) {
+            return true
+        }
         val range = declaration.range ?: return true
-        return compare(range.start, position) <= 0
+        if (compare(range.start, position) <= 0 && compare(position, range.end) < 0) {
+            return true
+        }
+        // Locals become visible after their whole LocalStatement (`visibleFrom`), so the
+        // initializer of `local x = x + 1` still resolves to the outer x.
+        val visibleFrom = declaration.visibleFrom ?: range.start
+        return compare(visibleFrom, position) <= 0
     }
 
     private fun findBackingMemberDeclaration(

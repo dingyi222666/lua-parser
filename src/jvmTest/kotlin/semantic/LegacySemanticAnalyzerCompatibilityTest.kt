@@ -53,6 +53,8 @@ class LegacySemanticAnalyzerCompatibilityTest {
         assertEquals(1, legacyVisible.count { it.name == "outer" })
         assertTrue(legacyVisible.any { it.name == "inner" })
         val pipelineNames = pipelineScope.symbols.map { it.name }.toSet()
+        println("DEBUG pipelineNames=$pipelineNames position=$position")
+        pipelineScope.symbols.forEach { println("DEBUG   symbol=${it.name} range=${it.range}") }
         assertTrue("outer" in pipelineNames)
         assertTrue("inner" in pipelineNames)
     }

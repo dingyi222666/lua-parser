@@ -254,29 +254,70 @@ open class LuaWorkspaceEngine(
             standardLibraryOverlayVersion = baseSnapshot.builtinOverlay.version
         )
 
-        semanticAnalysisOrder(pathsToAnalyze, baseSnapshot.graph).forEach { path ->
-            val fileSnapshot = files[path] ?: return@forEach
-            val carriedOver = previous?.files?.get(path)?.semanticFile ?: fileSnapshot.semanticFile
-            // Reuse the carried-over parse (and its diagnostics) when this pass has no source for
-            // the path; only fall back to an empty parse when there is nothing at all.
-            val parsed = sources[path]?.let { source -> parseWorkspaceResult(path, source) }
-            val chunk = parsed?.chunk ?: carriedOver?.chunk ?: parseWorkspaceSource("")
-            val semanticSnapshot = semanticPipeline.analyzeSnapshot(
-                chunk,
-                workspaceContext(analysisInput, path, analysisSnapshot)
-            )
-            val semanticFile = WorkspaceSemanticFile(
-                path = path,
-                source = sources[path] ?: carriedOver?.source ?: "",
-                chunk = chunk,
-                model = semanticSnapshot.model,
-                snapshot = semanticSnapshot,
-                recoveryDiagnostics = parsed?.recoveryDiagnostics
-                    ?: carriedOver?.recoveryDiagnostics.orEmpty()
-            )
-            files[path] = fileSnapshot.copy(semanticFile = semanticFile)
+        val analysisOrder = semanticAnalysisOrder(pathsToAnalyze, baseSnapshot.graph)
+        analysisOrder.forEach { path ->
+            analyzePathInto(files, path, sources, previous, analysisInput, analysisSnapshot)
+        }
+
+        // Cycle re-analysis pass. Members of a multi-member strongly connected component are
+        // first analyzed against half-finished peers — whichever cycle member comes first in
+        // dependency order sees `null` semantic files for the rest of its cycle — so globals
+        // flowing between cycle members bind as Unknown. Now that every path has a completed
+        // first pass, re-running the per-path analysis (chunks/sources are reused from the
+        // parse cache; each path gets a fresh workspaceContext over this same analysis
+        // snapshot) lets cycle members bind against completed peers.
+        //
+        // Invariant: the re-analyzed set is `analysisOrder` (⊆ pathsToAnalyze, each path once)
+        // filtered to multi-member SCC members — re-analyzed ⊆ pathsToAnalyze — so this pass
+        // never grows affectedDocuments, which callers derive from `pathsToAnalyze` alone.
+        // When no multi-member SCC is dirty the filter is empty and the pass is skipped
+        // silently; singleton workspaces and overlay/extra providers (never in
+        // pathsToAnalyze) are never re-analyzed.
+        val graph = baseSnapshot.graph
+        val cycleReAnalysis = analysisOrder.filter { path ->
+            (graph.stronglyConnectedComponentByFile[path]?.size ?: 1) > 1
+        }
+        if (cycleReAnalysis.isNotEmpty()) {
+            cycleReAnalysis.forEach { path ->
+                analyzePathInto(files, path, sources, previous, analysisInput, analysisSnapshot)
+            }
         }
         return baseSnapshot.copy(files = files.toMap())
+    }
+
+    /**
+     * Runs the semantic pipeline for one [path] and stores the resulting [WorkspaceSemanticFile]
+     * into [files]. Shared by the main ordered analysis pass and the cycle re-analysis pass;
+     * the chunk/source come from the parse cache when the source is unchanged.
+     */
+    private fun analyzePathInto(
+        files: MutableMap<VirtualPath, WorkspaceSnapshot.FileSnapshot>,
+        path: VirtualPath,
+        sources: Map<VirtualPath, String>,
+        previous: WorkspaceSnapshot?,
+        analysisInput: LuaWorkspaceInput,
+        analysisSnapshot: WorkspaceSnapshot
+    ) {
+        val fileSnapshot = files[path] ?: return
+        val carriedOver = previous?.files?.get(path)?.semanticFile ?: fileSnapshot.semanticFile
+        // Reuse the carried-over parse (and its diagnostics) when this pass has no source for
+        // the path; only fall back to an empty parse when there is nothing at all.
+        val parsed = sources[path]?.let { source -> parseWorkspaceResult(path, source) }
+        val chunk = parsed?.chunk ?: carriedOver?.chunk ?: parseWorkspaceSource("")
+        val semanticSnapshot = semanticPipeline.analyzeSnapshot(
+            chunk,
+            workspaceContext(analysisInput, path, analysisSnapshot)
+        )
+        val semanticFile = WorkspaceSemanticFile(
+            path = path,
+            source = sources[path] ?: carriedOver?.source ?: "",
+            chunk = chunk,
+            model = semanticSnapshot.model,
+            snapshot = semanticSnapshot,
+            recoveryDiagnostics = parsed?.recoveryDiagnostics
+                ?: carriedOver?.recoveryDiagnostics.orEmpty()
+        )
+        files[path] = fileSnapshot.copy(semanticFile = semanticFile)
     }
 
     private fun semanticAnalysisOrder(
@@ -286,19 +327,42 @@ open class LuaWorkspaceEngine(
         val visiting = mutableSetOf<VirtualPath>()
         val visited = mutableSetOf<VirtualPath>()
         val ordered = mutableListOf<VirtualPath>()
+        // Explicit-stack post-order DFS: one frame per in-progress visit holding the node plus
+        // its dependency providers in deterministic path-value order, with a cursor to the next
+        // child. The recursive visit it replaces emitted the same post-order but nested one
+        // call frame per chain link, which overflowed the call stack on deep require chains
+        // (thousands of files). `visiting` is the on-path set: a child already on the path is
+        // a cycle and is skipped exactly like the recursive early return.
+        val stack = ArrayDeque<Pair<VirtualPath, Iterator<VirtualPath>>>()
+
+        fun childrenOf(path: VirtualPath): Iterator<VirtualPath> =
+            graph.resolvedDependencies[path]
+                .orEmpty()
+                .map { it.provider.path }
+                .sortedBy { it.value }
+                .iterator()
 
         fun visit(path: VirtualPath) {
             if (path !in pathsToAnalyze || path in visited || !visiting.add(path)) {
                 return
             }
-            graph.resolvedDependencies[path]
-                .orEmpty()
-                .map { it.provider.path }
-                .sortedBy { it.value }
-                .forEach(::visit)
-            visiting -= path
-            visited += path
-            ordered += path
+            stack.addLast(path to childrenOf(path))
+            while (stack.isNotEmpty()) {
+                val (node, children) = stack.last()
+                val child = if (children.hasNext()) children.next() else null
+                if (child != null) {
+                    if (child !in pathsToAnalyze || child in visited || !visiting.add(child)) {
+                        continue
+                    }
+                    stack.addLast(child to childrenOf(child))
+                } else {
+                    // All children emitted (or none): post-order emission, as before.
+                    stack.removeLast()
+                    visiting -= node
+                    visited += node
+                    ordered += node
+                }
+            }
         }
 
         pathsToAnalyze.sortedBy { it.value }.forEach(::visit)

@@ -1988,8 +1988,27 @@ internal class ReferenceQueries(
         if (binder.isChunkGlobalFunctionDeclaration(declaration)) {
             return true
         }
+        // AST-invented chunk globals (`cfg = { title = "x" }` written after a function that
+        // reads `cfg`) are position-independent: Lua globals live in the environment table,
+        // so a bare-name write anywhere in the chunk is visible to every free read of that
+        // name in the file. DOC_COMMENT / SYNTHETIC declarations keep positional gating.
+        if (
+            declaration.kind == DeclarationKind.GLOBAL &&
+            declaration.origin == io.github.dingyi222666.luaparser.semantic.binder.DeclarationOrigin.AST
+        ) {
+            return true
+        }
         val range = declaration.range ?: return true
-        return compare(range.start, position) <= 0
+        // The declared name itself is always in scope at its own site (hover/rename on
+        // `local x` must resolve to the new local even though USES begin after the
+        // statement ends).
+        if (compare(range.start, position) <= 0 && compare(position, range.end) < 0) {
+            return true
+        }
+        // Locals carry `visibleFrom` at the end of their LocalStatement, so `local x = x + 1`
+        // resolves the RHS `x` to the outer x (the new local only exists after the statement).
+        val visibleFrom = declaration.visibleFrom ?: range.start
+        return compare(visibleFrom, position) <= 0
     }
 
     private fun compareSpecificity(a: io.github.dingyi222666.luaparser.parser.ast.node.Range?, b: io.github.dingyi222666.luaparser.parser.ast.node.Range?): Int {

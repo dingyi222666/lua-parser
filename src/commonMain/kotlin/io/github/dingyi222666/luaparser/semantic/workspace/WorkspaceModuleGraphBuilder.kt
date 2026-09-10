@@ -287,51 +287,77 @@ object WorkspaceModuleGraphBuilder {
         val stack = ArrayDeque<VirtualPath>()
         val onStack = mutableSetOf<VirtualPath>()
         val components = mutableListOf<Set<VirtualPath>>()
+        // Iterative Tarjan: one call-stack frame per strongConnect() activation, holding the
+        // node plus its (already filtered) dependency edges and a cursor to the next edge.
+        // The frame loop below reproduces the recursive DFS edge-for-edge while keeping the
+        // depth on the heap — the recursive version overflowed the call stack on deep require
+        // chains (thousands of files).
+        val callStack = ArrayDeque<Pair<VirtualPath, Iterator<VirtualPath>>>()
 
-        fun strongConnect(path: VirtualPath) {
+        fun edgesOf(path: VirtualPath): Iterator<VirtualPath> =
+            resolvedDependencies[path]
+                .orEmpty()
+                .map { it.provider.path }
+                .filter { it in paths }
+                .iterator()
+
+        fun pushActivation(path: VirtualPath) {
+            // strongConnect(path) prologue: assign the next index and push onto the Tarjan stack.
             indexByNode[path] = index
             lowLinkByNode[path] = index
             index += 1
             stack.addLast(path)
             onStack += path
-
-            resolvedDependencies[path].orEmpty()
-                .map { it.provider.path }
-                .filter { it in paths }
-                .forEach { dependency ->
-                    if (dependency !in indexByNode) {
-                        strongConnect(dependency)
-                        lowLinkByNode[path] = minOf(
-                            lowLinkByNode.getValue(path),
-                            lowLinkByNode.getValue(dependency)
-                        )
-                    } else if (dependency in onStack) {
-                        lowLinkByNode[path] = minOf(
-                            lowLinkByNode.getValue(path),
-                            indexByNode.getValue(dependency)
-                        )
-                    }
-                }
-
-            if (lowLinkByNode.getValue(path) != indexByNode.getValue(path)) {
-                return
-            }
-
-            val component = linkedSetOf<VirtualPath>()
-            while (true) {
-                val member = stack.removeLast()
-                onStack -= member
-                component += member
-                if (member == path) {
-                    break
-                }
-            }
-            components += component
+            callStack.addLast(path to edgesOf(path))
         }
 
         paths.sortedBy { it.value }.forEach { path ->
             if (path !in indexByNode) {
-                strongConnect(path)
+                pushActivation(path)
+            }
+            while (callStack.isNotEmpty()) {
+                val (node, edges) = callStack.last()
+                val dependency = if (edges.hasNext()) edges.next() else null
+                if (dependency != null) {
+                    if (dependency !in indexByNode) {
+                        // Descend: run the child prologue and continue the loop on the child
+                        // frame, now on top of the call stack.
+                        pushActivation(dependency)
+                    } else if (dependency in onStack) {
+                        lowLinkByNode[node] = minOf(
+                            lowLinkByNode.getValue(node),
+                            indexByNode.getValue(dependency)
+                        )
+                    }
+                } else {
+                    // All of node's edges are processed: strongConnect(node) returns here.
+                    callStack.removeLast()
+                    // Lowlink merge on pop, exactly where the recursive version merged: right
+                    // after strongConnect(child) returned to the parent's edge loop. Applied
+                    // unconditionally on purpose — when the child was an SCC root its lowlink
+                    // equals its own (strictly larger) index, so the min is a no-op and a
+                    // parent never absorbs a lowlink from an already-emitted component.
+                    callStack.lastOrNull()?.first?.let { parent ->
+                        lowLinkByNode[parent] = minOf(
+                            lowLinkByNode.getValue(parent),
+                            lowLinkByNode.getValue(node)
+                        )
+                    }
+                    if (lowLinkByNode.getValue(node) != indexByNode.getValue(node)) {
+                        continue
+                    }
+
+                    val component = linkedSetOf<VirtualPath>()
+                    while (true) {
+                        val member = stack.removeLast()
+                        onStack -= member
+                        component += member
+                        if (member == node) {
+                            break
+                        }
+                    }
+                    components += component
+                }
             }
         }
 
