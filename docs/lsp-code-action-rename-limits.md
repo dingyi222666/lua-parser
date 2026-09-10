@@ -1,33 +1,34 @@
 # LSP Code Action And Rename Limits
 
-This document records the **current** JVM language-server limits for
+This document records the **current** JVM language-server surface and limits for
 `textDocument/codeAction`, `textDocument/prepareRename`, and
 `textDocument/rename`. It is a policy and gap note for clients, harness
 authors, and reviewers — not a product implementation plan and not a claim
 that those capabilities are production-ready.
 
 Related usage surface: [language-server-usage.md](language-server-usage.md).
+Capability rows: [lsp-capability-negotiation-matrix.md](lsp-capability-negotiation-matrix.md).
 Concurrency / lifecycle policy: [lsp-concurrency-shutdown.md](lsp-concurrency-shutdown.md).
 Implementation lives under `src/jvmMain/kotlin/io/github/dingyi222666/luaparser/lsp`.
 
-Command-level confirmation of the safety corpora remains deferred to TASK-043
-serialized verification. This page documents the **fail-closed** surface
-observed in source and locked by test-only corpora; it does not re-run Gradle
-or expand production code.
+Command-level confirmation of the corpora remains deferred to TASK-043
+serialized verification. This page documents the surface observed in source
+(refreshed 2026-09-10 after the adversarial LSP audit) and locked by test-only
+corpora; it does not re-run Gradle.
 
 ## Scope Boundaries
 
 | In scope for this page | Out of scope / not claimed |
 | --- | --- |
 | Whether `initialize` advertises `codeActionProvider` / `renameProvider` | Full rename engine, multi-file refactor, or cross-module rewrite |
-| Current request surface on `LuaTextDocumentService` for codeAction / prepareRename / rename | Quickfix product catalog (unused local, import insertion, etc.) |
-| Fail-closed / dual-path safety contracts from TASK-249 and TASK-268 corpora | That every editor client hides unadvertised methods the same way |
-| Identifier-span safety floor via existing `documentHighlight` (rename proxy) | Concurrent rename/codeAction under load (see concurrency doc) |
+| Current request surface on `LuaTextDocumentService` / `LuaLanguageService` for codeAction / prepareRename / rename | Quickfix product catalog (unused local, import insertion, etc.) |
+| Accept / reject rules the implemented prepareRename and rename follow | That every editor client hides unadvertised methods the same way |
+| Why `codeAction` stays unadvertised even though a handler exists | Concurrent rename/codeAction under load (see concurrency doc) |
 | Focused verification command pointers for review-owned serial runs | Global green or release readiness (TASK-043 / TASK-037 still gate those) |
 
 **Do not treat this document as a capability certificate.** Claims stop at the
-advertised capabilities, the unimplemented request defaults, and the safety
-corpora named below.
+advertised capabilities, the implemented request behaviour, and the corpora
+named below.
 
 ## Current Capability Advertisement
 
@@ -36,111 +37,103 @@ corpora named below.
 | Capability | Advertised today? |
 | --- | --- |
 | Text document sync (full) | Yes |
-| Hover / completion / signature help | Yes |
+| Hover / completion (+ `completionItem/resolve`) / signature help | Yes |
 | Declaration / definition / references / document highlight | Yes |
 | Document symbols / workspace symbols | Yes |
-| **`codeActionProvider`** | **No** (`null`) |
-| **`renameProvider`** (and prepare-rename options) | **No** (`null`) |
-| Formatting / range formatting / on-type formatting | No |
-| Folding range / selection range / inlay hints | No |
+| **`codeActionProvider`** | **No** (`null`, intentional — handler exists but always answers with an empty list) |
+| **`renameProvider`** (and prepare-rename options) | **Yes** — `RenameOptions(prepareProvider = true)` |
+| Formatting / range formatting | Yes |
+| On-type formatting | **No** (`null`, intentional — handler reformats the whole document on any `d`/`n` keystroke) |
+| Folding range / selection range / inlay hints / semantic tokens / call hierarchy | Yes |
+| Workspace folders (`supported` + `changeNotifications`) | Yes |
 
-Clients that honor `ServerCapabilities` should **not** offer rename UI or code
-action lightbulbs against this server until those providers are non-null.
-Clients that still probe unadvertised methods hit the request-surface behavior
-below.
+Clients that honor `ServerCapabilities` will offer rename UI (with a prepare
+step) and will **not** offer code-action lightbulbs against this server.
+Clients that still probe `textDocument/codeAction` hit the request-surface
+behaviour below rather than an exception.
 
-## Request Surface Today (Fail-Closed)
+## Request Surface Today
 
-Neither `LuaTextDocumentService` nor the lifecycle wrapper on
-`LuaLanguageServer` overrides:
-
-- `textDocument/codeAction`
-- `textDocument/prepareRename`
-- `textDocument/rename`
-
-Those methods therefore inherit the **LSP4J `TextDocumentService` defaults**,
-which complete exceptionally with `UnsupportedOperationException` (wrapped by
-LSP4J/CompletableFuture as `ExecutionException` / `CompletionException` at the
-call site).
+`LuaTextDocumentService` overrides all three methods and delegates to
+`LuaLanguageService`; the lifecycle wrapper on `LuaLanguageServer` reaches them
+through delegation and applies the usual accept / quiet / reject request policy.
 
 | Method | Advertised? | Product override? | Current outcome |
 | --- | --- | --- | --- |
-| `textDocument/codeAction` | No | No | Exceptional completion (`UnsupportedOperationException`) |
-| `textDocument/prepareRename` | No | No | Exceptional completion (`UnsupportedOperationException`) |
-| `textDocument/rename` | No | No | Exceptional completion (`UnsupportedOperationException`) |
+| `textDocument/codeAction` | No (intentional) | Yes (`codeActions` → `collectCodeActions`) | Well-formed **empty** list for every input (kind filter, empty context, inverted / OOB ranges); never throws |
+| `textDocument/prepareRename` | Yes | Yes (`prepareRename`) | `PrepareRenameResult(identifierRange, placeholder)` for renamable identifiers; `null` (LSP reject) otherwise; never throws |
+| `textDocument/rename` | Yes | Yes (`rename`) | `WorkspaceEdit` with identifier-span `TextEdit`s for the **requesting document only**; empty `WorkspaceEdit` for invalid names / non-renamable positions; never throws |
 
-### What “fail-closed” means here
+### What "fail-closed" means here
 
-1. **No silent partial edits.** The server does not invent empty-looking
-   success payloads that clients might apply as no-ops while believing rename
-   succeeded, and it does not emit half-baked `WorkspaceEdit` content for
-   unvalidated positions.
-2. **No capability lie.** Because providers are not advertised, well-behaved
-   clients should not enter the rename/code-action UX. Probing clients still
-   get a hard “not implemented” failure rather than a best-effort rewrite.
-3. **Safety corpora dual-path.** Test-only corpora accept either the documented
-   gap (`UnsupportedOperationException`) **or** a future ideal product path that
-   is still fail-closed on unsafe inputs (reject / empty edit / empty action
-   list) and never hard-crashes the process.
+1. **No silent partial edits.** `rename` only emits edits for identifier spans
+   it resolved through document highlights / references in the requesting file;
+   cross-file member sites are left out rather than guessed.
+2. **No capability lie.** `codeAction` stays unadvertised until a deterministic
+   fix exists, so well-behaved clients never show an empty lightbulb. Probing
+   clients get a zero-length action list, not an `UnsupportedOperationException`.
+3. **Reject over rewrite.** `prepareRename` returns `null` for anything that is
+   not a local-like identifier (keywords, literals, operators, comments, free
+   globals without a local binding, out-of-range positions), so the client never
+   enters the rename UX for those positions.
 
-This is intentionally stricter than “return empty and pretend success.” Empty
-lists / soft rejects are only acceptable **after** product implements the
-methods and keeps unsafe cases closed.
+## Implemented Policy
 
-## Intended Safety Policy (When Product Lands)
-
-The following policy is locked by dual-path TDD corpora so a future product
-lane cannot weaken fail-closed behavior without turning the tests red. Until
-product lands, the documented gap path is the live behavior.
+The rules below are what the product does today; the corpora listed further
+down lock them so a later change cannot weaken them silently.
 
 ### `textDocument/prepareRename`
 
-| Position / symbol | Required behavior once implemented |
+| Position / symbol | Behaviour |
 | --- | --- |
-| Whitespace, keywords, numeric/string literals, operators | Reject (null / error / non-accepting prepare result) — **must not** return a rename range |
-| Globals without a local lexical binding (e.g. `print`) and free undeclared names | Reject when policy keeps renames lexical |
-| Local identifiers and local function names | Accept only with a range covering the **identifier span** (single-line token text), optional placeholder equal to current name |
-| Missing document / out-of-range positions | Soft reject or gap — **must not** NPE / assert / process-kill |
+| Whitespace, keywords, numeric/string literals, operators, comments | Reject (`null`) — no rename range is invented |
+| Globals without a local lexical binding (e.g. `print`) and free undeclared names | Reject (`null`) — renames stay lexical |
+| Local identifiers, parameters, for-loop names, local functions, attribute locals | Accept with a range covering the **identifier span** (single-line token text) and a placeholder equal to the current name |
+| Table field / method **name** token under the caret (`t.field`, `t:method`) | Soft-accept the identifier span (rename itself stays same-file, see below) |
+| Missing document / negative or out-of-range positions | Reject (`null`) — never NPE / assert / process-kill |
 
-`DefaultBehavior`-style prepare results (client word range) are treated as
-**not** a server-endorsed rename for safety policy purposes.
+`DefaultBehavior`-style prepare results (client word range) are never returned;
+a prepare result is always an explicit identifier span.
 
 ### `textDocument/rename`
 
-| Case | Required behavior once implemented |
+| Case | Behaviour |
 | --- | --- |
-| Missing symbol / whitespace / non-identifier | Soft fail or empty `WorkspaceEdit` — **must not** invent edits or NPE |
-| Local identifier rename | Edits cover identifier spans only; `newText` equals the requested name; ranges single-line |
-| Globals / free names under lexical policy | Prefer reject over workspace-wide text smash |
+| Empty / blank / non-identifier `newName` | Empty `WorkspaceEdit` |
+| Position that `prepareRename` would reject | Empty `WorkspaceEdit` |
+| Local identifier rename | Edits cover identifier spans only (declaration + same-file references via document highlights, falling back to references); `newText` equals the requested name; ranges single-line |
+| Field / method name rename | Same-file sites only; cross-file provider / consumer sites are **not** edited (documented limit) |
+| Internal error | Empty `WorkspaceEdit` (soft fail), never a thrown exception |
 
 ### `textDocument/codeAction` (quickfix surface)
 
-| Case | Required behavior once implemented |
+| Case | Behaviour |
 | --- | --- |
-| Known diagnostics with no fix | Empty action list or soft reject — **must not** hard-crash |
-| Empty selection, inverted/malformed ranges, OOB ranges | No crash; empty or soft fail |
-| Empty diagnostics / quickfix-only filter on clean docs | Empty or well-formed quickfix-kind actions only — **must not** invent hard failures |
-| Returned `CodeAction` / `Command` entries | Non-blank title (or command id); nested command coherent when present |
+| Any `only` filter that excludes `quickfix` / empty kind | Empty list |
+| Empty diagnostics context | Empty list |
+| Diagnostics present (parse / semantic) | Empty list — no deterministic auto-fix exists yet |
+| Empty selection, inverted / malformed / OOB ranges | Empty list; the range is never used to index into the source |
 
 Product may later advertise `codeActionProvider` as `true`, `Either`, or
-`CodeActionOptions`. Until then, `null` remains the advertised truth.
+`CodeActionOptions` once at least one deterministic fix ships. Until then
+`null` remains the advertised truth on purpose.
 
-## Identifier-Span Safety Floor (Available Today)
+## Identifier-Span Floor Shared With Document Highlight
 
-Rename product is absent, but **`textDocument/documentHighlight` is implemented
-and advertised**. The prepareRename/rename safety corpus uses document
-highlights as a **product-available proxy** for identifier coverage:
+`rename` reuses the same-file `documentHighlight` locations (tightened to
+identifier spans) as its primary edit set, so the two surfaces stay consistent:
 
-- Highlights for a local must be non-empty and ordered.
-- Ranges must cover the identifier (exact single-line span when product already
-  emits one; wider declaration/expression ranges that still cover/begin with
-  the identifier are soft-accepted while product ranges remain imperfect).
-- Highlight on whitespace must not throw.
+- Highlights for a local are non-empty and ordered; rename edits are the same
+  spans sorted by position.
+- A highlight that is not a single-line identifier span of the placeholder's
+  length is skipped by rename rather than widened.
+- Highlight on whitespace does not throw; rename on whitespace yields an empty
+  edit.
 
-Clients that need “find occurrences under cursor” today should use document
-highlight / references, **not** rename.
+Clients that only need "find occurrences under cursor" can keep using document
+highlight / references; rename adds the edit envelope on top of the same data.
 
-## Safety Corpora And Verification Pointers
+## Corpora And Verification Pointers
 
 Workers and documentation waves **must not** run these commands. They are
 deferred acceptance references for **review-owned serial verification**
@@ -158,30 +151,32 @@ Windows coordinated path uses the same filters with
 
 | Corpus / role | Owner task | Focused filter (review-only) |
 | --- | --- | --- |
-| prepareRename / rename safety (dual-path gap + ideal) | TASK-249 | `./gradlew.lf jvmTest --tests lsp.LspPrepareRenameSafetyTddTest` |
-| codeAction quickfix safety (dual-path gap + ideal) | TASK-268 | `./gradlew.lf jvmTest --tests lsp.LspCodeActionQuickFixSafetyTddTest` |
+| prepareRename / rename (accept / reject / same-file limit) | TASK-518 | `./gradlew.lf jvmTest --tests lsp.LspRenamePrepareMultiFileTddTest` |
+| codeAction empty-list contract (real-project refactor corpus) | TASK-542 | `./gradlew.lf jvmTest --tests lsp.LspRealProjectDiagnosticsRefactorTddTest` |
+| Capability advertisement (rename yes, codeAction / onType no) | TASK-478 | `./gradlew.lf jvmTest --tests lsp.LspCompletionCapabilitiesTddTest` and the `initialize` probes inside the `Lsp*TddTest` classes |
 | Shared compile gate before focused filters | TASK-043 | `./gradlew.lf compileTestKotlinJvm` |
-| Document highlight product surface (rename proxy dependency) | navigation / highlight corpora | `./gradlew.lf jvmTest --tests lsp.LspDocumentHighlightTddTest` (when present in suite) |
+| Document highlight product surface (rename edit-set dependency) | navigation / highlight corpora | `./gradlew.lf jvmTest --tests lsp.LspDocumentHighlightTddTest` |
 
-Source anchors (inspection only; no product edits in this docs task):
+Source anchors (inspection only):
 
 | Path | Role |
 | --- | --- |
-| `src/jvmMain/kotlin/.../lsp/LuaLanguageService.kt` (`serverCapabilities`) | Capability advertisement — no codeAction/rename providers |
-| `src/jvmMain/kotlin/.../lsp/LuaTextDocumentService.kt` | No `codeAction` / `prepareRename` / `rename` overrides |
-| `src/jvmMain/kotlin/.../lsp/LuaLanguageServer.kt` | Lifecycle wrapper does not add those methods |
-| `src/jvmTest/kotlin/lsp/LspPrepareRenameSafetyTddTest.kt` | TASK-249 safety contract |
-| `src/jvmTest/kotlin/lsp/LspCodeActionQuickFixSafetyTddTest.kt` | TASK-268 safety contract |
-
-Docs-only review of this page (TASK-307) accepts by reading this document
-against the TASK-307 acceptance criteria; it does **not** require Gradle.
+| `src/jvmMain/kotlin/.../lsp/LuaLanguageService.kt` (`serverCapabilities`) | Advertises `renameProvider = RenameOptions(true)`; leaves `codeActionProvider` and `documentOnTypeFormattingProvider` null with the reason in a comment |
+| `src/jvmMain/kotlin/.../lsp/LuaLanguageService.kt` (`prepareRename`, `rename`, `resolveRenameTarget`) | Accept / reject rules and same-file edit construction |
+| `src/jvmMain/kotlin/.../lsp/LuaLanguageService.kt` (`codeActions`, `collectCodeActions`) | Empty-list quickfix collector |
+| `src/jvmMain/kotlin/.../lsp/LuaTextDocumentService.kt` | `codeAction` / `prepareRename` / `rename` overrides with quiet-policy fallbacks |
+| `src/jvmMain/kotlin/.../lsp/LuaLanguageServer.kt` | Lifecycle wrapper delegates the three methods and applies request policy |
+| `src/jvmTest/kotlin/lsp/LspRenamePrepareMultiFileTddTest.kt` | Rename / prepareRename contract |
+| `src/jvmTest/kotlin/lsp/LspRealProjectDiagnosticsRefactorTddTest.kt` | Code-action empty-list contract on real-project shapes |
 
 ## Explicit Non-Claims
 
-- No claim that rename, prepareRename, or code actions are implemented.
-- No claim that clients must hide the UI the same way on every editor.
-- No claim that documentHighlight ranges are already exact identifier tokens in
-  every expression shape (binary / multi-line soft cases remain).
+- No claim that any code action is produced; the handler is an empty-list stub
+  kept for probing clients.
+- No claim that rename edits cross file boundaries (module fields, required
+  providers, Java members stay untouched).
+- No claim that clients must hide the code-action UI the same way on every
+  editor.
 - No claim that concurrent rename/codeAction under load is tested (see
   [lsp-concurrency-shutdown.md](lsp-concurrency-shutdown.md)).
 - No claim of global suite green; TASK-043 / TASK-037 remain the gates.
@@ -190,12 +185,14 @@ against the TASK-307 acceptance criteria; it does **not** require Gradle.
 
 | Surface | Today | Fail-closed stance |
 | --- | --- | --- |
-| Capability ads | codeAction / rename **not** advertised | Clients should not offer the UX |
-| Request methods | LSP4J default → `UnsupportedOperationException` | Hard gap, not partial rewrite |
-| Future product | Dual-path corpora already encode reject/empty/well-formed rules | Unsafe positions stay closed |
-| Proxy today | `documentHighlight` / references for occurrence navigation | Not a substitute for rename |
+| Capability ads | rename **advertised** (`RenameOptions(prepareProvider = true)`); codeAction **not** advertised (intentional) | Clients get rename UX, no lightbulb |
+| `prepareRename` | Identifier-span accept for local-like identifiers; `null` otherwise | Reject over guess |
+| `rename` | Same-file identifier-span `WorkspaceEdit`; empty edit when unsafe | No cross-file smash |
+| `codeAction` | Empty list for every input, never throws | No empty-lightbulb capability lie |
+| Shared data | `documentHighlight` spans feed rename edits | One identifier-span model |
 
-When a product task lands codeAction or rename, it must (1) advertise the
-matching provider, (2) keep unsafe cases fail-closed as above, and (3) turn the
-ideal paths of the TASK-249 / TASK-268 corpora green under serial review
-verification — without relaxing the gap-path safety floor mid-migration.
+When a product task ships a real code action, it must (1) advertise
+`codeActionProvider`, (2) keep the empty-list behaviour for inputs it cannot
+fix, and (3) extend the corpora above under serial review verification. When a
+future task widens rename beyond the requesting file, it must document the new
+cross-file policy here before advertising anything stronger.

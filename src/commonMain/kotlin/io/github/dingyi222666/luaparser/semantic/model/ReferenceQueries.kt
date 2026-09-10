@@ -1315,10 +1315,33 @@ internal class ReferenceQueries(
                 .hydrateJavaProviderType(workspaceContext.resolveImportTarget)
         val members = getMembers(baseType, lexicalScopeId)
         return if (expression.indexer == ":") {
-            members.sortedWith(compareBy<Symbol>({ if (it.kind == io.github.dingyi222666.luaparser.semantic.api.SymbolKind.METHOD) 0 else 1 }, { it.name }))
+            // `obj:` is a method call site: a FIELD whose value is not callable (JavaBean
+            // property aliases such as File.path / File.name, plain data fields) cannot be
+            // invoked, so it is dropped here. Callable field surfaces (Lua functions stored
+            // in table/module fields, `fun(...)` typed @field) stay, as does every METHOD.
+            // The `.` surface below keeps the full member list including the aliases.
+            members
+                .filterNot { symbol -> symbol.kind == SymbolKind.FIELD && !hasCallableMemberDisplay(symbol) }
+                .sortedWith(compareBy<Symbol>({ if (it.kind == io.github.dingyi222666.luaparser.semantic.api.SymbolKind.METHOD) 0 else 1 }, { it.name }))
         } else {
             members.sortedWith(compareBy<Symbol>({ if (it.kind == io.github.dingyi222666.luaparser.semantic.api.SymbolKind.FIELD) 0 else 1 }, { it.name }))
         }
+    }
+
+    /**
+     * Same `fun(` display heuristic the hover / completion-kind paths use to decide that a
+     * member's value is callable, applied to the member-completion surface. A
+     * [TypeInfoKind.FUNCTION] type info counts as callable even when the display differs.
+     */
+    private fun hasCallableMemberDisplay(symbol: Symbol): Boolean {
+        if (symbol.declaredType?.kind == TypeInfoKind.FUNCTION || symbol.type?.kind == TypeInfoKind.FUNCTION) {
+            return true
+        }
+        val display = symbol.declaredType?.displayName
+            ?: symbol.type?.displayName
+            ?: symbol.detail
+            ?: return false
+        return display.contains("fun(") || display.contains("fun<")
     }
 
     private fun collectMemberSurface(type: Type, lexicalScopeId: ScopeId): Map<String, MemberSurface> {

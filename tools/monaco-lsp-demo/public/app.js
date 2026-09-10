@@ -1150,6 +1150,7 @@
               startColumn: startColumn,
               endColumn: endColumn,
             };
+            const swallowed = lineContent.substring(startColumn - 1, word.endColumn - 1);
             const suggestions = items.map(function (item, index) {
               const labelObj = item.label;
               const label =
@@ -1160,10 +1161,18 @@
                 item.insertText != null
                   ? item.insertText
                   : label;
+              const insert = item.textEdit && item.textEdit.newText != null
+                ? item.textEdit.newText
+                : (item.insertText != null ? item.insertText : label);
+              const rangeApplies =
+                typeof insert === "string" &&
+                insert.toLowerCase().startsWith(String(swallowed || "").toLowerCase());
               const itemRange =
                 item.textEdit && item.textEdit.range
                   ? rangeFromLsp(item.textEdit.range)
-                  : defaultRangeWithContinuation;
+                  : rangeApplies
+                    ? defaultRangeWithContinuation
+                    : defaultRange;
               const text =
                 item.textEdit && item.textEdit.newText != null
                   ? item.textEdit.newText

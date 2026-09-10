@@ -116,7 +116,8 @@ class LuaTextDocumentService(
                 )
             )
         } ?: return
-        publishDiagnostics(diagnostics)
+        // Edited document first, then every other open document the update affected.
+        diagnostics.forEach(publishDiagnostics)
     }
 
     override fun didClose(params: DidCloseTextDocumentParams) {
@@ -380,16 +381,14 @@ class LuaTextDocumentService(
     /**
      * TASK-540 — textDocument/selectionRange nested AST parent chains.
      * Soft-degrades to an empty list under quiet policies / unknown positions;
-     * never throws UnsupportedOperationException once wired.
+     * never throws UnsupportedOperationException once wired. Unresolvable positions
+     * are dropped by the service, so the list never carries null slots.
      */
     override fun selectionRange(params: SelectionRangeParams): CompletableFuture<List<SelectionRange>> {
         return guardedRequest(
             quietResponse = { CompletableFuture.completedFuture(emptyList()) }
         ) {
-            @Suppress("UNCHECKED_CAST")
-            CompletableFuture.completedFuture(
-                languageService.selectionRanges(params) as List<SelectionRange>
-            )
+            CompletableFuture.completedFuture(languageService.selectionRanges(params))
         }
     }
 

@@ -231,10 +231,11 @@ class LuaLanguageService(
         InitializeResult(serverCapabilities())
     }
 
-    fun setWorkspaceMetadata(metadata: Map<String, String>) = synchronized(stateLock) {
+    fun setWorkspaceMetadata(metadata: Map<String, String>): Unit = synchronized(stateLock) {
         workspaceMetadata = metadata.toMap()
         // Configuration that invalidates global metadata falls back to a full rebuild.
         rebuildFull()
+        Unit
     }
 
     /**
@@ -242,7 +243,7 @@ class LuaLanguageService(
      * indexed workspace snapshot. Open-document overlays remain authoritative for
      * unsaved buffers. Non-Lua/ALY files are ignored.
      */
-    fun applyWatchedFileChanges(changes: List<FileEvent>) = synchronized(stateLock) {
+    fun applyWatchedFileChanges(changes: List<FileEvent>): Unit = synchronized(stateLock) {
         var mutated = false
         changes.forEach { event ->
             val uri = event.uri?.takeIf { it.isNotBlank() } ?: return@forEach
@@ -256,6 +257,10 @@ class LuaLanguageService(
                     // Keep URI mapping so diagnostics("path") still clears against the
                     // original file URI after the source is dropped from the snapshot.
                     indexedWorkspaceUris.putIfAbsent(virtualPath, uri)
+                    // A deleted file that is not open anymore has no token stream to cache.
+                    if (virtualPath !in openDocuments) {
+                        semanticTokensCache.remove(virtualPath)
+                    }
                     if (removedSource) {
                         mutated = true
                     }
@@ -273,6 +278,9 @@ class LuaLanguageService(
                         // File may have been replaced/truncated; drop stale index entry if unreadable.
                         if (indexedWorkspaceFiles.remove(virtualPath) != null) {
                             indexedWorkspaceUris.putIfAbsent(virtualPath, uri)
+                            if (virtualPath !in openDocuments) {
+                                semanticTokensCache.remove(virtualPath)
+                            }
                             mutated = true
                         }
                     }
@@ -284,6 +292,7 @@ class LuaLanguageService(
         if (mutated) {
             refreshIncremental()
         }
+        Unit
     }
 
     /**
@@ -302,7 +311,7 @@ class LuaLanguageService(
     fun applyWorkspaceFolderChanges(
         added: List<WorkspaceFolder>,
         removed: List<WorkspaceFolder>
-    ) = synchronized(stateLock) {
+    ): Unit = synchronized(stateLock) {
         if (added.isEmpty() && removed.isEmpty()) {
             return
         }
@@ -330,6 +339,7 @@ class LuaLanguageService(
         refreshWorkspaceFolderUriPrefixes()
         refreshWorkspaceFolderIndex()
         refreshIncremental()
+        Unit
     }
 
     private fun folderUriKey(folder: WorkspaceFolder): String? {
@@ -351,12 +361,34 @@ class LuaLanguageService(
         publishDiagnostics(path)
     }
 
-    fun didChange(params: DidChangeTextDocumentParams): PublishDiagnosticsParams = synchronized(stateLock) {
+    /**
+     * Applies a didChange and returns the diagnostics to publish, edited document first.
+     *
+     * Ranged edits fold onto the real buffer: an indexed-but-never-opened file used to
+     * start from `openDocuments[path].orEmpty()`, which turned the edit fragment into the
+     * whole overlay. The base is resolved the same way [applyWatchedFileChanges] resolves
+     * sources — open overlay, then the indexed workspace source, then the analyzed snapshot.
+     *
+     * After the incremental refresh, every document the update affected (require
+     * dependents included) is republished, deduped, with the edited path first. Affected
+     * paths without an open document are skipped: closed indexed files stay pull-only
+     * through [diagnostics] / [diagnosticsForUri], matching the open-doc publish policy.
+     */
+    fun didChange(params: DidChangeTextDocumentParams): List<PublishDiagnosticsParams> = synchronized(stateLock) {
         val path = pathOf(params.textDocument)
-        openDocuments[path] = applyContentChanges(openDocuments[path].orEmpty(), params.contentChanges)
+        val baseSource = openDocuments[path]
+            ?: indexedWorkspaceFiles[path]
+            ?: snapshot.files[path]?.semanticFile?.source
+            ?: ""
+        openDocuments[path] = applyContentChanges(baseSource, params.contentChanges)
         documentUris[path] = params.textDocument.uri
-        refreshIncremental()
-        publishDiagnostics(path)
+        val affected = refreshIncremental()
+        val publishOrder = linkedSetOf(path)
+        affected
+            .filter { candidate -> candidate in openDocuments }
+            .sortedBy { candidate -> candidate.value }
+            .forEach { candidate -> publishOrder += candidate }
+        publishOrder.map { candidate -> publishDiagnostics(candidate) }
     }
 
     fun didClose(params: DidCloseTextDocumentParams): PublishDiagnosticsParams = synchronized(stateLock) {
@@ -364,6 +396,8 @@ class LuaLanguageService(
         val path = pathOf(uri)
         openDocuments.remove(path)
         documentUris.remove(path)
+        // Closed buffers must not pin their last full semantic-tokens payload.
+        semanticTokensCache.remove(path)
         refreshIncremental()
         PublishDiagnosticsParams(uri, emptyList())
     }
@@ -434,6 +468,10 @@ class LuaLanguageService(
         val resolved = CompletionItem(label).apply {
             // Preserve core identity fields first — never drop label/kind.
             kind = item.kind
+            // Label presentation and insert-mode travel with the label: dropping them
+            // on the resolved copy changes how the client renders / indents the item.
+            labelDetails = item.labelDetails
+            insertTextMode = item.insertTextMode
             detail = item.detail
             documentation = item.documentation
             insertText = item.insertText
@@ -624,10 +662,14 @@ class LuaLanguageService(
      * TASK-540 — Selection ranges for nested block expand/shrink selection.
      * Builds a parent chain from the innermost AST node covering each position,
      * walking only real AST parents (no invented spans). Unknown documents,
-     * empty positions, and out-of-range cursors soft-degrade to empty / null
-     * entries without throwing.
+     * empty positions, and out-of-range cursors soft-degrade to an empty list
+     * without throwing.
+     *
+     * Positions that resolve to no AST node are dropped per item rather than kept as
+     * JSON-null slots: `SelectionRange[]` carries no nulls on the wire, and the lsp4j
+     * layer hands the list straight to the client.
      */
-    fun selectionRanges(params: SelectionRangeParams): List<SelectionRange?> = synchronized(stateLock) {
+    fun selectionRanges(params: SelectionRangeParams): List<SelectionRange> = synchronized(stateLock) {
         val positions = params.positions.orEmpty()
         if (positions.isEmpty()) {
             return@synchronized emptyList()
@@ -640,13 +682,8 @@ class LuaLanguageService(
             return@synchronized emptyList()
         }
         val index = positionIndexFor(chunk)
-        val results = positions.map { lspPosition ->
+        positions.mapNotNull { lspPosition ->
             selectionRangeAt(index, lspPosition.toParserPosition())
-        }
-        if (results.all { it == null }) {
-            emptyList()
-        } else {
-            results
         }
     }
 
@@ -1478,8 +1515,12 @@ class LuaLanguageService(
         snapshotReady = true
     }
 
-    /** Full workspace rebuild used for cold start and metadata invalidation. */
-    private fun rebuildFull() {
+    /**
+     * Full workspace rebuild used for cold start and metadata invalidation.
+     * Returns the documents the engine reported as affected (every analyzed file on a
+     * cold build) so callers can republish diagnostics without re-deriving the set.
+     */
+    private fun rebuildFull(): Set<VirtualPath> {
         val files = currentWorkspaceFiles()
         val result = engine.build(
             LuaWorkspaceInput(
@@ -1489,18 +1530,21 @@ class LuaLanguageService(
         )
         fullRebuildCount += 1
         applyWorkspaceResult(result, files)
+        return result.affectedDocuments
     }
 
     /**
      * Incremental path: compute a [WorkspaceDelta] against the last applied file map
      * and call engine.update (LuaWorkspaceEngine.update). Falls back to a full
      * rebuild when no snapshot has been established yet.
+     *
+     * Returns [WorkspaceUpdateResult.affectedDocuments] for the applied delta (empty when
+     * nothing changed) so didChange can republish every document the edit touched.
      */
-    private fun refreshIncremental() {
+    private fun refreshIncremental(): Set<VirtualPath> {
         val files = currentWorkspaceFiles()
         if (!snapshotReady) {
-            rebuildFull()
-            return
+            return rebuildFull()
         }
 
         val upserts = linkedMapOf<VirtualPath, String>()
@@ -1517,7 +1561,7 @@ class LuaLanguageService(
         }
 
         if (upserts.isEmpty() && removals.isEmpty()) {
-            return
+            return emptySet()
         }
 
         val result = engine.update(
@@ -1529,6 +1573,7 @@ class LuaLanguageService(
         )
         incrementalUpdateCount += 1
         applyWorkspaceResult(result, files)
+        return result.affectedDocuments
     }
 
     private fun configuredWorkspaceFolders(params: InitializeParams): List<WorkspaceFolder> {

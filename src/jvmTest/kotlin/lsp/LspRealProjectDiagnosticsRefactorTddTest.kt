@@ -661,17 +661,15 @@ class LspRealProjectDiagnosticsRefactorTddTest {
             SelectionRangeParams(TextDocumentIdentifier(uri), listOf(pos))
         )
         assertEquals(1, result.size)
-        val first = result[0]
-        if (first != null) {
-            assertTrue(first.range.start.line >= 0)
-            var depth = 0
-            var parent = first.parent
-            while (parent != null && depth < 16) {
-                parent = parent.parent
-                depth++
-            }
-            assertTrue(depth >= 0)
+        val first = result.single()
+        assertTrue(first.range.start.line >= 0)
+        var depth = 0
+        var parent = first.parent
+        while (parent != null && depth < 16) {
+            parent = parent.parent
+            depth++
         }
+        assertTrue(depth >= 0)
     }
 
     @Test
@@ -688,7 +686,13 @@ class LspRealProjectDiagnosticsRefactorTddTest {
         val result = service.selectionRanges(
             SelectionRangeParams(TextDocumentIdentifier(uri), positions)
         )
-        assertEquals(positions.size, result.size)
+        // Positions that resolve to no AST node are dropped rather than returned as
+        // JSON-null slots, so the result is bounded by the request and null-free.
+        assertTrue(
+            result.size <= positions.size,
+            "selection ranges must not exceed requested positions; got ${result.size} for ${positions.size}"
+        )
+        result.forEach { range -> assertNotNull(range, "selectionRange result must not contain null slots") }
     }
 
     @Test

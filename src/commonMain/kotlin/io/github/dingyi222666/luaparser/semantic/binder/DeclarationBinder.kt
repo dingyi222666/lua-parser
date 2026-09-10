@@ -159,6 +159,35 @@ internal class DeclarationBinder(
         }
     }
 
+    /**
+     * Lambda expressions introduce their own FUNCTION scope so parameters resolve inside
+     * the body expression, mirroring how function declarations bind parameters.
+     */
+    override fun visitLambdaDeclaration(node: LambdaDeclaration, value: Unit) {
+        val lambdaScopeId = builder.createScope(
+            kind = ScopeKind.FUNCTION,
+            range = node.expression.range,
+            ownerNode = node
+        )
+
+        builder.pushScope(lambdaScopeId)
+        try {
+            node.params.forEach { parameter ->
+                builder.addDeclarationWithSymbol(
+                    parameterDeclaration(
+                        id = builder.nextDeclarationId(),
+                        name = parameter.name,
+                        owner = DeclarationOwner.Lexical(node),
+                        anchorNode = parameter
+                    )
+                )
+            }
+            visitExpressionNode(node.expression, value)
+        } finally {
+            builder.popScope()
+        }
+    }
+
     override fun visitDoStatement(node: DoStatement, value: Unit) {
         bindBodyScope(node.body, ScopeKind.BLOCK, value)
     }
@@ -329,15 +358,39 @@ internal class DeclarationBinder(
     }
 
     /**
-     * Non-local `function name()` is itself a GLOBAL introducer. When a prior bare free-name
-     * write already invented the GLOBAL symbol, attach this function-site decl to that
-     * symbol so identity stays unified (later bare writes remain non-declarative).
+     * Non-local `function name()` is itself a GLOBAL introducer rooted at the chunk scope
+     * (even when written inside a nested do/if block). When a prior bare free-name write
+     * already invented the GLOBAL symbol, attach this function-site decl to that symbol so
+     * identity stays unified (later bare writes remain non-declarative).
+     *
+     * A visible LOCAL/PARAMETER owns the name instead: `function x() end` re-binds that
+     * local (Lua name resolution) by recording a FUNCTION-site declaration on the existing
+     * symbol — it must not mint a phantom GLOBAL peer.
      */
     private fun bindNonLocalFunctionName(
         identifier: Identifier,
         owner: DeclarationOwner,
         documentation: DeclarationDocumentation?
     ): BinderDeclaration {
+        val existing = builder.findVisibleValueDeclaration(identifier.name)
+        val existingSymbolId = existing?.symbolId
+
+        if (existingSymbolId != null &&
+            (existing.kind == DeclarationKind.LOCAL || existing.kind == DeclarationKind.PARAMETER)
+        ) {
+            return builder.addDeclarationToExistingSymbol(
+                functionDeclaration(
+                    id = builder.nextDeclarationId(),
+                    name = identifier.name,
+                    owner = owner,
+                    anchorNode = identifier,
+                    documentation = documentation
+                ),
+                existingSymbolId,
+                scopeId = builder.rootScopeId
+            )
+        }
+
         val declaration = globalDeclaration(
             id = builder.nextDeclarationId(),
             name = identifier.name,
@@ -345,17 +398,17 @@ internal class DeclarationBinder(
             anchorNode = identifier,
             documentation = documentation
         )
-        val existing = builder.findVisibleValueDeclaration(identifier.name)
-        val existingSymbolId = existing?.symbolId
         return if (
             existingSymbolId != null &&
-            existing.kind.namespace == DeclarationNamespace.VALUE &&
-            existing.kind != DeclarationKind.LOCAL &&
-            existing.kind != DeclarationKind.PARAMETER
+            existing.kind.namespace == DeclarationNamespace.VALUE
         ) {
-            builder.addDeclarationToExistingSymbol(declaration, existingSymbolId)
+            builder.addDeclarationToExistingSymbol(
+                declaration,
+                existingSymbolId,
+                scopeId = builder.rootScopeId
+            )
         } else {
-            builder.addDeclarationWithSymbol(declaration)
+            builder.addDeclarationWithSymbol(declaration, scopeId = builder.rootScopeId)
         }
     }
 

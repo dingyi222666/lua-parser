@@ -524,20 +524,32 @@ object TypeRelations {
     }
 
     private fun parameterListsCompatible(target: List<FunctionParameter>, source: List<FunctionParameter>): Boolean {
+        // Signature-vs-signature: the source must SERVE AS the target — it has to accept
+        // every call the target can make (arity containment) and each target argument must
+        // flow INTO the source parameter (contravariance). Extra source params/optionals
+        // are safe in Lua (callers simply pass fewer arguments).
         val requiredTarget = target.count { !it.optional && !it.vararg }
         val requiredSource = source.count { !it.optional && !it.vararg }
-        if (requiredTarget != requiredSource && target.none { it.vararg } && source.none { it.vararg }) {
+        if (requiredSource > requiredTarget) {
+            return false
+        }
+        val targetHasVararg = target.any { it.vararg }
+        val sourceHasVararg = source.any { it.vararg }
+        if (targetHasVararg && !sourceHasVararg) {
+            return false
+        }
+        if (!sourceHasVararg && source.size < target.size) {
             return false
         }
 
-        val maxParameters = maxOf(target.size, source.size)
-        for (index in 0 until maxParameters) {
-            val targetParameter = target.getOrNull(index) ?: target.lastOrNull { it.vararg } ?: return false
+        for (index in target.indices) {
+            val targetParameter = target[index]
             val sourceParameter = source.getOrNull(index)
                 ?: source.lastOrNull { it.vararg }
-                ?: return targetParameter.optional || targetParameter.vararg
-
-            if (!isAssignable(targetParameter.type, sourceParameter.type)) {
+                ?: return targetParameter.optional
+            // Contravariant: a handler whose parameter is NARROWER than the target's
+            // cannot serve it (fun(value: "x") cannot serve fun(value: string)).
+            if (!isAssignable(sourceParameter.type, targetParameter.type)) {
                 return false
             }
         }

@@ -842,8 +842,10 @@ class LspRealProjectEditorLifecycleTddTest {
         val ranges = service.selectionRanges(
             SelectionRangeParams(TextDocumentIdentifier(uri), listOf(pos))
         )
-        assertEquals(1, ranges.size)
-        val first = ranges[0]
+        // One position yields at most one chain; unresolvable positions are dropped
+        // instead of being returned as null slots.
+        assertTrue(ranges.size <= 1, "expected at most one chain for one position; got ${ranges.size}")
+        val first = ranges.firstOrNull()
         if (first != null) {
             assertTrue(first.range.start.line >= 0)
         }

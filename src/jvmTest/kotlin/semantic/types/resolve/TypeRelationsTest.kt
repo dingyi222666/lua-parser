@@ -92,11 +92,31 @@ class TypeRelationsTest {
             FunctionType(parameters = listOf(FunctionParameter("value", PrimitiveType.BOOLEAN)), returnType = PrimitiveType.STRING)
         )
 
-        assertTrue(target.isAssignableFrom(compatible))
+        // Function params are contravariant for signature-vs-signature assignability:
+        // a fun(value: "x") handler cannot serve fun(value: string) (it crashes on any
+        // other string), while fun(value: string) CAN serve fun(value: "x").
+        assertFalse(target.isAssignableFrom(compatible))
+        assertTrue(compatible.isAssignableFrom(target))
         assertFalse(target.isAssignableFrom(incompatible))
         assertTrue(overloadedTarget.isAssignableFrom(target))
         assertFalse(overloadedTarget.isAssignableFrom(uncoveredSource))
         assertTrue(PrimitiveType.FUNCTION.isAssignableFrom(overloadedTarget))
+
+        // Arity containment: a source accepting MORE arguments (extra optional) can serve
+        // a target with fewer required parameters; the reverse cannot.
+        val fewerRequired = FunctionType(
+            parameters = listOf(FunctionParameter("a", PrimitiveType.NUMBER)),
+            returnType = PrimitiveType.NIL
+        )
+        val extraOptional = FunctionType(
+            parameters = listOf(
+                FunctionParameter("a", PrimitiveType.NUMBER),
+                FunctionParameter("b", PrimitiveType.BOOLEAN, optional = true)
+            ),
+            returnType = PrimitiveType.NIL
+        )
+        assertTrue(fewerRequired.isAssignableFrom(extraOptional))
+        assertFalse(extraOptional.isAssignableFrom(fewerRequired))
     }
 
     @Test
