@@ -5,7 +5,7 @@ Task: TASK-499 (docs-only refresh)
 
 This matrix documents the current Android-Lua and LuaJava compatibility target for the Lua parser, semantic workspace, JVM interop, and LSP analysis work in this repository.
 
-**Honesty bound (post-TASK-184, pre-TASK-043):** these entries describe intended and currently implemented/static-model coverage after the Android-Lua documentation, resource-model, workspace import-resolution, LuaJava helper-alias, library-stub, and related task chain. They do **not** claim final green verification. Serialized Gradle/test verification remains review-owned under **TASK-043** (`blocked`). Final acceptance remains **TASK-037** (`blocked`). No Gradle, compile, or test command was run for this documentation task.
+**Honesty bound (post-TASK-184; updated 2026-07-13):** these entries describe intended and currently implemented/static-model coverage after the Android-Lua documentation, resource-model, workspace import-resolution, LuaJava helper-alias, library-stub, and related task chain. Serialized verification **TASK-043 is done** (2026-07-13, full `jvmTest` run 29228040252 green; see `tasks/TASK-043.md` and `docs/acceptance-traceability.md`), and the TASK-037 acceptance matrix is recorded in `docs/acceptance-traceability.md`. No Gradle, compile, or test command was run for this documentation task itself.
 
 ## Open verification gate (post-chain honesty)
 
@@ -17,7 +17,7 @@ The historical implementation chain **TASK-169 → TASK-140 → TASK-176 → TAS
 | TASK-140 | Complete transitive LuaJava helper alias resolution | `done` | Evaluator/reference resolution for chained local aliases such as `local bindClass = luajava.bindClass; local bind = bindClass; local again = bind`. Focused serial `LuaJavaBindClassTddTest` was accepted green under review. |
 | TASK-176 | Preserve Android-Lua import surfaces under scoped activation | `done` | Path-scoped `require "import"` / import-module surfaces, imported class/package completion kinds, dynamic import aliases, and current-file import definitions after sibling-file leakage filters. |
 | TASK-184 | Restore Android-Lua library stub fixture and type surfaces | `done` | Android-Lua library stub/global/type surfaces (`activity`/`service`/`loadlayout`/`loadbitmap`/`loadmenu`, helper modules, `.aly`/layout fixtures) restored under review acceptance. |
-| TASK-043 | Serialized Gradle verification phase | **`blocked`** | Full/serial Gradle and focused suite verification across the wave backlog. **Do not claim final green.** Inventory/path follow-ups (for example TASK-125 `review`, TASK-038 `ready`) still sit in front of a clean unlock narrative. |
+| TASK-043 | Serialized Gradle verification phase | **`done`** (2026-07-13) | Full Windows `jvmTest` run 29228040252 green (5386 tests / 0 failures / 0 errors / 177 skipped, SHA `cd188239`). Evidence: `tasks/TASK-043.md`, `docs/acceptance-traceability.md`. |
 | TASK-037 | Final green verification and acceptance audit | **`blocked`** | End-to-end acceptance after TASK-043 evidence is honest and green enough. |
 
 Claim policy after the chain:

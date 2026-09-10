@@ -818,6 +818,7 @@
       languageId: languageId,
       version: 1,
       model: model,
+      text: text,
       openedOnServer: false,
     };
     openDocs.set(uri, doc);
@@ -866,6 +867,13 @@
   function closeDocument(uri) {
     const doc = openDocs.get(uri);
     if (!doc) return;
+
+    if (doc.model.getValue() !== (doc.text || "")) {
+      const proceed = window.confirm(
+        '"' + doc.name + '" has unsaved changes. Close anyway?'
+      );
+      if (!proceed) return;
+    }
 
     if (lspReady && doc.openedOnServer) {
       try {

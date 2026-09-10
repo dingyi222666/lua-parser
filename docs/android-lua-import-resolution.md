@@ -270,6 +270,6 @@ Static pipeline order:
 - `src/commonMain/kotlin/.../workspace/WorkspaceModuleGraphBuilder.kt` — provider priority / active provider selection
 - `src/jvmMain/kotlin/.../interop/jvm/JvmWorkspaceEngine.kt` — extra providers, scoped imports, `resolveImportTarget`
 - `src/jvmMain/kotlin/.../interop/jvm/JvmClassModuleProvider.kt` — parse, resolveClassLoads, packageProvidersFor, diagnostics
-- `src/jvmTest/kotlin/semantic/workspace/AndroidLuaImportNegativePathTddTest.kt` — TASK-241 negative corpus
-- `src/jvmTest/kotlin/semantic/workspace/AndroidLuaImportWorkspaceTddTest.kt` — TASK-176 workspace surfaces
+- `src/jvmTest/kotlin/semantic/workspace/AndroidLuaImportNegativePathTddTest.kt` — TASK-241 negative corpus (**deleted** 2026-07, e786c77 — coverage culled, pending reimplementation)
+- `src/jvmTest/kotlin/semantic/workspace/AndroidLuaImportWorkspaceTddTest.kt` — TASK-176 workspace surfaces (**deleted** 2026-07, e786c77 — coverage culled, pending reimplementation)
 - `docs/android-platform-setup.md` — Corretto 17, dual-path macOS `android.jar`, skip-when-absent

@@ -1,6 +1,6 @@
 # JVM reflection and classloader design
 
-Status: design note for the **post-TASK-184 / pre-TASK-043** product tree. TASK-184 library-stub and related Android-Lua surface work is accepted in-tree; **TASK-043 serialized verification remains open**. This document is **not** a final-green claim, not a pass/fail ledger, and does not unlock TASK-043.
+Status: design note for the post-TASK-184 product tree. TASK-184 library-stub and related Android-Lua surface work is accepted in-tree; **TASK-043 serialized verification is done** (2026-07-13, full `jvmTest` run 29228040252 green — see `tasks/TASK-043.md` / `docs/acceptance-traceability.md`). This document remains a design note, not a pass/fail ledger.
 
 This note describes the JVM reflection provider introduced by TASK-030 (and later host-path / discovery work such as TASK-245) and how its output feeds the common Java interop and workspace analysis model. The loading boundary is JVM-only; reflected class surfaces are converted into the common semantic model before workspace queries, completion, hover, definition, references, and LSP features consume them.
 
@@ -184,7 +184,7 @@ Current limitations are intentional and should be preserved until a focused foll
 - Underscore inner-class compatibility can misinterpret legitimate class names containing underscores.
 - Non-literal dynamic class names remain unresolved unless supplied through workspace metadata.
 - Downloads `android.jar` is never auto-discovered; it must be explicit metadata when used.
-- Final behavioral acceptance of reflection + Android-Lua integration remains blocked on **TASK-043** (and TASK-037 acceptance audit). Do not treat this note as suite-green evidence.
+- Final behavioral acceptance of reflection + Android-Lua integration was covered by **TASK-043** (done 2026-07-13, run 29228040252 green) and the TASK-037 acceptance audit chain recorded in `docs/acceptance-traceability.md`. This note itself is still not suite-green evidence for future changes.
 
 ## Verification
 

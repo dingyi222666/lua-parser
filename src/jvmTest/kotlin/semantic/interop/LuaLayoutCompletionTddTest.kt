@@ -4,6 +4,7 @@ import io.github.dingyi222666.luaparser.interop.jvm.JvmWorkspaceConfiguration
 import io.github.dingyi222666.luaparser.interop.jvm.JvmWorkspaceEngine
 import semantic.support.WorkspaceSemanticHarness
 import java.io.File
+import org.junit.Assume
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -20,9 +21,7 @@ class LuaLayoutCompletionTddTest {
 
     @Test
     fun list_view_table_suggests_adapter_and_layout_keys() {
-        if (!androidJar.isFile) {
-            return
-        }
+        Assume.assumeTrue(androidJar.isFile)
         val harness = harness(
             "main.lua" to """
                 local tab = {}
@@ -49,9 +48,7 @@ class LuaLayoutCompletionTddTest {
 
     @Test
     fun text_view_table_suggests_text_keys() {
-        if (!androidJar.isFile) {
-            return
-        }
+        Assume.assumeTrue(androidJar.isFile)
         val harness = harness(
             "main.lua" to """
                 local tab = {}
@@ -74,9 +71,7 @@ class LuaLayoutCompletionTddTest {
 
     @Test
     fun ids_table_registers_layout_id_fields() {
-        if (!androidJar.isFile) {
-            return
-        }
+        Assume.assumeTrue(androidJar.isFile)
         val harness = harness(
             "main.lua" to """
                 local tab = {}
@@ -100,9 +95,7 @@ class LuaLayoutCompletionTddTest {
 
     @Test
     fun non_layout_table_keeps_regular_completions() {
-        if (!androidJar.isFile) {
-            return
-        }
+        Assume.assumeTrue(androidJar.isFile)
         val harness = harness(
             "main.lua" to """
                 local config = {
@@ -119,9 +112,7 @@ class LuaLayoutCompletionTddTest {
 
     @Test
     fun aly_layout_file_gets_property_completions() {
-        if (!androidJar.isFile) {
-            return
-        }
+        Assume.assumeTrue(androidJar.isFile)
         val harness = WorkspaceSemanticHarness.build(
             "popup.aly" to """
                 {
@@ -151,9 +142,7 @@ class LuaLayoutCompletionTddTest {
 
     @Test
     fun metadata_extensions_add_custom_class_properties() {
-        if (!androidJar.isFile) {
-            return
-        }
+        Assume.assumeTrue(androidJar.isFile)
         val harness = WorkspaceSemanticHarness.build(
             "main.lua" to """
                 local tab = {}
@@ -192,9 +181,7 @@ class LuaLayoutCompletionTddTest {
 
     @Test
     fun layout_value_string_literals_suggest_domains() {
-        if (!androidJar.isFile) {
-            return
-        }
+        Assume.assumeTrue(androidJar.isFile)
         val harness = harness(
             "main.lua" to """
                 local tab = {}
@@ -250,9 +237,7 @@ class LuaLayoutCompletionTddTest {
 
     @Test
     fun class_slot_caret_keeps_regular_completions() {
-        if (!androidJar.isFile) {
-            return
-        }
+        Assume.assumeTrue(androidJar.isFile)
         val harness = harness(
             "main.lua" to """
                 local tab = {}
@@ -276,9 +261,7 @@ class LuaLayoutCompletionTddTest {
 
     @Test
     fun empty_and_mid_string_values_suggest_domains() {
-        if (!androidJar.isFile) {
-            return
-        }
+        Assume.assumeTrue(androidJar.isFile)
         val source = """
             local tab = {}
             local view = loadlayout({

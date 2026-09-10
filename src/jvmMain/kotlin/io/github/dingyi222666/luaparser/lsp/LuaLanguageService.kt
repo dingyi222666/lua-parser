@@ -391,15 +391,20 @@ class LuaLanguageService(
         publishOrder.map { candidate -> publishDiagnostics(candidate) }
     }
 
-    fun didClose(params: DidCloseTextDocumentParams): PublishDiagnosticsParams = synchronized(stateLock) {
+    fun didClose(params: DidCloseTextDocumentParams): List<PublishDiagnosticsParams> = synchronized(stateLock) {
         val uri = params.textDocument.uri
         val path = pathOf(uri)
         openDocuments.remove(path)
         documentUris.remove(path)
         // Closed buffers must not pin their last full semantic-tokens payload.
         semanticTokensCache.remove(path)
-        refreshIncremental()
-        PublishDiagnosticsParams(uri, emptyList())
+        // Dependents re-analyzed against the closed file's disk text need fresh
+        // diagnostics too, otherwise they keep the pre-close markers.
+        val affected = refreshIncremental()
+        val republished = affected
+            .filter { it != path && it in openDocuments }
+            .map { publishDiagnostics(it) }
+        republished + PublishDiagnosticsParams(uri, emptyList())
     }
 
     fun didSave(@Suppress("UNUSED_PARAMETER") params: DidSaveTextDocumentParams) {

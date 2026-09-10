@@ -79,7 +79,7 @@ class CommentCollector(
                 endLine = range.end.line,
                 visibleEndLine = comments.last().visibleEndLine(),
                 docComment = docCommentSyntaxParser.parse(docComments),
-                inlineTypeText = docCommentSyntaxParser.findInlineTypeText(comments)
+                inlineTypeText = docCommentSyntaxParser.findInlineTypeText(docComments)
             )
             blocks.add(block)
             return block

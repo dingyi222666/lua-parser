@@ -128,7 +128,7 @@ class LuaTextDocumentService(
             openDocuments.remove(params.textDocument.uri)
             languageService.didClose(params)
         }
-        publishDiagnostics(diagnostics)
+        diagnostics.forEach(publishDiagnostics)
     }
 
     override fun didSave(params: DidSaveTextDocumentParams) {

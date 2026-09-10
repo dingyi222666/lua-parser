@@ -10,7 +10,7 @@ This matrix maps **malformed-input recovery scenarios** for the Lua 5.3 / Androi
 - `docs/test-strategy.md` — parser/source lane inventory  
 - `docs/final-verification.md` — final filter pointers  
 
-**Honesty bound:** rows describe the **current fixture contract** encoded in `src/jvmTest/kotlin/parser/recovery/*`. They do **not** claim a fresh green Gradle run. Serialized verification remains review-owned under **TASK-043**. No Gradle, compile, or test command was run for this documentation task.
+**Honesty bound (updated 2026-07):** the 2026-07 test cull (e786c77) removed all parser-recovery suites except `LuaParserRecoveryTddTest.kt` and `LuaParserRecoveryDiagnosticsTddTest.kt` under `src/jvmTest/kotlin/parser/recovery/`. Rows citing any other suite describe **coverage culled 2026-07 (e786c77), pending reimplementation** — they are not current fixture contracts. TASK-043 serialized verification is done (2026-07-13, full `jvmTest` run 29228040252 green; see `tasks/TASK-043.md` / `docs/acceptance-traceability.md`). No Gradle, compile, or test command was run for this documentation task.
 
 ## Recovery contract (shared)
 
@@ -20,7 +20,7 @@ This matrix maps **malformed-input recovery scenarios** for the Lua 5.3 / Androi
 | Diagnostics | Structured `LuaParserRecoveryDiagnostic` (message + range). Recovery must not write recovery warnings to process stdout (TASK-142). |
 | Residual AST | Recovered chunk stays usable: later statements remain reachable; recovered constructs keep deterministic compact shapes (`parser.renderShape`). |
 | Bad markers | Missing expressions/names/members often surface as `bad` nodes, commonly rendered as `ExpressionNodeSupport`, empty `Id()`, truncated `Member(...)`, or empty-arg `Call(...)`. |
-| Strict mode | Default `errorRecovery = false` should reject most of these inputs. Two assignment RHS gaps still currently parse under strict mode (recorded below); they are not production-blocked recovery cases. |
+| Strict mode | Strict mode is **non-default opt-in**: `LuaParser(luaVersion, errorRecovery = false)`. The parser default is recovery **on** (`errorRecovery = true` in `LuaParser.kt`), so the required-recovery rows in this matrix describe default behavior. Strict mode should reject most of these inputs. Two assignment RHS gaps still currently parse under strict mode (recorded below); they are not production-blocked recovery cases. |
 | Production-blocked inventory | Empty after TASK-180. Required cases live in supported recovery lists; intentionally rejected boundaries are explicit and separate. |
 | Determinism | Same source under recovery must produce the same shape fragments and the same diagnostic message list across repeated parses. |
 
@@ -156,7 +156,7 @@ These notes document **current product** absorb-vs-sibling behaviour so review d
 | Multi-RHS later term after comma + line-break | Later RHS always uses statement-start-after-line-break recovery → placeholder + sibling leftover NAME/call | Accepts well-formed multi-line multi-RHS (`CURRENTLY_ACCEPTS`) |
 | Incomplete RHS with both loop delimiters present | Placeholders only; do/end diagnostics are **not** emitted solely for incomplete expressions | Rejects true gaps when tokens missing |
 
-**Focused-suite honesty tallies (fixture counts, not green-run claims):**
+**Focused-suite honesty tallies (historical fixture counts; all suites below were culled 2026-07, e786c77 — coverage culled, pending reimplementation):**
 
 | Suite | Inventory size | `CURRENTLY_ACCEPTS` | `CURRENTLY_ACCEPTS_MISSING_RHS` | Default `REJECTS` remainder |
 | --- | --- | --- | --- | --- |
@@ -165,7 +165,7 @@ These notes document **current product** absorb-vs-sibling behaviour so review d
 | `LuaParserRecoveryWhileDoTddTest` | 25 | 0 | 0 | 25 (strict rejects malformed; incomplete-body forms still required recovery) |
 | `LuaParserRecoveryGotoLabelTddTest` | 14 (required inventory) | n/a (no `StrictParseExpectation` enum; malformed edges assert strict rejection; absorbed-NAME `goto\nprint` documented separately) | n/a | n/a |
 
-These gaps do **not** weaken recovery acceptance. TASK-043 should report whether they remain current when focused recovery filters run.
+These gaps do **not** weaken recovery acceptance. The focused suites that recorded them were culled 2026-07 (e786c77); re-verification of these tallies is pending reimplementation.
 
 ## Shape notes (current resynchronization markers)
 
@@ -178,28 +178,32 @@ These gaps do **not** weaken recovery acceptance. TASK-043 should report whether
 | Resource-backed mixed Android-Lua recovery fixture | Bad markers for broken member / malformed `when` call / lambda placeholder required; structured warning text for those constructs may be empty | Diagnostic drift is reported separately from AST reachability (`docs/android-lua-verification.md`) |
 | Unclosed empty table followed by `print(config)` | May absorb the call as a table array field rather than a sibling statement | Asserted in table suite; treat as intentional current shape |
 
-## Fixture map (source of truth)
+## Fixture map (source of truth; updated after the 2026-07 test cull, e786c77)
+
+Only `LuaParserRecoveryTddTest.kt` and `LuaParserRecoveryDiagnosticsTddTest.kt` survive under `src/jvmTest/kotlin/parser/recovery/`. Rows marked **deleted** had their coverage culled 2026-07 (e786c77) and are pending reimplementation; they do not describe current fixtures.
 
 | Suite | Path | Role |
 | --- | --- | --- |
 | Core inventory | `src/jvmTest/kotlin/parser/recovery/LuaParserRecoveryTddTest.kt` | Required recovery cases + intentionally rejected boundaries + strict gap flags + production-blocked list (empty) |
 | Structured diagnostics | `src/jvmTest/kotlin/parser/recovery/LuaParserRecoveryDiagnosticsTddTest.kt` | No-stdout + deterministic `LuaParserRecoveryDiagnostic` messages/ranges |
-| If chains | `src/jvmTest/kotlin/parser/recovery/LuaParserRecoveryIfChainTddTest.kt` | Expanded if/elseif/else residual corpus |
-| Numeric for / missing end | `src/jvmTest/kotlin/parser/recovery/LuaParserRecoveryNumericForEndTddTest.kt` | Numeric for end/body residual corpus |
-| Generic for / missing do | `src/jvmTest/kotlin/parser/recovery/LuaParserRecoveryForInDoTddTest.kt` | for-in do residual corpus |
-| Tables | `src/jvmTest/kotlin/parser/recovery/LuaParserRecoveryTableConstructorTddTest.kt` | Table constructor residual corpus |
-| Repeat / until | `src/jvmTest/kotlin/parser/recovery/LuaParserRecoveryRepeatUntilTddTest.kt` | Bounded nested until recovery |
-| **Local / assign (TASK-320)** | `src/jvmTest/kotlin/parser/recovery/LuaParserRecoveryLocalAssignTddTest.kt` | **37** cases: missing names/`=`/RHS, multi-target, index/member, incomplete RHS, nested blocks + `CURRENTLY_ACCEPTS` (4) / `CURRENTLY_ACCEPTS_MISSING_RHS` (6) honesty |
-| **While / do (TASK-319)** | `src/jvmTest/kotlin/parser/recovery/LuaParserRecoveryWhileDoTddTest.kt` | **25** cases: missing `do` body/siblings, missing `do`+`end`, missing `end` only, nested while, incomplete bodies (no CURRENTLY_ACCEPTS flags) |
-| **Goto / label (TASK-321)** | `src/jvmTest/kotlin/parser/recovery/LuaParserRecoveryGotoLabelTddTest.kt` | **14** required inventory cases: malformed `goto`/`::label::` residual shapes; empty vs absorbed NAME; nested residual + strict rejection |
-| **Multi-RHS line-break (TASK-386)** | `src/jvmTest/kotlin/parser/recovery/LuaParserRecoveryMultiRhsLineBreakTddTest.kt` | **18** cases: multi-line multi-RHS later-term footgun; unary/binary absorb-vs-sibling; local vs assign asymmetry; `CURRENTLY_ACCEPTS` (12) / `CURRENTLY_ACCEPTS_MISSING_RHS` (1) |
-| Layout tables (Android-Lua) | `src/jvmTest/kotlin/parser/recovery/LuaParserRecoveryLayoutTableTddTest.kt` | loadlayout / widget table residual corpus |
-| AndroLua switch/when | `src/jvmTest/kotlin/parser/recovery/LuaParserRecoveryAndroluaSwitchWhenTddTest.kt` | Version-gated switch/when recovery |
-| AndroLua lambda | `src/jvmTest/kotlin/parser/recovery/LuaParserRecoveryAndroluaLambdaTddTest.kt` | `->` / `=>` lambda recovery |
+| If chains | `src/jvmTest/kotlin/parser/recovery/LuaParserRecoveryIfChainTddTest.kt` — **deleted** (coverage culled 2026-07, e786c77; pending reimplementation) | Expanded if/elseif/else residual corpus |
+| Numeric for / missing end | `src/jvmTest/kotlin/parser/recovery/LuaParserRecoveryNumericForEndTddTest.kt` — **deleted** (coverage culled 2026-07, e786c77; pending reimplementation) | Numeric for end/body residual corpus |
+| Generic for / missing do | `src/jvmTest/kotlin/parser/recovery/LuaParserRecoveryForInDoTddTest.kt` — **deleted** (coverage culled 2026-07, e786c77; pending reimplementation) | for-in do residual corpus |
+| Tables | `src/jvmTest/kotlin/parser/recovery/LuaParserRecoveryTableConstructorTddTest.kt` — **deleted** (coverage culled 2026-07, e786c77; pending reimplementation) | Table constructor residual corpus |
+| Repeat / until | `src/jvmTest/kotlin/parser/recovery/LuaParserRecoveryRepeatUntilTddTest.kt` — **deleted** (coverage culled 2026-07, e786c77; pending reimplementation) | Bounded nested until recovery |
+| **Local / assign (TASK-320)** | `src/jvmTest/kotlin/parser/recovery/LuaParserRecoveryLocalAssignTddTest.kt` — **deleted** (coverage culled 2026-07, e786c77; pending reimplementation) | Was **37** cases: missing names/`=`/RHS, multi-target, index/member, incomplete RHS, nested blocks + `CURRENTLY_ACCEPTS` (4) / `CURRENTLY_ACCEPTS_MISSING_RHS` (6) honesty |
+| **While / do (TASK-319)** | `src/jvmTest/kotlin/parser/recovery/LuaParserRecoveryWhileDoTddTest.kt` — **deleted** (coverage culled 2026-07, e786c77; pending reimplementation) | Was **25** cases: missing `do` body/siblings, missing `do`+`end`, missing `end` only, nested while, incomplete bodies (no CURRENTLY_ACCEPTS flags) |
+| **Goto / label (TASK-321)** | `src/jvmTest/kotlin/parser/recovery/LuaParserRecoveryGotoLabelTddTest.kt` — **deleted** (coverage culled 2026-07, e786c77; pending reimplementation) | Was **14** required inventory cases: malformed `goto`/`::label::` residual shapes; empty vs absorbed NAME; nested residual + strict rejection |
+| **Multi-RHS line-break (TASK-386)** | `src/jvmTest/kotlin/parser/recovery/LuaParserRecoveryMultiRhsLineBreakTddTest.kt` — **deleted** (coverage culled 2026-07, e786c77; pending reimplementation) | Was **18** cases: multi-line multi-RHS later-term footgun; unary/binary absorb-vs-sibling; local vs assign asymmetry; `CURRENTLY_ACCEPTS` (12) / `CURRENTLY_ACCEPTS_MISSING_RHS` (1) |
+| Layout tables (Android-Lua) | `src/jvmTest/kotlin/parser/recovery/LuaParserRecoveryLayoutTableTddTest.kt` — **deleted** (coverage culled 2026-07, e786c77; pending reimplementation) | loadlayout / widget table residual corpus |
+| AndroLua switch/when | `src/jvmTest/kotlin/parser/recovery/LuaParserRecoveryAndroluaSwitchWhenTddTest.kt` — **deleted** (coverage culled 2026-07, e786c77; pending reimplementation) | Version-gated switch/when recovery |
+| AndroLua lambda | `src/jvmTest/kotlin/parser/recovery/LuaParserRecoveryAndroluaLambdaTddTest.kt` — **deleted** (coverage culled 2026-07, e786c77; pending reimplementation) | `->` / `=>` lambda recovery |
 | Regression resource shapes | `src/jvmTest/resources/parser/regressions/recovery/` (when present) | Resource-backed residual shapes |
-| Historical regression harness | `parser.ParserRecoveryRegressionTest` (JVM) | Supplemental regression filter for TASK-043 |
+| Historical regression harness | `parser.ParserRecoveryRegressionTest` (JVM) — **deleted** (coverage culled 2026-07, e786c77; pending reimplementation) | Supplemental regression filter for TASK-043 |
 
 ### Focused suite maps (TASK-390 refresh)
+
+> **Note:** all four suites mapped below (`LuaParserRecoveryLocalAssignTddTest`, `LuaParserRecoveryWhileDoTddTest`, `LuaParserRecoveryGotoLabelTddTest`, `LuaParserRecoveryMultiRhsLineBreakTddTest`) were deleted in the 2026-07 test cull (e786c77). These subsections are retained as the historical fixture contract; coverage is culled pending reimplementation.
 
 #### `LuaParserRecoveryLocalAssignTddTest` (37 cases)
 
@@ -271,7 +275,7 @@ Workers in parallel waves **must not** run Gradle. Review-owned serialized verif
 2. Run **one** command at a time.  
 3. Prefer compile gate first when a verification wave is released:  
    `JAVA_HOME=… ./gradlew compileTestKotlinJvm` (macOS) or `./gradlew.bat compileTestKotlinJvm` (Windows).  
-4. Then focused recovery filters (examples from `docs/android-lua-verification.md` / historical review commands):
+4. Then focused recovery filters (examples from `docs/android-lua-verification.md` / historical review commands; **several of the suites listed below were culled 2026-07, e786c77 and are shown for historical reference only**):
 
 ```bash
 # macOS host example (review-owned only; workers must not run these)

@@ -37,10 +37,10 @@ It is a focused companion to:
 | --- | --- | --- |
 | Android-Lua `_G` overlay | `src/commonMain/resources/io/github/dingyi222666/luaparser/semantic/workspace/androidlua/androlua5.3/_G.lua` | Primary `AndroidLuaContext` / `LuaActivity` / `LuaService` fields + globals |
 | Active LuaJava-facing `_G` | `src/commonMain/resources/.../std/androlua53-luajava/_G.lua` | Same context field set for the AndroLua 5.3 LuaJava overlay path |
-| Builtin overlay source twin | `src/commonMain/kotlin/.../std/AndroidLua53LuaJavaBuiltinOverlaySources.kt` | Embedded twin of the same declarations |
+| Builtin overlay resource loader | `src/commonMain/kotlin/.../std/BuiltinOverlayLoader.kt` | Loads the same declarations from classpath resources (`androidlua/androlua5.3/`, `std/androlua53-luajava/_G.lua`). Replaces the former Kotlin source twin `AndroidLua53LuaJavaBuiltinOverlaySources.kt`, which was deleted 2026-07 (e786c77). |
 | Compact class index only | `androidlua/androlua5.3/classes/androlua-runtime.index` | Lists `com.androlua.LuaActivity` / `LuaService` names; **not** a full method catalog |
 
-Inheritance shape in all three declaration sources:
+Inheritance shape in the remaining declaration resources (and the loader's resource tree):
 
 ```text
 ---@class AndroidLuaContext

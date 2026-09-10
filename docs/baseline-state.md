@@ -7,7 +7,7 @@ This page has two layers:
 1. **Current post-TASK-184 / pre-TASK-043 baseline note** (TASK-509 WAVE36F docs-only refresh) — host paths, inventory honesty, and gate status for the present macOS host.
 2. **Historical TASK-001 capture** (2026-06-06) — original inventory transcript retained for audit trail. Treat numbers and dirty-file lists in that section as **historical**, not live-tree truth.
 
-**Do not claim final green acceptance** from this document. Inventory is **not final until TASK-043**. TASK-043 remains **blocked**. No Gradle, tests, or compile were run for this refresh.
+**Update 2026-07-13: TASK-043 is done.** Serialized verification completed with Windows tip-coherent full `jvmTest` run 29228040252 GREEN (5386 tests, 0 failures, 0 errors, 177 skipped; SHA `cd188239b7a52744c9519e8d15169808a9f7e2c2`); see `tasks/TASK-043.md` and `docs/acceptance-traceability.md`. The pre-TASK-043 framing below is a dated 2026-07-12 snapshot (TASK-509 itself ran no Gradle, tests, or compile).
 
 ## Current Post-TASK-184 / Pre-TASK-043 Baseline Note (TASK-509, 2026-07-12)
 
@@ -18,11 +18,11 @@ This page has two layers:
 | TASK-184 (Android-Lua library stub surfaces) | **done** (review-accepted). Unblocks product surface work only. |
 | TASK-125 (pre-verification inventory bars) | **review** (not accepted green). Live recount bars: baseline **331** `*Test.kt` / **4624** `@Test`; campaign **272** `*TddTest.kt` / **4109** `@Test`. |
 | TASK-038 | **ready** (depends on TASK-125). |
-| TASK-043 (serialized Gradle verification) | **blocked**. Depends_on product wave through TASK-184 is done at task level, but inventory/trace path (TASK-125 → TASK-038) is still open. |
-| TASK-105 / TASK-106 / TASK-037 | Final ledger / traceability / acceptance audit chain remains **blocked** on TASK-043. |
-| Global green / release | **Not green.** Source-count campaign methods ≥ 500 is necessary for TASK-037's floor but is **not** command evidence. |
+| TASK-043 (serialized Gradle verification) | **done** (2026-07-13). Full `jvmTest` run 29228040252 green on Windows (5386/0/0/177). |
+| TASK-105 / TASK-106 / TASK-037 | Unblocked by TASK-043; the final ledger (`docs/final-verification.md`), traceability matrix (`docs/acceptance-traceability.md`), and acceptance audit chain were completed after run 29228040252. |
+| Global green / release | Green as of run 29228040252 (2026-07-13; 5386 tests / 0 failures / 0 errors / 177 skipped). Any later regression requires a new full-suite run before green is re-claimed. |
 
-**Inventory is not final until TASK-043.** Raised fixture bars, docs-only recounts, and worker `review` statuses are not pass/fail suite evidence. Do not treat this baseline note as a release statement.
+**Inventory finalization and suite evidence were owned by TASK-043, now done** (run 29228040252; see `docs/acceptance-traceability.md`). Raised fixture bars, docs-only recounts, and worker `review` statuses are still not pass/fail suite evidence, and this baseline note itself is not a release statement.
 
 ### Host paths (macOS; read-only checks)
 
