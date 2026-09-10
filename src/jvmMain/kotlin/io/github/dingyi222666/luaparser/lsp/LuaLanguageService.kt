@@ -2628,6 +2628,12 @@ class LuaLanguageService(
     /**
      * @param analyzed the workspace's own parse of exactly this text, when available. Range
      *   formatting passes a substring that has no snapshot entry, so it parses here instead.
+     *
+     * Guard rail: the AST2Lua surface is re-parsed before it is returned. A printer defect
+     * that drops or invents tokens (the if-statement terminal `end` regression from the
+     * adversarial audit) would otherwise reach the editor as a full-document replacement
+     * that corrupts the buffer. When the re-parse reports any recovery diagnostic, or throws,
+     * the safe indent/newline normalization of the ORIGINAL text is returned instead.
      */
     private fun formatSourceText(
         source: String,
@@ -2670,7 +2676,19 @@ class LuaLanguageService(
                 if (source.contains("\r\n")) {
                     printed = printed.replace("\r\n", "\n").replace("\n", "\r\n")
                 }
-                return printed
+                // Verify the exact text about to replace the document: it must parse back
+                // without recovery diagnostics under the same default parser used above.
+                // Any diagnostic (or parser throw) means the printer produced a surface the
+                // parser does not accept — fall through to the safe normalization below
+                // rather than hand the editor corrupting text.
+                val printedReparsesCleanly = try {
+                    LuaParser().parseWithDiagnostics(printed).recoveryDiagnostics.isEmpty()
+                } catch (_: Exception) {
+                    false
+                }
+                if (printedReparsesCleanly) {
+                    return printed
+                }
             }
         } catch (_: Exception) {
             // Fall through to indent normalize / empty degrade.

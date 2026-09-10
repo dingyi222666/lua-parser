@@ -49,11 +49,10 @@ import kotlin.test.assertTrue
  * 5. **Block layout** — nested blocks are re-indented by `AST2Lua` (`indentSize`, default 4).
  *    Fragment assertions use substrings that survive indentation.
  * 6. **If / else layout** — `AST2Lua` prints if-clauses via `visitIfClause` / `visitElseClause` /
- *    `visitElseIfClause` and does **not** emit a trailing terminal `end` for [IfStatement]
- *    (unlike `do` / `while` / `for` / `function`). Fragment goldens for if samples therefore
- *    assert clause keywords (`if … then`, `else`) and body labels/gotos only — never a required
- *    trailing `end` for pure-if fragments. Shape stability is still enforced via reparse when the
- *    printer surface is accepted by the parser.
+ *    `visitElseIfClause` and `visitIfStatement` emits exactly one terminal `end` per
+ *    [IfStatement] (like `do` / `while` / `for` / `function`). Fragment goldens for if samples
+ *    assert clause keywords (`if … then`, `else`) and body labels/gotos; shape stability is
+ *    enforced via reparse of the printed surface.
  * 7. **Version gating** — goto/label samples use [LuaVersion.LUA_5_3]; attribute samples use
  *    [LuaVersion.LUA_5_4]. Do not mix attribute syntax into 5.3 round-trips.
  * 8. **Out of scope** — jump legality, attribute semantic checks, and comment preservation are

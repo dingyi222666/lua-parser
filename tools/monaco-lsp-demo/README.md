@@ -37,7 +37,20 @@ Browser (Monaco)  --WS JSON-RPC-->  Node bridge  --stdio Content-Length-->  JVM 
 
 1. Click **Start LSP**; `main.lua` (or the first project file) opens after initialization
 2. Hover identifiers, Ctrl/Cmd-click definitions, type `.` / `:` for completion
-3. Open other project files from the sidebar as needed
+3. Document symbols: press Ctrl/Cmd+Shift+O (quick outline) to browse functions/
+   variables of the active file — served by
+   `textDocument/documentSymbol` (hierarchical or flat, both mapped)
+4. Folding: collapse multi-line functions and table constructors via the gutter arrows —
+   served by `textDocument/foldingRange`
+5. Semantic tokens: beyond grammar highlighting, the server's
+   `textDocument/semanticTokens/full` recolors variables/parameters/strings/numbers/
+   comments using the legend advertised at initialize
+6. Open other project files from the sidebar as needed; **↻ Refresh** re-reads the
+   workspace and closes tabs whose files no longer exist on disk
+
+> Semantic tokens require the demo's `semanticHighlighting: true` editor option
+> (already set) plus the provider registration, which happens right after the
+> initialize result delivers the legend.
 
 ### AndroLua layout (.aly) completions
 

@@ -33,9 +33,9 @@ import kotlin.test.fail
  * 4. **Empty / single-expression** — empty chunks and single-expression return statements must
  *    not crash the printer and must reparse to the same shape.
  * 5. **Version** — all samples use [LuaVersion.LUA_5_3] (includes floor-div / bitwise / power).
- * 6. **Out of scope** — comment preservation, semantic checks, and IfStatement trailing-`end`
- *    printer layout (IfStatement does not emit `end`; see TASK-192 policy). Pure-if samples
- *    only assert initial shape + condition fragments, not reparse.
+ * 6. **Out of scope** — comment preservation, semantic checks, and IfStatement printer
+ *    layout (IfStatement emits exactly one terminal `end`; covered by
+ *    [AST2LuaIfElseifRoundTripTddTest]).
  *
  * Documented Lua 5.3 precedence (high → low), relevant slice:
  *   power ^ (right-assoc)

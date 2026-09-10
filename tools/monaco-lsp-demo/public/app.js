@@ -117,6 +117,17 @@
   /** @type {Array<{ dispose: Function }>} */
   let providerDisposables = [];
 
+  /**
+   * Semantic tokens legend captured from the initialize result
+   * (capabilities.semanticTokensProvider.legend). Monaco decodes the server's
+   * tokenType/tokenModifier ints against this same legend, so the provider can
+   * only be registered once it is known.
+   * @type {{ tokenTypes: string[], tokenModifiers: string[] } | null}
+   */
+  let semanticLegend = null;
+  /** @type {{ dispose: Function } | null} */
+  let semanticTokensDisposable = null;
+
   // ---------------------------------------------------------------------------
   // UI helpers
   // ---------------------------------------------------------------------------
@@ -897,13 +908,13 @@
 
   function closeDocument(uri) {
     const doc = openDocs.get(uri);
-    if (!doc) return;
+    if (!doc) return false;
 
     if (doc.model.getValue() !== (doc.text || "")) {
       const proceed = window.confirm(
         '"' + doc.name + '" has unsaved changes. Close anyway?'
       );
-      if (!proceed) return;
+      if (!proceed) return false;
     }
 
     if (lspReady && doc.openedOnServer) {
@@ -936,6 +947,30 @@
     renderFileList();
     renderDiagnosticsPanel();
     updateEditorVisibility();
+    return true;
+  }
+
+  /**
+   * Close every open document whose uri no longer appears in the refreshed
+   * workspace file list (deleted or renamed on disk). Tabs used to survive a
+   * Refresh as ghosts, keeping dead models and stale didOpen state on the
+   * server. Skipped when the fetched list is empty — a failed or partial
+   * listing must not close every tab.
+   */
+  function pruneGoneDocuments() {
+    if (!workspaceFiles.length) return 0;
+    const present = Object.create(null);
+    workspaceFiles.forEach(function (f) {
+      if (f && f.uri) present[f.uri] = true;
+    });
+    let closed = 0;
+    Array.from(openDocs.keys()).forEach(function (uri) {
+      if (!present[uri]) {
+        logSys("Refresh: " + basename(uri) + " left the workspace, closing tab");
+        if (closeDocument(uri)) closed += 1;
+      }
+    });
+    return closed;
   }
 
   function reopenAllOnServer() {
@@ -1011,6 +1046,23 @@
           documentHighlight: {
             dynamicRegistration: false,
           },
+          documentSymbol: {
+            dynamicRegistration: false,
+            // The server picks hierarchical DocumentSymbol vs flat
+            // SymbolInformation from this flag; the demo maps both shapes.
+            hierarchicalDocumentSymbolSupport: true,
+          },
+          foldingRange: {
+            dynamicRegistration: false,
+            lineFoldingOnly: true,
+          },
+          semanticTokens: {
+            dynamicRegistration: false,
+            formats: ["relative"],
+            requests: { range: false, full: { delta: false } },
+            overlappingTokenSupport: false,
+            multilineTokenSupport: false,
+          },
           references: { dynamicRegistration: false },
         },
         window: {
@@ -1039,6 +1091,35 @@
     });
   }
 
+  /**
+   * Pick up capability payloads the demo consumes beyond capability names:
+   * the semantic tokens legend (token type/modifier name lists) that defines
+   * the protocol meaning of each int in the tokens data arrays. Called with
+   * the InitializeResult before any semantic tokens request goes out.
+   */
+  function captureServerCapabilities(result) {
+    const provider =
+      result && result.capabilities && result.capabilities.semanticTokensProvider;
+    const legend = provider && provider.legend;
+    if (legend && Array.isArray(legend.tokenTypes) && legend.tokenTypes.length) {
+      semanticLegend = {
+        tokenTypes: legend.tokenTypes.slice(),
+        tokenModifiers: Array.isArray(legend.tokenModifiers)
+          ? legend.tokenModifiers.slice()
+          : [],
+      };
+      logSys(
+        "semantic tokens legend: " +
+          semanticLegend.tokenTypes.length +
+          " types [" +
+          semanticLegend.tokenTypes.join(", ") +
+          "]"
+      );
+    } else {
+      semanticLegend = null;
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // Monaco providers
   // ---------------------------------------------------------------------------
@@ -1052,6 +1133,14 @@
       }
     });
     providerDisposables = [];
+    if (semanticTokensDisposable) {
+      try {
+        semanticTokensDisposable.dispose();
+      } catch (_) {
+        /* ignore */
+      }
+      semanticTokensDisposable = null;
+    }
   }
 
   function markupToString(contents) {
@@ -1105,6 +1194,100 @@
       25: K.TypeParameter,
     };
     return table[kind] || K.Text;
+  }
+
+  function symbolKindFromLsp(kind) {
+    if (!monacoApi) return 0;
+    const K = monacoApi.languages.SymbolKind;
+    // LSP SymbolKind ints are 1-based; Monaco's enum is 0-based.
+    const table = {
+      1: K.File,
+      2: K.Module,
+      3: K.Namespace,
+      4: K.Package,
+      5: K.Class,
+      6: K.Method,
+      7: K.Property,
+      8: K.Field,
+      9: K.Constructor,
+      10: K.Enum,
+      11: K.Interface,
+      12: K.Function,
+      13: K.Variable,
+      14: K.Constant,
+      15: K.String,
+      16: K.Number,
+      17: K.Boolean,
+      18: K.Array,
+      19: K.Object,
+      20: K.Key,
+      21: K.Null,
+      22: K.EnumMember,
+      23: K.Struct,
+      24: K.Event,
+      25: K.Operator,
+      26: K.TypeParameter,
+    };
+    const mapped = table[kind];
+    return mapped != null ? mapped : K.Object;
+  }
+
+  /**
+   * Map one LSP symbol into a Monaco DocumentSymbol. Accepts BOTH protocol
+   * shapes defensively — hierarchical DocumentSymbol (range/selectionRange/
+   * children/detail) and flat SymbolInformation (location/containerName) —
+   * because the server chooses per negotiated capability and an intervening
+   * proxy could return either regardless.
+   */
+  function documentSymbolFromLsp(sym, containerName) {
+    if (!sym || !monacoApi) return null;
+    const isSymbolInformation = !sym.range && !!sym.location;
+    const fallbackRange = {
+      startLineNumber: 1,
+      startColumn: 1,
+      endLineNumber: 1,
+      endColumn: 1,
+    };
+    const range = rangeFromLsp(
+      isSymbolInformation ? sym.location.range : sym.range
+    ) || fallbackRange;
+    const selectionRange = rangeFromLsp(sym.selectionRange) || range;
+    const symbol = {
+      name: String(sym.name || ""),
+      detail: sym.detail != null ? String(sym.detail) : undefined,
+      kind: symbolKindFromLsp(sym.kind),
+      tags: Array.isArray(sym.tags) ? sym.tags.slice() : [],
+      range: range,
+      selectionRange: selectionRange,
+      containerName:
+        sym.containerName != null ? String(sym.containerName) : containerName,
+    };
+    if (Array.isArray(sym.children) && sym.children.length) {
+      symbol.children = sym.children
+        .map(function (child) {
+          return documentSymbolFromLsp(child, symbol.name);
+        })
+        .filter(Boolean);
+    }
+    return symbol;
+  }
+
+  function foldingRangeFromLsp(range, maxLine) {
+    if (!range || !monacoApi) return null;
+    const start = Math.floor(Number(range.startLine));
+    let end = Math.floor(Number(range.endLine));
+    if (!isFinite(start) || !isFinite(end) || start < 0 || start > maxLine) {
+      return null;
+    }
+    if (end < start) end = start;
+    if (end > maxLine) end = maxLine;
+    if (end <= start) return null; // single-line spans are not foldable
+    const out = { start: start, end: end };
+    // LSP kinds are strings; Monaco's FoldingRangeKind wraps the same names.
+    if (range.kind === "comment") out.kind = monacoApi.languages.FoldingRangeKind.Comment;
+    else if (range.kind === "imports") out.kind = monacoApi.languages.FoldingRangeKind.Imports;
+    else if (range.kind === "region") out.kind = monacoApi.languages.FoldingRangeKind.Region;
+    return out;
   }
 
   function registerProviders() {
@@ -1378,6 +1561,97 @@
         },
       })
     );
+
+    // Monaco's quick outline (Ctrl/Cmd+Shift+O) and symbol search consume this
+    // provider against the active model — no dedicated UI surface needed.
+    providerDisposables.push(
+      monacoApi.languages.registerDocumentSymbolProvider(selector, {
+        provideDocumentSymbols: async function (model) {
+          if (!lspReady) return null;
+          try {
+            const result = await request("textDocument/documentSymbol", {
+              textDocument: { uri: model.uri.toString() },
+            });
+            if (!Array.isArray(result)) return null;
+            return result
+              .map(function (sym) {
+                return documentSymbolFromLsp(sym, undefined);
+              })
+              .filter(Boolean);
+          } catch (e) {
+            logErr("documentSymbol: " + (e.message || e));
+            return null;
+          }
+        },
+      })
+    );
+
+    providerDisposables.push(
+      monacoApi.languages.registerFoldingRangeProvider(selector, {
+        provideFoldingRanges: async function (model) {
+          if (!lspReady) return null;
+          try {
+            const result = await request("textDocument/foldingRange", {
+              textDocument: { uri: model.uri.toString() },
+            });
+            if (!Array.isArray(result)) return null;
+            // LSP and Monaco both count folding lines from 0, end inclusive.
+            const maxLine = model.getLineCount() - 1;
+            return result
+              .map(function (r) {
+                return foldingRangeFromLsp(r, maxLine);
+              })
+              .filter(Boolean);
+          } catch (e) {
+            logErr("foldingRange: " + (e.message || e));
+            return null;
+          }
+        },
+      })
+    );
+  }
+
+  /**
+   * (Re)register the semantic tokens provider. It needs the legend captured
+   * from the initialize result, so it runs only after a successful connect;
+   * a reconnect replaces the previous registration.
+   */
+  function registerSemanticTokensProvider() {
+    if (!monacoApi || !semanticLegend) return;
+    if (semanticTokensDisposable) {
+      try {
+        semanticTokensDisposable.dispose();
+      } catch (_) {
+        /* ignore */
+      }
+    }
+    semanticTokensDisposable = monacoApi.languages.registerDocumentSemanticTokensProvider(
+      { language: "lua" },
+      semanticLegend,
+      {
+        provideDocumentSemanticTokens: async function (model) {
+          if (!lspReady) return null;
+          try {
+            const result = await request("textDocument/semanticTokens/full", {
+              textDocument: { uri: model.uri.toString() },
+            });
+            if (!result || !Array.isArray(result.data)) return null;
+            // LSP and Monaco share the relative deltaLine/deltaStart encoding;
+            // positions were negotiated as UTF-16 code units.
+            return {
+              data: new Uint32Array(result.data),
+              resultId: result.resultId,
+            };
+          } catch (e) {
+            logErr("semanticTokens: " + (e.message || e));
+            return null;
+          }
+        },
+        releaseDocumentSemanticTokens: function () {
+          /* no resultId cache to invalidate */
+        },
+      }
+    );
   }
 
   // ---------------------------------------------------------------------------
@@ -1422,12 +1696,14 @@
                 ? Object.keys(result.capabilities).join(", ")
                 : "(none)")
           );
+          captureServerCapabilities(result);
           notify("initialized", {});
           sendDidChangeConfiguration();
           lspReady = true;
           setConnectingUi(false, true);
           setStatus("connected", "Connected");
           reopenAllOnServer();
+          registerSemanticTokensProvider();
           if (!settled) {
             settled = true;
             resolve();
@@ -1692,6 +1968,10 @@
         { token: "keyword", foreground: "c792ea" },
         { token: "string", foreground: "c3e88d" },
         { token: "number", foreground: "f78c6c" },
+        // "function"/"parameter" are never emitted by the Monarch grammar —
+        // these rules style semantic tokens from the language server only.
+        { token: "function", foreground: "82aaff" },
+        { token: "parameter", foreground: "f0a45d" },
       ],
       colors: {
         "editor.background": "#0f1115",
@@ -1736,6 +2016,9 @@
       // disable every string-literal completion the language server offers.
       quickSuggestions: { other: true, comments: false, strings: true },
       suggestSelection: "first",
+      // Monaco defaults to 'configuredByTheme'; force it on so the registered
+      // document semantic tokens provider actually colors the text.
+      semanticHighlighting: true,
     });
 
     registerProviders();
@@ -1786,7 +2069,13 @@
       el.btnRefreshFiles.addEventListener("click", async function () {
         await loadServerInfo();
         await loadFileList();
-        logSys("File list refreshed (" + workspaceFiles.length + ")");
+        const closed = pruneGoneDocuments();
+        logSys(
+          "File list refreshed (" +
+            workspaceFiles.length +
+            ")" +
+            (closed ? ", closed " + closed + " gone document(s)" : "")
+        );
       });
     }
 

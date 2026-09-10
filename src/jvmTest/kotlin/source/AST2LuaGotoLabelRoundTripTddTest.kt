@@ -39,8 +39,8 @@ import kotlin.test.fail
  * 2. **Label form** — always `::ident::` (no spaces inside delimiters).
  * 3. **Goto form** — always `goto ident` (single space after keyword).
  * 4. **Forward/backward** — both label-before-goto and goto-before-label must round-trip.
- * 5. **IfStatement** — pure-if samples assert shape + fragments only (printer omits trailing `end`);
- *    reparse covered when wrapped in terminated blocks.
+ * 5. **IfStatement** — the printer emits exactly one terminal `end` per if-statement, so
+ *    if samples reparse shape-stable like every other terminated block.
  * 6. Version: [LuaVersion.LUA_5_3]. Out of scope: jump legality, comment preservation.
  */
 class AST2LuaGotoLabelRoundTripTddTest {
@@ -146,7 +146,7 @@ class AST2LuaGotoLabelRoundTripTddTest {
               goto start
             end
             """.trimIndent(),
-            // terminated wrapper so pure-if end omission does not break reparse
+            // nested if inside a terminated wrapper: one `end` per block (if + do)
             """
             do
               if ok then
