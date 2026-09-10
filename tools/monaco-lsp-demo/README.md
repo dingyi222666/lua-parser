@@ -52,6 +52,12 @@ Browser (Monaco)  --WS JSON-RPC-->  Node bridge  --stdio Content-Length-->  JVM 
 - `require("...")` / `import "..."` strings complete workspace module names.
 - `id = "name"` registers a typed view field on the ids table (`tab.poplist`).
 
+String completion while typing: completion triggers are only `.` and `:` — typing
+`"` does not pop the suggestion list (so closing a string never triggers spam).
+Inside string literals, value completion appears as you type via
+`quickSuggestions.strings`: after `orientation = "` the list offers
+`vertical`/`horizontal`, after `require("` it offers workspace modules, etc.
+
 ### Custom view properties (embedders)
 
 Workspace/LSP configuration key `lua.layout.properties` extends completions for
@@ -63,6 +69,14 @@ com.project.MyBanner: autoScroll|boolean
 ```
 
 FQCN keys are also matched by simple name.
+
+## Single editor session
+
+Only one browser tab can hold the language server at a time. A second tab that
+connects while another session is active receives a busy message from the bridge
+("Another editor holds the language server") and its socket is closed — the
+status bar shows the reason. Stop the session in the active tab (or close it)
+before connecting from a new one.
 
 Env overrides: `PORT`, `JAVA_HOME`, `ANDROID_JAR`, `LUA_PARSER_ROOT`.
 

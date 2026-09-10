@@ -222,7 +222,7 @@ class BinderPassDocDeclarationTest {
     }
 
     @Test
-    fun leavesMultiLocalTypeMappingUnresolvedWithoutCrashing() {
+    fun mapsPositionalMultiLocalTypeTextWithoutCrashing() {
         val chunk = parser.parse(
             """
             ---@type string, number
@@ -234,7 +234,8 @@ class BinderPassDocDeclarationTest {
         val locals = result.declarationIndex.declarations.filter { it.kind == DeclarationKind.LOCAL }
 
         assertEquals(2, locals.size)
-        assertTrue(locals.all { it.declaredTypeSyntax == null })
+        assertEquals("string", assertIs<NamedTypeSyntax>(locals.single { it.name == "first" }.declaredTypeSyntax).name)
+        assertEquals("number", assertIs<NamedTypeSyntax>(locals.single { it.name == "second" }.declaredTypeSyntax).name)
         assertTrue(locals.all { it.documentation != null })
     }
 

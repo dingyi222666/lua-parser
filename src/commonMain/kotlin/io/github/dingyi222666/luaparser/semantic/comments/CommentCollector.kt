@@ -28,6 +28,7 @@ class CommentCollector(
 
         fun walkBlock(block: BlockNode) {
             val pending = mutableListOf<CommentStatement>()
+            var lastStatement: StatementNode? = null
 
             block.statements.forEach { statement ->
                 if (statement is CommentStatement) {
@@ -41,19 +42,22 @@ class CommentCollector(
                 }
 
                 closeGroup(pending)?.let { group ->
-                    attachments.add(group.toAttachment(statement.takeIf { target -> group.isAdjacentTo(target) }))
+                    attachments.add(group.toAttachment(group.resolveTarget(forward = statement, backward = lastStatement)))
                 }
                 walkStatement(statement)
+                lastStatement = statement
             }
 
             val returnStatement = block.returnStatement
             if (returnStatement == null) {
-                closeGroup(pending)?.let { attachments.add(it.toAttachment()) }
+                closeGroup(pending)?.let { group ->
+                    attachments.add(group.toAttachment(group.resolveTarget(forward = null, backward = lastStatement)))
+                }
                 return
             }
 
             closeGroup(pending)?.let { group ->
-                attachments.add(group.toAttachment(returnStatement.takeIf { target -> group.isAdjacentTo(target) }))
+                attachments.add(group.toAttachment(group.resolveTarget(forward = returnStatement, backward = lastStatement)))
             }
             walkStatement(returnStatement)
         }
@@ -201,6 +205,20 @@ class CommentCollector(
 
     private fun CollectedCommentBlock.isAdjacentTo(target: BaseASTNode): Boolean {
         return target.range.start.line - visibleEndLine in 0..1
+    }
+
+    /**
+     * A group whose first comment starts on the line where the previous statement ENDS is a
+     * trailing/inline comment (e.g. `local a = 1 ---@type string`). It documents the statement
+     * it trails: attach BACKWARD to that statement only, never forward to the next construct —
+     * a forward gap of 0..1 would otherwise pin the group onto the statement that follows it.
+     */
+    private fun CollectedCommentBlock.resolveTarget(
+        forward: BaseASTNode?,
+        backward: StatementNode?
+    ): BaseASTNode? {
+        val trailingTarget = backward?.takeIf { it.range.end.line == startLine }
+        return trailingTarget ?: forward?.takeIf { target -> isAdjacentTo(target) }
     }
 
     private fun CollectedCommentBlock.toAttachment(target: BaseASTNode? = null): CommentAttachment {

@@ -41,6 +41,7 @@ import io.github.dingyi222666.luaparser.semantic.comments.OverloadTagSyntax
 import io.github.dingyi222666.luaparser.semantic.types.model.PrimitiveType
 import io.github.dingyi222666.luaparser.semantic.types.syntax.TypeSyntax
 import io.github.dingyi222666.luaparser.semantic.types.syntax.TypeSyntaxParser
+import io.github.dingyi222666.luaparser.semantic.types.syntax.splitTopLevelTypeText
 
 internal class DeclarationBinder(
     private val builder: SymbolTableBuilder,
@@ -60,13 +61,12 @@ internal class DeclarationBinder(
     override fun visitLocalStatement(node: LocalStatement, value: Unit) {
         val attachment = comments.getAttachment(node)
         val documentation = attachment?.toDeclarationDocumentation()
-        val declaredTypeSyntax = if (node.init.size == 1) {
-            parseTypeSyntax(attachment?.inlineTypeText)
-        } else {
-            null
-        }
+        val declaredTypeSyntaxes = positionalDeclaredTypeSyntaxes(
+            declaredNameCount = node.init.size,
+            inlineTypeText = attachment?.inlineTypeText
+        )
 
-        node.init.forEach { identifier ->
+        node.init.forEachIndexed { index, identifier ->
             builder.addDeclarationWithSymbol(
                 localDeclaration(
                     id = builder.nextDeclarationId(),
@@ -74,7 +74,7 @@ internal class DeclarationBinder(
                     owner = DeclarationOwner.Lexical(currentLexicalOwnerNode()),
                     anchorNode = identifier,
                     documentation = documentation,
-                    declaredTypeSyntax = declaredTypeSyntax
+                    declaredTypeSyntax = declaredTypeSyntaxes.getOrNull(index)
                 )
             )
         }
@@ -699,6 +699,34 @@ internal class DeclarationBinder(
             return null
         }
         return TypeSyntaxParser.parseOrNull(normalized)
+    }
+
+    /**
+     * `---@type` on a multi-name local is positional: `---@type boolean, string` above
+     * `local ok, err = pcall(f)` types `ok` boolean and `err` string. Commas nested inside
+     * generics, tables, parens, or strings do not split (depth-aware scan). A single-name
+     * local keeps the whole text as before; a multi-name local whose text has no top-level
+     * comma stays unresolved (single type, ambiguous owner).
+     */
+    private fun positionalDeclaredTypeSyntaxes(
+        declaredNameCount: Int,
+        inlineTypeText: String?
+    ): List<TypeSyntax?> {
+        val normalized = inlineTypeText?.trim().orEmpty()
+        if (normalized.isEmpty()) {
+            return emptyList()
+        }
+
+        if (declaredNameCount == 1) {
+            return listOf(parseTypeSyntax(normalized))
+        }
+
+        val positionalTexts = splitTopLevelTypeText(normalized, ',')
+        if (positionalTexts.size <= 1) {
+            return List(declaredNameCount) { null }
+        }
+
+        return List(declaredNameCount) { index -> parseTypeSyntax(positionalTexts.getOrNull(index)) }
     }
 
     private fun documentationForTags(

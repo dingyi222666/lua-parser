@@ -11,6 +11,11 @@ import io.github.dingyi222666.luaparser.semantic.types.syntax.TypeSyntaxParser
 class DocCommentSyntaxParser(
 ) {
 
+    private companion object {
+        /** Longest-first candidate attempts in [recoverOperatorDelimitedTypePrefix]. */
+        const val RECOVERY_CANDIDATE_LIMIT = 8
+    }
+
     fun parse(comments: List<CommentStatement>): DocCommentSyntax? {
         if (comments.isEmpty()) {
             return null
@@ -411,6 +416,10 @@ class DocCommentSyntaxParser(
                 }
             }
         }.distinct().sortedDescending()
+            // Candidates are tried longest-first with a full parse each; a whitespace-heavy
+            // prefix makes this quadratic. The real type prefix sits within the first few
+            // longest candidates, so cap the attempts.
+            .take(RECOVERY_CANDIDATE_LIMIT)
 
         candidateEnds.forEach { endIndex ->
             val typeCandidate = text.substring(0, endIndex).trimEnd()

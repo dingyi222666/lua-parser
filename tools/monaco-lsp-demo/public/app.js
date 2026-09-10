@@ -185,6 +185,11 @@
 
   function appendLog(dir, body) {
     if (!el.panelLog) return;
+    // Autoscroll only when the pane is already pinned near the bottom; never
+    // yank the viewport while the user is reading earlier lines.
+    const nearBottom =
+      el.panelLog.scrollTop + el.panelLog.clientHeight >=
+      el.panelLog.scrollHeight - 20;
     const line = document.createElement("div");
     line.className = "log-line";
 
@@ -219,7 +224,9 @@
     while (el.panelLog.children.length > 500) {
       el.panelLog.removeChild(el.panelLog.firstChild);
     }
-    el.panelLog.scrollTop = el.panelLog.scrollHeight;
+    if (nearBottom) {
+      el.panelLog.scrollTop = el.panelLog.scrollHeight;
+    }
   }
 
   function logSys(msg) {
@@ -457,6 +464,30 @@
       monacoApi.editor.setModelMarkers(model, "lua-lsp", markers);
     }
 
+    renderDiagnosticsPanel();
+    renderFileList();
+  }
+
+  /**
+   * Drop every published diagnostic: clear markers from all models and forget
+   * the panel/file-badge state. Called when the socket closes so a dead
+   * session never leaves stale squiggles behind.
+   */
+  function clearAllDiagnostics() {
+    if (monacoApi) {
+      diagnosticsByUri.forEach(function (_diags, uri) {
+        let model = null;
+        try {
+          model = monacoApi.editor.getModel(monacoApi.Uri.parse(uri));
+        } catch (_) {
+          return;
+        }
+        if (model) {
+          monacoApi.editor.setModelMarkers(model, "lua-lsp", []);
+        }
+      });
+    }
+    diagnosticsByUri.clear();
     renderDiagnosticsPanel();
     renderFileList();
   }
@@ -1082,15 +1113,24 @@
 
     const selector = { language: "lua" };
 
+    // Monotonic sequence guards against the stale-response race: a slow earlier
+    // response must never overwrite a newer one. Each provider owns a closure
+    // counter; the provider snapshots it at request time and discards the
+    // response when a newer request has bumped the counter in the meantime.
+    let hoverSeq = 0;
+    let completionSeq = 0;
+
     providerDisposables.push(
       monacoApi.languages.registerHoverProvider(selector, {
         provideHover: async function (model, position) {
           if (!lspReady) return null;
+          const seq = ++hoverSeq;
           try {
             const result = await request("textDocument/hover", {
               textDocument: { uri: model.uri.toString() },
               position: positionFromMonaco(position),
             });
+            if (seq !== hoverSeq) return null; // superseded by a newer hover
             if (!result || result.contents == null) return null;
             const value = markupToString(result.contents);
             if (!value) return null;
@@ -1108,9 +1148,13 @@
 
     providerDisposables.push(
       monacoApi.languages.registerCompletionItemProvider(selector, {
-        triggerCharacters: [".", ":", "\""],
+        // No `"` trigger: quickSuggestions.strings already covers in-string
+        // completion, and a quote trigger also fires on every closing quote
+        // outside strings, spamming completion requests.
+        triggerCharacters: [".", ":"],
         provideCompletionItems: async function (model, position, context) {
           if (!lspReady) return { suggestions: [] };
+          const seq = ++completionSeq;
           try {
             let triggerKind = 1;
             if (
@@ -1132,6 +1176,7 @@
                 triggerCharacter: context.triggerCharacter,
               },
             });
+            if (seq !== completionSeq) return { suggestions: [] }; // superseded
             const items = Array.isArray(result)
               ? result
               : result && Array.isArray(result.items)
@@ -1415,6 +1460,7 @@
       socket.addEventListener("close", function (ev) {
         logSys("WebSocket closed code=" + ev.code + " reason=" + (ev.reason || ""));
         lspReady = false;
+        clearAllDiagnostics();
         setConnectingUi(false, false);
         // A refused connection closes right after the `$/bridge` busy status; keep
         // that reason visible instead of flashing generic "Disconnected".
