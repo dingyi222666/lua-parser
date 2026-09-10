@@ -148,9 +148,12 @@ class LuaWorkspaceService(
         if (!layoutProperties.isNullOrBlank()) {
             metadata[LuaLayoutPropertiesMetadata.METADATA_KEY] = layoutProperties
         }
-        // Preserve the null contract: no recognized configuration key means "no metadata
-        // snapshot", which callers distinguish from an empty snapshot.
-        return metadata.takeIf { it.isNotEmpty() }
+        // Null contract lives at the hasWorkspaceConfiguration() gate above: no recognized
+        // configuration key means "no metadata snapshot", which callers distinguish from an
+        // empty snapshot. Reaching this point means recognized keys WERE present, so an empty
+        // result is a deliberate clear (e.g. the last config key was deleted or its value
+        // emptied) and must replace — not silently preserve — the prior metadata snapshot.
+        return metadata
     }
 
     private fun Map<*, *>.hasWorkspaceConfiguration(): Boolean {

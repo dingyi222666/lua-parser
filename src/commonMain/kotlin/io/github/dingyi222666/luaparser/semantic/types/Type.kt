@@ -428,24 +428,53 @@ private fun intersectionOf(left: Type, right: Type): Type {
     return IntersectionType(leftTypes + rightTypes)
 }
 
+/**
+ * Parity mirror of [io.github.dingyi222666.luaparser.semantic.types.resolve.TypeRelations.parameterListsCompatible]
+ * (model hierarchy): the source (`actual`) must SERVE AS the target (`expected`) — it has
+ * to accept every call the target can make (arity containment) and each target argument
+ * must flow INTO the source parameter (contravariance). Extra source params/optionals are
+ * safe in Lua (callers simply pass fewer arguments). Legacy-only surface (display and the
+ * deprecated analyzer shell); kept in lock-step so both hierarchies agree.
+ */
 private fun parameterListsCompatible(expected: List<ParameterType>, actual: List<ParameterType>): Boolean {
     val requiredExpected = expected.count { !it.optional && !it.vararg }
     val requiredActual = actual.count { !it.optional && !it.vararg }
-    if (requiredExpected != requiredActual && expected.none { it.vararg } && actual.none { it.vararg }) {
+    if (requiredActual > requiredExpected) {
+        return false
+    }
+    val expectedHasVararg = expected.any { it.vararg }
+    val actualHasVararg = actual.any { it.vararg }
+    // A non-vararg source CAN serve a vararg target: Lua drops extra call arguments,
+    // so the loop below merely requires every expected slot past the source's length
+    // to be optional or vararg. Never pre-reject on the missing source vararg.
+    if (!expectedHasVararg && !actualHasVararg && actual.size < expected.size) {
         return false
     }
 
-    val max = maxOf(expected.size, actual.size)
-    for (index in 0 until max) {
-        val expectedParameter = expected.getOrNull(index) ?: expected.lastOrNull { it.vararg } ?: return false
-        val actualParameter = actual.getOrNull(index) ?: actual.lastOrNull { it.vararg } ?: return expectedParameter.optional || expectedParameter.vararg
-        if (!expectedParameter.type.isAssignableFrom(actualParameter.type)) {
-            return false
+    for (index in expected.indices) {
+        val expectedParameter = expected[index]
+        val actualParameter = actual.getOrNull(index)
+            ?: actual.lastOrNull { it.vararg }
+            ?: return expectedParameter.optional || expectedParameter.vararg
+        // Contravariant: a handler whose parameter is NARROWER than the target's
+        // cannot serve it (fun(value: "x") cannot serve fun(value: string)).
+        if (!actualParameter.type.isAssignableFrom(expectedParameter.type)) {
+            // Class parameters are BIVARIANT (parity with the model rule's Java-object
+            // relaxation): a handler annotated with a subclass still serves a
+            // superclass-declared slot.
+            if (!isClassParameterType(actualParameter.type) ||
+                !isClassParameterType(expectedParameter.type) ||
+                !expectedParameter.type.isAssignableFrom(actualParameter.type)
+            ) {
+                return false
+            }
         }
     }
 
     return true
 }
+
+private fun isClassParameterType(type: Type): Boolean = type.unwrapAliases() is ClassType
 
 private fun literalName(value: Any?): String = when (value) {
     null -> "nil"

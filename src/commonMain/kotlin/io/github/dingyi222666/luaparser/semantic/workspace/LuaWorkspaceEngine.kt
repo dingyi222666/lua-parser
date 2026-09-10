@@ -5,10 +5,14 @@ import io.github.dingyi222666.luaparser.parser.LuaParser
 import io.github.dingyi222666.luaparser.parser.LuaParserRecoveryDiagnostic
 import io.github.dingyi222666.luaparser.parser.LuaVersion
 import io.github.dingyi222666.luaparser.parser.ast.node.ChunkNode
+import io.github.dingyi222666.luaparser.parser.ast.node.ExpressionNode
 import io.github.dingyi222666.luaparser.parser.ast.node.Position
 import io.github.dingyi222666.luaparser.parser.ast.node.Range
 import io.github.dingyi222666.luaparser.semantic.SemanticPipeline
 import io.github.dingyi222666.luaparser.semantic.SemanticWorkspaceContext
+import io.github.dingyi222666.luaparser.semantic.binder.DeclarationKind
+import io.github.dingyi222666.luaparser.semantic.binder.DeclarationOrigin
+import io.github.dingyi222666.luaparser.semantic.checker.ExpressionTypeEvaluator
 import io.github.dingyi222666.luaparser.semantic.workspace.std.BuiltinOverlayLoader
 import io.github.dingyi222666.luaparser.semantic.workspace.std.BuiltinOverlaySnapshot
 
@@ -142,7 +146,17 @@ open class LuaWorkspaceEngine(
             )
         )
 
-        if (delta.isEmpty() && builtinOverlay == previous.builtinOverlay && extraProviders == previous.extraProviders) {
+        // No-op guard: no source upserts/removals and metadata either absent (delta carries no
+        // metadata, so nextMetadata fell back to previous.metadata) or content-identical to the
+        // previous snapshot cannot change any derived state — extraProviders (built above from
+        // nextMetadata) matching the previous snapshot seals that. The identical-metadata case
+        // previously fell through to a full provider pass plus graph build for nothing.
+        if (delta.upserts.isEmpty() &&
+            delta.removals.isEmpty() &&
+            nextMetadata == previous.metadata &&
+            builtinOverlay == previous.builtinOverlay &&
+            extraProviders == previous.extraProviders
+        ) {
             reporter.report(AnalysisProgress(AnalysisProgress.Phase.COMPLETE, completedFiles = 0, totalFiles = 0))
             return WorkspaceUpdateResult(
                 snapshot = previous,
@@ -278,11 +292,69 @@ open class LuaWorkspaceEngine(
             (graph.stronglyConnectedComponentByFile[path]?.size ?: 1) > 1
         }
         if (cycleReAnalysis.isNotEmpty()) {
-            cycleReAnalysis.forEach { path ->
-                analyzePathInto(files, path, sources, previous, analysisInput, analysisSnapshot)
+            // Bounded fixpoint, capped at MAX_CYCLE_REANALYSIS_PASSES sweeps. One sweep lets each
+            // cycle member bind against peers that are complete *as of the sweep order*; a
+            // derivation chain that runs against that order (3-cycle: a feeds b feeds c feeds a)
+            // advances only one hop per sweep, so a single sweep can leave the last hop's derived
+            // global Unknown. Repeat while a cheap fingerprint of the re-analyzed semantic
+            // snapshots (per path: model diagnostics count + evaluated global value-type display
+            // names) keeps changing, and stop as soon as it stabilizes: analysis is
+            // deterministic, so an unchanged fingerprint means another sweep would be a no-op.
+            // The cap bounds worst-case re-analysis cost; paths outside the cycle are never
+            // re-analyzed, so affectedDocuments is unaffected either way.
+            var fingerprint = cycleReAnalysisFingerprint(cycleReAnalysis, files)
+            var sweep = 0
+            while (sweep < MAX_CYCLE_REANALYSIS_PASSES) {
+                cycleReAnalysis.forEach { path ->
+                    analyzePathInto(files, path, sources, previous, analysisInput, analysisSnapshot)
+                }
+                sweep++
+                val nextFingerprint = cycleReAnalysisFingerprint(cycleReAnalysis, files)
+                val stabilized = nextFingerprint == fingerprint
+                fingerprint = nextFingerprint
+                if (stabilized) {
+                    break
+                }
             }
         }
         return baseSnapshot.copy(files = files.toMap())
+    }
+
+    /**
+     * Cheap, deterministic convergence fingerprint for the cycle re-analysis pass: per
+     * re-analyzed path, the semantic model's diagnostics count plus the evaluated value-type
+     * display names of the path's own global declarations. Those evaluated types are exactly
+     * what peers and consumers read through the module resolver, so the loop stops precisely
+     * when another sweep would re-derive the same semantic state. Built per call (never
+     * cached) so it always reflects the live [files] state.
+     */
+    private fun cycleReAnalysisFingerprint(
+        paths: List<VirtualPath>,
+        files: Map<VirtualPath, WorkspaceSnapshot.FileSnapshot>
+    ): List<String> {
+        return paths.map { path ->
+            val semanticFile = files[path]?.semanticFile
+            val snapshot = semanticFile?.snapshot
+            buildString {
+                append(path.value)
+                append('#')
+                append(semanticFile?.model?.getDiagnostics()?.size ?: -1)
+                if (snapshot != null) {
+                    val evaluator = ExpressionTypeEvaluator(snapshot.binder, snapshot.workspaceContext)
+                    snapshot.binder.declarationIndex.declarations
+                        .asSequence()
+                        .filter { it.kind == DeclarationKind.GLOBAL && it.origin == DeclarationOrigin.AST }
+                        .distinctBy { it.name }
+                        .forEach { declaration ->
+                            val anchor = declaration.anchorNode as? ExpressionNode ?: return@forEach
+                            append('|')
+                            append(declaration.name)
+                            append('=')
+                            append(evaluator.evaluate(anchor).displayName)
+                        }
+                }
+            }
+        }
     }
 
     /**
@@ -487,6 +559,14 @@ open class LuaWorkspaceEngine(
 
     private companion object {
         val PARSE_FAILURE_LOCATION = Regex("""^\((\d+),\s*(\d+)\):\s*(.*)$""", RegexOption.DOT_MATCHES_ALL)
+
+        /**
+         * Upper bound on cycle re-analysis sweeps per workspace pass. Each sweep advances
+         * cross-cycle type propagation at least one hop along the sweep order, so the cap
+         * covers chained derivations around small strongly connected components while keeping
+         * worst-case re-analysis work at a small constant multiple of a single pass.
+         */
+        const val MAX_CYCLE_REANALYSIS_PASSES = 3
     }
 
     private fun reportBindingProgress(

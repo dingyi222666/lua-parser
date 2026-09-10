@@ -642,12 +642,16 @@
     }
   }
 
-  async function loadFileList() {
+  let lastFileListWasLive = false;
+
+async function loadFileList() {
     let files = [];
+    let live = false;
     try {
       const data = await fetchJson(HTTP_BASE + "/api/files");
       if (Array.isArray(data)) files = data;
       else if (data && Array.isArray(data.files)) files = data.files;
+      live = true;
     } catch (e) {
       logSys("GET /api/files unavailable, using /api/info sampleFiles");
       files = serverInfo.sampleFiles || [];
@@ -656,6 +660,9 @@
     if (!files.length && Array.isArray(serverInfo.sampleFiles)) {
       files = serverInfo.sampleFiles;
     }
+    // Fallback/sample lists are not ground truth: ghost-tab pruning must never
+    // close real documents because a fetch failed or the server returned nothing.
+    lastFileListWasLive = live;
 
     workspaceFiles = files.map(function (f) {
       if (typeof f === "string") {
@@ -958,6 +965,9 @@
    * listing must not close every tab.
    */
   function pruneGoneDocuments() {
+    if (!lastFileListWasLive) {
+      return 0;
+    }
     if (!workspaceFiles.length) return 0;
     const present = Object.create(null);
     workspaceFiles.forEach(function (f) {
@@ -1276,13 +1286,21 @@
     if (!range || !monacoApi) return null;
     const start = Math.floor(Number(range.startLine));
     let end = Math.floor(Number(range.endLine));
-    if (!isFinite(start) || !isFinite(end) || start < 0 || start > maxLine) {
+    if (!isFinite(start) || !isFinite(end) || start < 0) {
       return null;
     }
-    if (end < start) end = start;
-    if (end > maxLine) end = maxLine;
-    if (end <= start) return null; // single-line spans are not foldable
-    const out = { start: start, end: end };
+    // LSP lines are 0-based; Monaco folding ranges are ONE-based inclusive.
+    // A 0-based start of 0 (file's first line) maps to Monaco line 1 — filtering
+    // start<0 silently dropped every fold touching the top of a file.
+    const startOneBased = start + 1;
+    let endOneBased = end + 1;
+    if (startOneBased > maxLine) {
+      return null;
+    }
+    if (endOneBased < startOneBased) endOneBased = startOneBased;
+    if (endOneBased > maxLine) endOneBased = maxLine;
+    if (endOneBased <= startOneBased) return null; // single-line spans are not foldable
+    const out = { start: startOneBased, end: endOneBased };
     // LSP kinds are strings; Monaco's FoldingRangeKind wraps the same names.
     if (range.kind === "comment") out.kind = monacoApi.languages.FoldingRangeKind.Comment;
     else if (range.kind === "imports") out.kind = monacoApi.languages.FoldingRangeKind.Imports;
@@ -1595,8 +1613,7 @@
               textDocument: { uri: model.uri.toString() },
             });
             if (!Array.isArray(result)) return null;
-            // LSP and Monaco both count folding lines from 0, end inclusive.
-            const maxLine = model.getLineCount() - 1;
+            const maxLine = model.getLineCount();
             return result
               .map(function (r) {
                 return foldingRangeFromLsp(r, maxLine);
@@ -1617,14 +1634,18 @@
    * a reconnect replaces the previous registration.
    */
   function registerSemanticTokensProvider() {
-    if (!monacoApi || !semanticLegend) return;
+    if (!monacoApi) return;
     if (semanticTokensDisposable) {
       try {
         semanticTokensDisposable.dispose();
       } catch (_) {
         /* ignore */
       }
+      semanticTokensDisposable = null;
     }
+    // A legend-less reinitialize (Stop -> Start against a server without the
+    // capability) must leave NO stale provider behind firing unadvertised requests.
+    if (!semanticLegend) return;
     semanticTokensDisposable = monacoApi.languages.registerDocumentSemanticTokensProvider(
       { language: "lua" },
       semanticLegend,
@@ -1635,7 +1656,7 @@
             const result = await request("textDocument/semanticTokens/full", {
               textDocument: { uri: model.uri.toString() },
             });
-            if (!result || !Array.isArray(result.data)) return null;
+            if (!result || !Array.isArray(result.data) || result.data.length % 5 !== 0) return null;
             // LSP and Monaco share the relative deltaLine/deltaStart encoding;
             // positions were negotiated as UTF-16 code units.
             return {

@@ -12,7 +12,9 @@ import io.github.dingyi222666.luaparser.semantic.types.model.JavaArrayType
 import io.github.dingyi222666.luaparser.semantic.types.model.JavaClassType
 import io.github.dingyi222666.luaparser.semantic.types.model.JavaConstructorType
 import io.github.dingyi222666.luaparser.semantic.types.model.JavaInstanceMemberType
+import io.github.dingyi222666.luaparser.semantic.types.model.JavaSignatureMetadata
 import io.github.dingyi222666.luaparser.semantic.types.model.JavaInstanceType
+import io.github.dingyi222666.luaparser.semantic.types.model.JavaMemberType
 import io.github.dingyi222666.luaparser.semantic.types.model.JavaOverloadSet
 import io.github.dingyi222666.luaparser.semantic.types.model.JavaOverloadType
 import io.github.dingyi222666.luaparser.semantic.types.model.JavaPrimitiveType
@@ -249,16 +251,21 @@ object TypeNormalizer {
             }
         }
 
-        if (simplifiedMembers.any { it == PrimitiveType.ANY }) return PrimitiveType.ANY
-        if (simplifiedMembers.any { it == UnknownType }) return UnknownType
+        // A doc-declared Java member (no reflection metadata) and its reflected twin encode
+        // the SAME member; plain data-class equality would keep both in the union and
+        // duplicate completion / hover entries (see dedupeSignatureMetadataDuplicates).
+        val metadataDedupedMembers = dedupeSignatureMetadataDuplicates(simplifiedMembers)
 
-        val primitiveKinds = simplifiedMembers
+        if (metadataDedupedMembers.any { it == PrimitiveType.ANY }) return PrimitiveType.ANY
+        if (metadataDedupedMembers.any { it == UnknownType }) return UnknownType
+
+        val primitiveKinds = metadataDedupedMembers
             .filterIsInstance<PrimitiveType>()
             .map { it.kind }
             .toSet()
 
         val dedupedMembers = linkedSetOf<Type>()
-        simplifiedMembers.forEach { member ->
+        metadataDedupedMembers.forEach { member ->
             if (member is LiteralType && member.baseType.kind in primitiveKinds) {
                 return@forEach
             }
@@ -270,6 +277,59 @@ object TypeNormalizer {
             1 -> dedupedMembers.single()
             else -> UnionType(dedupedMembers)
         }
+    }
+
+    /**
+     * Collapses Java members that differ ONLY in [JavaMemberType.signatureMetadata].
+     *
+     * A doc-declared member (empty metadata) and its reflected twin (varargs / generic
+     * metadata from the JVM index) are the same member; data-class equality would keep
+     * both in a union built via [unionTypeOf], duplicating completion and hover entries.
+     * Members are therefore keyed on every field EXCEPT signatureMetadata, and of each
+     * duplicate pair the metadata carrier is kept (it renders richer signature help);
+     * when both are bare the first occurrence wins so insertion order stays stable.
+     */
+    private fun dedupeSignatureMetadataDuplicates(members: Set<Type>): Set<Type> {
+        if (members.none { it is JavaMemberType }) {
+            return members
+        }
+
+        val deduped = linkedSetOf<Type>()
+        val carrierByKey = mutableMapOf<JavaMemberType, JavaMemberType>()
+        members.forEach { member ->
+            val javaMember = member as? JavaMemberType
+            if (javaMember == null) {
+                deduped += member
+                return@forEach
+            }
+            val key = javaMember.withoutSignatureMetadata()
+            val existing = carrierByKey[key]
+            when {
+                existing == null -> {
+                    deduped += javaMember
+                    carrierByKey[key] = javaMember
+                }
+                existing.javaMemberMetadata().isEmpty() && javaMember.javaMemberMetadata().isNotEmpty() -> {
+                    deduped.remove(existing)
+                    deduped += javaMember
+                    carrierByKey[key] = javaMember
+                }
+                // else: earlier member already carries the metadata (or both are bare).
+                else -> Unit
+            }
+        }
+        return deduped
+    }
+
+    private fun JavaMemberType.javaMemberMetadata(): List<JavaSignatureMetadata> = when (this) {
+        is JavaStaticMemberType -> signatureMetadata
+        is JavaInstanceMemberType -> signatureMetadata
+        else -> emptyList()
+    }
+
+    private fun JavaMemberType.withoutSignatureMetadata(): JavaMemberType = when (this) {
+        is JavaStaticMemberType -> copy(signatureMetadata = emptyList())
+        is JavaInstanceMemberType -> copy(signatureMetadata = emptyList())
     }
 
     private fun normalizeIntersection(types: Iterable<Type>): Type {
