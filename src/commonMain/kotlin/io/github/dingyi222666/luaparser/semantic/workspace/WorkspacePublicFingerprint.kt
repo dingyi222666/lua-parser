@@ -1,5 +1,10 @@
 package io.github.dingyi222666.luaparser.semantic.workspace
 
+import io.github.dingyi222666.luaparser.parser.ast.node.ExpressionNode
+import io.github.dingyi222666.luaparser.semantic.binder.BinderDeclaration
+import io.github.dingyi222666.luaparser.semantic.binder.DeclarationKind
+import io.github.dingyi222666.luaparser.semantic.binder.DeclarationOrigin
+import io.github.dingyi222666.luaparser.semantic.checker.ExpressionTypeEvaluator
 import io.github.dingyi222666.luaparser.semantic.types.model.AliasType
 import io.github.dingyi222666.luaparser.semantic.types.model.AppliedType
 import io.github.dingyi222666.luaparser.semantic.types.model.ArrayType
@@ -34,7 +39,14 @@ import io.github.dingyi222666.luaparser.semantic.types.model.VarargType
 
 data class WorkspacePublicFingerprint(
     val providedModuleNames: Set<String>,
-    val value: String
+    val value: String,
+    /**
+     * Fingerprint of this document's provider-global symbol surface (see
+     * [globalSymbolsFingerprint]). Empty until semantic analysis attached it; consumers read
+     * provider globals through the module resolver, so a change here is a public-surface
+     * change even when the module export surface ([value]) is untouched.
+     */
+    val globalSymbolsFingerprint: String = ""
 ) {
     companion object {
         fun from(
@@ -302,4 +314,70 @@ internal fun workspaceFingerprintHash(text: String): String {
         hash *= prime
     }
     return hash.toULong().toString(16).padStart(16, '0')
+}
+
+/** Upper bound on declarations hashed into [globalSymbolsFingerprint] (pathological-file guard). */
+private const val GLOBAL_FINGERPRINT_DECLARATION_LIMIT = 512
+
+/** Per-field truncation for [globalSymbolsFingerprint] lines (pathological-name guard). */
+private const val GLOBAL_FINGERPRINT_FIELD_LIMIT = 256
+
+/**
+ * Fingerprint of a provider's global symbol surface as consumers see it through the workspace
+ * module resolver: every distinct AST-originated global, rendered as `name:kind:<value type
+ * display name>` in binder order, hashed with [workspaceFingerprintHash].
+ *
+ * [WorkspacePublicFingerprint.value] only covers the module export surface (returned members,
+ * legacy environments, `---@` annotations), so editing a NON-exported global
+ * (`shared = 42` -> `shared = 43`) used to change nothing a consumer's dirty check could see —
+ * even though every consumer binding that global through the resolver now derives a different
+ * type. This fingerprint is derived from the binder's declaration index, so it can only be
+ * attached after semantic analysis (the workspace engine attaches it to the stored
+ * [WorkspacePublicFingerprint] copy); the empty default marks "not yet analyzed".
+ *
+ * [typeEvaluator] resolves each global's value type off its anchor expression — the same
+ * derivation the module resolver and the cycle re-analysis pass use. It is required in
+ * practice: `declaredType` only carries annotation-derived type syntax, so un-annotated
+ * assignments (`shared = 42`) have a null declaredType and would hash identically regardless
+ * of their initializer. When omitted, the fingerprint degrades to annotation-declared types
+ * only. Declaration count and field length are capped so adversarial documents cannot produce
+ * unbounded fingerprint payloads; the caps only ever merge the tail of huge global surfaces,
+ * never the head, so ordinary files hash deterministically.
+ */
+internal fun globalSymbolsFingerprint(
+    declarations: List<BinderDeclaration>,
+    typeEvaluator: ExpressionTypeEvaluator? = null
+): String {
+    val payload = declarations.asSequence()
+        .filter { it.kind == DeclarationKind.GLOBAL && it.origin == DeclarationOrigin.AST }
+        .distinctBy { it.name }
+        .take(GLOBAL_FINGERPRINT_DECLARATION_LIMIT)
+        .joinToString(separator = "\n") { declaration ->
+            buildString {
+                append(declaration.name.take(GLOBAL_FINGERPRINT_FIELD_LIMIT))
+                append(':')
+                append(declaration.kind.name.take(GLOBAL_FINGERPRINT_FIELD_LIMIT))
+                append(':')
+                append(globalValueTypeDisplayName(declaration, typeEvaluator).take(GLOBAL_FINGERPRINT_FIELD_LIMIT))
+            }
+        }
+    return workspaceFingerprintHash(payload)
+}
+
+/**
+ * Value-type display name of one global as consumers see it: the evaluated anchor-expression
+ * type when an evaluator is available and the anchor is an expression, otherwise the
+ * annotation-declared type (empty for un-annotated non-expression globals).
+ */
+private fun globalValueTypeDisplayName(
+    declaration: BinderDeclaration,
+    typeEvaluator: ExpressionTypeEvaluator?
+): String {
+    if (typeEvaluator != null) {
+        val anchor = declaration.anchorNode as? ExpressionNode
+        if (anchor != null) {
+            return typeEvaluator.evaluate(anchor).displayName
+        }
+    }
+    return declaration.declaredType?.displayName.orEmpty()
 }

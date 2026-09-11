@@ -252,7 +252,11 @@ internal class DeclarationBinder(
         visitExpressionNode(node.end, value)
         node.step?.let { visitExpressionNode(it, value) }
 
-        val scopeId = builder.createScope(ScopeKind.LOOP, node.range, node.body)
+        // Lua: the control variable is scoped to the body only, so the header expressions
+        // (`for i = 1, #i do`) still evaluate in the ENCLOSING scope. Scope the LOOP scope
+        // to the body; the control-var declaration keeps its header anchor (its own range
+        // covers the declared name for hover/rename via the declaration-site queries).
+        val scopeId = builder.createScope(ScopeKind.LOOP, node.body.range, node.body)
         builder.pushScope(scopeId)
         try {
             // Numeric for control var is always number in Lua (for i = start, limit [, step]).
@@ -275,7 +279,10 @@ internal class DeclarationBinder(
     override fun visitForGenericStatement(node: ForGenericStatement, value: Unit) {
         node.iterators.forEach { visitExpressionNode(it, value) }
 
-        val scopeId = builder.createScope(ScopeKind.LOOP, node.range, node.body)
+        // Lua: iterator expressions (`for k, v in pairs(k) do`) evaluate in the ENCLOSING
+        // scope and the loop variables are scoped to the body only. Scope the LOOP scope
+        // to the body; the loop-variable declarations keep their header anchors.
+        val scopeId = builder.createScope(ScopeKind.LOOP, node.body.range, node.body)
         builder.pushScope(scopeId)
         try {
             node.variables.forEach { identifier ->

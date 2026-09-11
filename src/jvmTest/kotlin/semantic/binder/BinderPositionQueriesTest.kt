@@ -96,9 +96,16 @@ class BinderPositionQueriesTest {
         val forStatement = chunk.body.statements.filterIsInstance<ForNumericStatement>().single()
         val loopScope = assertNotNull(result.scopeGraph.getScope(forStatement.body))
 
+        // The declared name token (in the for header) still resolves to the loop declaration
+        // and its symbol through the declaration's own range.
         assertEquals(loopDeclaration, result.positionQueries.getDeclarationAt(loopDeclaration.range!!.start))
         assertEquals(loopDeclaration.symbolId, result.positionQueries.getSymbolAt(loopDeclaration.range!!.start)?.id)
-        assertEquals(loopScope, result.positionQueries.getScopeAt(loopDeclaration.range!!.start))
+        // Lua scoping: the numeric for header evaluates in the ENCLOSING scope, so the loop
+        // scope starts at the body — getScopeAt on the header control-var anchor now returns
+        // the root scope instead of the loop scope.
+        assertEquals(result.scopeGraph.rootScope, result.positionQueries.getScopeAt(loopDeclaration.range!!.start))
+        // Inside the body the loop scope (which contains the control variable) is innermost.
+        assertEquals(loopScope, result.positionQueries.getScopeAt(positionOf(source, "print", occurrence = 2)))
     }
 
     @Test

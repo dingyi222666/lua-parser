@@ -176,18 +176,65 @@ open class LuaWorkspaceEngine(
             nextFiles[path] = analyzeFile(path, delta.upserts.getValue(path))
         }
 
+        // A metadata change (layout completion extensions, JVM class/import configuration)
+        // is baked into every per-document model at analysis time, so a metadata-only delta
+        // must re-analyze the whole workspace, not just text-dirtied files. Hoisted above the
+        // baseSnapshot build because the graph-reuse guard below needs it first.
+        val metadataChanged = nextMetadata != previous.metadata
+
+        // SPEC B: the module graph is derived solely from all files' documentFacts plus the
+        // builtin overlay and the extra providers. When exactly one file was upserted, nothing
+        // was removed, metadata/overlay/providers are unchanged, and that file's graph-relevant
+        // facts signature (DocumentFacts.fingerprint, which covers requires, source imports,
+        // legacy module calls, module-name candidates, dynamic requires and JVM class loads)
+        // is unchanged, a rebuild would derive a structurally identical graph — reuse the
+        // previous instance instead, so edge-neutral single-file edits (identifier renames,
+        // literal changes, whitespace) stop rebuilding the whole module graph on every
+        // keystroke. Identity (not structural equality) against EMPTY: a default-constructed
+        // snapshot carries the EMPTY sentinel, which is not a graph this engine built.
+        val singleUpsertPath = delta.upserts.keys.singleOrNull()
+        val graph = if (singleUpsertPath != null &&
+            delta.removals.isEmpty() &&
+            !metadataChanged &&
+            builtinOverlay == previous.builtinOverlay &&
+            extraProviders == previous.extraProviders &&
+            previous.graph !== WorkspaceModuleGraph.EMPTY &&
+            nextFiles[singleUpsertPath]?.factsSignature == previous.files[singleUpsertPath]?.factsSignature
+        ) {
+            previous.graph
+        } else {
+            WorkspaceModuleGraphBuilder.build(nextFiles, builtinOverlay, extraProviders)
+        }
+
         val baseSnapshot = WorkspaceSnapshot(
             files = nextFiles,
             metadata = nextMetadata,
             extraProviders = extraProviders,
             builtinOverlay = builtinOverlay,
-            graph = WorkspaceModuleGraphBuilder.build(nextFiles, builtinOverlay, extraProviders)
+            graph = graph
         )
+
+        // SPEC A: the dirty-set planner compares provider-global fingerprints, but those only
+        // exist after semantic analysis and planning runs before it. Upserted documents are
+        // unconditionally dirty, so pre-analyze exactly them here (chunks hit the parse cache)
+        // and attach their fingerprints to the base snapshots; the planner then sees real
+        // global-surface values for the edited files instead of the empty "not yet analyzed"
+        // default. attachSemanticState re-analyzes the upserts in dependency order against the
+        // final workspace view and re-attaches the authoritative value — the extra per-upsert
+        // analysis is the bounded price of making global-surface changes visible to the planner
+        // within the same update that produced them.
+        if (parsingTargets.isNotEmpty()) {
+            val provisionalInput = LuaWorkspaceInput(
+                files = nextSources,
+                metadata = nextMetadata,
+                standardLibraryOverlayVersion = baseSnapshot.builtinOverlay.version
+            )
+            parsingTargets.forEach { path ->
+                analyzePathInto(nextFiles, path, nextSources, previous, provisionalInput, baseSnapshot)
+            }
+        }
+
         val dirtyPlan = WorkspaceDirtySetPlanner.plan(previous, baseSnapshot)
-        // A metadata change (layout completion extensions, JVM class/import configuration)
-        // is baked into every per-document model at analysis time, so a metadata-only delta
-        // must re-analyze the whole workspace, not just text-dirtied files.
-        val metadataChanged = nextMetadata != previous.metadata
         val pathsToAnalyze = if (metadataChanged) {
             dirtyPlan.affectedDocuments + nextSources.keys
         } else {
@@ -252,6 +299,10 @@ open class LuaWorkspaceEngine(
         baseSnapshot.files.forEach { (path, fileSnapshot) ->
             if (path !in pathsToAnalyze) {
                 val existing = previous?.files?.get(path)?.semanticFile ?: fileSnapshot.semanticFile
+                // Data-class copy carries the whole stored FileSnapshot forward — including the
+                // analysis-derived publicFingerprint.globalSymbolsFingerprint. Files that are
+                // not re-analyzed must keep the value the dirty-set planner compared them
+                // against, or every subsequent update would see a false global-surface change.
                 files[path] = if (existing == null) fileSnapshot else fileSnapshot.copy(semanticFile = existing)
             } else {
                 files[path] = fileSnapshot.copy(semanticFile = null)
@@ -317,7 +368,54 @@ open class LuaWorkspaceEngine(
                 }
             }
         }
-        return baseSnapshot.copy(files = files.toMap())
+        // SPEC C: re-point every stored workspace context at ONE resolver over the final
+        // snapshot. Invariant: after this pass, every stored context's resolver sees the FINAL
+        // workspace state, never a mid-update map. Analysis builds one resolver per analyzed
+        // document over the in-progress analysis snapshot; left as-is, a session accumulates a
+        // resolver (plus its cold caches) per file per update, each pinning that update's
+        // intermediate view. Re-pointing is O(N) per update — every context is rebuilt once —
+        // but bounded by workspace size.
+        //
+        // The resolver itself reads documentFacts, export surfaces and binders, none of which
+        // re-pointing touches, so a resolver built over the pre-re-point assembly derives
+        // exactly what one built over the returned snapshot does. withWorkspaceImportEffects
+        // re-derives the active import set and falls back through baseResolve* — the
+        // resolver-independent engine lambdas captured when the context was first composed — so
+        // engine-level fallbacks survive the re-point: JvmWorkspaceEngine's resolveImportTarget
+        // captures classModuleProvider/configuration (never the resolver), and its
+        // resolveImportedSymbol captures the configured/source import map, so stripping the
+        // composed lambdas (which DO capture the stale per-document resolver) and recomposing
+        // against the final resolver loses nothing.
+        val assembledSnapshot = baseSnapshot.copy(files = files.toMap())
+        val finalResolver = WorkspaceModuleResolver(assembledSnapshot)
+        val repointedFiles = assembledSnapshot.files.mapValues { (_, fileSnapshot) ->
+            val semanticFile = fileSnapshot.semanticFile ?: return@mapValues fileSnapshot
+            val storedContext = semanticFile.snapshot.workspaceContext
+            // withWorkspaceImportEffects early-returns without recomposing when currentPath is
+            // null, so a context lacking either piece must not have its lambdas stripped.
+            if (storedContext.workspaceResolver == null || storedContext.currentPath == null) {
+                return@mapValues fileSnapshot
+            }
+            val repointedContext = storedContext.copy(
+                workspaceResolver = finalResolver,
+                // The composed lambdas close over the stale per-document resolver; drop them so
+                // withWorkspaceImportEffects recomposes fresh against finalResolver, falling
+                // back through the resolver-independent baseResolve* chain.
+                resolveImportedSymbol = null,
+                resolveImportTarget = null
+            ).withWorkspaceImportEffects()
+            fileSnapshot.copy(
+                semanticFile = WorkspaceSemanticFile(
+                    path = semanticFile.path,
+                    source = semanticFile.source,
+                    chunk = semanticFile.chunk,
+                    model = semanticFile.model,
+                    snapshot = semanticFile.snapshot.copy(workspaceContext = repointedContext),
+                    recoveryDiagnostics = semanticFile.recoveryDiagnostics
+                )
+            )
+        }
+        return assembledSnapshot.copy(files = repointedFiles)
     }
 
     /**
@@ -389,7 +487,23 @@ open class LuaWorkspaceEngine(
             recoveryDiagnostics = parsed?.recoveryDiagnostics
                 ?: carriedOver?.recoveryDiagnostics.orEmpty()
         )
-        files[path] = fileSnapshot.copy(semanticFile = semanticFile)
+        // SPEC A: attach the provider-global surface fingerprint derived from this document's
+        // bound globals. Only semantic analysis can derive it, so it is joined onto the stored
+        // publicFingerprint copy here rather than in analyzeFile; the cycle re-analysis pass and
+        // the update() pre-plan upsert pass both run through this same store, so every stored
+        // snapshot ends up with the authoritative value for its final semantic state. The
+        // evaluator is the same expression evaluator the module resolver uses for provider
+        // globals, so the fingerprint tracks exactly what consumers re-bind through it.
+        val globalTypeEvaluator = ExpressionTypeEvaluator(semanticSnapshot.binder, semanticSnapshot.workspaceContext)
+        val publicFingerprint = (fileSnapshot.publicFingerprint
+            ?: WorkspacePublicFingerprint.from(fileSnapshot.documentFacts, fileSnapshot.moduleExportSurface))
+            .copy(
+                globalSymbolsFingerprint = globalSymbolsFingerprint(
+                    semanticSnapshot.binder.declarationIndex.declarations,
+                    globalTypeEvaluator
+                )
+            )
+        files[path] = fileSnapshot.copy(publicFingerprint = publicFingerprint, semanticFile = semanticFile)
     }
 
     private fun semanticAnalysisOrder(

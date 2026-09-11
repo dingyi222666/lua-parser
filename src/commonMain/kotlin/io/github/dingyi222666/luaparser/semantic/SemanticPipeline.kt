@@ -90,7 +90,15 @@ internal data class SemanticWorkspaceContext(
     // Embedder-extended layout properties for loadlayout completions, keyed by the class
     // name written in the layout table (or its Java simple name). Sourced from workspace
     // metadata `lua.layout.properties` via LuaLayoutPropertiesMetadata.parse.
-    val layoutPropertyExtensions: Map<String, List<LuaLayoutPropertySuggestion>> = emptyMap()
+    val layoutPropertyExtensions: Map<String, List<LuaLayoutPropertySuggestion>> = emptyMap(),
+    // Engine-provided fallback lambdas captured when withWorkspaceImportEffects composed the
+    // active resolve* lambdas. Unlike the composed lambdas — which capture the per-update
+    // WorkspaceModuleResolver — these never reference a resolver (e.g. JvmWorkspaceEngine's
+    // resolveImportTarget captures classModuleProvider/configuration only), so the fallback
+    // chain stays re-derivable when a workspace engine re-points a stored context at a fresh
+    // resolver: null the composed resolve* and re-run withWorkspaceImportEffects.
+    val baseResolveImportedSymbol: ((String) -> WorkspaceImportedSymbol?)? = null,
+    val baseResolveImportTarget: ((String) -> WorkspaceImportedSymbol?)? = null
 ) {
     fun withWorkspaceImportEffects(): SemanticWorkspaceContext {
         val path = currentPath ?: return this
@@ -100,8 +108,10 @@ internal data class SemanticWorkspaceContext(
             putAll(importedSymbols)
             putAll(documentImports)
         }
-        val fallbackResolveImportedSymbol = resolveImportedSymbol
-        val fallbackResolveImportTarget = resolveImportTarget
+        // The context's own lambdas win; baseResolve* only backs the re-pointed case where the
+        // composed lambdas were stripped because they captured the stale per-update resolver.
+        val fallbackResolveImportedSymbol = resolveImportedSymbol ?: baseResolveImportedSymbol
+        val fallbackResolveImportTarget = resolveImportTarget ?: baseResolveImportTarget
         return copy(
             // Expose the current-file active import set so lexical completions and symbol queries
             // see MODULE-kind imported Java classes/packages for this file only.
@@ -117,7 +127,10 @@ internal data class SemanticWorkspaceContext(
                 resolver.importTargetSymbolFor(path, target)
                     ?: fallbackResolveImportTarget?.invoke(target)
                     ?: resolver.importTargetSymbol(target)
-            }
+            },
+            // Re-publish the surviving fallbacks so repeated re-pointing keeps the chain derivable.
+            baseResolveImportedSymbol = fallbackResolveImportedSymbol,
+            baseResolveImportTarget = fallbackResolveImportTarget
         )
     }
 }
