@@ -132,7 +132,8 @@ class TypeSubstitutor {
                         )
                     },
                     alias = type.alias?.let { substituteRecursive(it, scopedMapping, maskOwnTypeParameters = true) as AliasType },
-                    javaClassName = type.javaClassName
+                    javaClassName = type.javaClassName,
+                    declarationId = type.declarationId
                 )
             }
 

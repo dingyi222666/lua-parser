@@ -191,7 +191,7 @@ class TypeResolver(
 
     private fun resolveClassDeclaration(declaration: BinderDeclaration): BinderDeclaration {
         if (!classStack.add(declaration.id)) {
-            return declaration.copy(declaredType = ClassType(declaration.name))
+            return declaration.copy(declaredType = ClassType(declaration.name, declarationId = declaration.id.value))
         }
 
         try {
@@ -223,7 +223,8 @@ class TypeResolver(
                 superClass = superClass,
                 superType = parentType,
                 typeParameters = typeParameters,
-                javaClassName = javaClassName
+                javaClassName = javaClassName,
+                declarationId = declaration.id.value
             )
             return declaration.copy(
                 declaredType = classType,

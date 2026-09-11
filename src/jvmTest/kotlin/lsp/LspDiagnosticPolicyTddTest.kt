@@ -19,7 +19,8 @@ import kotlin.test.assertTrue
  *    stays suppressed there).
  * 2. `checker.luajava.target.unresolved` publishes as Warning: hosts without the target
  *    class on the classpath (no android.jar etc.) still run valid code on-device, so a
- *    hard Error would flag valid `luajava.bindClass` programs.
+ *    hard Error would flag valid `luajava.bindClass` programs. The same Warning policy
+ *    applies to `checker.global.unresolved` free-identifier diagnostics (FIXER-UNDEF).
  * 3. Published diagnostics never carry zero-width ranges: null / zero-width semantic
  *    ranges fall back to a 1-character anchor on the first token of the first non-blank
  *    line, while real spans are preserved untouched.
@@ -106,6 +107,27 @@ class LspDiagnosticPolicyTddTest {
             diagnostic.message.contains("missing.DoesNotExist"),
             "Message should name the unresolved target; actual: ${diagnostic.message}."
         )
+    }
+
+    @Test
+    fun unresolved_global_publishes_as_warning() {
+        val service = initializedService()
+
+        val published = service.didOpen(
+            openParams(
+                "file:///workspace/unresolved-global-warning.lua",
+                "local a = 1\nprint(a)\nlocal b = mysteryHelper + 1\nreturn b"
+            )
+        )
+
+        val unresolved = published.diagnostics.filter { it.code?.left == "checker.global.unresolved" }
+        assertTrue(
+            unresolved.isNotEmpty(),
+            "Expected unresolved-global diagnostic to publish; actual: ${describe(published.diagnostics)}."
+        )
+        val diagnostic = unresolved.single()
+        assertEquals(DiagnosticSeverity.Warning, diagnostic.severity)
+        assertEquals("Unresolved global 'mysteryHelper'.", diagnostic.message)
     }
 
     private fun initializedService(): LuaLanguageService {

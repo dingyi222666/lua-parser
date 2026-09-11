@@ -145,6 +145,112 @@ internal class ExpressionUsageChecker(
 
     override fun visitIdentifier(node: Identifier, value: MutableList<Diagnostic>) {
         markLocalRead(node)
+        emitUnresolvedGlobalDiagnostic(node, value)
+    }
+
+    /**
+     * Free-identifier (global read) diagnostic: `checker.global.unresolved`.
+     *
+     * Oracle — flag a READ identifier only when every resolution surface misses:
+     * 1. No visible VALUE-namespace declaration ([findVisibleValueLocal] walk): locals,
+     *    parameters, bare-write AST GLOBALs, non-local function GLOBALs, and BUILTIN
+     *    overlay globals all resolve here.
+     * 2. Not an imported symbol: [SemanticWorkspaceContext.importedSymbols] plus the
+     *    composed [SemanticWorkspaceContext.resolveImportedSymbol] fallback cover explicit
+     *    imports, wildcard package members (android.widget.* → TextView), and dependency
+     *    export surfaces.
+     * 3. Not the first segment of any active import target. AndroLua env_import installs
+     *    package roots (free `android`/`com` resolve once a wildcard import activated the
+     *    package). Closest available surface: wildcard activations alias by the FULL
+     *    package name (key `android.widget` in importedSymbols), so the bare root is
+     *    derivable from the active import keys; [SemanticWorkspaceContext.resolveImportTarget]
+     *    covers engine-level dynamic targets as an extra fallback.
+     *
+     * Suppression policy (ordered, before flagging):
+     * S1. Assignment-LHS bare identifiers never reach this path (visitAssignmentStatement
+     *     skips them), so only reads of names never WRITTEN anywhere in the file can flag.
+     * S2. `_`-prefixed names never flag ([isIgnoredLocalName]) — covers `_ENV`/`_G`.
+     * S3. Uppercase-first names never flag: AndroLua convention for cross-file runtime
+     *     globals without require edges (FileUtil in the demo corpus).
+     * S4. No blanket `_ENV`-param disable: `_ENV`-param functions keep checking, because
+     *     the env chains back to the global surface (the audit's corpus FN — free `h` in
+     *     dingyi.lua:137 — lives inside an `_ENV`-param lambda).
+     *
+     * Corpus-driven tightenings (recorded in tasks/agent-runs/FIXER-UNDEF.last.txt):
+     * T1. `.aly` layout documents never flag: layout tables are alyloader data — free
+     *     lowercase ids inside them (searchBar/navBar/searchText) and host-page globals
+     *     (refresh/search) are injected/defined by the runtime at layout-load time.
+     * T2. AndroLua runtime free-id helpers missing from the overlay catalog (`apply`,
+     *     primitive array constructors `int`/`long`/…) stay silent — same class as
+     *     BuiltinSymbolSeeder.ANDROLUA_IMPORT_INSTALL_HELPER_GLOBALS.
+     */
+    private fun emitUnresolvedGlobalDiagnostic(node: Identifier, diagnostics: MutableList<Diagnostic>) {
+        val name = node.name
+        if (isIgnoredLocalName(name)) {
+            return // S2: `_`-prefixed / blank recovery names never flag.
+        }
+        if (name.firstOrNull()?.isUpperCase() == true) {
+            return // S3: UpperCamel cross-file runtime globals without require edges.
+        }
+        if (isLayoutDocument()) {
+            return // T1: alyloader layout tables resolve ids at layout-load time.
+        }
+        if (name in ANDROLUA_RUNTIME_HELPER_GLOBALS) {
+            return // T2: AndroLua runtime helpers the overlay catalog does not model.
+        }
+        val position = node.range.start
+        if (findVisibleValueLocal(name, position, scopeIdFor(node)) != null) {
+            return // Oracle 1: local/parameter/GLOBAL/BUILTIN declaration is visible.
+        }
+        if (workspaceContext.importedSymbols.containsKey(name)) {
+            return // Oracle 2: active imported symbol (explicit / wildcard / dependency).
+        }
+        if (workspaceContext.resolveImportedSymbol?.invoke(name) != null) {
+            return // Oracle 2 fallback: composed resolver (document + engine layers).
+        }
+        if (isImportTargetRoot(name)) {
+            return // Oracle 3: first segment of an active import target (package root).
+        }
+        addDiagnostic(
+            diagnostics = diagnostics,
+            key = "unresolved-global:${node.range.start.line}:${node.range.start.column}:$name",
+            diagnostic = Diagnostic(
+                range = node.range,
+                message = "Unresolved global '$name'.",
+                // WARNING, not ERROR: AndroLua hosts inject cross-file runtime globals
+                // (loadlayout ids, dependency exports) that this static surface cannot
+                // always see, so a hard error would flag valid on-device programs.
+                severity = DiagnosticSeverity.WARNING,
+                code = GLOBAL_UNRESOLVED_CODE
+            )
+        )
+    }
+
+    /**
+     * True when the analyzed document is an AndroLua layout table (`.aly`): alyloader
+     * wraps it as `return <table>` (LuaParser.parseTopLevelTableReturn) and loadlayout
+     * injects the id names as globals at load time, so free lowercase identifiers in
+     * layout tables are runtime-injected, not unresolved user globals.
+     */
+    private fun isLayoutDocument(): Boolean {
+        val path = workspaceContext.currentPath?.value ?: return false
+        return path.endsWith(".aly")
+    }
+
+    /**
+     * True when [name] is the first segment of any active import target. Primary
+     * surface: [SemanticWorkspaceContext.importedSymbols] keys, which carry full-package
+     * aliases from wildcard activations (`android.widget` → root `android`). The composed
+     * [SemanticWorkspaceContext.resolveImportTarget] still runs first so engine-level
+     * dynamic targets resolve even when not (yet) in the active map.
+     */
+    private fun isImportTargetRoot(name: String): Boolean {
+        if (workspaceContext.resolveImportTarget?.invoke(name) != null) {
+            return true
+        }
+        return workspaceContext.importedSymbols.keys.any { key ->
+            key != name && key.substringBefore('.').substringBefore('/') == name
+        }
     }
 
     override fun visitMemberExpression(node: MemberExpression, value: MutableList<Diagnostic>) {
@@ -412,6 +518,21 @@ internal class ExpressionUsageChecker(
         const val UNUSED_LOCAL_CODE = "checker.local.unused"
         const val MEMBER_MISSING_CODE = "checker.member.missing"
         const val LUAJAVA_TARGET_UNRESOLVED_CODE = "checker.luajava.target.unresolved"
+        const val GLOBAL_UNRESOLVED_CODE = "checker.global.unresolved"
+
+        /**
+         * AndroLua runtime free-id helpers the builtin overlay catalog does not model.
+         * Corpus sweep false positives without this set: free `int{}` primitive-array
+         * constructor (demo main.lua) and free `apply(env, fn)` helper (demo
+         * mods/dingyi.lua). Same helper class as
+         * [io.github.dingyi222666.luaparser.semantic.binder.BuiltinSymbolSeeder.ANDROLUA_IMPORT_INSTALL_HELPER_GLOBALS];
+         * kept checker-side because the overlay seed surface is catalog-owned
+         * (tightening recorded in tasks/agent-runs/FIXER-UNDEF.last.txt).
+         */
+        private val ANDROLUA_RUNTIME_HELPER_GLOBALS = setOf(
+            "apply",
+            "byte", "short", "int", "long", "float", "double", "boolean", "char"
+        )
 
         /** Lua 5.3/5.4 (+ AndroLua bit32) standard library module globals. */
         private val LUA_STDLIB_MODULE_NAMES = setOf(

@@ -1567,7 +1567,10 @@ object BuiltinOverlayLoader {
                 "timer",
                 "loadbitmap",
                 "loadlayout",
-                "loadmenu"
+                "loadmenu",
+                // loadlayout injects the parent view of the loaded layout as a global;
+                // demo main.lua reads parent.getPageIds / parent.getIdsTable (FIXER-UNDEF).
+                "parent"
             ),
             moduleFieldNames = linkedMapOf(
                 *lua53.moduleFieldNames.entries.map { it.key to it.value }.toTypedArray(),

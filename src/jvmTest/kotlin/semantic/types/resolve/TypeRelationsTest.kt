@@ -451,4 +451,42 @@ class TypeRelationsTest {
         val unrelatedParam = listOf(FunctionParameter("value", ClassType("Stranger")))
         assertFalse(TypeRelations.parameterListsCompatible(animalParam, unrelatedParam))
     }
+
+    @Test
+    fun classDeclarationIdentityGatesSameNameMatching() {
+        // Same name from DISTINCT binder declarations: identity matching rejects.
+        assertFalse(ClassType("Foo", declarationId = 1).isAssignableFrom(ClassType("Foo", declarationId = 2)))
+        // Both sides synthetic/bridged (null id): name-only matching still holds.
+        assertTrue(ClassType("Foo").isAssignableFrom(ClassType("Foo")))
+        // One side carries no id (overlay/legacy path): identity matching disabled.
+        assertTrue(ClassType("Foo", declarationId = 1).isAssignableFrom(ClassType("Foo")))
+        assertTrue(ClassType("Foo").isAssignableFrom(ClassType("Foo", declarationId = 2)))
+        // Same declaration on both sides: assignable.
+        assertTrue(ClassType("Foo", declarationId = 1).isAssignableFrom(ClassType("Foo", declarationId = 1)))
+    }
+
+    @Test
+    fun superTypeFallbackReachesAncestorWhenSuperClassMissing() {
+        // Regression: TypeResolver materializes superClass only for a real class parent;
+        // when it stays null the raw superType edge must still be walked.
+        val base = ClassType("Base")
+        val child = ClassType("Child", superType = base)
+
+        assertTrue(base.isAssignableFrom(child), "superType fallback must reach Base from Child")
+        assertFalse(base.isAssignableFrom(ClassType("Child")))
+    }
+
+    @Test
+    fun superTypeCycleTerminates() {
+        // A superType pointing back at the declaring name (CustomType placeholder loop)
+        // must terminate instead of walking forever.
+        val child = ClassType("Child", superType = CustomType("Child"))
+        assertFalse(ClassType("Base").isAssignableFrom(child))
+
+        // Genuine ClassType cycle: the visited set blocks the self-referential superType edge.
+        val looping = ClassType("Loop", superType = ClassType("Loop"))
+        assertFalse(ClassType("Base").isAssignableFrom(looping))
+        // Self-match still succeeds despite the cycle (matched before revisiting).
+        assertTrue(ClassType("Loop").isAssignableFrom(looping))
+    }
 }

@@ -33,6 +33,7 @@ import io.github.dingyi222666.luaparser.semantic.types.model.TypeParameterType
 import io.github.dingyi222666.luaparser.semantic.types.model.UnionType
 import io.github.dingyi222666.luaparser.semantic.types.model.UnknownType
 import io.github.dingyi222666.luaparser.semantic.types.model.VarargType
+import io.github.dingyi222666.luaparser.semantic.types.model.unwrapAliases
 
 object TypeRelations {
     fun isAssignable(target: Type, source: Type): Boolean {
@@ -596,14 +597,25 @@ object TypeRelations {
     }
 
     private fun isSameOrSubclass(target: ClassType, source: ClassType): ClassType? {
-        var current: ClassType? = source
-        while (current != null) {
-            if (current.name == target.name) {
-                return current
-            }
-            current = current.superClass
+        fun matches(candidate: ClassType): Boolean {
+            if (candidate.name != target.name) return false
+            // Identity matching only when BOTH sides carry a binder declaration id:
+            // null = synthetic/overlay/bridged, where name equality stays authoritative.
+            val targetId = target.declarationId
+            val candidateId = candidate.declarationId
+            return targetId == null || candidateId == null || targetId == candidateId
         }
-        return null
+
+        fun visit(current: ClassType?, visited: MutableSet<String>): ClassType? {
+            current ?: return null
+            if (!visited.add("${current.name}#${current.declarationId ?: -1}")) return null
+            if (matches(current)) return current
+            visit(current.superClass, visited)?.let { return it }
+            // Parent materialization failed (TypeResolver): continue via raw superType.
+            return visit(current.superType?.unwrapAliases() as? ClassType, visited)
+        }
+
+        return visit(source, mutableSetOf())
     }
 
     private fun isSameOrJavaSubclass(target: JavaClassType, source: JavaClassType): Boolean {

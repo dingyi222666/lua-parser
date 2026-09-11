@@ -8,7 +8,13 @@ data class ClassType(
     val superType: Type? = null,
     val typeParameters: List<TypeParameterType> = emptyList(),
     val alias: AliasType? = null,
-    val javaClassName: String? = null
+    val javaClassName: String? = null,
+    /**
+     * Binder declaration id ([io.github.dingyi222666.luaparser.semantic.binder.DeclarationId.value])
+     * when this type was materialized from a real declaration. Null = synthetic/overlay/bridged
+     * (identity matching disabled; same-name ClassTypes are then matched by name only).
+     */
+    val declarationId: Int? = null
 ) : Type {
     fun getAllFields(): Map<String, Type> = collectAllFields(mutableListOf())
 
