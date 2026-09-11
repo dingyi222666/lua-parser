@@ -285,13 +285,18 @@ internal class WorkspaceModuleResolver(
         }
         // Also index by the last path segment so bare Locale/File lookups succeed even when a
         // provider surface temporarily reports a non-simple moduleName alias.
+        // Explicit (non-wildcard) targets ALWAYS win the simple-name slot, even when loop 1
+        // already installed a wildcard package member under it: explicit imports are more
+        // specific, and AndroLua installs imports sequentially into _G so an explicit import
+        // overrides a wildcard member of the same simple name. Skipping when the name is
+        // already present let an earlier/later wildcard member shadow the explicit import.
         activeImportTargets(facts).forEach { target ->
             val normalized = normalizeImportTarget(target)
             if (normalized.endsWith(".*")) {
                 return@forEach
             }
             val simpleName = normalized.substringAfterLast('.').substringAfterLast('/').substringAfterLast('$').substringAfterLast('_')
-            if (simpleName.isNotBlank() && simpleName !in imported) {
+            if (simpleName.isNotBlank()) {
                 importTargetSymbol(normalized)?.let { symbol ->
                     imported[simpleName] = symbol.copy(alias = simpleName)
                 }

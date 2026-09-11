@@ -725,12 +725,17 @@ object DocumentFactsCollector {
     }
 
     private fun extractImportTargets(call: CallExpression): List<String> {
-        return when (val firstArgument = callArguments(call).firstOrNull()) {
-            is ArrayConstructorExpression -> firstArgument.values.flatMap(::extractStringTargets)
-            is TableConstructorExpression -> firstArgument.fields
-                .filter(::isImplicitTableSequenceField)
-                .flatMap { extractStringTargets(it.value) }
-            else -> extractStringTargets(firstArgument)
+        // AndroLua import accepts multiple targets per call (`import("a.*", "b.*")`, chained
+        // compact-call forms, tables, arrays). Every argument — not just the first — feeds the
+        // same per-argument parse path so all string-literal targets activate.
+        return callArguments(call).flatMap { argument ->
+            when (argument) {
+                is ArrayConstructorExpression -> argument.values.flatMap(::extractStringTargets)
+                is TableConstructorExpression -> argument.fields
+                    .filter(::isImplicitTableSequenceField)
+                    .flatMap { extractStringTargets(it.value) }
+                else -> extractStringTargets(argument)
+            }
         }
     }
 

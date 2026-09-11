@@ -186,21 +186,40 @@ class JvmWorkspaceEngine(
         if (facts == null) {
             return emptyList()
         }
-        return facts.jvmClassLoads
-            .asSequence()
-            .filter { it.kind in diagnosticLuaJavaClassLoadKinds }
-            .filter { fact ->
-                classModuleProvider.importedClassName(fact.target, configuration) == null &&
-                    (fact.kind != DocumentFacts.JvmClassLoadKind.IMPORT_CALL ||
-                        workspaceResolver.importTargetSymbol(fact.target) == null)
-            }
-            .map { fact ->
-                UnresolvedLuaJavaTarget(
-                    target = fact.target,
-                    helperName = luaJavaHelperName(fact.kind),
-                    range = fact.range
-                )
-            }
+        return (
+            facts.jvmClassLoads
+                .asSequence()
+                .filter { it.kind in diagnosticLuaJavaClassLoadKinds }
+                .filter { fact ->
+                    classModuleProvider.importedClassName(fact.target, configuration) == null &&
+                        (fact.kind != DocumentFacts.JvmClassLoadKind.IMPORT_CALL ||
+                            workspaceResolver.importTargetSymbol(fact.target) == null)
+                }
+                .map { fact ->
+                    UnresolvedLuaJavaTarget(
+                        target = fact.target,
+                        helperName = luaJavaHelperName(fact.kind),
+                        range = fact.range
+                    )
+                } +
+                // Dead wildcard/package imports: `pkg.*` whose package enumeration came back
+                // empty (typo, case mismatch, absent jar) used to emit nothing because the
+                // wildcard targets are stripped from jvmClassLoads and IMPORT_CALL stays off
+                // diagnosticLuaJavaClassLoadKinds. sourceImports still carries every wildcard
+                // target; the resolver resolves a wildcard only through its mounted package
+                // provider (packageProvidersFor never mounts an empty enumeration), so a null
+                // symbol proves the package enumerated zero classes.
+                facts.sourceImports
+                    .asSequence()
+                    .filter { isDeadWildcardImport(it.target, workspaceResolver) }
+                    .map { importFact ->
+                        UnresolvedLuaJavaTarget(
+                            target = importFact.target,
+                            helperName = "import",
+                            range = importFact.range
+                        )
+                    }
+            )
             .distinctBy { target ->
                 listOf(
                     target.range?.start?.line,
@@ -212,6 +231,23 @@ class JvmWorkspaceEngine(
                 )
             }
             .toList()
+    }
+
+    /**
+     * True when [target] is a wildcard/package import (`pkg.*`) that resolved to no mounted
+     * package provider. Only `.*`-suffixed targets are considered — non-wildcard import
+     * targets (classes, Lua modules, dex-prefixed runtime forms) keep their existing
+     * diagnostic policy and are not flagged by this dead-package check.
+     */
+    private fun isDeadWildcardImport(
+        target: String,
+        workspaceResolver: io.github.dingyi222666.luaparser.semantic.workspace.WorkspaceModuleResolver
+    ): Boolean {
+        val normalized = target.removePrefix("import ").trim()
+        if (!normalized.endsWith(".*")) {
+            return false
+        }
+        return workspaceResolver.importTargetSymbol(normalized) == null
     }
 
     private fun collectConfiguredImports(

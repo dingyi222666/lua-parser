@@ -270,7 +270,12 @@ class JvmClassModuleProvider(
         val moduleType = packageModuleTypeFor(packageName, classes)
         val (providerPath, _) = providerForPackage(packageName, moduleType)
         return WorkspaceImportedSymbol(
-            alias = packageName.substringBeforeLast('.', packageName),
+            // Key the activation alias by the FULL package name. A short
+            // substringBeforeLast('.') alias ("widget") collides silently when two wildcard
+            // packages share the last segment (android.widget.* vs android.support.v7.widget.*,
+            // demo main.lua) — last-wins would drop the other package symbol. The resolver's
+            // importedPackageSymbol already aliases by the full package name; match it here.
+            alias = packageName,
             moduleName = moduleType.moduleName,
             providerPath = providerPath,
             moduleType = moduleType
@@ -1271,7 +1276,10 @@ class JvmClassModuleProvider(
      * Avoids deep super/interface *graph* expansion that OOMs multi-file android.jar wildcards
      * (TASK-611). Instance member surface still flattens [Class.getMethods]/[Class.getFields]
      * so constructed locals (`Button()` then `button.`) expose View/TextView inherited APIs
-     * without walking empty super shells.
+     * without walking empty super shells. The static surface uses the same reflected
+     * [Class.getFields]/[Class.getMethods] helpers as the explicit-import deep surface so
+     * inherited statics (`TextView.VISIBLE` from View) resolve identically through
+     * `import "android.widget.*"` and `import "android.widget.TextView"`.
      */
     private fun shallowModuleTypeFor(clazz: Class<*>): ModuleType {
         val cacheKey = reflectedClassCacheKey(clazz)
@@ -1285,8 +1293,9 @@ class JvmClassModuleProvider(
             fields["__call"] = classType
         }
 
-        // Declared public static fields only (File.separator, TextView.AUTO_SIZE_*, …).
-        publicDeclaredStaticFields(clazz).forEach { field ->
+        // Reflected public static fields incl. inherited ones (TextView.VISIBLE from View,
+        // File.separator, TextView.AUTO_SIZE_*, …) — same helper as the deep explicit surface.
+        publicStaticFields(clazz).forEach { field ->
             fields[field.name] = javaTypeToType(field.genericType)
         }
 
@@ -1297,7 +1306,7 @@ class JvmClassModuleProvider(
                 fields[innerClass.simpleName] = typeReferenceForJavaClass(innerClass)
             }
 
-        publicDeclaredStaticMethods(clazz)
+        publicStaticMethods(clazz)
             .groupBy(Method::getName)
             .forEach { (name, overloads) ->
                 methods[name] = javaMethodType(overloads)
@@ -1331,11 +1340,14 @@ class JvmClassModuleProvider(
      * Package-wildcard class type: no recursive super/interface *member* expand (TASK-611),
      * but instance members use the full public reflection surface ([Class.getMethods] /
      * [Class.getFields]) so inherited View APIs appear on `button.` after
-     * `import "android.widget.*"`. Super/interfaces stay name-only type references.
+     * `import "android.widget.*"`. The static member surface uses the same reflected
+     * helpers as the explicit-import deep surface so inherited statics
+     * (`TextView.VISIBLE` from View) match the explicit import exactly.
+     * Super/interfaces stay name-only type references.
      */
     private fun shallowJavaClassTypeFor(clazz: Class<*>): JavaClassType {
         val javaName = javaTypeNameFor(clazz)
-        val staticFields = publicDeclaredStaticFields(clazz)
+        val staticFields = publicStaticFields(clazz)
             .associate { field ->
                 field.name to JavaStaticMemberType(
                     owner = javaTypeNameFor(field.declaringClass),
@@ -1344,7 +1356,7 @@ class JvmClassModuleProvider(
                     memberKind = JavaMemberKind.FIELD
                 )
             }
-        val staticMethods = publicDeclaredStaticMethods(clazz)
+        val staticMethods = publicStaticMethods(clazz)
             .groupBy(Method::getName)
             .mapValues { (name, overloads) ->
                 JavaStaticMemberType(
@@ -1391,22 +1403,6 @@ class JvmClassModuleProvider(
             interfaces = clazz.interfaces.map(::typeReferenceForJavaClass),
             typeParameters = clazz.typeParameters.map(::javaTypeParameterFor)
         )
-    }
-
-    private fun publicDeclaredStaticFields(clazz: Class<*>): List<Field> {
-        return clazz.declaredFields.filter { field ->
-            Modifier.isPublic(field.modifiers) &&
-                Modifier.isStatic(field.modifiers) &&
-                !field.isSynthetic
-        }
-    }
-
-    private fun publicDeclaredStaticMethods(clazz: Class<*>): List<Method> {
-        return clazz.declaredMethods.filter { method ->
-            Modifier.isPublic(method.modifiers) &&
-                Modifier.isStatic(method.modifiers) &&
-                isReflectableMethod(method)
-        }
     }
 
     private fun moduleTypeFor(
