@@ -3,8 +3,13 @@ package semantic.binder
 import io.github.dingyi222666.luaparser.parser.LuaParser
 import io.github.dingyi222666.luaparser.parser.ast.node.Position
 import io.github.dingyi222666.luaparser.semantic.SemanticPipeline
+import io.github.dingyi222666.luaparser.semantic.binder.BinderPass
+import io.github.dingyi222666.luaparser.semantic.binder.ScopeKind
+import io.github.dingyi222666.luaparser.semantic.comments.CommentAttachPass
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 /**
@@ -23,6 +28,10 @@ import kotlin.test.assertTrue
  * - Header positions keep enclosing-scope semantics: the control variable must NOT be
  *   offered there (see BinderLoopHeaderScopeTddTest for the binder-level lock).
  * - After a nested for's `end`, the outer variable surfaces while the inner one is gone.
+ * - The promotion itself lives on the shared seam
+ *   `BinderPositionQueries.scopeForFreePositionQuery` consumed by every free-position
+ *   surface (ReferenceQueries, workspace facade, legacy adapters); the binder-level test
+ *   locks that seam and the raw getScopeAt enclosing-scope behavior side by side.
  */
 class BinderLoopTailSurfaceTddTest {
 
@@ -114,6 +123,48 @@ class BinderLoopTailSurfaceTddTest {
             "j" in outerTailLabels,
             "the inner control variable must be gone after the inner `end`; " +
                 "actual=$outerTailLabels"
+        )
+    }
+
+    @Test
+    fun freePositionScopeSeamPromotesLoopTailWhileRawLookupStaysEnclosing() {
+        val source = """
+            for i = 1, 10 do
+                print(i)
+            end
+        """.trimIndent()
+        val chunk = LuaParser().parse(source)
+        val binder = BinderPass().bind(chunk, CommentAttachPass().attach(chunk))
+        val tailPosition = Position(3, 1)
+
+        // The hoisted seam (BinderPositionQueries.scopeForFreePositionQuery) is the single
+        // scope entry every free-position surface must share: completion enumeration
+        // (ReferenceQueries), the workspace facade's local name/declaration walks, and the
+        // legacy adapters. At the tail-of-body caret it must surface the loop scope ...
+        val tailScope = assertNotNull(
+            binder.positionQueries.scopeForFreePositionQuery(tailPosition),
+            "the free-position seam must resolve a scope at the tail-of-body caret"
+        )
+        assertEquals(
+            ScopeKind.LOOP,
+            tailScope.kind,
+            "the free-position seam must promote the loop scope at the tail-of-body caret"
+        )
+
+        // ... while the raw positional lookup keeps its enclosing-scope semantics, so
+        // node-anchored lookups (hover/type on REAL nodes) are unaffected by the promotion.
+        assertEquals(
+            binder.scopeGraph.rootScope,
+            binder.positionQueries.getScopeAt(tailPosition),
+            "the raw positional lookup must still resolve the enclosing scope at the tail caret"
+        )
+
+        // Header positions keep enclosing-scope semantics through the seam as well — Lua
+        // header expressions must not see the freshly declared control variables.
+        assertEquals(
+            binder.scopeGraph.rootScope,
+            binder.positionQueries.scopeForFreePositionQuery(positionOf(source, "10")),
+            "the free-position seam must keep header positions in the enclosing scope"
         )
     }
 

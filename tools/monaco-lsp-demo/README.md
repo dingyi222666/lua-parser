@@ -103,3 +103,12 @@ Env overrides: `PORT`, `JAVA_HOME`, `ANDROID_JAR`, `LUA_PARSER_ROOT`.
 
 Run `npm run smoke` to build/start the real Gradle LSP path, initialize the full
 demo workspace, open its entry file, receive diagnostics, and shut down cleanly.
+The run also probes live wire coverage on the opened files:
+`textDocument/completion` (dynamic table members on `table.` in `mods/dingyi.lua`
+plus the `.aly` loadlayout string-value domain), `textDocument/documentSymbol`
+(array result + name/kind shape), `textDocument/foldingRange`,
+`textDocument/semanticTokens/full` (validated against the initialize legend),
+`textDocument/references`, `textDocument/documentHighlight`,
+`textDocument/selectionRange` (parent-chain shape), `textDocument/rangeFormatting`,
+`textDocument/prepareRename` + `textDocument/rename` (WorkspaceEdit shape),
+`textDocument/inlayHint`, and `workspace/symbol`.

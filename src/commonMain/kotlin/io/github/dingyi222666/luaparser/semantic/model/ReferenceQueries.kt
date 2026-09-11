@@ -1,13 +1,9 @@
 package io.github.dingyi222666.luaparser.semantic.model
 
 import io.github.dingyi222666.luaparser.parser.ast.node.BaseASTNode
-import io.github.dingyi222666.luaparser.parser.ast.node.WhileStatement
-import io.github.dingyi222666.luaparser.parser.ast.node.BlockNode
 import io.github.dingyi222666.luaparser.parser.ast.node.AssignmentStatement
 import io.github.dingyi222666.luaparser.parser.ast.node.ConstantNode
 import io.github.dingyi222666.luaparser.parser.ast.node.ExpressionNode
-import io.github.dingyi222666.luaparser.parser.ast.node.ForGenericStatement
-import io.github.dingyi222666.luaparser.parser.ast.node.ForNumericStatement
 import io.github.dingyi222666.luaparser.parser.ast.node.FunctionDeclaration
 import io.github.dingyi222666.luaparser.parser.ast.node.Identifier
 import io.github.dingyi222666.luaparser.parser.ast.node.IndexExpression
@@ -27,7 +23,6 @@ import io.github.dingyi222666.luaparser.semantic.binder.DeclarationKind
 import io.github.dingyi222666.luaparser.semantic.binder.DeclarationNamespace
 import io.github.dingyi222666.luaparser.semantic.binder.Scope
 import io.github.dingyi222666.luaparser.semantic.binder.ScopeId
-import io.github.dingyi222666.luaparser.semantic.binder.ScopeKind
 import io.github.dingyi222666.luaparser.semantic.binder.isChunkGlobalFunctionDeclaration
 import io.github.dingyi222666.luaparser.semantic.comments.AliasTagSyntax
 import io.github.dingyi222666.luaparser.semantic.comments.ClassTagSyntax
@@ -476,67 +471,12 @@ internal class ReferenceQueries(
 
     /**
      * Scope-chain entry for free-position queries (completion enumeration, bare-name
-     * resolution, import shadowing).
-     *
-     * Tail-of-body gap: a for statement's LOOP scope is created with exactly `body.range`
-     * (header expressions must evaluate in the ENCLOSING scope — see DeclarationBinder), and
-     * block ranges end at the last committed token, so a query position between the last body
-     * statement and the statement's `end` token sits OUTSIDE the loop scope's range.
-     * getScopeAt therefore resolves it to the enclosing scope and the loop's control
-     * variables / body locals vanish from the surface even though the block is still open.
-     * When the position falls inside a numeric/generic for statement's full range but at or
-     * after its body's end, surface that loop scope instead: it holds the control variables
-     * and body locals, and its parent chain still reaches every enclosing scope. Header
-     * positions (before the body) keep enclosing-scope semantics — Lua header expressions
-     * must not see the freshly declared control variables.
+     * resolution, import shadowing) — the loop-tail promotion lives on
+     * [io.github.dingyi222666.luaparser.semantic.binder.BinderPositionQueries.scopeForFreePositionQuery]
+     * so the workspace facade and legacy adapters resolve identical scopes at tail carets.
      */
     private fun scopeForFreePositionQuery(position: Position): Scope? {
-        return loopBodyTailScopeAt(position) ?: binder.positionQueries.getScopeAt(position)
-    }
-
-    /**
-     * The innermost LOOP scope whose loop statement spans [position] while its body ends at or
-     * before it — i.e. the caret sits in the statement's tail gap. Restricted to
-     * ForNumericStatement/ForGenericStatement/WhileStatement owners: their LOOP scopes are
-     * built on `body.range` (end-exclusive), so tail carets fall to the enclosing scope
-     * without this promotion. Repeat keeps `node.range` (until-condition included) and is
-     * excluded — its tail genuinely resolves through getScopeAt.
-     */
-    private val forLoopBodyScopes: List<Scope> by lazy {
-        binder.scopeGraph.scopes.filter { scope ->
-            scope.kind == ScopeKind.LOOP && scope.ownerNode is BlockNode
-        }
-    }
-
-    private fun loopBodyTailScopeAt(position: Position): Scope? {
-        var innermost: Scope? = null
-        forLoopBodyScopes.forEach { scope ->
-            val body = scope.ownerNode as? BlockNode ?: return@forEach
-            // `parent` is a not-null delegate that can still throw on synthetic/detached
-            // trees; treat those as non-candidates like CompletionProvider does.
-            val statement = runCatching { body.parent }.getOrNull() ?: return@forEach
-            if (
-                statement !is ForNumericStatement &&
-                statement !is ForGenericStatement &&
-                statement !is WhileStatement
-            ) {
-                return@forEach
-            }
-            // Tail only: inside the statement's full range (end-exclusive) but at/after the
-            // body's end-exclusive end. Header positions stay in the enclosing scope so
-            // `for i = 1, #i do` keeps resolving the OUTER `i`.
-            if (!isPositionWithin(statement.range.start, statement.range.end, position)) {
-                return@forEach
-            }
-            if (compare(body.range.end, position) > 0) {
-                return@forEach
-            }
-            val current = innermost
-            if (current == null || compare(current.range.start, scope.range.start) < 0) {
-                innermost = scope
-            }
-        }
-        return innermost
+        return binder.positionQueries.scopeForFreePositionQuery(position)
     }
 
     private fun mergeVisibleDeclarations(

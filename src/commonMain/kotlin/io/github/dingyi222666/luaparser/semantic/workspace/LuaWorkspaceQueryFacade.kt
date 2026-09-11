@@ -2714,7 +2714,7 @@ class LuaWorkspaceQueryFacade(
         position: Position
     ): Set<String> {
         val names = linkedSetOf<String>()
-        var scope = semanticFile.snapshot.binder.positionQueries.getScopeAt(position)
+        var scope = semanticFile.snapshot.binder.positionQueries.scopeForFreePositionQuery(position)
         while (scope != null) {
             scope.declarationIds
                 .asReversed()
@@ -2738,7 +2738,7 @@ class LuaWorkspaceQueryFacade(
         position: Position,
         excludedDeclarations: Set<DeclarationId> = emptySet()
     ): BinderDeclaration? {
-        var scope = semanticFile.snapshot.binder.positionQueries.getScopeAt(position)
+        var scope = semanticFile.snapshot.binder.positionQueries.scopeForFreePositionQuery(position)
         while (scope != null) {
             scope.declarationIds
                 .asReversed()
