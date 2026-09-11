@@ -8,12 +8,17 @@ import org.eclipse.lsp4j.TextDocumentIdentifier
 import org.eclipse.lsp4j.TextDocumentItem
 import org.eclipse.lsp4j.WorkspaceFolder
 import java.io.File
+import java.nio.file.Files
 import kotlin.test.Test
 
-class FoldingReproTest {
+class LspFoldingRangeForwarderTddTest {
     @Test
     fun repro() {
-        val workspace = File("/Users/dingyi/projects/java_projects/lua-parser/tools/monaco-lsp-demo/workspace")
+        // Portable multi-file workspace: the forwarder path needs a didOpen'd document
+        // plus workspace state, not the demo corpus specifically.
+        val workspace = Files.createTempDirectory("folding-forwarder").toFile()
+        File(workspace, "main.lua").writeText("local x = 1\nprint(x)\n")
+        File(workspace, "util.lua").writeText("return { trim = function(s) return s end }\n")
         val service = LuaLanguageService().apply {
             initialize(
                 InitializeParams().apply {
