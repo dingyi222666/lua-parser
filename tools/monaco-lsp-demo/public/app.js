@@ -127,6 +127,7 @@
   let semanticLegend = null;
   /** @type {{ dispose: Function } | null} */
   let semanticTokensDisposable = null;
+  const pendingTokenRequests = new WeakMap();
 
   // ---------------------------------------------------------------------------
   // UI helpers
@@ -1650,29 +1651,42 @@ async function loadFileList() {
       { language: "lua" },
       semanticLegend,
       {
-        provideDocumentSemanticTokens: async function (model, _context, token) {
+        provideDocumentSemanticTokens: function (model, _context, token) {
           if (!lspReady) return null;
-          // Debounce: every keystroke re-fires a full-buffer token request that the
-          // server recomputes under its global lock; 250ms coalesces typing bursts.
-          await new Promise(function (resolve) {
-            setTimeout(resolve, 250);
+          // Coalescing debounce: N keystrokes schedule N calls but only the LAST one
+          // per model proceeds — earlier calls are answered with null (superseded).
+          // The server recomputes tokens under its global lock, so uncoalesced bursts
+          // would serialize full-buffer recomputes on a 3000-line file.
+          return new Promise(function (resolve) {
+            const previous = pendingTokenRequests.get(model);
+            if (previous) {
+              clearTimeout(previous.timer);
+              previous.resolve(null);
+            }
+            const timer = setTimeout(async function () {
+              pendingTokenRequests.delete(model);
+              if (!lspReady || (token && token.isCancellationRequested)) return resolve(null);
+              try {
+                const result = await request("textDocument/semanticTokens/full", {
+                  textDocument: { uri: model.uri.toString() },
+                });
+                if (token && token.isCancellationRequested) return resolve(null);
+                if (!result || !Array.isArray(result.data) || result.data.length % 5 !== 0) {
+                  return resolve(null);
+                }
+                // LSP and Monaco share the relative deltaLine/deltaStart encoding;
+                // positions were negotiated as UTF-16 code units.
+                resolve({
+                  data: new Uint32Array(result.data),
+                  resultId: result.resultId,
+                });
+              } catch (e) {
+                logErr("semanticTokens: " + (e.message || e));
+                resolve(null);
+              }
+            }, 250);
+            pendingTokenRequests.set(model, { timer: timer, resolve: resolve });
           });
-          if (token && token.isCancellationRequested) return null;
-          try {
-            const result = await request("textDocument/semanticTokens/full", {
-              textDocument: { uri: model.uri.toString() },
-            });
-            if (!result || !Array.isArray(result.data) || result.data.length % 5 !== 0) return null;
-            // LSP and Monaco share the relative deltaLine/deltaStart encoding;
-            // positions were negotiated as UTF-16 code units.
-            return {
-              data: new Uint32Array(result.data),
-              resultId: result.resultId,
-            };
-          } catch (e) {
-            logErr("semanticTokens: " + (e.message || e));
-            return null;
-          }
         },
         releaseDocumentSemanticTokens: function () {
           /* no resultId cache to invalidate */

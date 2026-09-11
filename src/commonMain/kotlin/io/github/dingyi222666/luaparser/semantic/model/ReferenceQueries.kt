@@ -1,6 +1,7 @@
 package io.github.dingyi222666.luaparser.semantic.model
 
 import io.github.dingyi222666.luaparser.parser.ast.node.BaseASTNode
+import io.github.dingyi222666.luaparser.parser.ast.node.WhileStatement
 import io.github.dingyi222666.luaparser.parser.ast.node.BlockNode
 import io.github.dingyi222666.luaparser.parser.ast.node.AssignmentStatement
 import io.github.dingyi222666.luaparser.parser.ast.node.ConstantNode
@@ -494,10 +495,12 @@ internal class ReferenceQueries(
     }
 
     /**
-     * The innermost LOOP scope whose for statement spans [position] while its body ends at or
+     * The innermost LOOP scope whose loop statement spans [position] while its body ends at or
      * before it — i.e. the caret sits in the statement's tail gap. Restricted to
-     * ForNumericStatement/ForGenericStatement owners: while/repeat LOOP scopes already cover
-     * their whole `node.range` (until-condition included), so getScopeAt resolves their tails.
+     * ForNumericStatement/ForGenericStatement/WhileStatement owners: their LOOP scopes are
+     * built on `body.range` (end-exclusive), so tail carets fall to the enclosing scope
+     * without this promotion. Repeat keeps `node.range` (until-condition included) and is
+     * excluded — its tail genuinely resolves through getScopeAt.
      */
     private val forLoopBodyScopes: List<Scope> by lazy {
         binder.scopeGraph.scopes.filter { scope ->
@@ -514,7 +517,8 @@ internal class ReferenceQueries(
             val statement = runCatching { body.parent }.getOrNull() ?: return@forEach
             if (
                 statement !is ForNumericStatement &&
-                statement !is ForGenericStatement
+                statement !is ForGenericStatement &&
+                statement !is WhileStatement
             ) {
                 return@forEach
             }

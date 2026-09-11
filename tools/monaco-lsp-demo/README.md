@@ -52,6 +52,14 @@ Browser (Monaco)  --WS JSON-RPC-->  Node bridge  --stdio Content-Length-->  JVM 
 > (already set) plus the provider registration, which happens right after the
 > initialize result delivers the legend.
 
+### Diagnostics you will see
+
+`main.lua` ships one intentional INFO marker: its `android.support.v7.widget.*`
+wildcard mounts zero classes from `android.jar` because the support library lives
+in the workspace's own `libs/classes.dex`, which the analyzer does not load —
+the members exist at runtime on-device. `mods/dingyi.lua` carries a real
+catch: an unresolved global `h` (a typo for the `w` parameter).
+
 ### AndroLua layout (.aly) completions
 
 `.aly` files and `loadlayout({...}, ids)` tables are layout-aware:
