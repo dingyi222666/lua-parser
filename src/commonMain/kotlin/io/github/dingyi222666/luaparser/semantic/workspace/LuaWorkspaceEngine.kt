@@ -424,7 +424,11 @@ open class LuaWorkspaceEngine(
      * display names of the path's own global declarations. Those evaluated types are exactly
      * what peers and consumers read through the module resolver, so the loop stops precisely
      * when another sweep would re-derive the same semantic state. Built per call (never
-     * cached) so it always reflects the live [files] state.
+     * cached) so it always reflects the live [files] state. Declaration count and field
+     * length are capped — mirroring the provider fingerprint's (globalSymbolsFingerprint)
+     * pathological-file guards — so a >512-global SCC member cannot turn every convergence
+     * check into a full evaluation sweep; the caps only ever merge the tail of huge global
+     * surfaces, never the head, so the fixpoint comparison stays deterministic.
      */
     private fun cycleReAnalysisFingerprint(
         paths: List<VirtualPath>,
@@ -443,12 +447,13 @@ open class LuaWorkspaceEngine(
                         .asSequence()
                         .filter { it.kind == DeclarationKind.GLOBAL && it.origin == DeclarationOrigin.AST }
                         .distinctBy { it.name }
+                        .take(CYCLE_REANALYSIS_DECLARATION_LIMIT)
                         .forEach { declaration ->
                             val anchor = declaration.anchorNode as? ExpressionNode ?: return@forEach
                             append('|')
-                            append(declaration.name)
+                            append(declaration.name.take(CYCLE_REANALYSIS_FIELD_LIMIT))
                             append('=')
-                            append(evaluator.evaluate(anchor).displayName)
+                            append(evaluator.evaluate(anchor).displayName.take(CYCLE_REANALYSIS_FIELD_LIMIT))
                         }
                 }
             }
@@ -595,11 +600,45 @@ open class LuaWorkspaceEngine(
         return WorkspaceSnapshot.FileSnapshot(
             cacheKey = workspaceFingerprintHash(source),
             documentFacts = facts,
-            factsSignature = facts.fingerprint,
+            factsSignature = graphReuseRangeSignature(facts),
             legacyModuleEnvironment = legacyEnvironment,
             moduleExportSurface = exportSurface,
             publicFingerprint = publicFingerprint
         )
+    }
+
+    /**
+     * Signature the module-graph reuse guard compares (SPEC B in [update]): the document facts
+     * fingerprint PLUS a hash over the graph-relevant fact ranges. [DocumentFacts.fingerprint]
+     * hashes requires / source imports / dynamic requires by NAME only, but the graph bakes
+     * each fact's range into its entries (resolved dependencies, unresolved requires, dynamic
+     * require sites), so a range-only edit — inserting a line above a `require` — used to pass
+     * the guard and leave the reused graph holding stale positions. Hashing the line/column
+     * ints alongside the name fingerprint makes range-only edits rebuild the graph. No query
+     * reads those ranges today; this closes the latent trap at the only seam that compares
+     * these signatures.
+     */
+    private fun graphReuseRangeSignature(facts: DocumentFacts): String {
+        val rangePayload = buildString {
+            facts.requires.forEach { appendRangeFact('R', it.moduleName, it.range) }
+            facts.sourceImports.forEach { appendRangeFact('I', it.target, it.range) }
+            facts.dynamicRequires.forEach { appendRangeFact('D', it.kind.name, it.range) }
+        }
+        return facts.fingerprint + workspaceFingerprintHash(rangePayload)
+    }
+
+    private fun StringBuilder.appendRangeFact(kind: Char, name: String, range: Range) {
+        append(kind)
+        append(name)
+        append('@')
+        append(range.start.line)
+        append(',')
+        append(range.start.column)
+        append('-')
+        append(range.end.line)
+        append(',')
+        append(range.end.column)
+        append('\n')
     }
 
     /**
@@ -681,6 +720,14 @@ open class LuaWorkspaceEngine(
          * worst-case re-analysis work at a small constant multiple of a single pass.
          */
         const val MAX_CYCLE_REANALYSIS_PASSES = 3
+
+        /**
+         * Caps for the cycle re-analysis fingerprint ([cycleReAnalysisFingerprint]), mirroring
+         * the provider fingerprint's caps (GLOBAL_FINGERPRINT_DECLARATION_LIMIT /
+         * GLOBAL_FINGERPRINT_FIELD_LIMIT in WorkspacePublicFingerprint).
+         */
+        const val CYCLE_REANALYSIS_DECLARATION_LIMIT = 512
+        const val CYCLE_REANALYSIS_FIELD_LIMIT = 256
     }
 
     private fun reportBindingProgress(

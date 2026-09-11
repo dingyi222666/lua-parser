@@ -1474,16 +1474,20 @@ class LuaLanguageService(
                 }
             }
             .toList()
-        val diagnostics = (parse + semantic).distinctBy { diagnostic ->
-            listOf(
-                diagnostic.range?.start?.line,
-                diagnostic.range?.start?.character,
-                diagnostic.range?.end?.line,
-                diagnostic.range?.end?.character,
-                diagnostic.severity,
-                diagnostic.message
-            )
-        }
+        val diagnostics = (parse + semantic)
+            .distinctBy { diagnostic ->
+                listOf(
+                    diagnostic.range?.start?.line,
+                    diagnostic.range?.start?.character,
+                    diagnostic.range?.end?.line,
+                    diagnostic.range?.end?.character,
+                    diagnostic.severity,
+                    diagnostic.message
+                )
+            }
+            // Bound the payload: a typo-heavy file can produce hundreds of per-site
+            // unresolved-global warnings; clients choke on megabyte diagnostic arrays.
+            .take(PUBLISH_DIAGNOSTICS_CAP)
         return PublishDiagnosticsParams(uri ?: uriFor(path), diagnostics)
     }
 
@@ -4091,3 +4095,6 @@ private fun SemanticSymbolKind.toLspSymbolKind(): org.eclipse.lsp4j.SymbolKind {
         SemanticSymbolKind.UNKNOWN -> org.eclipse.lsp4j.SymbolKind.Property
     }
 }
+
+/** Bound for the per-document published diagnostic payload (adversarial audit wave N). */
+private const val PUBLISH_DIAGNOSTICS_CAP = 300
