@@ -144,9 +144,20 @@ internal class ExpressionUsageChecker(
     }
 
     override fun visitIdentifier(node: Identifier, value: MutableList<Diagnostic>) {
-        markLocalRead(node)
-        emitUnresolvedGlobalDiagnostic(node, value)
+        val scopeId = scopeIdFor(node)
+        markLocalRead(node, scopeId)
+        emitUnresolvedGlobalDiagnostic(node, scopeId, value)
     }
+
+    /**
+     * Per-pass memos for the POSITION-INDEPENDENT resolution layers only. Imports are
+     * file-global: isImportTargetRoot and the resolveImportedSymbol/resolveImportTarget
+     * lambdas return the same answer for a given name regardless of where in the file
+     * the read sits. The local-scope walk (Oracle 1) is position-dependent and is NEVER
+     * memoized — a name-keyed memo there poisoned later sites (reverted, 2c2c9e1).
+     */
+    private val importRootMemo = hashMapOf<String, Boolean>()
+    private val importedSymbolMemo = hashMapOf<String, Boolean>()
 
     /**
      * Free-identifier (global read) diagnostic: `checker.global.unresolved`.
@@ -184,7 +195,11 @@ internal class ExpressionUsageChecker(
      *     primitive array constructors `int`/`long`/…) stay silent — same class as
      *     BuiltinSymbolSeeder.ANDROLUA_IMPORT_INSTALL_HELPER_GLOBALS.
      */
-    private fun emitUnresolvedGlobalDiagnostic(node: Identifier, diagnostics: MutableList<Diagnostic>) {
+    private fun emitUnresolvedGlobalDiagnostic(
+        node: Identifier,
+        scopeId: ScopeId,
+        diagnostics: MutableList<Diagnostic>
+    ) {
         val name = node.name
         if (isIgnoredLocalName(name)) {
             return // S2: `_`-prefixed / blank recovery names never flag.
@@ -204,16 +219,19 @@ internal class ExpressionUsageChecker(
             return
         }
         val position = node.range.start
-        if (findVisibleValueLocal(name, position, scopeIdFor(node)) != null) {
+        if (findVisibleValueLocal(name, position, scopeId) != null) {
             return // Oracle 1: local/parameter/GLOBAL/BUILTIN declaration is visible.
         }
-        if (workspaceContext.importedSymbols.containsKey(name)) {
+        // Oracle 2/3 memoization: file-global layers, keyed per name for this pass.
+        val importedResolved = importedSymbolMemo.getOrPut(name) {
+            workspaceContext.importedSymbols.containsKey(name) ||
+                workspaceContext.resolveImportedSymbol?.invoke(name) != null
+        }
+        if (importedResolved) {
             return // Oracle 2: active imported symbol (explicit / wildcard / dependency).
         }
-        if (workspaceContext.resolveImportedSymbol?.invoke(name) != null) {
-            return // Oracle 2 fallback: composed resolver (document + engine layers).
-        }
-        if (isImportTargetRoot(name)) {
+        val importRoot = importRootMemo.getOrPut(name) { isImportTargetRoot(name) }
+        if (importRoot) {
             return // Oracle 3: first segment of an active import target (package root).
         }
         addDiagnostic(
@@ -419,8 +437,8 @@ internal class ExpressionUsageChecker(
         }
     }
 
-    private fun markLocalRead(node: Identifier) {
-        val declaration = findVisibleValueLocal(node.name, node.range.start, scopeIdFor(node)) ?: return
+    private fun markLocalRead(node: Identifier, scopeId: ScopeId) {
+        val declaration = findVisibleValueLocal(node.name, node.range.start, scopeId) ?: return
         if (declaration.kind != DeclarationKind.LOCAL) {
             return
         }
