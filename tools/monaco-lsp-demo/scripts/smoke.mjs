@@ -287,10 +287,33 @@ function runProtocol(info, files) {
         // green). Unadvertised capabilities (codeAction, onTypeFormatting) are not
         // probed: a compliant server rejects requests it never advertised, so those
         // requests would produce noise instead of signal.
+        const identifierPosition = positionAt(entry.text, firstIdentifierOffset(entry.text));
         const entryLines = entry.text.split('\n');
-        const printOffset = entry.text.indexOf('print(');
-        const identifierOffset = printOffset >= 0 ? printOffset + 1 : firstIdentifierOffset(entry.text);
-        const identifierPosition = positionAt(entry.text, identifierOffset);
+        // Rename probe needs a RENAMABLE identifier: builtins like `print` make
+        // prepareRename return null, which let the probe pass vacuously. A chunk-level
+        // local declaration (`local adapters = ...`) is always renamable.
+        const localDeclLine = entryLines
+          .map(function (line, index) { return { line: line, index: index }; })
+          .find(function (candidate) { return /^local\s+[A-Za-z_][A-Za-z0-9_]*\b/.test(candidate.line); });
+        let renamePosition = null;
+        let renameTarget = null;
+        if (localDeclLine) {
+          const nameMatch = /^local\s+([A-Za-z_][A-Za-z0-9_]*)/.exec(localDeclLine.line);
+          const lineStart = entry.text
+            .split('\n')
+            .slice(0, localDeclLine.index)
+            .reduce(function (sum, line) { return sum + line.length + 1; }, 0);
+          renameTarget = nameMatch[1];
+          renamePosition = positionAt(entry.text, lineStart + localDeclLine.line.indexOf(nameMatch[1]));
+        }
+        // Rename probe: a chunk-level LOCAL declaration is always renamable — builtins
+        // like `print` make prepareRename return null and the probe passed vacuously.
+        const localDecl = entryLines
+          .map(function (line, index) { return { line: line, index: index }; })
+          .find(function (entry) { return /^local\s+[A-Za-z_][A-Za-z0-9_]*/.test(entry.line); });
+        const localIdentifierOffset = localDecl
+          ? entry.text.indexOf(localDecl.line) + localDecl.line.indexOf(/^local\s+/.exec(localDecl.line)[0].length) + 1
+          : firstIdentifierOffset(entry.text);
 
         // 1. textDocument/references — must return an array of Locations.
         const references = await request('textDocument/references', {
@@ -405,27 +428,33 @@ function runProtocol(info, files) {
 
         // 6. textDocument/prepareRename + textDocument/rename — prepare returns
         // null or a {range, placeholder} shape; rename returns a WorkspaceEdit.
+        if (!renamePosition) {
+          throw new Error('smoke could not find a chunk-level local for the rename probe');
+        }
         const preparedRename = await request('textDocument/prepareRename', {
           textDocument: { uri: entry.uri },
-          position: identifierPosition,
+          position: renamePosition,
         }, 60000);
-        if (preparedRename !== null && preparedRename !== undefined) {
-          // Modern {range, placeholder} shape, or the legacy bare Range form.
-          const prepareRange = preparedRename.range || preparedRename;
-          assertRangeShape(prepareRange, 'prepareRename');
-          if (
-            preparedRename.placeholder !== undefined
-            && preparedRename.placeholder !== null
-            && typeof preparedRename.placeholder !== 'string'
-          ) {
-            throw new Error(
-              `prepareRename placeholder must be a string; got ${typeof preparedRename.placeholder}`
-            );
-          }
+        if (preparedRename === null || preparedRename === undefined) {
+          throw new Error(
+            `prepareRename must return a range for the renamable local '${renameTarget}'; got null`
+          );
+        }
+        // Modern {range, placeholder} shape, or the legacy bare Range form.
+        const prepareRange = preparedRename.range || preparedRename;
+        assertRangeShape(prepareRange, 'prepareRename');
+        if (
+          preparedRename.placeholder !== undefined
+          && preparedRename.placeholder !== null
+          && typeof preparedRename.placeholder !== 'string'
+        ) {
+          throw new Error(
+            `prepareRename placeholder must be a string; got ${typeof preparedRename.placeholder}`
+          );
         }
         const renameResult = await request('textDocument/rename', {
           textDocument: { uri: entry.uri },
-          position: identifierPosition,
+          position: renamePosition,
           newName: 'smokeRenamedIdentifier42',
         }, 60000);
         if (!renameResult || typeof renameResult !== 'object') {
@@ -439,6 +468,12 @@ function runProtocol(info, files) {
           throw new Error(
             'rename WorkspaceEdit needs a changes map or a documentChanges array; got keys ' +
             `${JSON.stringify(Object.keys(renameResult))}`
+          );
+        }
+        if (hasChangesMap && !Object.keys(renameResult.changes).includes(entry.uri)) {
+          throw new Error(
+            `rename edits must be keyed under the request URI ${entry.uri}; got ` +
+            `${JSON.stringify(Object.keys(renameResult.changes))}`
           );
         }
 

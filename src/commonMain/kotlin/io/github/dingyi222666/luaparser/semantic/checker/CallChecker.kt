@@ -7,6 +7,7 @@ import io.github.dingyi222666.luaparser.semantic.binder.ScopeId
 import io.github.dingyi222666.luaparser.semantic.types.model.CallableType
 import io.github.dingyi222666.luaparser.semantic.types.model.AppliedType
 import io.github.dingyi222666.luaparser.semantic.types.model.ArrayType
+import io.github.dingyi222666.luaparser.semantic.types.model.CustomType
 import io.github.dingyi222666.luaparser.semantic.types.model.FunctionParameter
 import io.github.dingyi222666.luaparser.semantic.types.model.FunctionType
 import io.github.dingyi222666.luaparser.semantic.types.model.IntersectionType
@@ -287,7 +288,14 @@ class CallChecker(
                 if (parameterType.name !in typeParameterNames) {
                     return
                 }
-                if (parameterType.constraint?.isAssignableFrom(argumentType) == false) {
+                val constraint = parameterType.constraint
+                // An unresolvable constraint name (`@generic T: comparable` with no matching
+                // class/alias) resolves to a CustomType that is assignable-from nothing, so the
+                // strict gate below rejected every argument and the whole call collapsed to
+                // NO_MATCHING_SIGNATURE. Treat unresolved constraint names as UNVERIFIED: skip
+                // the gate but still infer the parameter from the argument. Real constraint
+                // types (declared classes/aliases, primitives) keep the strict check.
+                if (constraint !is CustomType && constraint?.isAssignableFrom(argumentType) == false) {
                     return
                 }
                 val current = inferred[parameterType.name]
@@ -335,6 +343,16 @@ class CallChecker(
                 is JavaArrayType -> inferGenericArguments(parameterType.elementType, argumentType.elementType, typeParameterNames, inferred)
                 else -> Unit
             }
+
+            // Documented vararg slots (`---@param ... T`) are wrapped as VarargType(T) by the
+            // resolver; infer the element parameter from each argument the slot absorbs
+            // (e.g. `pack(1, 2)` binds T=number for a `T[]` return) instead of falling to `else`.
+            is VarargType -> inferGenericArguments(
+                parameterType.elementType,
+                argumentType,
+                typeParameterNames,
+                inferred
+            )
 
             is TableType -> if (argumentType is TableType) {
                 val parameterIndex = parameterType.indexSignature

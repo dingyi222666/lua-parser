@@ -100,6 +100,37 @@ class DocTypeResolutionTest {
     }
 
     @Test
+    fun synthesizesColonMethodSignatureWithMethodOwnedTypeParameters() {
+        val result = bindAndResolve(
+            """
+            ---@class Repo<T>
+
+            ---@generic U
+            ---@param value U
+            ---@return Repo<U>
+            function Repo:of(value)
+                return self
+            end
+            """.trimIndent()
+        )
+
+        val method = result.declarationIndex.declarations.single {
+            it.kind == DeclarationKind.METHOD && it.name == "of"
+        }
+        val methodType = assertIs<FunctionType>(method.declaredType)
+
+        // The method-owned @generic must ride on the synthesized signature so
+        // CallChecker.instantiateGenericSignature can infer it at call sites.
+        assertEquals(listOf("U"), methodType.typeParameters.map { it.name })
+        assertEquals(listOf("self", "value"), methodType.parameters.map { it.name })
+        assertEquals("U", methodType.parameters.last().type.displayName)
+
+        val returnType = assertIs<AppliedType>(methodType.returnType)
+        assertEquals("Repo", returnType.baseName)
+        assertEquals("U", assertIs<TypeParameterType>(returnType.typeArguments.single()).name)
+    }
+
+    @Test
     fun resolvesAliasClassFieldsAndMethodDocForms() {
         val result = bindAndResolve(
             """

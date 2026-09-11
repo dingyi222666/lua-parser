@@ -307,8 +307,16 @@ class TypeResolver(
             else -> MultiReturnType(returnTypes)
         }
 
+        // Method-owned @generic tags are bound as TYPE_PARAMETER children of the METHOD
+        // declaration (same as functions); carry them onto the synthesized signature so
+        // CallChecker.instantiateGenericSignature can infer method-level generics
+        // (`Repo:of(value)` with `---@generic U`), mirroring resolveFunctionDeclaration.
+        val typeParameters = ownedDeclarations
+            .filter { it.kind == DeclarationKind.TYPE_PARAMETER }
+            .mapNotNull { resolveDeclaration(it.id).declaredType as? TypeParameterType }
+
         val inferredPrimaryType = if (primaryType == null && (parameters.isNotEmpty() || returnTypes.isNotEmpty())) {
-            FunctionType(parameters = parameters, returnType = returnType)
+            FunctionType(parameters = parameters, returnType = returnType, typeParameters = typeParameters)
         } else {
             primaryType
         }
