@@ -77,7 +77,14 @@ internal class ExpressionUsageChecker(
                     // WARNING, not ERROR: hosts without android.jar / the target class on the
                     // classpath still run this code fine on-device (e.g. bindClass on an
                     // Android-only class), so a hard error would flag valid programs.
-                    severity = DiagnosticSeverity.WARNING,
+                    // Dead WILDCARD imports are INFO: a pkg.* import is declarative scoping
+                    // whose members may come from workspace dex the analyzer cannot mount —
+                    // a different epistemic state from an explicitly written bindClass string.
+                    severity = if (target.fromWildcardImport) {
+                        DiagnosticSeverity.INFO
+                    } else {
+                        DiagnosticSeverity.WARNING
+                    },
                     code = LUAJAVA_TARGET_UNRESOLVED_CODE
                 )
             )

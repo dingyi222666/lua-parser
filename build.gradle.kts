@@ -4,14 +4,28 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.ExperimentalKotlinGradlePluginApi
 
 plugins {
+    // Kotlin consumer floor: this library is compiled with the Kotlin 2.2.0 compiler,
+    // so CONSUMERS REQUIRE KOTLIN >= 2.1 to read its metadata (Kotlin 1.9 and older
+    // reject the 2.2 metadata with "compiled with an incompatible version of Kotlin").
+    // Documented for consumers in README.md (Dependencies).
     kotlin("multiplatform") version "2.2.0"
     id("com.vanniktech.maven.publish") version "0.29.0"
     id("maven-publish")
     signing
 }
 
-group = "io.github.dingyi222666"
-version = "1.0.4"
+// Single source of truth for the published Maven coordinates. The
+// mavenPublishing { coordinates(...) } block below is authoritative; the
+// top-level project group/version are derived from these same constants so
+// tasks that read project.version (jar manifests, install publications, and
+// any consumer's project dependency resolution) stay in sync with what
+// actually publishes. Change release coordinates HERE only.
+val publishGroup = "io.github.dingyi222666"
+val publishArtifact = "luaparser"
+val publishVersion = "1.0.4"
+
+group = publishGroup
+version = publishVersion
 
 val runNativeHostTests = providers.gradleProperty("runNativeHostTests")
     .map { it.equals("true", ignoreCase = true) }
@@ -193,7 +207,7 @@ mavenPublishing {
 
     signAllPublications()
 
-    coordinates("io.github.dingyi222666", "luaparser", "1.0.4")
+    coordinates(publishGroup, publishArtifact, publishVersion)
 
     pom {
         name.set("luaparser")

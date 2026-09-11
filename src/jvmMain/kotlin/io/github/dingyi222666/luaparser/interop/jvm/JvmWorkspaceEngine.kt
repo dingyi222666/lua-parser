@@ -256,7 +256,8 @@ class JvmWorkspaceEngine(
                         UnresolvedLuaJavaTarget(
                             target = importFact.target,
                             helperName = "import",
-                            range = importFact.range
+                            range = importFact.range,
+                            fromWildcardImport = true
                         )
                     }
             )

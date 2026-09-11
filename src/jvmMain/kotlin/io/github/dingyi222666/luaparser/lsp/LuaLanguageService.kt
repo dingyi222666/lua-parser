@@ -435,6 +435,13 @@ class LuaLanguageService(
         hover
     }
 
+    /**
+     * Completion for [path] at the given text position.
+     *
+     * [line] and [character] are 0-based LSP integers (as sent by LSP clients);
+     * they are converted to the parser's 1-based [Position] internally
+     * (`Position(line + 1, character + 1)`) before hitting the semantic model.
+     */
     fun completion(path: String, line: Int, character: Int): CompletionList = synchronized(stateLock) {
         val items = queries.completions(pathFromClientPath(path), Position(line + 1, character + 1)).map { completion ->
             CompletionItem(completion.label).apply {

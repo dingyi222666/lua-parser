@@ -50,6 +50,14 @@ import kotlin.test.assertTrue
  *    synthetic `__jvm__` path has no real location are dropped unless the provider is
  *    actually indexed (module-graph claimed, or a real workspace file path).
  *
+ * 5. **Prefix-before-substring ranking (wave Q).** Non-blank queries rank name-prefix
+ *    matches (`name.startsWith(query, ignoreCase)`) ahead of mid-name substring matches
+ *    WITHIN the already-built entry list, each bucket keeping the deterministic
+ *    (name, path, line, column) order, and the 500-cap applies after that ranking.
+ *    Without it, a short query returns an arbitrary alphabetical slice of the cap in
+ *    which leading-prefix symbols can be displaced by alphabetically-earlier substring
+ *    hits. The substring filter itself is unchanged.
+ *
  * Verification is review-owned and serial; this worker does not run Gradle.
  */
 class LspWorkspaceSymbolSurfacePolicyTddTest {
@@ -119,6 +127,57 @@ class LspWorkspaceSymbolSurfacePolicyTddTest {
         // documentSymbol keeps the full per-file surface: the exclusion is workspace-only.
         val documentNames = service.documentSymbols("workspace/ws-body-locals.lua").map { it.name }
         assertTrue("bodyLocal" in documentNames, "documentSymbol surface keeps body locals; got $documentNames")
+    }
+
+    // -------------------------------------------------------------------------
+    // Wave Q — prefix-before-substring ranking applied before the cap
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun workspace_symbols_rank_prefix_matches_ahead_of_substring_matches() {
+        val service = service()
+        service.open(
+            "workspace/ws-prefix-rank.lua",
+            """
+            local hasSomethingElse = 1
+            local getSomething = 2
+            local budget = 3
+            """.trimIndent()
+        )
+
+        // Query "get": "getSomething" is a leading-prefix match, "budget" only a mid-name
+        // substring match. The prefix bucket must rank ahead of the substring bucket inside
+        // the capped result — plain alphabetical order would put "budget" first.
+        val ranked = service.workspaceSymbols("get").map { it.name }
+        val getSomethingIndex = ranked.indexOf("getSomething")
+        val budgetIndex = ranked.indexOf("budget")
+        assertTrue(
+            getSomethingIndex >= 0,
+            "prefix match 'getSomething' must surface for query 'get'; got $ranked"
+        )
+        assertTrue(
+            budgetIndex >= 0,
+            "substring match 'budget' must stay in the capped result; got $ranked"
+        )
+        assertTrue(
+            getSomethingIndex < budgetIndex,
+            "prefix matches must rank ahead of substring matches within the capped result; got $ranked"
+        )
+
+        // getSomething vs hasSomethingElse: on the query that genuinely matches both
+        // ("something"), both land in the substring bucket and keep the deterministic
+        // (name, path, line, column) order — getSomething before hasSomethingElse.
+        val somethingRanked = service.workspaceSymbols("something").map { it.name }
+        val somethingGetIndex = somethingRanked.indexOf("getSomething")
+        val somethingHasIndex = somethingRanked.indexOf("hasSomethingElse")
+        assertTrue(
+            somethingGetIndex >= 0 && somethingHasIndex >= 0,
+            "query 'something' must keep both substring matches; got $somethingRanked"
+        )
+        assertTrue(
+            somethingGetIndex < somethingHasIndex,
+            "substring bucket keeps the deterministic entry order: getSomething before hasSomethingElse; got $somethingRanked"
+        )
     }
 
     // -------------------------------------------------------------------------

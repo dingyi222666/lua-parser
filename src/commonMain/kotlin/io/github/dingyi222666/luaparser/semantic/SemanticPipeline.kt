@@ -138,7 +138,11 @@ internal data class SemanticWorkspaceContext(
 internal data class UnresolvedLuaJavaTarget(
     val target: String,
     val helperName: String,
-    val range: Range?
+    val range: Range?,
+    // Wildcard imports are declarative scoping whose members may be supplied at runtime
+    // by workspace dex the analyzer cannot mount (e.g. libs/classes.dex) — a different
+    // epistemic state from an explicit bindClass string, so they diagnose at INFO.
+    val fromWildcardImport: Boolean = false
 )
 
 internal data class WorkspaceImportedSymbol(

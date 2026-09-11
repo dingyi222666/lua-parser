@@ -49,7 +49,7 @@ class LspDeadWildcardImportDiagnosticTddTest {
                 "actual: ${describe(published.diagnostics)}."
         )
         val diagnostic = unresolved.single()
-        assertEquals(DiagnosticSeverity.Warning, diagnostic.severity)
+        assertEquals(DiagnosticSeverity.Information, diagnostic.severity)
         assertTrue(
             diagnostic.message.contains("android.does.not.exist.*"),
             "Message should name the dead wildcard target; actual: ${diagnostic.message}."

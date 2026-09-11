@@ -532,14 +532,25 @@ class LuaWorkspaceQueryFacade(
      * - Results are capped at [WORKSPACE_SYMBOL_RESULT_CAP] AFTER the deterministic sort
      *   (name, path, line, column), so a blank query returns a stable 500-entry prefix of
      *   the workspace instead of dumping every local in every file.
+     * - Non-blank queries apply a stable two-bucket ranking (wave Q) to the matched
+     *   entries BEFORE the cap: leading-prefix matches ([String.startsWith], ignoreCase)
+     *   rank ahead of mid-name substring matches, and each bucket keeps the deterministic
+     *   (name, path, line, column) order of the already-built entry list. A short query
+     *   therefore cannot push name-prefix symbols out of the 500-entry window behind
+     *   alphabetically-earlier substring hits.
      */
     fun workspaceSymbolEntries(query: String): List<WorkspaceSymbolEntry> {
         val normalizedQuery = query.trim()
-        return cachedWorkspaceSymbolEntries
-            .asSequence()
-            .filter { normalizedQuery.isBlank() || it.name.contains(normalizedQuery, ignoreCase = true) }
-            .take(WORKSPACE_SYMBOL_RESULT_CAP)
-            .toList()
+        if (normalizedQuery.isBlank()) {
+            return cachedWorkspaceSymbolEntries.take(WORKSPACE_SYMBOL_RESULT_CAP)
+        }
+        val matches = cachedWorkspaceSymbolEntries.filter { entry ->
+            entry.name.contains(normalizedQuery, ignoreCase = true)
+        }
+        val (prefixMatches, substringMatches) = matches.partition { entry ->
+            entry.name.startsWith(normalizedQuery, ignoreCase = true)
+        }
+        return (prefixMatches + substringMatches).take(WORKSPACE_SYMBOL_RESULT_CAP)
     }
 
     private val cachedWorkspaceSymbolEntries: List<WorkspaceSymbolEntry> by lazy {

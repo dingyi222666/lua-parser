@@ -188,6 +188,60 @@ function runProtocol(info, files) {
           );
         }
 
+        // Wire coverage beyond completion, on the already-opened entry file.
+        const documentSymbols = await request('textDocument/documentSymbol', {
+          textDocument: { uri: entry.uri },
+        }, 60000);
+        if (!Array.isArray(documentSymbols)) {
+          throw new Error(
+            `documentSymbol must return an array; got ${documentSymbols === null ? 'null' : typeof documentSymbols}`
+          );
+        }
+        const malformedDocumentSymbol = documentSymbols.find(
+          (symbol) => typeof symbol?.name !== 'string' || typeof symbol?.kind !== 'number'
+        );
+        if (malformedDocumentSymbol) {
+          throw new Error(
+            `documentSymbol entries need name+kind; got ${JSON.stringify(malformedDocumentSymbol)}`
+          );
+        }
+
+        const foldingRanges = await request('textDocument/foldingRange', {
+          textDocument: { uri: entry.uri },
+        }, 60000);
+        if (!Array.isArray(foldingRanges)) {
+          throw new Error(
+            `foldingRange must return an array; got ${foldingRanges === null ? 'null' : typeof foldingRanges}`
+          );
+        }
+
+        const semanticLegend = initialized.capabilities?.semanticTokensProvider?.legend;
+        if (!Array.isArray(semanticLegend?.tokenTypes) || semanticLegend.tokenTypes.length === 0) {
+          throw new Error('Initialize capabilities omitted semanticTokensProvider.legend.tokenTypes');
+        }
+        const semanticTokens = await request('textDocument/semanticTokens/full', {
+          textDocument: { uri: entry.uri },
+        }, 60000);
+        if (!Array.isArray(semanticTokens?.data)) {
+          throw new Error(
+            `semanticTokens/full must return numeric data; got ${semanticTokens === null ? 'null' : typeof semanticTokens?.data}`
+          );
+        }
+        if (semanticTokens.data.length % 5 !== 0) {
+          throw new Error(
+            `semanticTokens data length must be a multiple of 5; got ${semanticTokens.data.length}`
+          );
+        }
+        for (let index = 3; index < semanticTokens.data.length; index += 5) {
+          const tokenType = semanticTokens.data[index];
+          if (tokenType < 0 || tokenType >= semanticLegend.tokenTypes.length) {
+            throw new Error(
+              `semanticTokens tokenType index ${tokenType} outside legend ` +
+              `(0..${semanticLegend.tokenTypes.length - 1}) at data slot ${index}`
+            );
+          }
+        }
+
         // AndroLua layout (.aly) file: must open as a parsed Lua document, and an empty
         // property string must offer the loadlayout value domain (regression for the
         // quickSuggestions/empty-string completion path).

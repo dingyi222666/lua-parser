@@ -58,8 +58,13 @@ Use the `jvm.androidJar` metadata key or `JvmWorkspaceConfiguration.androidJar` 
 - Add the dependency to your gradle file
 
 ```kotlin
-implementation("io.github.dingyi222666:luaparser:1.0.3")
+implementation("io.github.dingyi222666:luaparser:1.0.4")
 ```
+
+### Dependencies
+
+- **Kotlin consumer floor: Kotlin >= 2.1.** This library is compiled with the Kotlin 2.2.0 compiler, so consumers must build with a Kotlin Gradle plugin of 2.1 or newer to read its metadata; Kotlin 1.9 (and older) consumers fail with "compiled with an incompatible version of Kotlin".
+- Runtime dependencies: the Kotlin stdlib. On JVM, `org.eclipse.lsp4j` is an `api` dependency because its types appear in the public `LuaLanguageService` surface.
 
 Minimal parser round-trip example:
 
@@ -216,6 +221,8 @@ A JVM `lsp4j` server is now available under `io.github.dingyi222666.luaparser.ls
 ```
 
 The current server implementation maps workspace-backed diagnostics, hover, completion, and goto-definition queries through `LuaWorkspaceQueryFacade`.
+
+Workspace symbol search (`workspace/symbol`) matches case-insensitively on symbol names and ranks name-prefix matches ahead of mid-name substring matches before capping results at 500 entries; each bucket keeps the deterministic (name, path, line, column) order of the workspace index, so short queries return stable, prefix-first results instead of an arbitrary alphabetical slice.
 
 Example client settings payload:
 
