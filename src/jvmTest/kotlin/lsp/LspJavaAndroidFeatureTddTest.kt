@@ -242,21 +242,30 @@ class LspJavaAndroidFeatureTddTest {
         server.shutdown().get()
         server.exit()
 
-        val ignoredHover = server.textDocumentService.hover(
+        val rejectedHover = server.textDocumentService.hover(
             HoverParams(TextDocumentIdentifier(uri), Position(0, 16))
-        ).get()
-        val ignoredCompletion = server.textDocumentService.completion(
+        )
+        val rejectedCompletion = server.textDocumentService.completion(
             CompletionParams(TextDocumentIdentifier(uri), Position(0, 16))
-        ).get().right
-        val ignoredDefinition = server.textDocumentService.definition(
+        )
+        val rejectedDefinition = server.textDocumentService.definition(
             DefinitionParams(TextDocumentIdentifier(uri), Position(0, 16))
-        ).get().left
+        )
         val rejectedWorkspaceSymbols = server.workspaceService.symbol(WorkspaceSymbolParams("String"))
 
         assertEquals(javaProviderUri("java.lang.String"), beforeExitDefinition.single().uri)
-        assertEquals(null, ignoredHover)
-        assertTrue(ignoredCompletion.items.isEmpty())
-        assertTrue(ignoredDefinition.isEmpty())
+        assertTrue(
+            rejectedHover.isCompletedExceptionally,
+            "Hover requests should be rejected once the server has exited."
+        )
+        assertTrue(
+            rejectedCompletion.isCompletedExceptionally,
+            "Completion requests should be rejected once the server has exited."
+        )
+        assertTrue(
+            rejectedDefinition.isCompletedExceptionally,
+            "Definition requests should be rejected once the server has exited."
+        )
         assertTrue(
             rejectedWorkspaceSymbols.isCompletedExceptionally,
             "Workspace symbol requests should be rejected once the server has exited."

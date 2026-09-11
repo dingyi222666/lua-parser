@@ -35,8 +35,6 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertNull
-import kotlin.test.assertTrue
 import kotlin.test.fail
 
 /**
@@ -47,8 +45,8 @@ import kotlin.test.fail
  * - Repeated [LanguageServer.exit] is a no-op that keeps EXITED state.
  * - After shutdown (before exit): text-document + workspace *requests* complete exceptionally;
  *   notifications are ignored.
- * - After exit: text-document requests are quiet/empty; workspace requests still rejected;
- *   notifications ignored; further initialize/shutdown rejected.
+ * - After exit: text-document + workspace requests complete exceptionally (same hard
+ *   rejection as shutdown); notifications ignored; further initialize/shutdown rejected.
  */
 class LspShutdownExitIdempotencyTddTest {
 
@@ -73,7 +71,7 @@ class LspShutdownExitIdempotencyTddTest {
         server.exit()
 
         val uri = "file:///workspace/idempotent-exit.lua"
-        assertQuietTextDocumentRequests(server.textDocumentService, uri)
+        assertRejectedTextDocumentRequests(server.textDocumentService, uri)
         assertFutureFails(
             server.workspaceService.symbol(WorkspaceSymbolParams("value")),
             "workspace requests after repeated exit should remain rejected"
@@ -143,7 +141,7 @@ class LspShutdownExitIdempotencyTddTest {
     }
 
     @Test
-    fun exit_without_shutdown_is_idempotent_and_quiets_text_document_requests() {
+    fun exit_without_shutdown_is_idempotent_and_rejects_text_document_requests() {
         val server = LuaLanguageServer()
         server.initialize(InitializeParams()).get()
         val uri = "file:///workspace/exit-without-shutdown.lua"
@@ -152,7 +150,7 @@ class LspShutdownExitIdempotencyTddTest {
         server.exit()
         server.exit()
 
-        assertQuietTextDocumentRequests(server.textDocumentService, uri)
+        assertRejectedTextDocumentRequests(server.textDocumentService, uri)
         assertFutureFails(
             server.workspaceService.symbol(WorkspaceSymbolParams("value")),
             "workspace requests after direct exit should be rejected"
@@ -205,8 +203,8 @@ class LspShutdownExitIdempotencyTddTest {
             )
         )
 
-        // Stable post-condition: EXITED policy (quiet text docs, rejected workspace/lifecycle).
-        assertQuietTextDocumentRequests(server.textDocumentService, uri)
+        // Stable post-condition: EXITED policy (rejected text docs, workspace, and lifecycle).
+        assertRejectedTextDocumentRequests(server.textDocumentService, uri)
         assertFutureFails(
             server.workspaceService.symbol(WorkspaceSymbolParams("value")),
             "workspace requests after interleaved shutdown/exit should be rejected"
@@ -277,42 +275,6 @@ class LspShutdownExitIdempotencyTddTest {
         }
     }
 
-    private fun assertQuietTextDocumentRequests(textDocuments: TextDocumentService, uri: String) {
-        val position = Position(1, 7)
-
-        val hover = textDocuments.hover(HoverParams(TextDocumentIdentifier(uri), position)).get()
-        val completion = textDocuments.completion(
-            CompletionParams(TextDocumentIdentifier(uri), position)
-        ).get().right
-        val signatureHelp = textDocuments.signatureHelp(
-            SignatureHelpParams(TextDocumentIdentifier(uri), position)
-        ).get()
-        val definition = textDocuments.definition(
-            DefinitionParams(TextDocumentIdentifier(uri), position)
-        ).get().left
-        val declaration = textDocuments.declaration(
-            DeclarationParams(TextDocumentIdentifier(uri), position)
-        ).get().left
-        val documentHighlights = textDocuments.documentHighlight(
-            DocumentHighlightParams(TextDocumentIdentifier(uri), position)
-        ).get()
-        val references = textDocuments.references(
-            ReferenceParams(TextDocumentIdentifier(uri), position, ReferenceContext(true))
-        ).get()
-        val documentSymbols = textDocuments.documentSymbol(
-            DocumentSymbolParams(TextDocumentIdentifier(uri))
-        ).get()
-
-        assertNull(hover)
-        assertTrue(completion.items.isEmpty())
-        assertNull(signatureHelp)
-        assertTrue(definition.isEmpty())
-        assertTrue(declaration.isEmpty())
-        assertTrue(documentHighlights.isEmpty())
-        assertTrue(references.isEmpty())
-        assertTrue(documentSymbols.isEmpty())
-    }
-
     private fun assertRejectedTextDocumentRequests(textDocuments: TextDocumentService, uri: String) {
         val position = Position(1, 7)
         val requests = listOf<CompletableFuture<*>>(
@@ -329,7 +291,7 @@ class LspShutdownExitIdempotencyTddTest {
         )
 
         requests.forEach { request ->
-            assertFutureFails(request, "text document requests after shutdown should complete exceptionally")
+            assertFutureFails(request, "text document requests after shutdown or exit should complete exceptionally")
         }
     }
 

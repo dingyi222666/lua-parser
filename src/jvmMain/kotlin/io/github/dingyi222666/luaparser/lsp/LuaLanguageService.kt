@@ -1481,7 +1481,7 @@ class LuaLanguageService(
                 }
             }
             .toList()
-        val diagnostics = (parse + semantic)
+        val distinct = (parse + semantic)
             .distinctBy { diagnostic ->
                 listOf(
                     diagnostic.range?.start?.line,
@@ -1492,10 +1492,33 @@ class LuaLanguageService(
                     diagnostic.message
                 )
             }
-            // Bound the payload: a typo-heavy file can produce hundreds of per-site
-            // unresolved-global warnings; clients choke on megabyte diagnostic arrays.
-            .take(PUBLISH_DIAGNOSTICS_CAP)
+        // Bound the payload: a typo-heavy file can produce hundreds of per-site
+        // unresolved-global warnings; clients choke on megabyte diagnostic arrays.
+        // Truncation is announced with one trailing sentinel diagnostic (HINT,
+        // code `diagnostics.truncated`) so clients can tell a capped payload from a
+        // clean bill of health instead of silently losing the tail.
+        val truncatedCount = distinct.size - PUBLISH_DIAGNOSTICS_CAP
+        val diagnostics = if (truncatedCount > 0) {
+            distinct.take(PUBLISH_DIAGNOSTICS_CAP) + truncatedDiagnosticsSentinel(truncatedCount, buffer)
+        } else {
+            distinct
+        }
         return PublishDiagnosticsParams(uri ?: uriFor(path), diagnostics)
+    }
+
+    /**
+     * Synthetic trailing marker published ONLY when the payload exceeded
+     * [PUBLISH_DIAGNOSTICS_CAP]. Reuses the same fallback anchor as range-less diagnostics
+     * (1-character span on the document's first token) and a HINT severity with a dedicated
+     * code so it can never be mistaken for a real finding.
+     */
+    private fun truncatedDiagnosticsSentinel(count: Int, source: String?): Diagnostic {
+        return Diagnostic().apply {
+            range = fallbackDiagnosticRange(source)
+            severity = org.eclipse.lsp4j.DiagnosticSeverity.Hint
+            code = Either.forLeft<String, Int>("diagnostics.truncated")
+            message = "$count more diagnostics truncated"
+        }
     }
 
     /**

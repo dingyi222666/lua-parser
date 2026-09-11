@@ -205,6 +205,16 @@ function runProtocol(info, files) {
             `documentSymbol entries need name+kind; got ${JSON.stringify(malformedDocumentSymbol)}`
           );
         }
+        // main.lua is not symbol-dead: it declares chunk-level locals (adapters,
+        // roundDrawable) and top-level function declarations (refresh, search), which
+        // the wave M documentSymbol policy keeps (body-locals excluded, chunk-level
+        // kept). An empty result means symbol production is broken, not merely quiet.
+        if (documentSymbols.length === 0) {
+          throw new Error(
+            'documentSymbol must not be empty for main.lua: it declares chunk-level locals ' +
+            '(adapters, roundDrawable) and top-level functions (refresh, search)'
+          );
+        }
 
         const foldingRanges = await request('textDocument/foldingRange', {
           textDocument: { uri: entry.uri },
@@ -218,6 +228,13 @@ function runProtocol(info, files) {
         const semanticLegend = initialized.capabilities?.semanticTokensProvider?.legend;
         if (!Array.isArray(semanticLegend?.tokenTypes) || semanticLegend.tokenTypes.length === 0) {
           throw new Error('Initialize capabilities omitted semanticTokensProvider.legend.tokenTypes');
+        }
+        const keywordTokenType = semanticLegend.tokenTypes.indexOf('keyword');
+        if (keywordTokenType < 0) {
+          throw new Error(
+            'semanticTokensProvider.legend.tokenTypes must include "keyword" so Lua keywords ' +
+            `can be classified; got [${semanticLegend.tokenTypes.join(', ')}]`
+          );
         }
         const semanticTokens = await request('textDocument/semanticTokens/full', {
           textDocument: { uri: entry.uri },
@@ -240,6 +257,28 @@ function runProtocol(info, files) {
               `(0..${semanticLegend.tokenTypes.length - 1}) at data slot ${index}`
             );
           }
+        }
+        // main.lua is keyword-bearing (local/function/for/if/then/end throughout), so a
+        // working tokenizer must emit at least one token; data:[] means token production
+        // is dead, which the shape checks above alone would let pass.
+        if (semanticTokens.data.length === 0) {
+          throw new Error('semanticTokens must not be empty for a keyword-bearing document');
+        }
+        // Classification, not just encoding: at least one emitted token must be typed
+        // "keyword" in the legend. Catches servers that encode deltas but type every
+        // token as a non-keyword class (the range check above cannot see that).
+        let hasKeywordToken = false;
+        for (let index = 3; index < semanticTokens.data.length; index += 5) {
+          if (semanticTokens.data[index] === keywordTokenType) {
+            hasKeywordToken = true;
+            break;
+          }
+        }
+        if (!hasKeywordToken) {
+          throw new Error(
+            `semanticTokens must classify at least one token as "keyword" ` +
+            `(legend index ${keywordTokenType}); main.lua contains local/function/for/if keywords`
+          );
         }
 
         // Capability wire-coverage: every advertised capability must answer with a

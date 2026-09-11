@@ -163,7 +163,7 @@ class LspShutdownBehaviorTddTest {
     }
 
     @Test
-    fun exit_after_shutdown_preserves_quiet_text_document_requests_and_rejected_workspace_requests() {
+    fun exit_after_shutdown_rejects_text_document_and_workspace_requests() {
         val server = LuaLanguageServer()
         server.initialize(InitializeParams()).get()
         val uri = "file:///workspace/post-exit.lua"
@@ -172,7 +172,7 @@ class LspShutdownBehaviorTddTest {
         server.shutdown().get()
         server.exit()
 
-        assertQuietTextDocumentRequests(server.textDocumentService, uri)
+        assertRejectedTextDocumentRequests(server.textDocumentService, uri)
         assertFutureFails(
             server.workspaceService.symbol(WorkspaceSymbolParams("value")),
             "workspace requests after exit should remain rejected"

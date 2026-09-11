@@ -385,11 +385,16 @@ class LuaLanguageServer(
     }
 
     private fun textDocumentRequestPolicy(): LspTextDocumentRequestPolicy {
+        // CREATED stays quiet-empty (client probes before initialize settle); SHUTDOWN and
+        // EXIT are hard lifecycle boundaries and reject identically. EXITED is reachable for
+        // embedded usage (the default `processExit` is a no-op; only LuaLanguageServerLauncher
+        // wires exitProcess), so post-exit requests must surface the same IllegalStateException
+        // as post-shutdown ones instead of silently returning empty results.
         return when (lifecycleState) {
             LifecycleState.CREATED -> LspTextDocumentRequestPolicy.QuietEmpty
             LifecycleState.INITIALIZED -> LspTextDocumentRequestPolicy.Accept
             LifecycleState.SHUTDOWN -> LspTextDocumentRequestPolicy.Reject("Lua language server has already shut down")
-            LifecycleState.EXITED -> LspTextDocumentRequestPolicy.QuietEmpty
+            LifecycleState.EXITED -> LspTextDocumentRequestPolicy.Reject("Lua language server has already exited")
         }
     }
 

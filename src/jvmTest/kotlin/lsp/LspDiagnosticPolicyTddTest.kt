@@ -24,6 +24,10 @@ import kotlin.test.assertTrue
  * 3. Published diagnostics never carry zero-width ranges: null / zero-width semantic
  *    ranges fall back to a 1-character anchor on the first token of the first non-blank
  *    line, while real spans are preserved untouched.
+ * 4. Publish payloads cap at 300 diagnostics; truncation is announced with ONE trailing
+ *    sentinel diagnostic (HINT, code `diagnostics.truncated`, "N more diagnostics
+ *    truncated") instead of silently dropping the tail. Under-cap publishes stay
+ *    sentinel-free.
  *
  * Test-only; exercises the publish policy, not the semantic model internals.
  */
@@ -128,6 +132,56 @@ class LspDiagnosticPolicyTddTest {
         val diagnostic = unresolved.single()
         assertEquals(DiagnosticSeverity.Warning, diagnostic.severity)
         assertEquals("Unresolved global 'mysteryHelper'.", diagnostic.message)
+    }
+
+    @Test
+    fun publish_payload_over_cap_truncates_with_trailing_sentinel() {
+        val service = initializedService()
+        // 400 statements, each proven to emit at least one publishable diagnostic
+        // (unused-local Information; the unresolved global read adds a Warning), so the
+        // distinct payload exceeds the 300-diagnostic publish cap.
+        val source = (1..400).joinToString("\n") { index -> "local value$index = mysteryGlobal$index + 1" }
+
+        val published = service.didOpen(
+            openParams("file:///workspace/truncation-sentinel.lua", source)
+        )
+
+        // Cap math: exactly 300 real diagnostics + exactly one trailing sentinel.
+        assertEquals(301, published.diagnostics.size)
+        assertTrue(
+            published.diagnostics.dropLast(1).none { it.code?.left == "diagnostics.truncated" },
+            "Only the trailing diagnostic may be the truncation sentinel; " +
+                "actual: ${describe(published.diagnostics.takeLast(5))}."
+        )
+        val sentinel = published.diagnostics.last()
+        assertEquals("diagnostics.truncated", sentinel.code?.left)
+        assertEquals(DiagnosticSeverity.Hint, sentinel.severity)
+        assertTrue(
+            sentinel.message.matches(Regex("\\d+ more diagnostics truncated")),
+            "Sentinel must report how many diagnostics were truncated; actual: ${sentinel.message}."
+        )
+        val range = assertNotNull(sentinel.range, "truncation sentinel must carry a visible anchor range")
+        assertEquals(0, range.start.line)
+        assertTrue(
+            range.end.line > range.start.line ||
+                (range.end.line == range.start.line && range.end.character > range.start.character),
+            "truncation sentinel span must stay non-zero-width; actual: $range."
+        )
+    }
+
+    @Test
+    fun publish_payload_under_cap_stays_sentinel_free() {
+        val service = initializedService()
+
+        val published = service.didOpen(
+            openParams("file:///workspace/no-truncation.lua", "local unusedValue = 1\nreturn 1")
+        )
+
+        assertTrue(
+            published.diagnostics.none { it.code?.left == "diagnostics.truncated" },
+            "Under-cap publishes must not carry a truncation sentinel; " +
+                "actual: ${describe(published.diagnostics)}."
+        )
     }
 
     private fun initializedService(): LuaLanguageService {
