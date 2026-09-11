@@ -184,10 +184,26 @@ class LuaLanguageServer(
         }
 
         override fun symbol(params: WorkspaceSymbolParams): CompletableFuture<Either<MutableList<out SymbolInformation>, MutableList<out WorkspaceSymbol>>> {
-            if (!acceptsMessages()) {
-                return failedFuture(IllegalStateException("Lua language server is not accepting workspace requests"))
+            // Lifecycle policy (workspace-symbol audit, wave M): CREATED mirrors the text
+            // request QuietEmpty policy — a client probing workspace/symbol before
+            // initialize settles gets an empty legacy symbol list instead of a hard
+            // rejection. SHUTDOWN/EXIT stay rejected (hard lifecycle boundary).
+            return when (lifecycleState) {
+                LifecycleState.CREATED -> completedLegacyWorkspaceSymbols()
+                LifecycleState.INITIALIZED -> workspaceDelegate.symbol(params)
+                LifecycleState.SHUTDOWN, LifecycleState.EXITED ->
+                    failedFuture(IllegalStateException("Lua language server is not accepting workspace requests"))
             }
-            return workspaceDelegate.symbol(params)
+        }
+
+        /**
+         * `workspaceSymbol/resolve` is NOT advertised (`WorkspaceSymbolOptions.resolveProvider`
+         * stays unset — symbol locations are already inline). lsp4j's interface default would
+         * throw UnsupportedOperationException if a client invoked it anyway; pre-empt that by
+         * quietly returning the input symbol unchanged.
+         */
+        override fun resolveWorkspaceSymbol(symbol: WorkspaceSymbol?): CompletableFuture<WorkspaceSymbol?> {
+            return CompletableFuture.completedFuture(symbol)
         }
     }
 
@@ -256,6 +272,15 @@ class LuaLanguageServer(
 
     private fun acceptsMessages(): Boolean {
         return lifecycleState == LifecycleState.INITIALIZED
+    }
+
+    /** Quiet-empty legacy workspace/symbol payload used by the CREATED-state policy. */
+    private fun completedLegacyWorkspaceSymbols(): CompletableFuture<Either<MutableList<out SymbolInformation>, MutableList<out WorkspaceSymbol>>> {
+        return CompletableFuture.completedFuture(
+            Either.forLeft<MutableList<out SymbolInformation>, MutableList<out WorkspaceSymbol>>(
+                mutableListOf<SymbolInformation>()
+            )
+        )
     }
 
     private fun <T> textDocumentRequest(

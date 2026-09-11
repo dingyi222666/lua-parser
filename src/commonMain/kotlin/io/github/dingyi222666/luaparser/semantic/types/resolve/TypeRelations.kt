@@ -597,19 +597,16 @@ object TypeRelations {
     }
 
     private fun isSameOrSubclass(target: ClassType, source: ClassType): ClassType? {
-        fun matches(candidate: ClassType): Boolean {
-            if (candidate.name != target.name) return false
-            // Identity matching only when BOTH sides carry a binder declaration id:
-            // null = synthetic/overlay/bridged, where name equality stays authoritative.
-            val targetId = target.declarationId
-            val candidateId = candidate.declarationId
-            return targetId == null || candidateId == null || targetId == candidateId
-        }
-
+        // Name matching is authoritative. Binder declaration ids are PER-DOCUMENT
+        // counters, not workspace identities: gating on them rejects the same logical
+        // class across require boundaries and can falsely unify distinct classes whose
+        // binders happened to allocate equal ids. The field stays for future
+        // workspace-unique allocation; the audit-verified win here is the superType
+        // fallback below (parent materialization failures no longer break inheritance).
         fun visit(current: ClassType?, visited: MutableSet<String>): ClassType? {
             current ?: return null
-            if (!visited.add("${current.name}#${current.declarationId ?: -1}")) return null
-            if (matches(current)) return current
+            if (!visited.add(current.name)) return null
+            if (current.name == target.name) return current
             visit(current.superClass, visited)?.let { return it }
             // Parent materialization failed (TypeResolver): continue via raw superType.
             return visit(current.superType?.unwrapAliases() as? ClassType, visited)

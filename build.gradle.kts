@@ -11,7 +11,7 @@ plugins {
 }
 
 group = "io.github.dingyi222666"
-version = "1.0.3"
+version = "1.0.4"
 
 val runNativeHostTests = providers.gradleProperty("runNativeHostTests")
     .map { it.equals("true", ignoreCase = true) }
@@ -117,8 +117,9 @@ kotlin {
             kotlin.srcDir(generateBuiltinOverlayMirror)
             dependencies {
                 implementation(kotlin("stdlib"))
-                implementation(kotlin("test"))
-
+                // kotlin("test") lives ONLY in commonTest: putting it on commonMain
+                // shipped a testing framework as a runtime dependency of the published
+                // library (verified in the 1.0.3 POM on Maven Central).
             }
         }
         commonTest {
@@ -192,7 +193,7 @@ mavenPublishing {
 
     signAllPublications()
 
-    coordinates("io.github.dingyi222666", "luaparser", "1.0.3")
+    coordinates("io.github.dingyi222666", "luaparser", "1.0.4")
 
     pom {
         name.set("luaparser")

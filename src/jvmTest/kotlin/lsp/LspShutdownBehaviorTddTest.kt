@@ -44,15 +44,17 @@ import kotlin.test.fail
 
 class LspShutdownBehaviorTddTest {
     @Test
-    fun before_initialize_returns_quiet_text_document_requests_and_rejects_workspace_requests() {
+    fun before_initialize_returns_quiet_text_document_and_workspace_symbol_requests() {
         val server = LuaLanguageServer()
         val uri = "file:///workspace/pre-initialize.lua"
 
         assertQuietTextDocumentRequests(server.textDocumentService, uri)
-        assertFutureFails(
-            server.workspaceService.symbol(WorkspaceSymbolParams("value")),
-            "workspace requests before initialize should complete exceptionally"
-        )
+        // CREATED-state parity (workspace-symbol audit wave M): workspace/symbol is
+        // quiet-empty before initialize instead of a hard rejection. Shutdown/exit
+        // requests stay rejected (see tests below).
+        val symbols = server.workspaceService.symbol(WorkspaceSymbolParams("value")).get()
+        assertTrue(symbols.isLeft, "pre-initialize workspace/symbol should use the legacy empty branch; got $symbols")
+        assertTrue(symbols.left.isEmpty(), "pre-initialize workspace/symbol should be empty; got $symbols")
     }
 
     @Test

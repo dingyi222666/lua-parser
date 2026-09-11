@@ -453,16 +453,16 @@ class TypeRelationsTest {
     }
 
     @Test
-    fun classDeclarationIdentityGatesSameNameMatching() {
-        // Same name from DISTINCT binder declarations: identity matching rejects.
-        assertFalse(ClassType("Foo", declarationId = 1).isAssignableFrom(ClassType("Foo", declarationId = 2)))
-        // Both sides synthetic/bridged (null id): name-only matching still holds.
+    fun classDeclarationIdsDoNotGateNameMatching() {
+        // Binder declaration ids are PER-DOCUMENT counters, not workspace identities:
+        // gating on them rejected the same logical class across require boundaries and
+        // could falsely unify distinct classes whose binders allocated equal ids
+        // (adversarial audit F1). Name matching is authoritative; the ids stay on the
+        // model for future workspace-unique allocation.
+        assertTrue(ClassType("Foo", declarationId = 1).isAssignableFrom(ClassType("Foo", declarationId = 2)))
         assertTrue(ClassType("Foo").isAssignableFrom(ClassType("Foo")))
-        // One side carries no id (overlay/legacy path): identity matching disabled.
         assertTrue(ClassType("Foo", declarationId = 1).isAssignableFrom(ClassType("Foo")))
         assertTrue(ClassType("Foo").isAssignableFrom(ClassType("Foo", declarationId = 2)))
-        // Same declaration on both sides: assignable.
-        assertTrue(ClassType("Foo", declarationId = 1).isAssignableFrom(ClassType("Foo", declarationId = 1)))
     }
 
     @Test

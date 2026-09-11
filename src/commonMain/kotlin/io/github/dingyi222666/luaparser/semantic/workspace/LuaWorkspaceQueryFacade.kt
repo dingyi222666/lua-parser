@@ -521,20 +521,49 @@ class LuaWorkspaceQueryFacade(
         return mergeDocumentSymbolRoots(declarationNodes, exportNodes)
     }
 
+    /**
+     * Workspace/symbol query surface (workspace-symbol audit, wave M):
+     *
+     * - The entry universe ([buildAllWorkspaceSymbolEntries]) is memoized for this facade
+     *   instance's lifetime. A facade serves exactly one [snapshot] — the LSP service swaps
+     *   in a fresh facade on every workspace build/update — so the full iterate/distinct/
+     *   sort pass runs once per workspace build instead of on every query while the caller
+     *   holds its state lock. Query filtering stays per-request and cheap.
+     * - Results are capped at [WORKSPACE_SYMBOL_RESULT_CAP] AFTER the deterministic sort
+     *   (name, path, line, column), so a blank query returns a stable 500-entry prefix of
+     *   the workspace instead of dumping every local in every file.
+     */
     fun workspaceSymbolEntries(query: String): List<WorkspaceSymbolEntry> {
         val normalizedQuery = query.trim()
-        return allWorkspaceSymbolEntries()
+        return cachedWorkspaceSymbolEntries
             .asSequence()
             .filter { normalizedQuery.isBlank() || it.name.contains(normalizedQuery, ignoreCase = true) }
+            .take(WORKSPACE_SYMBOL_RESULT_CAP)
             .toList()
     }
 
-    private fun allWorkspaceSymbolEntries(): List<WorkspaceSymbolEntry> {
+    private val cachedWorkspaceSymbolEntries: List<WorkspaceSymbolEntry> by lazy {
+        buildAllWorkspaceSymbolEntries()
+    }
+
+    private fun buildAllWorkspaceSymbolEntries(): List<WorkspaceSymbolEntry> {
+        // extraProvider symbol entries are kept only for actually indexed providers: paths
+        // claimed by the module graph (requireable module surfaces) or paths that are real
+        // workspace files. Unclaimed synthetic __jvm__ paths have no real location and
+        // would only fabricate file:/// URIs a client cannot navigate to (audit finding 4).
+        val indexedProviderPaths = snapshot.graph.providersByModuleName.values
+            .asSequence()
+            .flatten()
+            .map { provider -> provider.path }
+            .toCollection(linkedSetOf())
         val entries = buildList {
             snapshot.files.forEach { (path, file) ->
                 addAll(fileSymbolEntries(path, file))
             }
             snapshot.extraProviders.forEach { (path, file) ->
+                if (path !in snapshot.files && path !in indexedProviderPaths) {
+                    return@forEach
+                }
                 moduleWorkspaceSymbolEntry(path, file)?.let(::add)
                 addAll(fileSymbolEntries(path, file))
             }
@@ -568,7 +597,8 @@ class LuaWorkspaceQueryFacade(
         val declarations = if (semanticFile != null) {
             declarationWorkspaceSymbolEntries(
                 path,
-                semanticFile.snapshot.binder.declarationIndex.declarations
+                semanticFile.snapshot.binder.declarationIndex.declarations,
+                semanticFile.chunk.body
             )
         } else {
             emptyList()
@@ -579,12 +609,13 @@ class LuaWorkspaceQueryFacade(
 
     private fun declarationWorkspaceSymbolEntries(
         path: VirtualPath,
-        declarations: List<BinderDeclaration>
+        declarations: List<BinderDeclaration>,
+        chunkBody: BaseASTNode?
     ): List<WorkspaceSymbolEntry> {
         val declarationsById = declarations.associateBy(BinderDeclaration::id)
         return declarations
             .asSequence()
-            .filter(::isNavigableDocumentSymbolDeclaration)
+            .filter { isNavigableWorkspaceSymbolDeclaration(it, chunkBody) }
             .mapNotNull { declaration ->
                 declaration.range?.let { range ->
                     WorkspaceSymbolEntry(
@@ -791,6 +822,34 @@ class LuaWorkspaceQueryFacade(
             return false
         }
         return declaration.kind != DeclarationKind.PARAMETER && declaration.kind != DeclarationKind.TYPE_PARAMETER
+    }
+
+    /**
+     * Workspace/symbol navigability narrows the document-symbol rule (workspace-symbol
+     * audit, wave M): body-LOCAL declarations — locals bound inside function bodies,
+     * loop bodies, or conditional blocks — are noise at workspace scale and never
+     * surface. Only chunk-level locals, globals, functions, classes, fields, methods and
+     * module export surfaces stay: symbols a user can navigate to meaningfully from a
+     * workspace-wide list. The binder anchors chunk-level locals with
+     * `DeclarationOwner.Lexical(chunk body)`; any other Lexical owner is a nested body.
+     */
+    private fun isNavigableWorkspaceSymbolDeclaration(
+        declaration: BinderDeclaration,
+        chunkBody: BaseASTNode?
+    ): Boolean {
+        if (!isNavigableDocumentSymbolDeclaration(declaration)) {
+            return false
+        }
+        if (declaration.kind != DeclarationKind.LOCAL) {
+            return true
+        }
+        val owner = declaration.owner
+        if (owner == DeclarationOwner.Root) {
+            return true
+        }
+        // AST nodes use identity equality, and the declaration owner node is the exact
+        // chunk-body instance this snapshot's binder anchored chunk-level locals with.
+        return chunkBody != null && owner == DeclarationOwner.Lexical(chunkBody)
     }
 
     private fun workspaceContainerNameFor(
@@ -2294,6 +2353,13 @@ class LuaWorkspaceQueryFacade(
     }
 
     private companion object {
+        /**
+         * Workspace/symbol result cap (workspace-symbol audit, wave M). Applied after the
+         * deterministic (name, path, line, column) sort so every query — blank included —
+         * returns a bounded, stable prefix instead of an unbounded megabyte payload.
+         */
+        const val WORKSPACE_SYMBOL_RESULT_CAP = 500
+
         val LUA_JAVA_CLASS_LOAD_HELPERS: Set<String> = setOf(
             "bindClass",
             "newInstance",

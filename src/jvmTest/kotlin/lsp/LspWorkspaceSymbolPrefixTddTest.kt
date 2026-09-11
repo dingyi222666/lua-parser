@@ -33,7 +33,8 @@ import kotlin.test.assertTrue
  *   surface today is case-insensitive **substring** match on the symbol name
  *   (not a strict startsWith-only prefix). This corpus locks that behavior
  *   without inventing a new API.
- * - Blank / whitespace-only queries return the full symbol set (trimmed).
+ * - Blank / whitespace-only queries return the workspace symbol set (trimmed), capped
+ *   at 500 entries after the deterministic sort (workspace-symbol audit wave M).
  * - Matches cover locals, functions, module-export members, and (with JVM
  *   metadata) provider modules / members — same sources already exercised by
  *   [LspNavigationSymbolsTddTest].

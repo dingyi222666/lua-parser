@@ -195,8 +195,13 @@ internal class ExpressionUsageChecker(
         if (isLayoutDocument()) {
             return // T1: alyloader layout tables resolve ids at layout-load time.
         }
-        if (name in ANDROLUA_RUNTIME_HELPER_GLOBALS) {
-            return // T2: AndroLua runtime helpers the overlay catalog does not model.
+        // T2: AndroLua runtime helpers (luajava numeric coercions, apply) that the
+        // overlay catalog does not model — gated to the AndroLua flavor so plain-Lua
+        // workspaces keep diagnosing typos of user globals with these plausible names.
+        if (workspaceContext.overlayGlobals.globalNames.contains("loadlayout") &&
+            name in ANDROLUA_RUNTIME_HELPER_GLOBALS
+        ) {
+            return
         }
         val position = node.range.start
         if (findVisibleValueLocal(name, position, scopeIdFor(node)) != null) {

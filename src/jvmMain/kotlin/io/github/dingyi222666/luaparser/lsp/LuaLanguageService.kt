@@ -1399,10 +1399,27 @@ class LuaLanguageService(
         definitionLinkSupport
     }
 
+    /**
+     * Legacy workspace/symbol surface (Either.left SymbolInformation payloads).
+     *
+     * Wrapper symbol policy (workspace-symbol audit, wave M): both this and
+     * [modernWorkspaceSymbols] delegate to [LuaWorkspaceQueryFacade.workspaceSymbolEntries],
+     * which memoizes the distinct+sorted entry universe per snapshot (one facade per
+     * workspace build/update, so rebuild+full-sort no longer runs per query under
+     * [stateLock]), caps results at 500 AFTER the deterministic sort, excludes body-LOCAL
+     * declarations (only chunk-level locals join globals/functions/classes/fields/methods
+     * and module export surfaces), and drops extraProvider entries whose synthetic
+     * __jvm__ path is not actually indexed (module-graph-claimed or a real workspace file).
+     */
     fun workspaceSymbols(query: String): List<SymbolInformation> = synchronized(stateLock) {
         queries.workspaceSymbolEntries(query).map { toSymbolInformation(it) }
     }
 
+    /**
+     * Modern workspace/symbol surface (WorkspaceSymbol payloads with inline Location).
+     * Shares the facade entry policy documented on [workspaceSymbols]; location URIs stay
+     * Either.left(Location) so legacy and modern payloads remain in lock-step.
+     */
     fun modernWorkspaceSymbols(query: String): List<WorkspaceSymbol> = synchronized(stateLock) {
         queries.workspaceSymbolEntries(query).map { toWorkspaceSymbol(it) }
     }
