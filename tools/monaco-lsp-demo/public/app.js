@@ -1650,8 +1650,14 @@ async function loadFileList() {
       { language: "lua" },
       semanticLegend,
       {
-        provideDocumentSemanticTokens: async function (model) {
+        provideDocumentSemanticTokens: async function (model, _context, token) {
           if (!lspReady) return null;
+          // Debounce: every keystroke re-fires a full-buffer token request that the
+          // server recomputes under its global lock; 250ms coalesces typing bursts.
+          await new Promise(function (resolve) {
+            setTimeout(resolve, 250);
+          });
+          if (token && token.isCancellationRequested) return null;
           try {
             const result = await request("textDocument/semanticTokens/full", {
               textDocument: { uri: model.uri.toString() },

@@ -426,8 +426,14 @@ wss.on('connection', (ws) => {
       const obj = JSON.parse(text);
       lsp.child.stdin.write(frameMessage(obj));
     } catch {
-      // if client sent Content-Length frame, write as-is
-      lsp.child.stdin.write(Buffer.from(text, 'utf8'));
+      // Never forward unparseable bytes: raw writes would desync the Content-Length
+      // framer and corrupt every subsequent message on the shared stream.
+      if (lsp.client) {
+        lsp.client.send(JSON.stringify({
+          jsonrpc: '2.0', id: null,
+          error: { code: -32700, message: 'Parse error: message is not valid JSON' },
+        }));
+      }
     }
   });
 

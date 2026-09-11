@@ -83,6 +83,11 @@ internal class ExpressionUsageChecker(
             )
         }
         readLocalDeclarationIds.clear()
+        seenDiagnostics.clear()
+        // Wave O memos are per-pass: clear them so a future double check() on one
+        // instance cannot suppress diagnostics for imports activated between runs.
+        importRootMemo.clear()
+        importedSymbolMemo.clear()
         visitChunkNode(chunk, diagnostics)
         emitUnusedLocalDiagnostics(diagnostics)
         return diagnostics
