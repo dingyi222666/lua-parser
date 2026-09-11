@@ -56,6 +56,46 @@ class JvmWorkspaceEngine(
 
     private val documentImportFactsCache = mutableMapOf<VirtualPath, DocumentImportFacts>()
 
+    /**
+     * Per-update [io.github.dingyi222666.luaparser.semantic.workspace.WorkspaceModuleResolver]
+     * reuse (wave K perf). A fresh resolver used to be built per analyzed file per update, so
+     * its caches (`importedSymbolsFor` keyed by path, `activeProvider` keyed by module name,
+     * provider globals keyed by provider path) never survived and `packageMembers` re-ran its
+     * O(wildcardMembers x extraProviders) linear scans for every file on every keystroke.
+     *
+     * Reuse is sound because the resolver derives solely from the snapshot it is handed: its
+     * mutable state is keyed by path/module name (no cross-path bleed), and nothing it reads
+     * changes while that snapshot instance drives one analysis pass. The cache is keyed by
+     * snapshot IDENTITY — each analysis pass (build / update / attachSemanticState) composes a
+     * fresh analysis snapshot instance, so a new update naturally starts a new generation.
+     *
+     * A served path that repeats marks a cycle re-analysis sweep (attachSemanticState re-runs
+     * SCC members against rewritten peer semantic files). Sweeps therefore start a fresh
+     * resolver generation, preserving exactly the per-sweep freshness the old per-file
+     * resolvers provided — a cached import map or provider-global list must never outlive the
+     * peer binding state it was derived from.
+     */
+    private var cachedResolverSnapshot: WorkspaceSnapshot? = null
+    private var cachedResolver: io.github.dingyi222666.luaparser.semantic.workspace.WorkspaceModuleResolver? = null
+    private val cachedResolverPaths = mutableSetOf<VirtualPath>()
+
+    private fun workspaceResolverFor(
+        snapshot: WorkspaceSnapshot,
+        path: VirtualPath
+    ): io.github.dingyi222666.luaparser.semantic.workspace.WorkspaceModuleResolver {
+        val cached = cachedResolver
+        if (cached != null && cachedResolverSnapshot === snapshot && path !in cachedResolverPaths) {
+            cachedResolverPaths += path
+            return cached
+        }
+        val fresh = io.github.dingyi222666.luaparser.semantic.workspace.WorkspaceModuleResolver(snapshot)
+        cachedResolverSnapshot = snapshot
+        cachedResolver = fresh
+        cachedResolverPaths.clear()
+        cachedResolverPaths += path
+        return fresh
+    }
+
     private fun documentImportFacts(path: VirtualPath, source: String): DocumentImportFacts {
         documentImportFactsCache[path]?.takeIf { it.source == source }?.let { return it }
         val scan = scanDocument(parseWorkspaceSource(path, source))
@@ -152,7 +192,7 @@ class JvmWorkspaceEngine(
             putAll(configuredImports)
             putAll(sourceImports)
         }
-        val workspaceResolver = io.github.dingyi222666.luaparser.semantic.workspace.WorkspaceModuleResolver(snapshot)
+        val workspaceResolver = workspaceResolverFor(snapshot, path)
         return SemanticWorkspaceContext(
             currentPath = path,
             workspaceResolver = workspaceResolver,
@@ -533,24 +573,32 @@ class JvmWorkspaceEngine(
         astImportTargets: Collection<String> = emptyList()
     ): JvmWorkspaceConfiguration {
         val normalized = configuration.normalized()
-        val wildcardPrefixes = linkedSetOf<String>().apply {
-            normalized.androluaImports.forEach { importText ->
-                wildcardImportPrefix(importText)?.let { add(it) }
-            }
-        }
-        documentFacts.values.forEach { facts ->
-            facts.sourceImports.forEach { importFact ->
-                wildcardImportPrefix(importFact.target)?.let(wildcardPrefixes::add)
-            }
-        }
-        astImportTargets.forEach { target ->
-            wildcardImportPrefix(target)?.let(wildcardPrefixes::add)
-        }
-        if (wildcardPrefixes.isEmpty()) {
+        // Import precedence (wave K): AndroLua installs imports into _G sequentially, so the
+        // LAST document import wins short-name collisions (import "android.widget.*" followed
+        // by import "android.support.v7.widget.*" must resolve Toolbar to the support class).
+        // The document's own wildcard prefixes therefore go FIRST in reverse document order,
+        // then the workspace-configured (`androlua.imports` / jvm.importPrefixes) wildcard
+        // prefixes, then DEFAULT_IMPORT_PREFIXES — all as fallbacks for identifiers the
+        // document never imported (bare Button under a support-only import still lands on
+        // android.widget.Button). Previously every wildcard suffix was appended after the
+        // defaults, so neither a document import nor a configured one could override a
+        // default-prefix short name. Per-document resolution (workspaceContext) sees exactly
+        // one file's facts, so reverse document order is exact there; the workspace-wide
+        // extraProviders pass flattens every file's facts in input order before reversing,
+        // which keeps each file's internal order intact.
+        val documentWildcardPrefixes = documentFacts.values.flatMap { facts ->
+            facts.sourceImports.mapNotNull { importFact -> wildcardImportPrefix(importFact.target) }
+        } + astImportTargets.mapNotNull(::wildcardImportPrefix)
+        val configuredWildcardPrefixes = normalized.androluaImports.mapNotNull(::wildcardImportPrefix)
+        if (documentWildcardPrefixes.isEmpty() && configuredWildcardPrefixes.isEmpty()) {
             return normalized
         }
         return normalized.copy(
-            importPrefixes = (normalized.importPrefixes + wildcardPrefixes).distinct()
+            importPrefixes = (
+                documentWildcardPrefixes.asReversed() +
+                    configuredWildcardPrefixes +
+                    normalized.importPrefixes
+                ).distinct()
         )
     }
 

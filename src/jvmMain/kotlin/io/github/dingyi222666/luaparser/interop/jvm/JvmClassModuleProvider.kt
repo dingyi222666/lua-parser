@@ -67,6 +67,13 @@ class JvmClassModuleProvider(
     private val classLoaderCache = linkedMapOf<String, ClassLoader>()
     private val moduleTypeCache = linkedMapOf<String, ModuleType>()
     private val shallowModuleTypeCache = linkedMapOf<String, ModuleType>()
+    // Wave K perf: reflectiveClasspathFiles() is needed to BUILD the wildcard/package cache
+    // keys below (and to construct class loaders), so an uncached call re-ran env reads plus
+    // SDK-root directory listings on every short-name/package resolution even when every
+    // downstream cache was going to hit. The resolution is deterministic in (configured
+    // classpath fields + env values + well-known SDK roots); env and the filesystem SDK roots
+    // cannot change mid-process, so entries are intentionally never invalidated.
+    private val reflectiveClasspathFilesCache = linkedMapOf<String, List<File>>()
 
     fun providersFor(metadata: Map<String, String>): Map<VirtualPath, WorkspaceSnapshot.FileSnapshot> {
         return providersFor(JvmWorkspaceConfiguration.fromMetadata(metadata))
@@ -987,6 +994,42 @@ class JvmClassModuleProvider(
     }
 
     /**
+     * Existing reflective classpath files for ClassLoader + package enumeration, memoized per
+     * provider instance (wave K perf; see [reflectiveClasspathFilesCache]).
+     */
+    private fun reflectiveClasspathFiles(configuration: JvmWorkspaceConfiguration): List<File> {
+        val cacheKey = reflectiveClasspathCacheKey(configuration)
+        reflectiveClasspathFilesCache[cacheKey]?.let { return it }
+        return resolveReflectiveClasspathFiles(configuration)
+            .also { resolved -> reflectiveClasspathFilesCache[cacheKey] = resolved }
+    }
+
+    /**
+     * Cache identity for [reflectiveClasspathFiles]: the configuration fields that feed the
+     * resolution (classpath entries, androidJar, and — via the soft-fallback gate — classes
+     * and imports) plus the environment values discovery consults. System properties used by
+     * discovery (user.home, os.name) are process-constant and need no key component.
+     */
+    private fun reflectiveClasspathCacheKey(configuration: JvmWorkspaceConfiguration): String {
+        val environment = System.getenv()
+        return buildString {
+            append(configuration.classpathEntries.joinToString(";"))
+            append('#')
+            append(configuration.androidJar.orEmpty())
+            append('#')
+            append(configuration.classes.joinToString(";"))
+            append('#')
+            append(configuration.androluaImports.joinToString(";"))
+            append('#')
+            append(environment[JvmWorkspaceConfiguration.ANDROID_HOME_ENV].orEmpty())
+            append('#')
+            append(environment[JvmWorkspaceConfiguration.ANDROID_SDK_ROOT_ENV].orEmpty())
+            append('#')
+            append(environment[JvmWorkspaceConfiguration.LOCAL_APPDATA_ENV].orEmpty())
+        }
+    }
+
+    /**
      * Existing reflective classpath files for ClassLoader + package enumeration.
      *
      * Uses [JvmWorkspaceConfiguration.reflectionClasspathEntries] first. When an explicit
@@ -1000,7 +1043,7 @@ class JvmClassModuleProvider(
      * Never hard-requires G:, a missing AppData android-35 path alone, or a macOS-only
      * absolute path.
      */
-    private fun reflectiveClasspathFiles(configuration: JvmWorkspaceConfiguration): List<File> {
+    private fun resolveReflectiveClasspathFiles(configuration: JvmWorkspaceConfiguration): List<File> {
         val entries = configuration.reflectionClasspathEntries()
             .map(::File)
             .filter { entry ->
