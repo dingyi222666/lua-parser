@@ -133,6 +133,41 @@ class DocTypeResolutionTest {
     }
 
     @Test
+    fun rebuildsDocMethodTagSignatureWithMethodOwnedTypeParameters() {
+        val result = bindAndResolve(
+            """
+            ---@class Repo<T>
+
+            ---@generic U
+            ---@method of(value: U): Repo<U>
+            function Repo:of(value)
+                return self
+            end
+            """.trimIndent()
+        )
+
+        val method = result.declarationIndex.declarations.single {
+            it.kind == DeclarationKind.METHOD && it.name == "of"
+        }
+        val methodType = assertIs<FunctionType>(method.declaredType)
+
+        // A @method-tag primaryType (parsed from the signature text) must be rebuilt with
+        // the method-owned @generic type parameters, mirroring resolveFunctionDeclaration;
+        // pre-fix the collected [U] was dropped and U stayed unbindable at call sites.
+        assertEquals(listOf("U"), methodType.typeParameters.map { it.name })
+
+        // The signature shape survives the rebuild: parameter and return come from the
+        // @method signature text, and the return keeps U so
+        // CallChecker.instantiateGenericSignature substitutes Repo<U> at call sites.
+        assertEquals(listOf("value"), methodType.parameters.map { it.name })
+        assertEquals("U", methodType.parameters.single().type.displayName)
+
+        val returnType = assertIs<AppliedType>(methodType.returnType)
+        assertEquals("Repo", returnType.baseName)
+        assertEquals("U", assertIs<TypeParameterType>(returnType.typeArguments.single()).name)
+    }
+
+    @Test
     fun resolvesAliasClassFieldsAndMethodDocForms() {
         val result = bindAndResolve(
             """

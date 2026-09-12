@@ -1473,6 +1473,11 @@ class LuaLanguageService(
                         ?.takeIf { range -> range.start != range.end }
                         ?.toLspRange()
                         ?: fallbackDiagnosticRange(buffer)
+                    // api Diagnostic.tags carry raw LSP DiagnosticTag Ints (the common api
+                    // stays lsp4j-free); unused-local publishes Unnecessary so clients fade it.
+                    if (diagnostic.tags.isNotEmpty()) {
+                        tags = diagnostic.tags.mapNotNull { tag -> tag.toLspDiagnosticTag() }
+                    }
                 }
             }
             .let { mapped ->
@@ -3853,6 +3858,12 @@ class LuaLanguageService(
 /** Matches ExpressionUsageChecker unused-local code; filtered from LSP publish. */
 private const val UNUSED_LOCAL_DIAGNOSTIC_CODE = "checker.local.unused"
 
+/** org.eclipse.lsp4j.DiagnosticTag.Unnecessary — emitted by checker.local.unused. */
+private const val DIAGNOSTIC_TAG_UNNECESSARY = 1
+
+/** org.eclipse.lsp4j.DiagnosticTag.Deprecated. */
+private const val DIAGNOSTIC_TAG_DEPRECATED = 2
+
 // TASK-541 legend indices — keep stable; clients map by name from the legend list.
 private val SEMANTIC_TOKEN_TYPES: List<String> = listOf(
     SemanticTokenTypes.Keyword,
@@ -3908,6 +3919,19 @@ private fun DiagnosticSeverity.toLspSeverity(): org.eclipse.lsp4j.DiagnosticSeve
         DiagnosticSeverity.ERROR -> org.eclipse.lsp4j.DiagnosticSeverity.Error
         DiagnosticSeverity.WARNING -> org.eclipse.lsp4j.DiagnosticSeverity.Warning
         DiagnosticSeverity.INFO -> org.eclipse.lsp4j.DiagnosticSeverity.Information
+    }
+}
+
+/**
+ * api [io.github.dingyi222666.luaparser.semantic.api.Diagnostic.tags] (raw LSP
+ * DiagnosticTag values as Ints, so the common api stays lsp4j-free) → lsp4j
+ * DiagnosticTag. Unknown values are dropped rather than crashing the publish pass.
+ */
+private fun Int.toLspDiagnosticTag(): org.eclipse.lsp4j.DiagnosticTag? {
+    return when (this) {
+        DIAGNOSTIC_TAG_UNNECESSARY -> org.eclipse.lsp4j.DiagnosticTag.Unnecessary
+        DIAGNOSTIC_TAG_DEPRECATED -> org.eclipse.lsp4j.DiagnosticTag.Deprecated
+        else -> null
     }
 }
 

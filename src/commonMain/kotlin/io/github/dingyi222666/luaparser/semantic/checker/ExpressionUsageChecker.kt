@@ -434,7 +434,10 @@ internal class ExpressionUsageChecker(
                         // LSP publish surface maps this to lsp Information and only publishes
                         // it while the analyzed snapshot matches the current buffer.
                         severity = DiagnosticSeverity.INFO,
-                        code = UNUSED_LOCAL_CODE
+                        code = UNUSED_LOCAL_CODE,
+                        // Canonical LSP unused signal (DiagnosticTag.Unnecessary): clients
+                        // fade/gray tagged ranges. The only tagged diagnostic today.
+                        tags = listOf(DIAGNOSTIC_TAG_UNNECESSARY)
                     )
                 )
             }
@@ -465,6 +468,15 @@ internal class ExpressionUsageChecker(
         // Never treat the declaring identifier itself as a read.
         if (declaration.anchorNode === node) {
             return
+        }
+        // Mark every declaration sharing the symbol: `local f = ...; function f() end`
+        // re-binds attach the re-bind declaration to the SAME symbol, and a read may
+        // resolve to the re-bind — without symbol-wide marking the original would be
+        // flagged unused despite the read (adversarial audit wave Z).
+        declaration.symbolId?.let { symbolId ->
+            binder.declarationIndex.getDeclarations(symbolId).forEach { sibling ->
+                readLocalDeclarationIds += sibling.id
+            }
         }
         readLocalDeclarationIds += declaration.id
     }
@@ -582,6 +594,10 @@ internal class ExpressionUsageChecker(
 
     private companion object {
         const val UNUSED_LOCAL_CODE = "checker.local.unused"
+
+        /** LSP DiagnosticTag.Unnecessary — the canonical unused-code signal clients fade. */
+        const val DIAGNOSTIC_TAG_UNNECESSARY = 1
+
         const val MEMBER_MISSING_CODE = "checker.member.missing"
         const val LUAJAVA_TARGET_UNRESOLVED_CODE = "checker.luajava.target.unresolved"
         const val GLOBAL_UNRESOLVED_CODE = "checker.global.unresolved"

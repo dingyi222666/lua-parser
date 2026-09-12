@@ -315,10 +315,23 @@ class TypeResolver(
             .filter { it.kind == DeclarationKind.TYPE_PARAMETER }
             .mapNotNull { resolveDeclaration(it.id).declaredType as? TypeParameterType }
 
-        val inferredPrimaryType = if (primaryType == null && (parameters.isNotEmpty() || returnTypes.isNotEmpty())) {
-            FunctionType(parameters = parameters, returnType = returnType, typeParameters = typeParameters)
-        } else {
-            primaryType
+        val inferredPrimaryType = when {
+            primaryType == null && (parameters.isNotEmpty() || returnTypes.isNotEmpty()) ->
+                FunctionType(parameters = parameters, returnType = returnType, typeParameters = typeParameters)
+            // A @method-tag primaryType is parsed from the signature text alone, which never
+            // carries an inline <T> list (DocFunctionTypeSyntaxParser parses none), so the
+            // collected method-owned typeParameters would be silently dropped. Rebuild the
+            // FunctionType with them — mirroring resolveFunctionDeclaration's unconditional
+            // rebuild — so `---@generic U ---@method of(value: U): Repo<U>` ships a [U]
+            // signature whose Repo<U> return substitutes at call sites. Rebuild (not copy)
+            // so the display name recomputes with the <U> marker. Other shapes pass through.
+            primaryType != null && typeParameters.isNotEmpty() ->
+                FunctionType(
+                    parameters = primaryType.parameters,
+                    returnType = primaryType.returnType,
+                    typeParameters = mergeTypeParameters(typeParameters, primaryType.typeParameters)
+                )
+            else -> primaryType
         }
         val type = combineMethodCallableType(inferredPrimaryType, overloadTypes)
         val resolvedParameterTypes = linkedMapOf<String, Type>()

@@ -87,7 +87,7 @@ object DocumentFactsCollector {
         // name -> Boolean tombstones (false = the name was re-bound to something else),
         // index-aligned with [aliasScopes]; lookup walks innermost->outermost and the
         // FIRST scope mentioning the name decides (shadowing retires outward visibility).
-        private val requireAliasScopes = mutableListOf(mutableMapOf<String, Boolean>())
+        private val requireAliasScopes = mutableListOf(mutableMapOf<String, Boolean>().apply { this["require"] = true })
         private val functionAliasBoundaries = mutableListOf<Int>()
         private val luaJavaHelperKinds = mapOf(
             "bindClass" to DocumentFacts.JvmClassLoadKind.BIND_CLASS_CALL,
@@ -448,7 +448,14 @@ object DocumentFactsCollector {
 
         private fun collectFunctionAliasShadow(function: FunctionDeclaration) {
             val identifier = function.identifier as? Identifier ?: return
-            requireAliasScopes.last()[identifier.name] = false
+            // Non-local `function r() end` re-binds through assignAlias's boundary
+            // targeting — the tombstone must land on the same scope, not last() (the
+            // do-block tombstone would pop while the null-kind shadow persists).
+            if (function.isLocal) {
+                requireAliasScopes.last()[identifier.name] = false
+            } else {
+                requireAliasScopeForWrite(identifier.name)[identifier.name] = false
+            }
             if (function.isLocal) {
                 declareLocalAlias(identifier.name, null)
             } else {
@@ -458,6 +465,12 @@ object DocumentFactsCollector {
 
         private fun declareLocalAlias(aliasName: String, kind: DocumentFacts.JvmClassLoadKind?) {
             aliasScopes.last()[aliasName] = kind
+            // Params, loop vars, and every other local binding tombstone the require
+            // alias unless THIS scope already bound it to the bare global loader
+            // (the bare-require true writers run immediately before this call).
+            if (requireAliasScopes.last()[aliasName] != true) {
+                requireAliasScopes.last()[aliasName] = false
+            }
         }
 
         private fun assignAlias(aliasName: String, kind: DocumentFacts.JvmClassLoadKind?) {

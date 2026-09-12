@@ -47,6 +47,9 @@ class ExpressionUsageDiagnosticPolicyTddTest {
         val diagnostic = unused.single()
         assertEquals(DiagnosticSeverity.INFO, diagnostic.severity)
         assertEquals("Unused local 'unusedValue'.", diagnostic.message)
+        // Canonical LSP unused signal (DiagnosticTag.Unnecessary = 1); the LSP publish
+        // mapping translates it so clients render faded text.
+        assertEquals(listOf(1), diagnostic.tags)
     }
 
     @Test

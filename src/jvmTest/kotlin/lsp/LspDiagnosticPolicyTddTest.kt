@@ -50,6 +50,9 @@ class LspDiagnosticPolicyTddTest {
         val diagnostic = unused.single()
         assertEquals(DiagnosticSeverity.Information, diagnostic.severity)
         assertEquals("Unused local 'unusedValue'.", diagnostic.message)
+        // api Diagnostic.tags (1 = Unnecessary) map onto lsp4j Diagnostic.tags so clients
+        // render the unused local faded.
+        assertEquals(listOf(org.eclipse.lsp4j.DiagnosticTag.Unnecessary), diagnostic.tags)
         val range = assertNotNull(diagnostic.range, "unused-local must publish a real span")
         assertEquals(0, range.start.line)
         assertEquals(6, range.start.character)
