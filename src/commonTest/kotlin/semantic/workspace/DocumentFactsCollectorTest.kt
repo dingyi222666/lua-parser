@@ -476,4 +476,14 @@ class DocumentFactsCollectorTest {
             facts.jvmClassLoads.map { it.kind }
         )
     }
+
+    @Test
+    fun require_alias_shadowing_rebind_retires_the_alias() {
+        val facts = collectFacts(
+            path = "main.lua",
+            source = "local r = require\nlocal r = fake\nr(\"mods.util\")"
+        )
+        assertEquals(emptyList(), facts.requires.map { it.moduleName })
+    }
+
 }

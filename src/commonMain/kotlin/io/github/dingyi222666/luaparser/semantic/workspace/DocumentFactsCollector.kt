@@ -409,6 +409,10 @@ object DocumentFactsCollector {
                 // require facts, not unknown callees.
                 if (value is Identifier && value.name == "require") {
                     requireAliasScopes.last().add(identifier.name)
+                } else {
+                    // Rebinding to anything else retires the require alias — otherwise a
+                    // later `local r = fake` would keep fabricating require facts.
+                    requireAliasScopes.last().remove(identifier.name)
                 }
                 declareLocalAlias(identifier.name, value?.let(::jvmClassLoadKindForAliasExpression))
             }
@@ -428,6 +432,8 @@ object DocumentFactsCollector {
                 }
                 if (value is Identifier && value.name == "require") {
                     requireAliasScopes.last().add(identifier.name)
+                } else {
+                    requireAliasScopes.last().remove(identifier.name)
                 }
                 assignAlias(identifier.name, value?.let(::jvmClassLoadKindForAliasExpression))
             }
@@ -444,6 +450,7 @@ object DocumentFactsCollector {
 
         private fun collectFunctionAliasShadow(function: FunctionDeclaration) {
             val identifier = function.identifier as? Identifier ?: return
+            requireAliasScopes.last().remove(identifier.name)
             if (function.isLocal) {
                 declareLocalAlias(identifier.name, null)
             } else {
