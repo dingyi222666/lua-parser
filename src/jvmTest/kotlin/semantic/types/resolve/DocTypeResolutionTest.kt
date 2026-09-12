@@ -12,8 +12,10 @@ import io.github.dingyi222666.luaparser.semantic.types.model.FunctionType
 import io.github.dingyi222666.luaparser.semantic.types.model.MultiReturnType
 import io.github.dingyi222666.luaparser.semantic.types.model.OverloadedFunctionType
 import io.github.dingyi222666.luaparser.semantic.types.model.PrimitiveType
+import io.github.dingyi222666.luaparser.semantic.types.model.TableType
 import io.github.dingyi222666.luaparser.semantic.types.model.TypeParameterType
 import io.github.dingyi222666.luaparser.semantic.types.resolve.TypeResolver
+import io.github.dingyi222666.luaparser.semantic.types.resolve.TypeSubstitutor
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -276,6 +278,39 @@ class DocTypeResolutionTest {
         assertIs<AliasType>(child.superType)
         assertNull(child.superClass)
         assertIs<AliasType>(childDeclaration.documentation?.resolvedParentType)
+    }
+
+    @Test
+    fun bareParametrizedAliasInternalsSurviveEnclosingTypeParameterBinding() {
+        val result = bindAndResolve(
+            """
+            ---@alias Box<T> { value: T }
+
+            ---@generic T
+            ---@param b Box
+            ---@param t T
+            local function store(b, t)
+            end
+            """.trimIndent()
+        )
+
+        val function = result.declarationIndex.declarations.single {
+            it.kind == DeclarationKind.FUNCTION && it.name == "store"
+        }
+        val functionType = assertIs<FunctionType>(function.declaredType)
+        assertEquals(listOf("T"), functionType.typeParameters.map { it.name })
+        assertEquals("T", functionType.parameters.last().type.name)
+
+        // A bare `Box` reference keeps the alias's own parameter unbound, but renamed to
+        // `Box.T` so an unrelated `{T: ...}` binding can never rewrite the alias internals.
+        val bareBox = assertIs<AliasType>(functionType.parameters.first { it.name == "b" }.type)
+        assertEquals("Box.T", assertIs<TableType>(bareBox.target).fields.getValue("value").name)
+
+        // Binding the enclosing generic (`T := number`, as CallChecker.instantiateGenericSignature
+        // does) must NOT rewrite the alias internals.
+        val bound = TypeSubstitutor().substitute(bareBox, mapOf("T" to PrimitiveType.NUMBER)) as AliasType
+        assertEquals("Box", bound.name)
+        assertEquals("Box.T", assertIs<TableType>(bound.target).fields.getValue("value").name)
     }
 
     private fun bindAndResolve(source: String) = parser.parse(source).let { chunk ->

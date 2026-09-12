@@ -1412,13 +1412,13 @@ class LuaParser(
     private fun parseGotoStatement(parent: BaseASTNode): GotoStatement {
         val result = GotoStatement()
         result.parent = parent
-        result.identifier = parseStatementNameOrMissing(result)
+        result.identifier = parseGotoTargetOrMissing(result)
 
         // Recovery residual (TASK-639 / GotoLabel suite): when a real NAME is absorbed as
-        // the goto target, same-line leftover funcargs (e.g. `goto\nprint(1)` leaving `(1)`)
-        // must not re-enter the statement loop as a sibling CallStmt. Strict mode leaves
-        // those tokens so `goto\nprint(1)` still rejects. Empty/bad residual names keep
-        // following tokens reachable as siblings.
+        // the goto target, same-line leftover funcargs (e.g. `goto print(1)` trailing
+        // `(1)`) must not re-enter the statement loop as a sibling CallStmt. Strict mode
+        // leaves those tokens so `goto\nprint(1)` still rejects. Empty/bad residual names
+        // keep following tokens reachable as siblings.
         if (errorRecovery &&
             result.identifier.name.isNotEmpty() &&
             !result.identifier.bad
@@ -1427,6 +1427,36 @@ class LuaParser(
         }
 
         return result
+    }
+
+    /**
+     * goto-target parse with the shared statement-start recovery
+     * ([shouldRecoverStatementStartAsMissingExpression]).
+     *
+     * `goto\nprint(1)` must not absorb the NAME across the line break as the label (that
+     * dropped the whole print call behind the TASK-639 same-line drain). After a line
+     * break, a call-shaped NAME statement start (or a keyword/control statement start)
+     * recovers as a missing label diagnostic and stays unconsumed so the outer block
+     * parses it as a sibling statement. A bare NAME after a line break still parses as
+     * the label, so well-formed `goto\nlabel` keeps working.
+     */
+    private fun parseGotoTargetOrMissing(parent: BaseASTNode): Identifier {
+        // Capture the line break BEFORE any peek/pushback (see parseExpressionOrMissing):
+        // once the next token is queued in WrapperLuaLexer.currentStates the scan starts
+        // at that token and would miss the newline immediately before it.
+        val hasLineBreakBeforeTarget = hasLineBreakBeforeNextSignificantToken()
+        val targetToken = peek()
+        if (errorRecovery &&
+            hasLineBreakBeforeTarget &&
+            shouldRecoverStatementStartAsMissingExpression(targetToken)
+        ) {
+            warning("<name> expected near ${lexerText()}")
+            return Identifier("").also {
+                it.parent = parent
+                it.bad = true
+            }
+        }
+        return parseStatementNameOrMissing(parent)
     }
 
     /**
@@ -1639,6 +1669,14 @@ class LuaParser(
 
         val compoundOperator = compoundAssignmentOperator(peekToken)
         if (compoundOperator != null && isCompoundAssignmentTarget(suffix)) {
+            // The lexer emits *_ASSIGN tokens for every dialect, but the desugar is an
+            // AndroLua-only extension: without this gate strict LUA_5_3/5_4 silently
+            // accepted `n += 2` where the pre-desugar parser rejected it with
+            // "'=' expected". Version gating is hard (not parser recovery) — same
+            // contract as the sibling lambda/switch/continue assertVersion gates.
+            assertVersion(LuaVersion.ANDROLUA_5_3) {
+                "compound assignment statement is only supported in androlua 5.3"
+            }
             return parseCompoundAssignmentStatement(parent, suffix, compoundOperator)
         }
 
@@ -2844,7 +2882,15 @@ class LuaParser(
         val result = UnaryExpression()
         result.parent = parent
         result.operator = findExpressionOperator(lexerText()).requireNotNull()
-        result.arg = if (errorRecovery && isExpressionTerminator(peek())) {
+        // Same recovery the binary tail uses (parseSubExpTail): after a line break, a
+        // statement start (`not\nprint(a)`) is recovered as a missing operand instead of
+        // being absorbed, so the following statement survives as a sibling. Strict mode
+        // still parses the (valid) cross-line operand form `a = not\nprint(a)`.
+        val hasLineBreakBeforeOperand = hasLineBreakBeforeNextSignificantToken()
+        val operandToken = peek()
+        result.arg = if (errorRecovery && isExpressionTerminator(operandToken)) {
+            missingExpression(result)
+        } else if (errorRecovery && hasLineBreakBeforeOperand && isStatementStart(operandToken)) {
             missingExpression(result)
         } else {
             parseSubExp(result, 11)

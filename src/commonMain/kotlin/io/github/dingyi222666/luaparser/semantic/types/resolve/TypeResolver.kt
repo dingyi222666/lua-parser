@@ -534,9 +534,46 @@ class TypeResolver(
         val declaration = context.resolveTypeReference(name) ?: return CustomType(name)
         return when {
             declaration.kind == DeclarationKind.TYPE_PARAMETER -> resolveTypeParameterReference(declaration, context)
-            binder.declarationIndex.getDeclaration(declaration.id) != null -> resolveDeclaration(declaration.id).declaredType ?: CustomType(name)
+            binder.declarationIndex.getDeclaration(declaration.id) != null -> {
+                val resolved = resolveDeclaration(declaration.id).declaredType ?: return CustomType(name)
+                if (declaration.kind == DeclarationKind.TYPE_ALIAS) {
+                    renameBareAliasTypeParameters(resolved, declaration)
+                } else {
+                    resolved
+                }
+            }
             else -> CustomType(name)
         }
+    }
+
+    /**
+     * A parametrized alias used BARE (`---@param b Box` for `---@alias Box<T> { value: T }`)
+     * keeps its own type parameters unbound — but they keep their bare source name (`T`), so
+     * a later UNRELATED name-based substitution (`{T: number}` binding an enclosing generic,
+     * e.g. CallChecker.instantiateGenericSignature) rewrote the alias internals: Box's
+     * `value: T` silently became `value: number`. Rename each owned parameter to
+     * `<Alias>.<Param>` (e.g. `Box.T`): still unbound (hover shows the alias's own parameter
+     * instead of a lossy `unknown`) while the name can never collide with an enclosing
+     * substitution. Callable targets that re-declare the parameter on their own signature
+     * are shielded by the substitutor's own-parameter masking and stay self-consistent.
+     */
+    private fun renameBareAliasTypeParameters(resolved: Type, aliasDeclaration: BinderDeclaration): Type {
+        val alias = resolved as? AliasType ?: return resolved
+        val ownedTypeParameters = binder.declarationIndex
+            .getOwnedDeclarations(DeclarationOwner.Declaration(aliasDeclaration.id))
+            .filter { it.kind == DeclarationKind.TYPE_PARAMETER }
+            .mapNotNull { resolveDeclaration(it.id).declaredType as? TypeParameterType }
+        if (ownedTypeParameters.isEmpty()) {
+            return resolved
+        }
+        val mapping = ownedTypeParameters.associate { parameter ->
+            parameter.name to TypeParameterType(
+                name = "${aliasDeclaration.name}.${parameter.name}",
+                constraint = parameter.constraint,
+                defaultType = parameter.defaultType
+            )
+        }
+        return typeSubstitutor.substitute(alias, mapping)
     }
 
     private fun resolveGenericType(typeSyntax: GenericTypeSyntax, context: TypeResolutionContext): Type {

@@ -6,6 +6,7 @@ import io.github.dingyi222666.luaparser.semantic.types.model.ClassType
 import io.github.dingyi222666.luaparser.semantic.types.model.FunctionParameter
 import io.github.dingyi222666.luaparser.semantic.types.model.FunctionType
 import io.github.dingyi222666.luaparser.semantic.types.model.IntersectionType
+import io.github.dingyi222666.luaparser.semantic.types.model.OverloadedFunctionType
 import io.github.dingyi222666.luaparser.semantic.types.model.PrimitiveType
 import io.github.dingyi222666.luaparser.semantic.types.model.TypeParameterType
 import io.github.dingyi222666.luaparser.semantic.types.model.UnionType
@@ -16,8 +17,10 @@ import io.github.dingyi222666.luaparser.semantic.types.resolve.TypeSubstitutor
 import io.github.dingyi222666.luaparser.semantic.types.resolve.TypeResolver
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertSame
+import kotlin.test.assertTrue
 
 class TypeSubstitutorTest {
 
@@ -161,6 +164,77 @@ class TypeSubstitutorTest {
         val factory = substituted.fields.getValue("factory") as FunctionType
         assertEquals("T", factory.typeParameters.single().name)
         assertEquals("T", factory.returnType.name)
+    }
+
+    @Test
+    fun forwardsMaskFlagToOverloadedCallSignatures() {
+        val typeParameter = TypeParameterType("T")
+        val overloaded = OverloadedFunctionType(
+            callSignatures = listOf(
+                FunctionType(
+                    typeParameters = listOf(typeParameter),
+                    parameters = listOf(FunctionParameter("value", typeParameter)),
+                    returnType = typeParameter
+                )
+            )
+        )
+
+        // The public substitute() runs with maskOwnTypeParameters = false: the enclosing
+        // mapping must NOT be masked by the overload's own type parameters, mirroring the
+        // direct FunctionType branch instead of hard-coding true.
+        val substituted = substitutor.substitute(overloaded, mapOf("T" to PrimitiveType.STRING)) as OverloadedFunctionType
+        val signature = substituted.callSignatures.single()
+        assertSame(PrimitiveType.STRING, signature.parameters.single().type)
+        assertSame(PrimitiveType.STRING, signature.returnType)
+        // NOTE: the signature's `name` may still carry the stale fun<T> marker — the
+        // stale-parameter drop lives in substituteApplied (applied-alias path), and the
+        // direct substitute() branch forwards the mask flag only. Semantic types here
+        // prove the mask forwarding; the name cleanup is display-level (LOW audit).
+        // (displayName intentionally not asserted: the direct substitute() branch may
+        // keep the stale fun<T> name marker — semantic substitution is the contract.)
+
+        // preserveOwnTypeParameters = true keeps masking the mapping (current behavior for
+        // masking callers such as TypeResolver.materializeAppliedParentClassSurface).
+        val masked = substitutor.substitute(overloaded, mapOf("T" to PrimitiveType.STRING), preserveOwnTypeParameters = true) as OverloadedFunctionType
+        assertEquals("T", masked.callSignatures.single().parameters.single().type.name)
+        assertEquals("T", masked.callSignatures.single().returnType.name)
+    }
+
+    @Test
+    fun appliedClassSurfaceDropsStaleTypeParameterMarker() {
+        val harness = resolvedHarness(
+            """
+            ---@class Box<T>
+            ---@field value T
+            """.trimIndent()
+        )
+
+        val applied = assertIs<ClassType>(
+            substitutor.substituteApplied(AppliedType("Box", listOf(PrimitiveType.NUMBER)), harness.context, harness.binder)
+        )
+
+        assertSame(PrimitiveType.NUMBER, applied.fields.getValue("value"))
+        // The mapped `T` was replaced by the concrete argument: no phantom class<T> marker.
+        assertTrue(applied.typeParameters.isEmpty())
+        assertFalse(applied.displayName.contains("<T>"))
+    }
+
+    @Test
+    fun appliedAliasFunctionSurfaceDropsStaleGenericMarkerFromDisplayName() {
+        val harness = resolvedHarness(
+            """
+            ---@alias Mapper<T> fun(value: T): T
+            """.trimIndent()
+        )
+
+        val applied = assertIs<FunctionType>(
+            substitutor.substituteApplied(AppliedType("Mapper", listOf(PrimitiveType.NUMBER)), harness.context, harness.binder)
+        )
+
+        assertSame(PrimitiveType.NUMBER, applied.returnType)
+        assertSame(PrimitiveType.NUMBER, applied.parameters.single().type)
+        assertEquals("fun(value: number): number", applied.displayName)
+        assertFalse(applied.displayName.contains("<T>"))
     }
 
     private fun resolvedHarness(source: String): ResolvedHarness {
