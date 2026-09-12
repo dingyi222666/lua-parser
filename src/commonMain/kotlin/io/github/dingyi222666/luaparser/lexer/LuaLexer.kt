@@ -474,31 +474,25 @@ class LuaLexer @JvmOverloads constructor(
         }
 
         var cursor = longBracketStart + equalsCount + 2
-        var nestedDepth = 0
         // Scan until the exact same-level close is found. Must not early-exit on a
         // wrong-level close while scanning: a well-formed body may embed lower/higher
         // closes before the true same-level terminator (e.g. [=[keep ]==] still]=]).
-        // When no matching close exists (true unclosed or pure level-mismatch), the
-        // BAD_CHARACTER span consumes through EOF so lower-level close noise and
-        // trailing source are not re-lexed as RBRACK/EQ/NAME/print(...) (TASK-633
-        // remainder-consume contract for parser.lexer long-bracket suites).
+        // BLOCK_COMMENT follows the exact same rule: real Lua block comments do NOT
+        // nest, so a comment ends at the FIRST same-level close. An inner same-level
+        // `[=*[` open inside a comment body is inert text, and
+        // `--[[ x [[\n--]] code_here() ]]` must end the comment at `--]]` and leave
+        // code_here() executable. The former BLOCK_COMMENT "nesting" heuristic
+        // (same-level open + later outer close => treat the whole span as one
+        // comment) silently changed program meaning and was also quadratic on
+        // unclosed comments (every same-level open without an outer close re-scanned
+        // the rest of the buffer). When no matching close exists (true unclosed or
+        // pure level-mismatch), the BAD_CHARACTER span consumes through EOF so
+        // lower-level close noise and trailing source are not re-lexed as
+        // RBRACK/EQ/NAME/print(...) (TASK-633 remainder-consume contract for
+        // parser.lexer long-bracket suites).
         while (cursor < bufferLen) {
-            if (tokenType == LuaTokenTypes.BLOCK_COMMENT &&
-                longBracketEqualsCount(cursor) == equalsCount &&
-                (nestedDepth > 0 || hasOuterCloseAfterNestedLongBracket(cursor, equalsCount))
-            ) {
-                nestedDepth++
-                cursor += equalsCount + 2
-                continue
-            }
-
             val closeLength = longBracketCloseLength(cursor, equalsCount)
             if (closeLength > 0) {
-                if (nestedDepth > 0) {
-                    nestedDepth--
-                    cursor += closeLength
-                    continue
-                }
                 tokenLength = cursor + closeLength - offset
                 return tokenType
             }
@@ -508,43 +502,6 @@ class LuaLexer @JvmOverloads constructor(
 
         tokenLength = bufferLen - offset
         return LuaTokenTypes.BAD_CHARACTER
-    }
-
-    private fun hasOuterCloseAfterNestedLongBracket(nestedStart: Int, equalsCount: Int): Boolean {
-        var cursor = nestedStart + equalsCount + 2
-        var depth = 1
-        while (cursor < bufferLen) {
-            if (longBracketEqualsCount(cursor) == equalsCount) {
-                depth++
-                cursor += equalsCount + 2
-                continue
-            }
-
-            val closeLength = longBracketCloseLength(cursor, equalsCount)
-            if (closeLength > 0) {
-                depth--
-                cursor += closeLength
-                if (depth == 0) {
-                    return hasLongBracketCloseAtOrAfter(cursor, equalsCount)
-                }
-                continue
-            }
-
-            cursor++
-        }
-
-        return false
-    }
-
-    private fun hasLongBracketCloseAtOrAfter(start: Int, equalsCount: Int): Boolean {
-        var cursor = start
-        while (cursor < bufferLen) {
-            if (longBracketCloseLength(cursor, equalsCount) > 0) {
-                return true
-            }
-            cursor++
-        }
-        return false
     }
 
     private fun longBracketEqualsCount(start: Int): Int {
