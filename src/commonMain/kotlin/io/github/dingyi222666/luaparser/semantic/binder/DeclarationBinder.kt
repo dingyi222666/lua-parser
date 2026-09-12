@@ -88,8 +88,31 @@ internal class DeclarationBinder(
                     // offered from there onward, while the initializer itself (`local x = 1`
                     // caret on `1`, or the RHS `outer` in `local inner = outer`) still
                     // resolves to the outer binding per Lua scoping.
+                    //
+                    // `end.column` is EXCLUSIVE (one past the last initializer character —
+                    // the parser commits `firstCharColumn + tokenLength`), so the legacy
+                    // end-of-statement caret sits at `end.column - 1` and must still see
+                    // the new local (LegacySemanticAnalyzerCompatibilityTest probes exactly
+                    // that position for `local inner = outer`).
+                    //
+                    // Sole exception — a single-character identifier initializer that reads
+                    // a name this same statement declares (`local i = i`, `local a, b = a, b`):
+                    // its read position (range.start) coincides with that caret, so
+                    // anchoring there would self-bind the read to the not-yet-initialized
+                    // local (the outer is never marked used and falsely reports
+                    // "Unused local"). Anchor strictly after it instead.
                     visibleFrom = node.variables.lastOrNull()?.range?.end
-                        ?.let { end -> Position(end.line, (end.column - 1).coerceAtLeast(1)) }
+                        ?.let { end ->
+                            val initializer = node.variables.last() as? Identifier
+                            val declaredNames = node.init.map { it.name }
+                            val selfReadAtCaret = initializer != null &&
+                                initializer.name in declaredNames &&
+                                end.column - initializer.range.start.column == 1
+                            Position(
+                                end.line,
+                                if (selfReadAtCaret) end.column else (end.column - 1).coerceAtLeast(1)
+                            )
+                        }
                         ?: node.range.end
                 )
             )

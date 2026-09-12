@@ -343,7 +343,11 @@ object DocumentFactsCollector {
             }
             val calleeName = calleeName(effectiveCallBase(call)) ?: return
             when {
-                calleeName == "require" || isRequireAliasCall(calleeName) ->
+                // Bare `require` resolves through the alias tombstones too: the file-scope
+                // seed makes it true unless a local re-bind wrote a false tombstone over
+                // the name (`local require = print; require("x")` must NOT fabricate a
+                // require fact). A hard-coded name check would short-circuit that lookup.
+                isRequireAliasCall(calleeName) ->
                     collectRequireFact(call)
                 calleeName == "module" -> extractLegacyModuleCall(call, isTopLevel)?.let { fact ->
                     legacyModuleCalls += fact
@@ -406,6 +410,11 @@ object DocumentFactsCollector {
                 // own loader — identity-equivalent to `local luajava = luajava`: a null-kind
                 // shadow here would blank every luajava.* helper fact (adversarial audit).
                 if (value != null && extractRequireString(value) == identifier.name) {
+                    // The name now holds a module value, not the bare loader: retire the
+                    // require-alias tombstone BEFORE the alias-kind skip so a prior true
+                    // (`local r = require` then `local r = require "r"`) does not leak
+                    // through the re-bind. The null-kind shadow skip itself stays.
+                    requireAliasScopes.last()[identifier.name] = false
                     return@forEachIndexed
                 }
                 // `local r = require` binds the bare global loader: calls through r are
@@ -426,6 +435,11 @@ object DocumentFactsCollector {
                 }
                 // Same self-require identity exemption as collectLocalAliases.
                 if (value != null && extractRequireString(value) == identifier.name) {
+                    // Retire the tombstone where the alias entry lives (boundary targeting,
+                    // mirroring the writer below) BEFORE the alias-kind skip: `r = require "r"`
+                    // replaces the bare loader with a module value, so later calls through
+                    // the name are no longer require facts.
+                    requireAliasScopeForWrite(identifier.name)[identifier.name] = false
                     return@forEachIndexed
                 }
                 // Mirror assignAlias's boundary targeting: a bare rebind inside a nested

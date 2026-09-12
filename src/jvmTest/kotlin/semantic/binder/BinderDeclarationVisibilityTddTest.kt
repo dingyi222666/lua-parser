@@ -82,6 +82,57 @@ class BinderDeclarationVisibilityTddTest {
     }
 
     @Test
+    fun singleCharacterSelfReferencingInitializerResolvesRhsToOuterDeclaration() {
+        // `local x = x` is the anchor's worst case: the single-char RHS identifier's read
+        // position (range.start) coincides exactly with the legacy end-of-statement caret
+        // (end.column - 1). The read must still resolve to the OUTER x instead of
+        // self-binding to the not-yet-initialized new local.
+        val source = """
+            local x = 1
+            do local x = x end
+        """.trimIndent()
+        val model = SemanticPipeline().analyze(LuaParser().parse(source)).model
+
+        // Occurrences of `x`: 1 = outer declaration, 2 = inner declaration, 3 = RHS read.
+        val rhsRead = assertNotNull(
+            model.getSymbolAt(positionOf(source, "x", occurrence = 3)),
+            "RHS `x` of `local x = x` must resolve to a declaration"
+        )
+        assertEquals("x", rhsRead.name)
+        assertEquals(
+            positionOf(source, "x", occurrence = 1),
+            rhsRead.range?.start,
+            "single-char RHS `x` must bind to the outer x even though it sits on the " +
+                "legacy end-of-statement caret of its own initializer"
+        )
+    }
+
+    @Test
+    fun singleCharacterSelfReferenceFlagsOnlyTheInnerLocalAsUnused() {
+        // The self-binding counterpart at the diagnostics surface: the RHS read credits
+        // the OUTER x, so the unused-local INFO lands on the INNER declaration. Pre-fix
+        // the read self-bound the inner local (marking it used) and the OUTER x was
+        // falsely reported unused instead.
+        val source = """
+            local x = 1
+            do local x = x end
+        """.trimIndent()
+        val model = SemanticPipeline().analyze(LuaParser().parse(source)).model
+
+        val unused = model.getDiagnostics().filter { it.message == "Unused local 'x'." }
+        assertEquals(
+            1,
+            unused.size,
+            "exactly one unused-local INFO expected; actual=${model.getDiagnostics().map { it.message }}"
+        )
+        assertEquals(
+            positionOf(source, "x", occurrence = 2),
+            unused.single().range?.start,
+            "the outer x stays used by the RHS read; only the inner x is reported unused"
+        )
+    }
+
+    @Test
     fun bareGlobalAssignmentAfterFunctionResolvesReadsInsideIt() {
         val source = """
             local function show() return cfg.title end
