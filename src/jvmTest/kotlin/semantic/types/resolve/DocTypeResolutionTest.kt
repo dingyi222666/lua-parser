@@ -22,6 +22,7 @@ import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertSame
+import kotlin.test.assertTrue
 
 class DocTypeResolutionTest {
 
@@ -346,6 +347,36 @@ class DocTypeResolutionTest {
         val bound = TypeSubstitutor().substitute(bareBox, mapOf("T" to PrimitiveType.NUMBER)) as AliasType
         assertEquals("Box", bound.name)
         assertEquals("Box.T", assertIs<TableType>(bound.target).fields.getValue("value").name)
+    }
+
+    @Test
+    fun bareCallableParametrizedAliasRenamesSignatureAndDropsDeadInferenceSlot() {
+        val result = bindAndResolve(
+            """
+            ---@alias Mapper<T> fun(value: T): T
+
+            ---@param m Mapper
+            local function run(m)
+            end
+            """.trimIndent()
+        )
+
+        val function = result.declarationIndex.declarations.single {
+            it.kind == DeclarationKind.FUNCTION && it.name == "run"
+        }
+        val bareMapper = assertIs<AliasType>(
+            assertIs<FunctionType>(function.declaredType).parameters.single().type
+        )
+        val signature = assertIs<FunctionType>(bareMapper.target)
+        // The alias's own parameter is qualified (`Mapper.T`), and the merged `fun<T>` slot —
+        // a dead inference slot on a bare use, since no type arguments can bind it — no
+        // longer shows in the display.
+        assertEquals("fun(value: Mapper.T): Mapper.T", signature.displayName)
+        assertTrue(signature.typeParameters.isEmpty())
+
+        // An unrelated `{T: ...}` binding still cannot rewrite the qualified internals.
+        val rebound = TypeSubstitutor().substitute(bareMapper, mapOf("T" to PrimitiveType.NUMBER)) as AliasType
+        assertEquals("fun(value: Mapper.T): Mapper.T", assertIs<FunctionType>(rebound.target).displayName)
     }
 
     private fun bindAndResolve(source: String) = parser.parse(source).let { chunk ->

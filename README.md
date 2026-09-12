@@ -261,6 +261,10 @@ For a fuller setup and acceptance checklist, see `docs/production-readiness.md`.
 - Runnable JVM language server entry point: `./gradlew runLuaLanguageServer`.
 - Final production acceptance is not claimed until `TASK-043` serialized verification and the `TASK-037` acceptance audit complete.
 
+## Publishing
+
+Releases go to Maven Central through the manual `publish` workflow (`.github/workflows/publish.yml`, "Run workflow" only — it never triggers on push or tag). Before every run, bump `publishVersion` in `build.gradle.kts` (the single source of truth for the published coordinates): Maven Central forbids re-uploading an existing version, so retrying an already-burned version always fails. Consumers need Kotlin 2.1 or newer: the library is compiled with the Kotlin 2.2.0 compiler, and older Kotlin compilers reject its metadata ("compiled with an incompatible version of Kotlin").
+
 ## Special thanks
 
 [GavinHigham/lpil53](https://github.com/GavinHigham/lpil53)

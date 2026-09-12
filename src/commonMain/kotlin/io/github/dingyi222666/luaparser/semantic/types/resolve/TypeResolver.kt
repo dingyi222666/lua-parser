@@ -567,8 +567,19 @@ class TypeResolver(
      * `value: T` silently became `value: number`. Rename each owned parameter to
      * `<Alias>.<Param>` (e.g. `Box.T`): still unbound (hover shows the alias's own parameter
      * instead of a lossy `unknown`) while the name can never collide with an enclosing
-     * substitution. Callable targets that re-declare the parameter on their own signature
-     * are shielded by the substitutor's own-parameter masking and stay self-consistent.
+     * substitution.
+     *
+     * Callable targets merge the alias's parameters onto the function surface
+     * (attachAliasOwnedTypeParameters), so the substitution runs on the TARGET with the
+     * public substitute's top-level own-parameter masking off: the rename reaches the
+     * signature (`fun(value: Mapper.T): Mapper.T`) instead of being shielded by the merged
+     * slots. Those merged `fun<T>` slots are dead inference slots on a bare use (no type
+     * arguments can ever bind them), so they are dropped once their occurrences were renamed
+     * — same phantom rule as TypeSubstitutor.dropAppliedTypeParameters. Tradeoff: the
+     * signature no longer carries an explicit "is generic" marker, but a bare alias
+     * reference binds nothing, and the qualified `Alias.Param` names keep the provenance;
+     * inline slots whose names do NOT collide with the alias's own parameters (e.g.
+     * `fun<U>`) are kept.
      */
     private fun renameBareAliasTypeParameters(resolved: Type, aliasDeclaration: BinderDeclaration): Type {
         val alias = resolved as? AliasType ?: return resolved
@@ -586,7 +597,46 @@ class TypeResolver(
                 defaultType = parameter.defaultType
             )
         }
-        return typeSubstitutor.substitute(alias, mapping)
+        // Substitute the TARGET (not the whole AliasType): the substitutor's AliasType branch
+        // re-enters the target with own-parameter masking ON, which lets a callable target's
+        // merged fun<T> slots shield the mapping and left the stale marker in place.
+        val renamedTarget = typeSubstitutor.substitute(alias.target, mapping)
+        return AliasType(alias.name, dropRenamedTargetTypeParameters(renamedTarget, mapping.keys))
+    }
+
+    /**
+     * Drops declared type-parameter slots whose names were just renamed to `<Alias>.<Param>`:
+     * after the rename no occurrence under the old bare name remains, so the slot is a
+     * phantom. Constructors (not copy()) rebuild the display name, otherwise the stale
+     * `fun<T>(...)` marker survives. Slots whose names were NOT renamed are kept: they are
+     * genuinely unbound.
+     */
+    private fun dropRenamedTargetTypeParameters(type: Type, renamedNames: Set<String>): Type {
+        if (renamedNames.isEmpty()) {
+            return type
+        }
+        return when (type) {
+            is FunctionType -> {
+                val typeParameters = type.typeParameters.filterNot { parameter -> parameter.name in renamedNames }
+                if (typeParameters.size == type.typeParameters.size) {
+                    type
+                } else {
+                    FunctionType(
+                        parameters = type.parameters,
+                        returnType = type.returnType,
+                        typeParameters = typeParameters
+                    )
+                }
+            }
+
+            is OverloadedFunctionType -> OverloadedFunctionType(
+                callSignatures = type.callSignatures.map {
+                    dropRenamedTargetTypeParameters(it, renamedNames) as FunctionType
+                }
+            )
+
+            else -> type
+        }
     }
 
     private fun resolveGenericType(typeSyntax: GenericTypeSyntax, context: TypeResolutionContext): Type {
