@@ -454,4 +454,26 @@ class DocumentFactsCollectorTest {
         val chunk = LuaParser().parse(source)
         return DocumentFactsCollector.collect(VirtualPath.of(path), chunk)
     }
+
+    @Test
+    fun require_alias_bound_to_bare_require_collects_require_fact() {
+        val facts = collectFacts(
+            path = "main.lua",
+            source = "local r = require\nlocal m = r(\"mods.util\")\nreturn m"
+        )
+        assertEquals(listOf("mods.util"), facts.requires.map { it.moduleName })
+    }
+
+    @Test
+    fun luajava_self_require_keeps_helper_facts() {
+        val facts = collectFacts(
+            path = "main.lua",
+            source = "local luajava = require \'luajava\'\n" +
+                "local String = luajava.bindClass(\"java.lang.String\")\nreturn String"
+        )
+        assertEquals(
+            listOf(DocumentFacts.JvmClassLoadKind.BIND_CLASS_CALL),
+            facts.jvmClassLoads.map { it.kind }
+        )
+    }
 }

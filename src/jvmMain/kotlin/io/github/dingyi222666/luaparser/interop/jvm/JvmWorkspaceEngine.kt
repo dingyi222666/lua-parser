@@ -3,6 +3,7 @@ package io.github.dingyi222666.luaparser.interop.jvm
 import io.github.dingyi222666.luaparser.parser.LuaParser
 import io.github.dingyi222666.luaparser.parser.LuaVersion
 import io.github.dingyi222666.luaparser.parser.ast.node.ArrayConstructorExpression
+import io.github.dingyi222666.luaparser.parser.ast.node.AssignmentStatement
 import io.github.dingyi222666.luaparser.parser.ast.node.AttributeIdentifier
 import io.github.dingyi222666.luaparser.parser.ast.node.CallExpression
 import io.github.dingyi222666.luaparser.parser.ast.node.ChunkNode
@@ -14,6 +15,7 @@ import io.github.dingyi222666.luaparser.parser.ast.node.ForNumericStatement
 import io.github.dingyi222666.luaparser.parser.ast.node.FunctionDeclaration
 import io.github.dingyi222666.luaparser.parser.ast.node.Identifier
 import io.github.dingyi222666.luaparser.parser.ast.node.LambdaDeclaration
+import io.github.dingyi222666.luaparser.parser.ast.node.LocalStatement
 import io.github.dingyi222666.luaparser.parser.ast.node.MemberExpression
 import io.github.dingyi222666.luaparser.parser.ast.node.StringCallExpression
 import io.github.dingyi222666.luaparser.parser.ast.node.TableCallExpression
@@ -407,8 +409,13 @@ class JvmWorkspaceEngine(
      * Single walk producing both AST import targets and free class-like identifiers.
      *
      * The two used to be separate back-to-back traversals of the same chunk. The binding-position
-     * skips below (parameters, loop variables, member names) only ever elide `Identifier` nodes,
-     * which can never contain a call, so import discovery is unaffected by sharing this traversal.
+     * skips below (local declared names, assignment targets, parameters, loop variables, member
+     * names) only ever elide `Identifier` nodes, which can never contain a call, so import
+     * discovery is unaffected by sharing this traversal. Only FREE READS qualify as class roots:
+     * a binding site (`local File = ...` / bare `File = ...` / `local function File() end`) must
+     * not feed the DEFAULT_IMPORT_PREFIXES activation in [collectSourceImports] — a shadowed
+     * local's name would otherwise activate its Java simple-name class, and unrelated local
+     * names that happen to match class simple names pollute the activation set.
      */
     private fun scanDocument(chunk: ChunkNode): DocumentScan {
         val names = linkedSetOf<String>()
@@ -435,9 +442,47 @@ class JvmWorkspaceEngine(
                     visitExpressionNode(node.base, value)
                 }
 
-                /** Declared names/bodies only: parameter names are bindings, not class roots. */
+                /**
+                 * Local declared names are binding sites, not free reads. The printer-reversed
+                 * AST puts them in [LocalStatement.init] while the initializer expressions land
+                 * in [LocalStatement.variables] — the same quirk DocumentFactsCollector
+                 * documents for collectLocalAliases — so only the initializers are walked.
+                 * `local File = io.open(".")` must not activate java.io.File through the
+                 * default import prefixes, and a bare UpperCamel local name must not enter the
+                 * activation set merely by being declared.
+                 */
+                override fun visitLocalStatement(node: LocalStatement, value: Unit) {
+                    visitExpressionNodes(node.variables, value)
+                }
+
+                /**
+                 * Assignment targets are writes, not free reads: bare `File = io.open(".")`
+                 * binds a name and must not activate a JVM class alias. Non-plain targets
+                 * (`Foo.Bar = v` / `t[k] = v`) still read their base and index, so they are
+                 * walked; compound assignment desugars into a plain assignment whose RHS
+                 * re-reads a clone of the target, keeping genuine reads live.
+                 */
+                override fun visitAssignmentStatement(node: AssignmentStatement, value: Unit) {
+                    visitExpressionNodes(node.variables, value)
+                    node.init.forEach { target ->
+                        if (target !is Identifier) {
+                            visitExpressionNode(target, value)
+                        }
+                    }
+                }
+
+                /**
+                 * Declared names/bodies only: parameter names are bindings, not class roots.
+                 * A `local function` name is a local-declaration binding too, so it is skipped
+                 * when it is a plain Identifier; `function Foo.Bar() end` keeps walking the
+                 * member expression because naming the receiver member reads `Foo`.
+                 */
                 override fun visitFunctionDeclaration(node: FunctionDeclaration, value: Unit) {
-                    node.identifier?.let { visitExpressionNode(it, value) }
+                    node.identifier?.let { identifier ->
+                        if (!(node.isLocal && identifier is Identifier)) {
+                            visitExpressionNode(identifier, value)
+                        }
+                    }
                     node.body?.let { visitBlockNode(it, value) }
                 }
 

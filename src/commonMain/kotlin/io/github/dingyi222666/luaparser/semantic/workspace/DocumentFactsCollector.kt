@@ -82,6 +82,9 @@ object DocumentFactsCollector {
         private val moduleNameCandidates = linkedMapOf<ModuleNameCandidateKey, DocumentFacts.ModuleNameCandidate>()
         private val topLevelSegmentTriggers = mutableListOf<DocumentFacts.LegacyModuleCallFact>()
         private val aliasScopes = mutableListOf(mutableMapOf<String, DocumentFacts.JvmClassLoadKind?>())
+        // Names bound to the BARE global `require` (local r = require): calls through them
+        // are require facts, not unknown callees (adversarial facts audit).
+        private val requireAliasScopes = mutableListOf(mutableSetOf<String>())
         private val functionAliasBoundaries = mutableListOf<Int>()
         private val luaJavaHelperKinds = mapOf(
             "bindClass" to DocumentFacts.JvmClassLoadKind.BIND_CLASS_CALL,
@@ -336,9 +339,10 @@ object DocumentFactsCollector {
                 return
             }
             val calleeName = calleeName(effectiveCallBase(call)) ?: return
-            when (calleeName) {
-                "require" -> collectRequireFact(call)
-                "module" -> extractLegacyModuleCall(call, isTopLevel)?.let { fact ->
+            when {
+                calleeName == "require" || calleeName in requireAliasScopes.last() ->
+                    collectRequireFact(call)
+                calleeName == "module" -> extractLegacyModuleCall(call, isTopLevel)?.let { fact ->
                     legacyModuleCalls += fact
                     addModuleNameCandidate(
                         moduleName = fact.moduleName,
@@ -395,6 +399,17 @@ object DocumentFactsCollector {
                 if (isIdentityAliasRebind(identifier.name, value)) {
                     return@forEachIndexed
                 }
+                // `local luajava = require "luajava"` re-binds the module global from its
+                // own loader — identity-equivalent to `local luajava = luajava`: a null-kind
+                // shadow here would blank every luajava.* helper fact (adversarial audit).
+                if (value != null && extractRequireString(value) == identifier.name) {
+                    return@forEachIndexed
+                }
+                // `local r = require` binds the bare global loader: calls through r are
+                // require facts, not unknown callees.
+                if (value is Identifier && value.name == "require") {
+                    requireAliasScopes.last().add(identifier.name)
+                }
                 declareLocalAlias(identifier.name, value?.let(::jvmClassLoadKindForAliasExpression))
             }
         }
@@ -406,6 +421,13 @@ object DocumentFactsCollector {
                 val value = statement.variables.getOrNull(index)
                 if (isIdentityAliasRebind(identifier.name, value)) {
                     return@forEachIndexed
+                }
+                // Same self-require identity exemption as collectLocalAliases.
+                if (value != null && extractRequireString(value) == identifier.name) {
+                    return@forEachIndexed
+                }
+                if (value is Identifier && value.name == "require") {
+                    requireAliasScopes.last().add(identifier.name)
                 }
                 assignAlias(identifier.name, value?.let(::jvmClassLoadKindForAliasExpression))
             }
@@ -447,6 +469,7 @@ object DocumentFactsCollector {
             block: () -> T
         ): T {
             aliasScopes += mutableMapOf()
+            requireAliasScopes.add(mutableSetOf())
             if (isFunctionBoundary) {
                 functionAliasBoundaries += aliasScopes.lastIndex
             }
@@ -457,6 +480,7 @@ object DocumentFactsCollector {
                     functionAliasBoundaries.removeAt(functionAliasBoundaries.lastIndex)
                 }
                 aliasScopes.removeAt(aliasScopes.lastIndex)
+                requireAliasScopes.removeAt(requireAliasScopes.lastIndex)
             }
         }
 
