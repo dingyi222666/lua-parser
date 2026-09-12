@@ -27,7 +27,8 @@ import kotlin.test.assertTrue
  * 4. Publish payloads cap at 300 diagnostics; truncation is announced with ONE trailing
  *    sentinel diagnostic (HINT, code `diagnostics.truncated`, "N more diagnostics
  *    truncated") instead of silently dropping the tail. Under-cap publishes stay
- *    sentinel-free.
+ *    sentinel-free. On hard-locked publishes (parse recovery errors present) the
+ *    sentinel joins the Error-only invariant and emits as Error.
  *
  * Test-only; exercises the publish policy, not the semantic model internals.
  */
@@ -86,6 +87,49 @@ class LspDiagnosticPolicyTddTest {
         assertTrue(
             published.diagnostics.none { it.code?.left == "checker.local.unused" },
             "unused-local Information must stay suppressed while parse errors publish."
+        )
+    }
+
+    @Test
+    fun hard_locked_publish_over_cap_truncates_with_error_sentinel() {
+        val service = initializedService()
+        // 400 parse-broken statements: each `local =` line emits its own recovery
+        // diagnostics (missing name / missing expression), so the Error-only hard-locked
+        // payload exceeds the 300-diagnostic publish cap without needing any semantic
+        // diagnostic surface.
+        val source = (1..400).joinToString("\n") { "local =" }
+
+        val published = service.didOpen(
+            openParams("file:///workspace/hardlock-truncation-sentinel.lua", source)
+        )
+
+        // Cap math: exactly 300 real diagnostics + exactly one trailing sentinel.
+        assertEquals(301, published.diagnostics.size)
+        assertTrue(
+            published.diagnostics.all { it.severity == DiagnosticSeverity.Error },
+            "hard-locked publishes stay Error-only INCLUDING the truncation sentinel; " +
+                "actual: ${describe(published.diagnostics.takeLast(3))}."
+        )
+        assertTrue(
+            published.diagnostics.none { it.code?.left == "checker.local.unused" },
+            "unused-local Information must stay suppressed on hard-locked publishes."
+        )
+        val sentinel = published.diagnostics.last()
+        assertEquals("diagnostics.truncated", sentinel.code?.left)
+        assertEquals(
+            DiagnosticSeverity.Error,
+            sentinel.severity,
+            "the sentinel must join the Error-only hard-lock instead of publishing a Hint."
+        )
+        assertTrue(
+            sentinel.message.matches(Regex("\\d+ more diagnostics truncated")),
+            "Sentinel must report how many diagnostics were truncated; actual: ${sentinel.message}."
+        )
+        val range = assertNotNull(sentinel.range, "truncation sentinel must carry a visible anchor range")
+        assertTrue(
+            range.end.line > range.start.line ||
+                (range.end.line == range.start.line && range.end.character > range.start.character),
+            "truncation sentinel span must stay non-zero-width; actual: $range."
         )
     }
 

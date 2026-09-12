@@ -507,8 +507,15 @@ class LuaParser(
      * ({ NL LinearLayout, ...}) parse as expressions while incomplete
      * a = NL print(a) / trailing-comma call NL activity.setContentView(view) keep
      * the following call as a sibling statement.
+     *
+     * [sameLineOnly] restricts the call-shape probe to the NAME's own line (used by
+     * the goto-target recovery so a valid cross-line label before a next-line call
+     * statement is not mistaken for a call-shaped start).
      */
-    private fun shouldRecoverStatementStartAsMissingExpression(token: LuaTokenTypes): Boolean {
+    private fun shouldRecoverStatementStartAsMissingExpression(
+        token: LuaTokenTypes,
+        sameLineOnly: Boolean = false
+    ): Boolean {
         if (isKeywordStatementStart(token)) {
             return true
         }
@@ -516,7 +523,7 @@ class LuaParser(
             return false
         }
         // token is the just-peeked NAME (pushbacked). Walk member chains then call.
-        return isCallShapedNameStatementStart()
+        return isCallShapedNameStatementStart(sameLineOnly)
     }
 
     /**
@@ -525,18 +532,31 @@ class LuaParser(
      * that ends in a call starter (activity.setContentView(, view:setText().
      * Restores the lexer with [WrapperLuaLexer.back].
      *
+     * With [sameLineOnly] the probe refuses to cross a NEW_LINE: a line break before
+     * the call starter / chain segment reports not-call-shaped (lexer restored), so a
+     * valid cross-line goto label (`goto\nout` ahead of `(f)()` on the next line) is
+     * not mistaken for a call-shaped statement start.
+     *
      * Used by call-arg trailing-comma recovery (TASK-551 / TASK-647) so incomplete
-     * Android-Lua forms do not absorb later setContentView as an extra argument.
+     * Android-Lua forms do not absorb later setContentView as an extra argument, and
+     * by the goto-target recovery with [sameLineOnly] enabled.
      */
-    private fun isCallShapedNameStatementStart(): Boolean {
+    private fun isCallShapedNameStatementStart(sameLineOnly: Boolean = false): Boolean {
         var backSize = 0
 
-        fun nextSignificant(): LuaTokenTypes {
+        // Next non-ignored token; null when the scan crossed a NEW_LINE under
+        // [sameLineOnly] (the lexer has already been restored by [WrapperLuaLexer.back],
+        // so callers must NOT back up again in that case).
+        fun nextSignificant(): LuaTokenTypes? {
             while (true) {
                 val token = lexer.advance()
                 backSize++
                 if (token == LuaTokenTypes.EOF) {
                     return LuaTokenTypes.EOF
+                }
+                if (sameLineOnly && token == LuaTokenTypes.NEW_LINE) {
+                    lexer.back(backSize)
+                    return null
                 }
                 if (!ignoreToken(token)) {
                     return token
@@ -545,7 +565,11 @@ class LuaParser(
         }
 
         // Leading NAME (statement head).
-        if (nextSignificant() != LuaTokenTypes.NAME) {
+        val head = nextSignificant()
+        if (head == null) {
+            return false
+        }
+        if (head != LuaTokenTypes.NAME) {
             lexer.back(backSize)
             return false
         }
@@ -553,6 +577,8 @@ class LuaParser(
         // Zero or more (.|:) NAME segments, then a call starter.
         while (true) {
             when (val next = nextSignificant()) {
+                null -> return false
+
                 LuaTokenTypes.LPAREN,
                 LuaTokenTypes.LCURLY,
                 LuaTokenTypes.STRING,
@@ -563,7 +589,11 @@ class LuaParser(
 
                 LuaTokenTypes.DOT,
                 LuaTokenTypes.COLON -> {
-                    if (nextSignificant() != LuaTokenTypes.NAME) {
+                    val segment = nextSignificant()
+                    if (segment == null) {
+                        return false
+                    }
+                    if (segment != LuaTokenTypes.NAME) {
                         lexer.back(backSize)
                         return false
                     }
@@ -1431,14 +1461,16 @@ class LuaParser(
 
     /**
      * goto-target parse with the shared statement-start recovery
-     * ([shouldRecoverStatementStartAsMissingExpression]).
+     * ([shouldRecoverStatementStartAsMissingExpression]) in same-line-only mode.
      *
      * `goto\nprint(1)` must not absorb the NAME across the line break as the label (that
      * dropped the whole print call behind the TASK-639 same-line drain). After a line
-     * break, a call-shaped NAME statement start (or a keyword/control statement start)
-     * recovers as a missing label diagnostic and stays unconsumed so the outer block
-     * parses it as a sibling statement. A bare NAME after a line break still parses as
-     * the label, so well-formed `goto\nlabel` keeps working.
+     * break, a SAME-LINE call-shaped NAME statement start (or a keyword/control statement
+     * start) recovers as a missing label diagnostic and stays unconsumed so the outer
+     * block parses it as a sibling statement. A bare NAME after a line break still parses
+     * as the label, so well-formed `goto\nlabel` keeps working — and the probe never
+     * skips the NEW_LINE after the label, so valid standard Lua like `goto\nout\n(f)()`
+     * keeps the label `out` (the next-line `(f)()` call parses as a sibling statement).
      */
     private fun parseGotoTargetOrMissing(parent: BaseASTNode): Identifier {
         // Capture the line break BEFORE any peek/pushback (see parseExpressionOrMissing):
@@ -1448,7 +1480,7 @@ class LuaParser(
         val targetToken = peek()
         if (errorRecovery &&
             hasLineBreakBeforeTarget &&
-            shouldRecoverStatementStartAsMissingExpression(targetToken)
+            shouldRecoverStatementStartAsMissingExpression(targetToken, sameLineOnly = true)
         ) {
             warning("<name> expected near ${lexerText()}")
             return Identifier("").also {

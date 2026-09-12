@@ -23,6 +23,10 @@ import kotlin.test.assertTrue
  *    when every resolution surface misses (visible VALUE declaration, imported symbol,
  *    active import-target root), with the S1-S4 suppression policy (writes, `_`-prefixed,
  *    UpperCamel, `_ENV`-param functions keep checking) and the `parent` overlay seed.
+ * 5. Local-function dead code (wave Z FIXER-TRIO): unreferenced local `function` declarations
+ *    report the same INFO unused-local diagnostic as unreferenced value locals; reads
+ *    (direct calls, table-dispatch `{ f = f }` values) mark them referenced, while
+ *    method-style `function M.f()` declarations stay outside the policy.
  *
  * Harness mirrors sibling interop suites (WorkspaceSemanticHarness + JvmWorkspaceEngine);
  * `luajava.bindClass` resolves host JDK classes reflectively, so `java.lang.System` is a
@@ -54,6 +58,74 @@ class ExpressionUsageDiagnosticPolicyTddTest {
         assertTrue(
             unused.isEmpty(),
             "Read local must not report unused; actual: ${describe(diagnostics(harness))}."
+        )
+    }
+
+    // =========================================================================
+    // Local-function dead code (wave Z FIXER-TRIO): `local function name() end`
+    // participates in the unused-local policy like `local f = function() end`.
+    // =========================================================================
+
+    @Test
+    fun unused_local_function_reports_info_diagnostic() {
+        val harness = harness("local function unusedHelper() end")
+
+        val unused = diagnostics(harness).filter { it.code == "checker.local.unused" }
+
+        assertTrue(
+            unused.isNotEmpty(),
+            "Zero-caller local function must report unused; " +
+                "actual: ${describe(diagnostics(harness))}."
+        )
+        val diagnostic = unused.single()
+        assertEquals(DiagnosticSeverity.INFO, diagnostic.severity)
+        assertEquals("Unused local 'unusedHelper'.", diagnostic.message)
+    }
+
+    @Test
+    fun used_local_function_emits_no_unused_local_diagnostic() {
+        val harness = harness("local function usedHelper() end\nusedHelper()")
+
+        val unused = diagnostics(harness).filter { it.code == "checker.local.unused" }
+
+        assertTrue(
+            unused.isEmpty(),
+            "Called local function must not report unused; actual: ${describe(diagnostics(harness))}."
+        )
+    }
+
+    @Test
+    fun local_function_table_dispatch_read_stays_silent() {
+        // Table-dispatch usage counts as a read: `{ readyLoad = readyLoad }` is a plain
+        // identifier read of the FUNCTION declaration (markLocalRead), and the later
+        // member call keeps the dispatch table itself referenced.
+        val harness = harness(
+            "local function readyLoad() end\n" +
+                "local handlers = { readyLoad = readyLoad }\n" +
+                "handlers.readyLoad(1)"
+        )
+
+        val unused = diagnostics(harness).filter { it.code == "checker.local.unused" }
+
+        assertTrue(
+            unused.isEmpty(),
+            "Table-dispatch referenced local function must not report unused; " +
+                "actual: ${describe(diagnostics(harness))}."
+        )
+    }
+
+    @Test
+    fun method_style_module_function_stays_out_of_unused_policy() {
+        // `function M.exposed() end` declares a METHOD member (module surface), not a
+        // value local — it must stay outside the unused-local emission.
+        val harness = harness("function M.exposed() end")
+
+        val unused = diagnostics(harness).filter { it.code == "checker.local.unused" }
+
+        assertTrue(
+            unused.isEmpty(),
+            "Method-style module function must not report unused; " +
+                "actual: ${describe(diagnostics(harness))}."
         )
     }
 

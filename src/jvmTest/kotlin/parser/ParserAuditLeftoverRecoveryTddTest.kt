@@ -4,12 +4,14 @@ import io.github.dingyi222666.luaparser.parser.LuaParser
 import io.github.dingyi222666.luaparser.parser.LuaParseResult
 import io.github.dingyi222666.luaparser.parser.LuaVersion
 import io.github.dingyi222666.luaparser.parser.ast.node.AssignmentStatement
+import io.github.dingyi222666.luaparser.parser.ast.node.CallStatement
 import io.github.dingyi222666.luaparser.parser.ast.node.ExpressionOperator
 import io.github.dingyi222666.luaparser.parser.ast.node.GotoStatement
 import io.github.dingyi222666.luaparser.parser.ast.node.Identifier
 import io.github.dingyi222666.luaparser.parser.ast.node.UnaryExpression
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertFails
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
@@ -30,6 +32,9 @@ import kotlin.test.assertTrue
  *    call-shaped / keyword statement starts after the break recover as a missing-label
  *    diagnostic and stay unconsumed so the block parses them as siblings. A bare NAME after
  *    the break still parses as the label (well-formed `goto\nlabel` keeps working).
+ *    Wave-Z same-line-only refinement: the call-shape probe never skips a NEW_LINE from the
+ *    goto path, so valid standard Lua `goto\nout\n(f)()` keeps the label `out` instead of
+ *    dropping it behind a false "<name> expected" diagnostic.
  *
  * 3. Unary absorption: `a = not\nprint(a)` absorbed the next statement as the operand. The
  *    operand parse now applies the exact parseSubExpTail binary-operand recovery
@@ -152,6 +157,29 @@ class ParserAuditLeftoverRecoveryTddTest {
             emptyList(),
             result.recoveryDiagnostics.map { it.message },
             "same-line goto drain stays silent"
+        )
+    }
+
+    @Test
+    fun gotoLabelBeforeNextLineCallStatementSurvives() {
+        // `goto\nout\n(f)()` is valid standard Lua (goto out; (f)()): the call-shape
+        // probe for the target must NOT skip the NEW_LINE after `out`, or the valid
+        // label drops to a bad identifier behind a false "<name> expected" diagnostic
+        // and the next-line call re-associates with the label name.
+        val result = recovering("goto\nout\n(f)()")
+
+        // Structural assertions (the paren-call's recovery marker makes exact shape
+        // strings brittle): the label survives non-bad, and the call parses as a sibling.
+        val goto = assertIs<GotoStatement>(result.chunk.body.statements.first())
+        assertEquals("out", goto.identifier.name)
+        assertTrue(!goto.identifier.bad, "valid cross-line label must not recover as bad")
+        assertTrue(goto.identifier.parent === goto, "label parent must be the goto statement")
+        assertTrue(result.chunk.body.statements[1] is CallStatement, "(f)() must parse as a sibling call")
+
+        assertEquals(
+            emptyList(),
+            result.recoveryDiagnostics.map { it.message },
+            "no false missing-goto-label diagnostic; got ${result.recoveryDiagnostics.map { it.message }}"
         )
     }
 

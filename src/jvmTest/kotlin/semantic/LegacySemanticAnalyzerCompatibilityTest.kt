@@ -28,7 +28,13 @@ class LegacySemanticAnalyzerCompatibilityTest {
         val pipeline = SemanticPipeline().analyze(chunk)
         val legacy = SemanticAnalyzer().analyze(chunk)
 
-        assertEquals(pipeline.model.getDiagnostics().map { it.message }, legacy.diagnostics.take(3).map { it.message })
+        // The legacy wrapper surfaces the same 4 diagnostics (3 signature/return +
+        // the wave-Z unused-local-function INFO); the legacy analyzer's own extra
+        // trailing entries are out of contract here.
+        assertEquals(
+            pipeline.model.getDiagnostics().map { it.message },
+            legacy.diagnostics.take(pipeline.model.getDiagnostics().size).map { it.message }
+        )
     }
 
     @Test

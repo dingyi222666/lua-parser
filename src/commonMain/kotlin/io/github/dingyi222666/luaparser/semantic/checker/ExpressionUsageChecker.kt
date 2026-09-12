@@ -49,11 +49,15 @@ import io.github.dingyi222666.luaparser.semantic.types.resolve.TypeExpansion
  * Expression-surface diagnostics plus value-local unused reporting.
  *
  * Unused-local policy:
- * - Report [DeclarationKind.LOCAL] value locals that are never *read* after declaration.
+ * - Report [DeclarationKind.LOCAL] value locals that are never *read* after declaration,
+ *   plus local `function name() end` declarations ([DeclarationKind.FUNCTION] anchored to
+ *   a local [FunctionDeclaration]) that are never read — a zero-caller local function is
+ *   the same dead code an unreferenced `local f = function() end` is.
  * - Pure writes (assignment LHS) do not count as a use.
  * - Suppress `_` and names starting with `_`.
- * - Parameters, bare globals, and loop-control names are out of scope for this code.
- * - Local `function` declarations remain [DeclarationKind.FUNCTION] and are not reported here.
+ * - Parameters, bare globals, non-local function re-binds, and loop-control names are out
+ *   of scope for this code; method declarations (`function M.f()`) are
+ *   [DeclarationKind.METHOD] members and stay excluded.
  * - Table field names (`{ name = ... }`) and member selectors (`.name` / `:name`) are not reads.
  */
 internal class ExpressionUsageChecker(
@@ -406,8 +410,8 @@ internal class ExpressionUsageChecker(
         binder.declarationIndex.declarations
             .asSequence()
             .filter { declaration ->
-                declaration.kind == DeclarationKind.LOCAL &&
-                    declaration.origin == DeclarationOrigin.AST &&
+                declaration.origin == DeclarationOrigin.AST &&
+                    isUnusedLocalCandidateKind(declaration) &&
                     !isLoopControlLocal(declaration) &&
                     !isIgnoredLocalName(declaration.name) &&
                     declaration.id !in readLocalDeclarationIds
@@ -451,7 +455,11 @@ internal class ExpressionUsageChecker(
 
     private fun markLocalRead(node: Identifier, scopeId: ScopeId) {
         val declaration = findVisibleValueLocal(node.name, node.range.start, scopeId) ?: return
-        if (declaration.kind != DeclarationKind.LOCAL) {
+        // FUNCTION joins LOCAL: reads of a local `function name() end` declaration must
+        // mark it referenced (table-dispatch `{ readyLoad = readyLoad }` surfaces here as
+        // a plain identifier read of the FUNCTION declaration; `readyLoad(self)` is the
+        // ordinary call read).
+        if (declaration.kind != DeclarationKind.LOCAL && declaration.kind != DeclarationKind.FUNCTION) {
             return
         }
         // Never treat the declaring identifier itself as a read.
@@ -459,6 +467,29 @@ internal class ExpressionUsageChecker(
             return
         }
         readLocalDeclarationIds += declaration.id
+    }
+
+    /**
+     * Unused-local emission candidates: [DeclarationKind.LOCAL] value locals plus local
+     * `function name() end` declarations — [DeclarationKind.FUNCTION] whose anchor is the
+     * name identifier of a local [FunctionDeclaration] (zero-caller local functions are
+     * dead code, matching `local f = function() end`).
+     *
+     * Non-local `function x() end` statements re-binding an existing local/parameter
+     * produce FUNCTION-kind declarations too, but their anchor carries isLocal = false:
+     * they are global-surface re-bindings and stay emission-exempt. Method declarations
+     * (`function M.f()`) are [DeclarationKind.METHOD] members — excluded, unchanged.
+     * Builtin FUNCTION seeds carry origin BUILTIN and are already filtered by origin.
+     */
+    private fun isUnusedLocalCandidateKind(declaration: BinderDeclaration): Boolean {
+        if (declaration.kind == DeclarationKind.LOCAL) {
+            return true
+        }
+        if (declaration.kind != DeclarationKind.FUNCTION) {
+            return false
+        }
+        val parent = declaration.anchorNode?.parent
+        return parent is FunctionDeclaration && parent.isLocal
     }
 
     private fun findVisibleValueLocal(name: String, position: Position, lexicalScopeId: ScopeId): BinderDeclaration? {

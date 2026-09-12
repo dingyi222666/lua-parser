@@ -1453,7 +1453,9 @@ class LuaLanguageService(
         //    repair-clears windows.
         // 3) When parse recovery diagnostics exist, non-Error semantic diagnostics
         //    (unused-local Information included) are dropped so invalid sources hard-lock
-        //    to Error only and repair/valid stays empty.
+        //    to Error only and repair/valid stays empty. The truncation sentinel joins the
+        //    hard-lock: on such publishes it emits as Error (not its usual Hint) so an
+        //    over-cap invalid source still publishes Error-only.
         val buffer = openDocuments[path] ?: indexedWorkspaceFiles[path]
         val bufferAnalyzed = snapshot.files[path]?.semanticFile?.let { semanticFile ->
             buffer != null && semanticFile.source == buffer
@@ -1494,12 +1496,14 @@ class LuaLanguageService(
             }
         // Bound the payload: a typo-heavy file can produce hundreds of per-site
         // unresolved-global warnings; clients choke on megabyte diagnostic arrays.
-        // Truncation is announced with one trailing sentinel diagnostic (HINT,
-        // code `diagnostics.truncated`) so clients can tell a capped payload from a
-        // clean bill of health instead of silently losing the tail.
+        // Truncation is announced with one trailing sentinel diagnostic (HINT, or
+        // ERROR while the Error-only hard-lock is active, code `diagnostics.truncated`)
+        // so clients can tell a capped payload from a clean bill of health instead of
+        // silently losing the tail.
         val truncatedCount = distinct.size - PUBLISH_DIAGNOSTICS_CAP
         val diagnostics = if (truncatedCount > 0) {
-            distinct.take(PUBLISH_DIAGNOSTICS_CAP) + truncatedDiagnosticsSentinel(truncatedCount, buffer)
+            distinct.take(PUBLISH_DIAGNOSTICS_CAP) +
+                truncatedDiagnosticsSentinel(truncatedCount, buffer, hardLocked = parse.isNotEmpty())
         } else {
             distinct
         }
@@ -1510,12 +1514,18 @@ class LuaLanguageService(
      * Synthetic trailing marker published ONLY when the payload exceeded
      * [PUBLISH_DIAGNOSTICS_CAP]. Reuses the same fallback anchor as range-less diagnostics
      * (1-character span on the document's first token) and a HINT severity with a dedicated
-     * code so it can never be mistaken for a real finding.
+     * code so it can never be mistaken for a real finding. While the Error-only hard-lock
+     * is active ([hardLocked] — parse recovery diagnostics present), the sentinel emits as
+     * ERROR so hard-locked publishes keep the Error-only invariant end to end.
      */
-    private fun truncatedDiagnosticsSentinel(count: Int, source: String?): Diagnostic {
+    private fun truncatedDiagnosticsSentinel(count: Int, source: String?, hardLocked: Boolean): Diagnostic {
         return Diagnostic().apply {
             range = fallbackDiagnosticRange(source)
-            severity = org.eclipse.lsp4j.DiagnosticSeverity.Hint
+            severity = if (hardLocked) {
+                org.eclipse.lsp4j.DiagnosticSeverity.Error
+            } else {
+                org.eclipse.lsp4j.DiagnosticSeverity.Hint
+            }
             code = Either.forLeft<String, Int>("diagnostics.truncated")
             message = "$count more diagnostics truncated"
         }
