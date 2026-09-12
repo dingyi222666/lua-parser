@@ -486,4 +486,14 @@ class DocumentFactsCollectorTest {
         assertEquals(emptyList(), facts.requires.map { it.moduleName })
     }
 
+
+    @Test
+    fun require_alias_retired_through_nested_block_rebind() {
+        val facts = collectFacts(
+            path = "main.lua",
+            source = "local r = require\ndo r = fake end\nr(\"mods.util\")"
+        )
+        assertEquals(emptyList(), facts.requires.map { it.moduleName })
+    }
+
 }
