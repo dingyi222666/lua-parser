@@ -418,9 +418,11 @@ object DocumentFactsCollector {
                     return@forEachIndexed
                 }
                 // `local r = require` binds the bare global loader: calls through r are
-                // require facts, not unknown callees.
+                // require facts, not unknown callees. A rebind whose RHS still READS
+                // bare require (local require = require or print — polyfill idiom)
+                // keeps the seed alive; anything else retires it.
                 requireAliasScopes.last()[identifier.name] =
-                    value is Identifier && value.name == "require"
+                    value is Identifier && value.name == "require" || readsBareRequire(value)
                 declareLocalAlias(identifier.name, value?.let(::jvmClassLoadKindForAliasExpression))
             }
         }
@@ -446,7 +448,7 @@ object DocumentFactsCollector {
                 // block rewrites the OUTER scope's registration, so the tombstone must be
                 // written where the alias entry lives (adversarial audit wave X).
                 requireAliasScopeForWrite(identifier.name)[identifier.name] =
-                    value is Identifier && value.name == "require"
+                    value is Identifier && value.name == "require" || readsBareRequire(value)
                 assignAlias(identifier.name, value?.let(::jvmClassLoadKindForAliasExpression))
             }
         }
@@ -455,6 +457,23 @@ object DocumentFactsCollector {
          * True for `local x = x` / `x = x` identity captures of the outer binding.
          * These must not register a null-kind local shadow for LuaJava helper resolution.
          */
+        /**
+         * True when [value] still READS the bare global `require` somewhere (binary
+         * expressions like `require or print`, parenthesized forms) — the rebind keeps
+         * the real loader alive, so the require-alias seed must not retire.
+         */
+        private fun readsBareRequire(value: ExpressionNode?): Boolean {
+            val current = value ?: return false
+            when (current) {
+                is Identifier -> return current.name == "require"
+                is io.github.dingyi222666.luaparser.parser.ast.node.UnaryExpression ->
+                    return readsBareRequire(current.arg)
+                is io.github.dingyi222666.luaparser.parser.ast.node.BinaryExpression ->
+                    return readsBareRequire(current.left) || readsBareRequire(current.right)
+            }
+            return false
+        }
+
         private fun isIdentityAliasRebind(aliasName: String, value: ExpressionNode?): Boolean {
             val identifier = value as? Identifier ?: return false
             return identifier.name == aliasName

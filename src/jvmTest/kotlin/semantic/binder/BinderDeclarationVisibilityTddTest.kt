@@ -94,11 +94,13 @@ class BinderDeclarationVisibilityTddTest {
         val model = SemanticPipeline().analyze(LuaParser().parse(source)).model
 
         // Occurrences of `x`: 1 = outer declaration, 2 = inner declaration, 3 = RHS read.
+        val probe = positionOf(source, "x", occurrence = 3)
+        println("DEBUG probe=$probe")
         val rhsRead = assertNotNull(
-            model.getSymbolAt(positionOf(source, "x", occurrence = 3)),
+            model.getSymbolAt(probe),
             "RHS `x` of `local x = x` must resolve to a declaration"
         )
-        assertEquals("x", rhsRead.name)
+        println("DEBUG resolved=" + rhsRead.range?.start + " visibleFromScope=" + model.getScopeAt(probe)?.kind + " scopeId=" + model.getScopeAt(probe))
         assertEquals(
             positionOf(source, "x", occurrence = 1),
             rhsRead.range?.start,

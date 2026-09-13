@@ -103,11 +103,27 @@ internal class DeclarationBinder(
                     // "Unused local"). Anchor strictly after it instead.
                     visibleFrom = node.variables.lastOrNull()?.range?.end
                         ?.let { end ->
-                            val initializer = node.variables.last() as? Identifier
                             val declaredNames = node.init.map { it.name }
-                            val selfReadAtCaret = initializer != null &&
-                                initializer.name in declaredNames &&
-                                end.column - initializer.range.start.column == 1
+                            // A same-name read ending at the initializer's last
+                            // character self-binds at the legacy anchor — cover both the
+                            // bare identifier and prefix-unary forms (local i = -i).
+                            val sameNameReadEndsAtEnd = sequence {
+                                var current: io.github.dingyi222666.luaparser.parser.ast.node.ExpressionNode? =
+                                    node.variables.lastOrNull()
+                                while (current is io.github.dingyi222666.luaparser.parser.ast.node.UnaryExpression) {
+                                    current = current.arg
+                                }
+                                if (current is Identifier && current.name in declaredNames) {
+                                    yield(current)
+                                }
+                            }.any { read ->
+                                // The read's exclusive end IS the initializer's exclusive
+                                // end: the whole initializer is the same-name read itself
+                                // (`local x = x`), so the caret on its last character sits
+                                // on the read.
+                                read.range.end.column == end.column && read.range.end.line == end.line
+                            }
+                            val selfReadAtCaret = sameNameReadEndsAtEnd
                             Position(
                                 end.line,
                                 if (selfReadAtCaret) end.column else (end.column - 1).coerceAtLeast(1)

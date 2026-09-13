@@ -710,6 +710,34 @@ class LuaLexer @JvmOverloads constructor(
         tokenLength -= length
     }
 
+    /**
+     * Restore the lexer to a captured token-start state: the exact cursor tuple
+     * visible right after [nextToken] returned the token starting at [index].
+     *
+     * Field mapping (one assignment each, no logic):
+     * - [index] -> [index] and -> [offset]. The `offset == index` invariant holds
+     *   because both start at 0 and are only ever advanced together by
+     *   `+= tokenLength` in [nextTokenInternal]; every field a restore needs is
+     *   therefore captured by the [index]/[tokenLength]/[line]/[column] tuple
+     *   (the same tuple a `LexerState` snapshot stores).
+     * - [tokenLength] -> [tokenLength], [line] -> [tokenLine], [column] -> [tokenColumn].
+     *
+     * [tokenType] is intentionally not restored: it is write-only inside this class
+     * and the next [nextToken] call overwrites it.
+     *
+     * The next [nextToken] call re-counts newlines across the restored token span,
+     * moves `index`/`offset` past it, and scans the following token — identical to
+     * replaying from the original call. This is the primitive a deep-probe
+     * snapshot/restore uses instead of history-based back-stepping.
+     */
+    fun restoreTo(index: Int, tokenLength: Int, line: Int, column: Int) {
+        this.index = index
+        offset = index
+        this.tokenLength = tokenLength
+        tokenLine = line
+        tokenColumn = column
+    }
+
     private fun scanNewline() {
         if (offset + tokenLength < bufferLen && charAt(offset + tokenLength) == '\n') {
             tokenLength++
