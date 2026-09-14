@@ -69,6 +69,9 @@ local AndroidContentContext = {}
 
 ---@class LuaActivity: AndroidLuaContext
 ---@java-class android.app.Activity
+--- Reads the Lua global `name` from the activity Lua state
+--- (runtime LuaActivity.get; `activity.get("_taskFinlshFunction")(data)` idiom).
+---@field get fun(name: string): any
 local LuaActivity = {}
 
 ---@class LuaService: AndroidLuaContext
