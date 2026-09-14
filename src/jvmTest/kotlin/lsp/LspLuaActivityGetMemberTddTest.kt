@@ -47,6 +47,25 @@ class LspLuaActivityGetMemberTddTest {
     }
 
     @Test
+    fun bundled_runtime_reflection_surfaces_real_members_beyond_stub_fields() {
+        val service = service()
+        val source = CALL_SITES.trimIndent()
+        val uri = "file:///workspace/luaactivity-reflection.lua"
+        service.didOpen(DidOpenTextDocumentParams(TextDocumentItem(uri, "lua", 1, source)))
+
+        // The bundled com.androlua.LuaActivity class reflects the real surface: runtime
+        // helpers (set/call/showToast) AND inherited android.app.Activity methods
+        // (getPackageManager) all come from reflection, not hand-written stubs.
+        val labels = service.completion(uri, 1, 11).items.map { it.label }.toSet()
+        assertTrue("set" in labels, "reflected surface must offer runtime set; got ${labels.take(40)}")
+        assertTrue("showToast" in labels, "reflected surface must offer runtime showToast; got ${labels.take(40)}")
+        assertTrue(
+            "getPackageManager" in labels,
+            "reflected surface must offer inherited framework getPackageManager; got ${labels.take(40)}"
+        )
+    }
+
+    @Test
     fun unrelated_unknown_members_are_still_diagnosed() {
         val service = service()
         val diagnostics = openAndGetDiagnostics(service, "luaactivity-bogus.lua", BOGUS_MEMBER)

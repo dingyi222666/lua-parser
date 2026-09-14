@@ -1043,13 +1043,36 @@ class JvmClassModuleProvider(
      * Never hard-requires G:, a missing AppData android-35 path alone, or a macOS-only
      * absolute path.
      */
+    /**
+     * Bundled Android-Lua runtime classes (com.androlua.*, com.luajava.*, compiled from the
+     * Android-Lua app sources, MIT license — see LICENSE attribution in the source repo).
+     * Extracted once to a temp file so the reflective classloader can mount real runtime
+     * members (LuaActivity.get/set/call/showToast/…) without host-specific configuration.
+     * Null when the resource is absent (never invents classes).
+     */
+    private val bundledAndroLuaRuntimeJar: File? by lazy {
+        runCatching {
+            val resource = JvmClassModuleProvider::class.java
+                .getResourceAsStream("/io/github/dingyi222666/luaparser/interop/jvm/androlua-runtime.jar")
+                ?: return@lazy null
+            val target = Files.createTempFile("androlua-runtime", ".jar")
+            resource.use { input ->
+                Files.copy(input, target, java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+            }
+            target.toFile().takeIf { it.isFile && it.length() > 0 }
+        }.getOrNull()
+    }
+
     private fun resolveReflectiveClasspathFiles(configuration: JvmWorkspaceConfiguration): List<File> {
-        val entries = configuration.reflectionClasspathEntries()
+        val entries = mutableListOf<File>()
+        // The bundled runtime always leads the classpath: it carries the AndroLua-facing
+        // helpers (LuaActivity.get/set/call, LuaService, luajava) that android.jar lacks.
+        bundledAndroLuaRuntimeJar?.let(entries::add)
+        entries += configuration.reflectionClasspathEntries()
             .map(::File)
             .filter { entry ->
                 entry.isDirectory || (entry.isFile && entry.extension.equals("jar", ignoreCase = true))
             }
-            .toMutableList()
         val hasAndroidJar = entries.any { entry ->
             entry.isFile && entry.name.equals("android.jar", ignoreCase = true)
         }

@@ -107,7 +107,11 @@ class AndroidJarReflectionTddTest {
     }
     @Test
     fun package_wildcard_without_android_jar_does_not_invent_framework_members() {
-        // Honest empty surface when reflective classpath has no android.jar: never invent Activity/Context/View/TextView.
+        // Honest surface when reflective classpath has no android.jar: never invent
+        // framework-only classes (Activity/Context/View/TextView). The bundled Android-Lua
+        // runtime jar legitimately ships vendored android.* helper classes (FloatWindow,
+        // DrawerLayout, FileProvider, ...), so the wildcard surface may be non-empty — but
+        // every listed class must be a real bundled-runtime class.
         val configuration = JvmWorkspaceConfiguration(
             classpathEntries = emptyList(),
             androidJar = null,
@@ -123,9 +127,22 @@ class AndroidJarReflectionTddTest {
                 androidJar = "/nonexistent/android-sdk/platforms/android-35/android.jar"
             )
         )
+        val frameworkOnly = setOf(
+            "android.widget.TextView",
+            "android.app.Activity",
+            "android.content.Context",
+            "android.view.View"
+        )
+        val offenders = providers.entries.flatMap { (path, snapshot) ->
+            val packageName = path.value.removePrefix("__jvm__/packages/").removeSuffix(".lua")
+            val module = snapshot.moduleExportSurface?.moduleType
+            module?.fields?.keys
+                ?.filter { member -> "$packageName.$member" in frameworkOnly }
+                .orEmpty()
+        }
         assertTrue(
-            providers.isEmpty(),
-            "Missing android.jar must not invent package providers; got paths=${providers.keys.map { it.value }}"
+            offenders.isEmpty(),
+            "Missing android.jar must not invent framework members; got offenders=$offenders paths=${providers.keys.map { it.value }}"
         )
     }
     @Test

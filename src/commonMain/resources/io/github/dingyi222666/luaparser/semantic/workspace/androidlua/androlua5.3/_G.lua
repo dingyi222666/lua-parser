@@ -68,14 +68,19 @@ local AndroidLuaContext = {}
 local AndroidContentContext = {}
 
 ---@class LuaActivity: AndroidLuaContext
----@java-class android.app.Activity
+--- Reflected from the Android-Lua runtime jar bundled with the JVM engine: the real
+--- com.androlua.LuaActivity surface extends android.app.Activity, so inherited framework
+--- methods (getPackageManager, startActivity, ...) resolve through reflection too.
+---@java-class com.androlua.LuaActivity
 --- Reads the Lua global `name` from the activity Lua state
 --- (runtime LuaActivity.get; `activity.get("_taskFinlshFunction")(data)` idiom).
 ---@field get fun(name: string): any
 local LuaActivity = {}
 
 ---@class LuaService: AndroidLuaContext
----@java-class android.app.Service
+--- Reflected from the Android-Lua runtime jar bundled with the JVM engine
+--- (extends android.app.Service).
+---@java-class com.androlua.LuaService
 local LuaService = {}
 
 ---@type LuaActivity
