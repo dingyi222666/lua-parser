@@ -1724,10 +1724,13 @@ class LuaParser(
                     suffix
                 }
 
-                CallStatement().apply {
+                // `stmt@` labels the statement receiver: an unqualified `this@apply` here
+                // binds to the INNER apply (the CallExpression itself), making the recovery
+                // node its own parent — an AST parent-cycle that hangs every parent-chain walk.
+                CallStatement().apply stmt@{
                     this.parent = parent
                     expression = CallExpression().apply {
-                        this.parent = this@apply
+                        this.parent = this@stmt
                         base = recoveredExpression
                         base.parent = this
                         bad = true
@@ -1745,7 +1748,7 @@ class LuaParser(
               }*/
 
             // function call
-            CallStatement().apply {
+            CallStatement().apply stmt@{
                 this.parent = parent
                 suffix.parent = this
 
@@ -1754,8 +1757,10 @@ class LuaParser(
                         error("The assignment statement is incorrect near ${lexerText()}")
                     }
 
+                    // `this@stmt` — same shadowing hazard as above: `this@apply` would make
+                    // the recovery CallExpression its own parent (parent-cycle).
                     expression = CallExpression().apply {
-                        this.parent = this@apply
+                        this.parent = this@stmt
                         this.base = suffix
                         suffix.parent = this
                         bad = true

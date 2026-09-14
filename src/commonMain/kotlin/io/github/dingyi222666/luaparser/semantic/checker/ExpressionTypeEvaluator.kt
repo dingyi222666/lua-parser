@@ -201,7 +201,31 @@ class ExpressionTypeEvaluator internal constructor(
             }
         }
         imported?.let { return it.valueType }
+        if (node.name == "self") {
+            implicitSelfType(node)?.let { return it }
+        }
         return UnknownType
+    }
+
+    /**
+     * The implicit `self` inside a colon-method body is not bound as a parameter, so plain
+     * identifier resolution falls through to UnknownType and every `self.` member query
+     * (completion / hover / member diagnostics) collapses to an empty surface. The method's
+     * binder declaration already carries the resolved `---@param self T` type
+     * (TypeResolver synthesizes the implicit first parameter for colon methods), so consult
+     * it before giving up. Explicit `self` parameters (`function f(self)`) are bound
+     * normally and never reach this path.
+     */
+    private fun implicitSelfType(node: Identifier): Type? {
+        val functionNode = findAncestorFunction(node) ?: return null
+        val anchor = when (val identifier = functionNode.identifier) {
+            is MemberExpression -> identifier.identifier
+            is Identifier -> identifier
+            else -> null
+        } ?: return null
+        return binder.declarationIndex.getDeclarations(anchor)
+            .mapNotNull { declaration -> declaration.documentation?.resolvedParameterTypes?.get("self") }
+            .firstOrNull()
     }
 
     private fun evaluateUnary(node: UnaryExpression): Type {

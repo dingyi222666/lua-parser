@@ -91,9 +91,12 @@ internal class CompletionProvider(
             return true
         }
         val baseEnd = expression.base.range.end
+        // `>=` (not `>`): a caret exactly at the base-end column sits on the indexer itself
+        // (`self|.` / `self.|`) — the member surface is correct there, and this branch only
+        // runs when the indexer exists in the source.
         val afterBase =
             position.line > baseEnd.line ||
-                (position.line == baseEnd.line && position.column > baseEnd.column)
+                (position.line == baseEnd.line && position.column >= baseEnd.column)
         if (!afterBase) {
             return false
         }

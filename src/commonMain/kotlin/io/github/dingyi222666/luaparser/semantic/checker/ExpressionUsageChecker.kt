@@ -552,7 +552,12 @@ internal class ExpressionUsageChecker(
         if (name.isBlank()) {
             return true
         }
-        return name == "_" || name.startsWith("_")
+        // `self` is the implicit colon-method receiver (function t:build() ... self)
+        // and `_`-prefixed names are deliberate throwaways.
+        if (name == "self" || name == "_" || name.startsWith("_")) {
+            return true
+        }
+        return false
     }
 
     private fun isJavaDiagnosticSurface(type: Type, lexicalScopeId: ScopeId): Boolean {
