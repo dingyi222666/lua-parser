@@ -273,6 +273,21 @@ object TypeNormalizer {
             dedupedMembers += member
         }
 
+        // A union carrying BOTH boolean literals is exactly boolean — collapse the
+        // `true | false` pair so hover/completion render `boolean` instead of the
+        // literal pair (`true | boolean` / `false | boolean` already collapse above).
+        val booleanLiterals = dedupedMembers.filter {
+            it is LiteralType && it.baseType == PrimitiveType.BOOLEAN
+        }
+        if (LiteralType(true, PrimitiveType.BOOLEAN) in booleanLiterals &&
+            LiteralType(false, PrimitiveType.BOOLEAN) in booleanLiterals
+        ) {
+            dedupedMembers.removeAll { member ->
+                member is LiteralType && member.baseType == PrimitiveType.BOOLEAN
+            }
+            dedupedMembers += PrimitiveType.BOOLEAN
+        }
+
         return when (dedupedMembers.size) {
             0 -> NeverType
             1 -> dedupedMembers.single()
