@@ -471,6 +471,11 @@
           endColumn: Math.max(range.end.character + 1, range.start.character + 2),
           source: d.source || "lua-parser",
           code: d.code != null ? String(d.code) : undefined,
+          // LSP DiagnosticTag 1 = Unnecessary (gray out unused code), 2 = Deprecated
+          // (strike-through). Monaco uses the same numeric MarkerTag values.
+          tags: Array.isArray(d.tags)
+            ? d.tags.filter(function (t) { return t === 1 || t === 2; })
+            : undefined,
         };
       });
       monacoApi.editor.setModelMarkers(model, "lua-lsp", markers);
