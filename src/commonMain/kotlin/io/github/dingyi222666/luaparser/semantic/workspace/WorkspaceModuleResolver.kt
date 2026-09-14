@@ -32,6 +32,7 @@ internal class WorkspaceModuleResolver(
     private val activeProviderCache = mutableMapOf<String, WorkspaceModuleGraph.ModuleProvider?>()
     private val importedSymbolsCache = mutableMapOf<VirtualPath, Map<String, WorkspaceImportedSymbol>>()
     private val providerGlobalSymbolsCache = mutableMapOf<VirtualPath, List<WorkspaceImportedSymbol>>()
+    private val sharedGlobalSymbolsCache = mutableMapOf<String, List<WorkspaceImportedSymbol>>()
 
     /**
      * Real workspace module names for require / import string-literal completions: user
@@ -374,7 +375,11 @@ internal class WorkspaceModuleResolver(
             providerModuleType = providerModuleType,
             evaluator = evaluator,
             declarations = binder.declarationIndex.declarations,
-            globalNames = semanticSnapshot.workspaceContext.overlayGlobals.globalNames
+            // Overlay globals a module extends (activity.newTask = ...) PLUS the module's
+            // own chunk globals: `FileUtil = {}` + `FileUtil.saveBitmap = function` in the
+            // defining file must ride on the exported global's surface, not just overlays.
+            globalNames = semanticSnapshot.workspaceContext.overlayGlobals.globalNames +
+                globals.map { symbol -> symbol.alias }.toSet()
         )
         return (globals + extendedGlobals).also { providerGlobalSymbolsCache[provider.path] = it }
     }
@@ -448,6 +453,16 @@ internal class WorkspaceModuleResolver(
     }
 
     fun importedSymbolFor(path: VirtualPath, alias: String): WorkspaceImportedSymbol? {
+        resolveImportedSymbolFor(path, alias)?.let { return it }
+        // AndroLua project scripts share one Lua global environment: main.lua imports
+        // mods.dingyi and then mods.util, so dingyi's chunk-level `FileUtil = {}`
+        // assignment lands in _G before util.lua reads it — even though no require /
+        // import edge exists between the mods themselves. Fall back to the workspace's
+        // other chunk-level globals so runtime-visible globals stay resolvable.
+        return sharedGlobalSymbol(path, alias)
+    }
+
+    private fun resolveImportedSymbolFor(path: VirtualPath, alias: String): WorkspaceImportedSymbol? {
         importedSymbolsFor(path)[alias]?.let { return it }
         // Path-scoped bare-name recovery: only when this file actively imported a matching target.
         val facts = snapshot.files[path]?.documentFacts ?: return null
@@ -461,6 +476,39 @@ internal class WorkspaceModuleResolver(
             }
         } ?: return null
         return importTargetSymbol(match)?.copy(alias = alias)
+    }
+
+    /**
+     * Workspace shared-global fallback: the defining chunk-level global in ANOTHER project
+     * file. Multiple defining files merge (first definition carries identity, later ones
+     * contribute their member surfaces); the consumer's own file is excluded so a same-name
+     * read inside the defining file still resolves through its own scope first.
+     */
+    private fun sharedGlobalSymbol(consumerPath: VirtualPath, alias: String): WorkspaceImportedSymbol? {
+        if (alias.isBlank()) {
+            return null
+        }
+        // Candidate list is consumer-independent (the cache is shared per alias); the
+        // consumer's own file is excluded at read time so same-name resolution inside the
+        // defining file still goes through its own scope first.
+        val candidates = sharedGlobalSymbolsCache.getOrPut(alias) {
+            snapshot.graph.providersByModuleName.values.asSequence()
+                .flatten()
+                .filter { provider ->
+                    provider.path.value.endsWith(".lua") || provider.path.value.endsWith(".aly")
+                }
+                .distinctBy { it.path }
+                .sortedBy { it.path.value }
+                .mapNotNull { provider ->
+                    providerGlobalSymbols(provider).firstOrNull { symbol -> symbol.alias == alias }
+                }
+                .toList()
+        }
+        return candidates
+            .filter { it.providerPath != consumerPath }
+            .reduceOrNull { merged, next ->
+                merged.copy(valueType = mergeWorkspaceGlobalExtension(merged.valueType, next.valueType))
+            }
     }
 
     fun importTargetSymbol(target: String): WorkspaceImportedSymbol? {
