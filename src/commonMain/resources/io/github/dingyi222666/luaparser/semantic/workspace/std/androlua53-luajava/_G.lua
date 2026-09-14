@@ -67,6 +67,34 @@ local AndroidLuaContext = {}
 ---@java-class android.content.Context
 local AndroidContentContext = {}
 
+--- Android-Lua adapter constructors, preloaded into the project global environment
+--- (layout `adapter = LuaMultiAdapter(activity, {...})` idiom). Reflected from the
+--- bundled runtime jar, so add/addAll/clear and the rest of the real surface resolve.
+---@class LuaAdapter
+---@java-class com.androlua.LuaAdapter
+---@type LuaAdapter
+LuaAdapter = LuaAdapter
+
+---@class LuaArrayAdapter: LuaAdapter
+---@java-class com.androlua.LuaArrayAdapter
+---@type LuaArrayAdapter
+LuaArrayAdapter = LuaArrayAdapter
+
+---@class LuaExAdapter: LuaAdapter
+---@java-class com.androlua.LuaExAdapter
+---@type LuaExAdapter
+LuaExAdapter = LuaExAdapter
+
+---@class LuaExpandableListAdapter
+---@java-class com.androlua.LuaExpandableListAdapter
+---@type LuaExpandableListAdapter
+LuaExpandableListAdapter = LuaExpandableListAdapter
+
+---@class LuaMultiAdapter
+---@java-class com.androlua.LuaMultiAdapter
+---@type LuaMultiAdapter
+LuaMultiAdapter = LuaMultiAdapter
+
 ---@class LuaActivity: AndroidLuaContext
 --- Reflected from the Android-Lua runtime jar bundled with the JVM engine: the real
 --- com.androlua.LuaActivity surface extends android.app.Activity, so inherited framework

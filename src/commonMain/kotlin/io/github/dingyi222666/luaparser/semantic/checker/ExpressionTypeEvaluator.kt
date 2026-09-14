@@ -2378,7 +2378,7 @@ class ExpressionTypeEvaluator internal constructor(
                         }
                         keyName == "id" -> {
                             val idName = stringLiteralOf(value) ?: return@forEach
-                            fields[idName] = currentClassType ?: androidLuaHydratedSurface("AndroidView")
+                            fields[idName] = layoutIdFieldType(currentClassType, node)
                         }
                         value is TableConstructorExpression -> walk(value, currentClassType)
                         // Never evaluate / descend into listener function bodies while collecting ids.
@@ -2392,6 +2392,70 @@ class ExpressionTypeEvaluator internal constructor(
         }
         walk(table, null)
         return fields
+    }
+
+    /**
+     * The synthesized type for a layout id: the row's Android view class enriched with
+     * data-bearing property values (`adapter = LuaMultiAdapter(activity, {...})`). At
+     * runtime loadlayout assigns the constructed value through the matching setter and
+     * reading the property back (`tab.poplist.adapter`) returns it, so the field type
+     * carries the constructor class's instance surface. Resolution mounts the class by
+     * name through the JVM interop target resolver (bundled AndroLua runtime jar) —
+     * bounded, no listener-body descent, everything else keeps the plain view class.
+     */
+    private fun layoutIdFieldType(viewClassType: Type?, entry: TableConstructorExpression): Type {
+        var fieldType: Type = viewClassType ?: androidLuaHydratedSurface("AndroidView")
+        var enriched = 0
+        entry.fields.forEach { field ->
+            if (enriched >= LAYOUT_ID_ADAPTER_FIELDS_BUDGET) {
+                return@forEach
+            }
+            val keyName = staticTableKeyName(field) ?: return@forEach
+            if (keyName != "adapter" && keyName != "list") {
+                return@forEach
+            }
+            val call = field.value as? CallExpression ?: return@forEach
+            val constructorName = (call.base as? Identifier)?.name ?: return@forEach
+            if (!constructorName.startsWith("Lua") || !constructorName.endsWith("Adapter")) {
+                return@forEach
+            }
+            // The constructor identifier resolves to the overlay global's class surface:
+            // a ModuleType carrying a __class Java surface, or a ClassType whose
+            // @java-class names the runtime class. Mount the reflected instance surface
+            // (add/addAll/clear/...) from either shape.
+            val baseEval = runCatching { evaluate(call.base) }.getOrNull()
+            val instanceSurface = when (baseEval) {
+                is ModuleType -> baseEval.javaInstanceSurface()
+                is ClassType -> baseEval.javaClassName?.let { fqcn ->
+                    runCatching {
+                        workspaceContext.resolveImportTarget?.invoke(fqcn)
+                            ?.moduleType
+                            ?.javaInstanceSurface()
+                    }.getOrNull()
+                }
+                else -> null
+            } ?: return@forEach
+            fieldType = when (val current = fieldType) {
+                is JavaInstanceType -> current.copy(
+                    classType = current.classType.copy(
+                        // Direct instance-member hit: wins over the getAdapter() bean
+                        // alias, so `.adapter` surfaces the assigned Lua adapter.
+                        instanceMembers = current.classType.instanceMembers + (
+                            keyName to JavaInstanceMemberType(
+                                owner = current.classType.javaName,
+                                memberName = keyName,
+                                valueType = instanceSurface,
+                                memberKind = JavaMemberKind.FIELD
+                            )
+                        )
+                    )
+                )
+                is ClassType -> current.copy(fields = current.fields + (keyName to instanceSurface))
+                else -> current
+            }
+            enriched++
+        }
+        return fieldType
     }
 
     /**
@@ -3460,6 +3524,7 @@ class ExpressionTypeEvaluator internal constructor(
         private const val LOADLAYOUT_COLLECT_NODE_BUDGET = 4_096
         private const val LOADLAYOUT_ID_TABLE_NODE_BUDGET = 512
         private const val LOADLAYOUT_ID_TABLE_MAX_DEPTH = 32
+        private const val LAYOUT_ID_ADAPTER_FIELDS_BUDGET = 4
         private const val LOADLAYOUT_PARENT_WALK_LIMIT = 64
         private const val LAYOUT_COMPLETION_NODE_BUDGET = 1_024
 
