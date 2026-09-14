@@ -711,7 +711,9 @@ open class LuaWorkspaceEngine(
     }
 
     private companion object {
-        val PARSE_FAILURE_LOCATION = Regex("""^\((\d+),\s*(\d+)\):\s*(.*)$""", RegexOption.DOT_MATCHES_ALL)
+        // `[\s\S]` spans newlines portably — RegexOption.DOT_MATCHES_ALL is JVM-only and
+        // breaks the JS target compilation of this common source set.
+        val PARSE_FAILURE_LOCATION = Regex("""^\((\d+),\s*(\d+)\):\s*([\s\S]*)$""")
 
         /**
          * Upper bound on cycle re-analysis sweeps per workspace pass. Each sweep advances

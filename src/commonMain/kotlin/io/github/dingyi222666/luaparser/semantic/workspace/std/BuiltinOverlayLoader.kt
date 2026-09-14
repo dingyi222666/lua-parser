@@ -143,7 +143,9 @@ object BuiltinOverlayLoader {
 
     private fun documentedModuleSource(moduleName: String, resourceText: String): String {
         val source = resourceText.trim()
-        if (Regex("""(?m)^\s*return\s+${Regex.escape(moduleName)}\s*$""").containsMatchIn(source)) {
+        // MULTILINE as a RegexOption (not an inline (?m) group): inline flags are
+        // java.util.regex syntax and throw on the JS target.
+        if (Regex("""^\s*return\s+${Regex.escape(moduleName)}\s*$""", RegexOption.MULTILINE).containsMatchIn(source)) {
             return source
         }
         return "$source\n\nreturn $moduleName"
@@ -194,7 +196,8 @@ object BuiltinOverlayLoader {
 
     private fun globalNameDeclared(source: String, name: String): Boolean {
         val escapedName = Regex.escape(name)
-        return Regex("""(?m)^\s*(?:function\s+$escapedName\s*\(|$escapedName\s*=)""").containsMatchIn(source)
+        return Regex("""^\s*(?:function\s+$escapedName\s*\(|$escapedName\s*=)""", RegexOption.MULTILINE)
+            .containsMatchIn(source)
     }
 
     private fun documentedGlobalsSurface(
