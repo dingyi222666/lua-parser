@@ -348,7 +348,16 @@ internal class DeclarationBinder(
 
     override fun visitSwitchStatement(node: SwitchStatement, value: Unit) {
         visitExpressionNode(node.condition, value)
-        node.causes.forEach { cause -> visitStatementNode(cause, value) }
+        // Dispatch causes DIRECTLY: the base visitStatementNode when-table has no
+        // CaseCause/DefaultCause branches, so routing causes through it silently bound
+        // nothing inside case bodies (no scopes, no callback params, no for-in control
+        // variables — every `v` inside a switch body resolved as an unresolved global).
+        node.causes.forEach { cause ->
+            when (cause) {
+                is DefaultCause -> visitDefaultCause(cause, value)
+                is CaseCause -> visitCaseCause(cause, value)
+            }
+        }
     }
 
     override fun visitCommentStatement(commentStatement: CommentStatement, value: Unit) {

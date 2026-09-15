@@ -1028,7 +1028,9 @@ class LuaParser(
 
     //    switch exp do {case explist [then] block} [default block] end
     private fun parseSwitchStatement(parent: BaseASTNode): SwitchStatement {
-        markLocation()
+        // Direct capture (NOT via the mark stack): the historical mark pattern here is
+        // load-bearing for downstream parses, so the stack behavior is preserved as-is.
+        val startMark = Position(lexer.line(), max(lexer.column(), 1))
         expectToken(LuaTokenTypes.SWITCH) { "<switch> expected near ${lexerText(true)}" }
         markLocation()
         val result = SwitchStatement()
@@ -1080,6 +1082,11 @@ class LuaParser(
             warning("<end> expected (to close 'switch' at line $currentLine) near ${lexerText()}")
         }
 
+        // Set the switch's own span explicitly. The mark stack stays untouched: pushing
+        // without popping here is the historical pattern downstream parses tolerate, and
+        // an unset range made scope-by-position lookups miss switch conditions against
+        // enclosing function parameters.
+        result.range = Range(startMark, currentEndPosition())
         return result
     }
 
@@ -1107,7 +1114,6 @@ class LuaParser(
     // Case body is a normal block terminated by case/default/end (see isBlockTerminator).
     // Shape: Case(conditions:Block[...]) nested under Switch(condition:cases) — no extra wrappers.
     private fun parseSwitchCaseStatement(parent: BaseASTNode): CaseCause {
-        markLocation()
         expectToken(LuaTokenTypes.CASE) { "<case> expected near ${lexerText(true)}" }
         markLocation()
         val result = CaseCause()
@@ -1154,7 +1160,7 @@ class LuaParser(
 
     //      when exp (varlist ‘=’ explist| functioncall) | [else (varlist ‘=’ explist | functioncall)]
     private fun parseWhenStatement(parent: BaseASTNode): WhenStatement {
-        markLocation()
+        val startMark = Position(lexer.line(), max(lexer.column(), 1))
         expectToken(LuaTokenTypes.WHEN) { "<when> expected near '${lexerText()}'" }
         markLocation()
         val result = WhenStatement()
@@ -1165,11 +1171,13 @@ class LuaParser(
         result.ifCause = parseExpStatement(result)
 
         if (!consumeToken(LuaTokenTypes.ELSE)) {
+            result.range = Range(startMark, currentEndPosition())
             return result
         }
 
         result.elseCause = parseExpStatement(result)
 
+        result.range = Range(startMark, currentEndPosition())
         return result
     }
 
@@ -1295,10 +1303,12 @@ class LuaParser(
         val findThenToken = consumeToken(LuaTokenTypes.THEN)
         if (!findThenToken) {
             if (isAndroLua()) {
-                // Optional `then` is product syntax under AndroLua strict mode.
-                // Recovery still records the historical missing-then diagnostic so
-                // expand/TDD goldens stay green without marking the clause bad.
-                if (errorRecovery) {
+                // Same dialect rule as parseIfCause: silent when the block boundary
+                // directly follows the condition.
+                val silentThenOmission = peek() == LuaTokenTypes.ELSE ||
+                    peek() == LuaTokenTypes.ELSEIF ||
+                    peek() == LuaTokenTypes.END
+                if (errorRecovery && !silentThenOmission) {
                     warning("The <then> expected near ${lexerText()}")
                 }
             } else if (!errorRecovery) {
@@ -1331,10 +1341,14 @@ class LuaParser(
         val findThenToken = consumeToken(LuaTokenTypes.THEN)
         if (!findThenToken) {
             if (isAndroLua()) {
-                // Optional `then` is product syntax under AndroLua strict mode.
-                // Recovery still records the historical missing-then diagnostic so
-                // expand/TDD goldens stay green without marking the clause bad.
-                if (errorRecovery) {
+                // Optional `then` is product syntax under AndroLua strict mode. When the
+                // condition is directly terminated by a block boundary (`if io.readall
+                // else`), the dialect accepts it silently; garbage tokens still record
+                // the historical recovery warning so expand/TDD goldens stay green.
+                val silentThenOmission = peek() == LuaTokenTypes.ELSE ||
+                    peek() == LuaTokenTypes.ELSEIF ||
+                    peek() == LuaTokenTypes.END
+                if (errorRecovery && !silentThenOmission) {
                     warning("The <then> expected near ${lexerText()}")
                 }
             } else if (!errorRecovery) {

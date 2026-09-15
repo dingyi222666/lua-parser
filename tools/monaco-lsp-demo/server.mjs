@@ -271,7 +271,7 @@ const server = http.createServer((req, res) => {
     res.end('not found');
     return;
   }
-  res.writeHead(200, { 'Content-Type': mime(filePath) });
+  res.writeHead(200, { 'Content-Type': mime(filePath), 'Cache-Control': 'no-cache' });
   const stream = fs.createReadStream(filePath);
   stream.on('error', () => {
     try {

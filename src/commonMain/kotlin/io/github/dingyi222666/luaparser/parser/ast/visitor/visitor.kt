@@ -173,6 +173,8 @@ interface ASTVisitor<T> {
             is LocalStatement -> visitLocalStatement(node, value)
             is FunctionDeclaration -> visitFunctionDeclaration(node, value)
             is CommentStatement -> visitCommentStatement(node, value)
+            is CaseCause -> visitCaseCause(node, value)
+            is DefaultCause -> visitDefaultCause(node, value)
         }
 
     }
