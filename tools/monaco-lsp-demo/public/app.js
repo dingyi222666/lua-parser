@@ -1209,7 +1209,9 @@ async function loadFileList() {
       24: K.Operator,
       25: K.TypeParameter,
     };
-    return table[kind] || K.Text;
+    // Monaco's Method = 0: `|| K.Text` would treat the valid 0 as missing and render
+    // every method completion with the "abc" text glyph.
+    return table[kind] != null ? table[kind] : K.Text;
   }
 
   function symbolKindFromLsp(kind) {
