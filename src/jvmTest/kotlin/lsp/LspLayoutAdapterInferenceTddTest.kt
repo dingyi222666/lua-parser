@@ -45,6 +45,57 @@ class LspLayoutAdapterInferenceTddTest {
         )
     }
 
+    @Test
+    fun demo_configuration_keeps_runtime_adapters_reachable_and_capital_properties_resolvable() {
+        // ListView surfaces need a real android.jar; soft-skip without a host SDK.
+        val platforms = java.io.File(
+            System.getProperty("user.home"),
+            "Library/Android/sdk/platforms"
+        )
+        val androidJar = platforms.listFiles()
+            ?.filter { it.name.startsWith("android-") }
+            ?.sortedByDescending { it.name }
+            ?.firstNotNullOfOrNull { dir -> dir.resolve("android.jar").takeIf { it.isFile } }
+            ?: return
+        val service = service()
+        // The Monaco demo sends jvm.importPrefixes WITHOUT com.androlua; the bundled
+        // runtime package must stay reachable anyway (prefix union, not replacement).
+        io.github.dingyi222666.luaparser.lsp.LuaWorkspaceService(service).didChangeConfiguration(
+            org.eclipse.lsp4j.DidChangeConfigurationParams(
+                mapOf(
+                    "jvm.androidJar" to androidJar.path,
+                    "jvm.importPrefixes" to listOf(
+                        "java.lang", "java.util", "android.app", "android.content",
+                        "android.view", "android.view.View", "android.widget"
+                    ),
+                    "androlua.imports" to listOf("Activity", "View", "TextView")
+                )
+            )
+        )
+        val uri = open(service)
+
+        val labels = service.completion(uri, 12, 22).items.map { it.label }
+        assertTrue("clear" in labels, "configured prefixes must not sever runtime adapters; got $labels")
+
+        // AndroLua accepts the capital-first property spelling (runtime luajava matches
+        // bean properties case-insensitively); `tab.poplist.OnItemClickListener = {...}`
+        // must not diagnose as an unknown Java member.
+        val diagnostics = service.diagnosticsForUri(uri).diagnostics
+        val memberMissing = diagnostics.filter {
+            val code = it.code
+            val codeText = when {
+                code == null -> ""
+                code.isLeft -> code.left.orEmpty()
+                else -> code.right.toString()
+            }
+            codeText == "checker.member.missing"
+        }
+        assertTrue(
+            memberMissing.isEmpty(),
+            "no member-missing diagnostics expected on the layout sample; got ${memberMissing.map { it.message }}"
+        )
+    }
+
     // --- helpers -----------------------------------------------------------------
 
     private fun document(uri: String) = org.eclipse.lsp4j.TextDocumentIdentifier(uri)

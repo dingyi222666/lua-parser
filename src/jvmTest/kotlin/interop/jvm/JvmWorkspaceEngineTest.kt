@@ -115,7 +115,12 @@ class JvmWorkspaceEngineTest {
         assertEquals("String", metadata[JvmClassModuleProvider.IMPORTS_METADATA_KEY])
         assertEquals("libs/example.jar\nlibs/second.jar", metadata[JvmWorkspaceConfiguration.CLASSPATH_METADATA_KEY])
         assertEquals("platforms/android-34/android.jar", metadata[JvmWorkspaceConfiguration.ANDROID_JAR_METADATA_KEY])
-        assertEquals("java.lang\nandroid.widget", metadata[JvmWorkspaceConfiguration.IMPORT_PREFIXES_METADATA_KEY])
+        // The bundled Android-Lua runtime prefix is always appended to user-configured
+        // prefixes so its classes stay reachable by simple name.
+        assertEquals(
+            "java.lang\nandroid.widget\ncom.androlua",
+            metadata[JvmWorkspaceConfiguration.IMPORT_PREFIXES_METADATA_KEY]
+        )
     }
     @Test
     fun provider_honors_custom_import_prefixes_from_configuration() {

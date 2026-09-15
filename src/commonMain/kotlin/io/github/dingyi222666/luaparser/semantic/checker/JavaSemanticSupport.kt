@@ -232,9 +232,18 @@ private fun resolveJavaBeanProperty(
     if (propertyName.isBlank()) {
         return null
     }
-    val getterCandidates = members.filter { member ->
+    var getterCandidates = members.filter { member ->
         member.memberKind == JavaMemberKind.METHOD &&
             javaBeanGetterPropertyName(member.memberName) == propertyName
+    }
+    if (getterCandidates.isEmpty()) {
+        // AndroLua luajava accepts the capital-first property spelling as written in
+        // layouts and code (`view.OnItemClickListener = ...`), so a case-insensitive
+        // bean-name match runs before declaring the member unknown.
+        getterCandidates = members.filter { member ->
+            member.memberKind == JavaMemberKind.METHOD &&
+                javaBeanGetterPropertyName(member.memberName).equals(propertyName, ignoreCase = true)
+        }
     }
     if (getterCandidates.isEmpty()) {
         return null

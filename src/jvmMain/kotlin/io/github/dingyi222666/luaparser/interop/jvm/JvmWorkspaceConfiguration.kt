@@ -158,7 +158,17 @@ data class JvmWorkspaceConfiguration(
     private fun normalizedImportPrefixes(defaultImportPrefixes: List<String>): List<String> {
         val explicit = hasExplicitImportPrefixes()
         val prefixes = importPrefixes.map(String::trim).filter(String::isNotEmpty).ifEmpty { defaultImportPrefixes }
-        return MetadataImportPrefixes(prefixes, explicit)
+        // The bundled Android-Lua runtime package stays reachable regardless of user
+        // configuration: configured prefixes replace the defaults authoritatively, but
+        // dropping com.androlua silently severs the runtime classes (LuaMultiAdapter,
+        // LuaActivity, ...) that overlay globals and loadlayout adapter inference mount
+        // by simple name.
+        val withRuntime = if (prefixes.any { it.equals(ANDROLUA_RUNTIME_PREFIX, ignoreCase = true) }) {
+            prefixes
+        } else {
+            prefixes + ANDROLUA_RUNTIME_PREFIX
+        }
+        return MetadataImportPrefixes(withRuntime, explicit)
     }
 
     private fun hasExplicitImportPrefixes(): Boolean {
@@ -183,6 +193,8 @@ data class JvmWorkspaceConfiguration(
         const val ANDROID_HOME_ENV = "ANDROID_HOME"
         const val ANDROID_SDK_ROOT_ENV = "ANDROID_SDK_ROOT"
         const val LOCAL_APPDATA_ENV = "LOCALAPPDATA"
+        /** Bundled Android-Lua runtime package; always an active simple-name prefix. */
+        const val ANDROLUA_RUNTIME_PREFIX = "com.androlua"
 
         /**
          * Host-resolved default android.jar path for tests and convenience consumers.
