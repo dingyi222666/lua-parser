@@ -53,8 +53,24 @@ jobs:
       - name: jvmTest
         run: ./gradlew jvmTest --parallel --max-workers=12 --stacktrace
 
+      # Actions 的 artifact 服务（results-receiver.actions.githubusercontent.com）
+      # 解析到 140.82.113.x —— 实测该网段从本机仅 0-2/5 可达，upload-artifact 会
+      # 5 次重试后 CreateArtifact 超时。所以先把产物落一份到 runner 本地目录（可靠），
+      # 上传失败不再判 job 失败。
+      - name: Keep reports locally on the runner
+        if: always()
+        run: |
+          set -x
+          DEST="/home/dingyi/ci-artifacts/${GITHUB_REPOSITORY//\//_}/run-${GITHUB_RUN_ID}-attempt-${GITHUB_RUN_ATTEMPT}"
+          mkdir -p "$DEST"
+          cp -a build/test-results/jvmTest "$DEST/" 2>/dev/null || true
+          cp -a build/reports/tests/jvmTest "$DEST/" 2>/dev/null || true
+          echo "本地产物目录: $DEST"
+          du -sh "$DEST" 2>/dev/null || true
+
       - name: Upload JUnit XML
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: junit-xml-linux
@@ -63,6 +79,7 @@ jobs:
 
       - name: Upload HTML report
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: test-report-html-linux
