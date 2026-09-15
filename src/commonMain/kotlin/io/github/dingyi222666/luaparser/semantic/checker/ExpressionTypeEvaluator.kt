@@ -3082,7 +3082,7 @@ class ExpressionTypeEvaluator internal constructor(
         }
         val memberDeclarations = visibleMemberDeclarationsForValue(declaration, context)
         if (memberDeclarations.isEmpty()) {
-            return baseType
+            return attachNestedMemberAssignments(baseType, declaration, context)
         }
         val fields = linkedMapOf<String, Type>()
         val methods = linkedMapOf<String, Type>()
@@ -3096,7 +3096,7 @@ class ExpressionTypeEvaluator internal constructor(
                 }
             }
         }
-        return when (baseType) {
+        val merged = when (baseType) {
             is TableType -> baseType.copy(
                 fields = baseType.fields + fields,
                 methods = baseType.methods + methods
@@ -3106,6 +3106,121 @@ class ExpressionTypeEvaluator internal constructor(
                 methods = baseType.methods + methods
             )
             else -> baseType
+        }
+        // Control-flow-assigned sub-table fields (`data.scrollData.last = b` inside a
+        // later callback) must complete on the sub-table itself (`data.scrollData.`
+        // offering scroll/last/page), mirroring direct-member attachment.
+        return attachNestedMemberAssignments(merged, declaration, context)
+    }
+
+    /**
+     * Merge nested member-assignment paths rooted at [declaration]'s name
+     * (`data.scrollData.scroll = i > 0`) into the base type's sub-table fields, so a
+     * field only ever written through control-flow callbacks still completes and types.
+     */
+    private fun attachNestedMemberAssignments(
+        baseType: Type,
+        declaration: BinderDeclaration,
+        context: Context
+    ): Type {
+        val nested = nestedMemberAssignmentsFor(declaration, context)
+        if (nested.isEmpty()) {
+            return baseType
+        }
+        var merged = baseType
+        nested.forEach { (path, members) ->
+            merged = attachMemberPath(merged, path, members, context)
+        }
+        return merged
+    }
+
+    /**
+     * Collect FIELD/METHOD declarations whose anchor LHS is a nested member path rooted
+     * at [declaration]'s name (`data.scrollData.last`): root resolves to this declaration
+     * and the intermediate segments form the sub-table path. Grouped by path.
+     */
+    private fun nestedMemberAssignmentsFor(
+        declaration: BinderDeclaration,
+        context: Context
+    ): Map<List<String>, List<Pair<String, Type>>> {
+        // No lexical-owner filter here: correctness is guaranteed by the root-identifier
+        // resolution below (the assignment's root must resolve to THIS declaration), and
+        // field declarations may be owned by scope nodes outside the query position's
+        // owner chain (callbacks assigned to member functions, etc.).
+        val candidates = binder.declarationIndex.declarations.filter { candidate ->
+            candidate.kind in setOf(DeclarationKind.FIELD, DeclarationKind.METHOD) &&
+                candidate.anchorNode != null
+        }
+        val grouped = linkedMapOf<List<String>, MutableList<Pair<String, Type>>>()
+        candidates.forEach { candidate ->
+            val anchorMember = candidate.anchorNode?.parent as? MemberExpression ?: return@forEach
+            // Walk the LHS chain: segments between the root identifier and the assigned
+            // member form the sub-table path (data.scrollData.last → path [scrollData]).
+            val segments = ArrayDeque<String>()
+            var cursor: ExpressionNode = anchorMember
+            while (cursor is MemberExpression) {
+                segments.addFirst(cursor.identifier.name)
+                cursor = cursor.base
+            }
+            val root = cursor as? Identifier ?: return@forEach
+            if (root.name != declaration.name || segments.isEmpty()) {
+                return@forEach
+            }
+            val scopeId = binder.positionQueries.getScopeAt(root.range.start)?.id ?: context.lexicalScopeId
+            val resolvedRoot = findVisibleValueDeclaration(
+                root.name,
+                root.range.start,
+                context.copy(lexicalScopeId = scopeId)
+            ) ?: return@forEach
+            val sameDeclaration = if (
+                declaration.symbolId != null && resolvedRoot.symbolId != null
+            ) {
+                declaration.symbolId == resolvedRoot.symbolId
+            } else {
+                declaration.id == resolvedRoot.id
+            }
+            if (!sameDeclaration) {
+                return@forEach
+            }
+            val path = segments.dropLast(1)
+            if (path.isEmpty() || path.size > NESTED_MEMBER_PATH_MAX_DEPTH - 1) {
+                return@forEach
+            }
+            // Unknown-typed nested members STILL belong on the surface: the user asks
+            // for `data.scrollData.` to offer scroll/last/page even when the assigned
+            // RHS is a bare parameter (type unknown). Completion presence is the point.
+            val memberType = typeOfDeclaration(candidate, context)
+            grouped.getOrPut(path) { mutableListOf() }.add(candidate.name to memberType)
+        }
+        return grouped
+    }
+
+    private fun attachMemberPath(
+        base: Type,
+        path: List<String>,
+        members: List<Pair<String, Type>>,
+        context: Context
+    ): Type {
+        if (base !is TableType && base !is ModuleType) {
+            return base
+        }
+        val head = path.first()
+        val existing = when (base) {
+            is TableType -> base.fields[head]
+            is ModuleType -> base.fields[head]
+            else -> null
+        } ?: TableType()
+        val enriched: Type = if (path.size > 1) {
+            attachMemberPath(existing, path.drop(1), members, context)
+        } else when (existing) {
+            is TableType -> existing.copy(fields = existing.fields + members.toMap())
+            is ModuleType -> existing.copy(fields = existing.fields + members.toMap())
+            else -> TableType(fields = members.toMap())
+        }
+        return when (base) {
+            is TableType -> base.copy(fields = base.fields + (head to enriched))
+            is ModuleType -> base.copy(fields = base.fields + (head to enriched))
+            else -> base
         }
     }
 
@@ -3525,6 +3640,7 @@ class ExpressionTypeEvaluator internal constructor(
         private const val LOADLAYOUT_ID_TABLE_NODE_BUDGET = 512
         private const val LOADLAYOUT_ID_TABLE_MAX_DEPTH = 32
         private const val LAYOUT_ID_ADAPTER_FIELDS_BUDGET = 4
+        private const val NESTED_MEMBER_PATH_MAX_DEPTH = 4
         private const val LOADLAYOUT_PARENT_WALK_LIMIT = 64
         private const val LAYOUT_COMPLETION_NODE_BUDGET = 1_024
 
