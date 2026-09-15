@@ -365,7 +365,14 @@ open class LuaWorkspaceEngine(
         // pathsToAnalyze) are never re-analyzed.
         val graph = baseSnapshot.graph
         val cycleReAnalysis = analysisOrder.filter { path ->
-            (graph.stronglyConnectedComponentByFile[path]?.size ?: 1) > 1
+            val scc = graph.stronglyConnectedComponentByFile[path] ?: return@filter false
+            if (scc.size <= 1) return@filter false
+            // A second sweep only matters when a SCC PEER is also being re-analyzed in
+            // THIS update: peers carried over from the previous snapshot are already
+            // complete, so the first pass bound against their final state and the sweep
+            // would deterministically re-produce it (a full pipeline run per keystroke
+            // for single-file edits otherwise).
+            scc.any { peer -> peer != path && peer in pathsToAnalyze }
         }
         if (cycleReAnalysis.isNotEmpty()) {
             // Bounded fixpoint, capped at MAX_CYCLE_REANALYSIS_PASSES sweeps. One sweep lets each
