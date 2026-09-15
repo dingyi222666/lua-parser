@@ -23,6 +23,11 @@ jobs:
     timeout-minutes: 120
     env:
       JAVA_HOME: /home/dingyi/.jdks/temurin-17
+      # Android-Lua 反射测试需要 android.jar；缺失时
+      # JvmWorkspaceConfiguration.discoverReflectiveAndroidJarPath() 会 requireNotNull 抛异常。
+      # 已装 platforms/android-35（腾讯云镜像，61 MB/s）。
+      ANDROID_HOME: /home/dingyi/Android/Sdk
+      ANDROID_SDK_ROOT: /home/dingyi/Android/Sdk
       GRADLE_OPTS: -Xmx5g -Dorg.gradle.workers.max=12 -Dfile.encoding=UTF-8
     steps:
       - name: Checkout
