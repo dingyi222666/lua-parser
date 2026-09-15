@@ -1,0 +1,65 @@
+# Linux self-hosted slice of the lua-parser verification.
+#
+# 由 DSH 生成的最小可用 Linux 版，用于在自建 runner `dsh-jvm-1` 上验证
+# Kotlin/JVM 编译与 jvmTest 能否跑通。刻意不改动任何 windows-* workflow。
+#
+# 与 windows-verify 分支的差异（有意为之）：
+#   - runs-on: [self-hosted, linux, x64]（Windows workflow 用的是 [self-hosted, Windows, X64]）
+#   - 用 bash 而非 pwsh；JAVA_HOME 指向 Linux 路径
+#   - 未移植 windows-run-slice.ps1 的切片进度条（slices.json/progress.json）与
+#     CPU affinity 硬限额（Linux 上等价物是 taskset / systemd CPUQuota）
+#   - 未装 Android SDK：缺少 platforms/android-35/android.jar 时那批反射测试按
+#     原脚本注释应 soft-skip
+name: linux-jvmtest
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [linux-verify]
+
+jobs:
+  jvmtest:
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 120
+    env:
+      JAVA_HOME: /home/dingyi/.jdks/temurin-17
+      GRADLE_OPTS: -Xmx5g -Dorg.gradle.workers.max=12 -Dfile.encoding=UTF-8
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show environment
+        run: |
+          set -euxo pipefail
+          echo "JAVA_HOME=$JAVA_HOME"
+          "$JAVA_HOME/bin/java" -version
+          echo "nproc=$(nproc)"
+          free -h | head -2
+          git rev-parse --short HEAD
+          chmod +x ./gradlew
+          ./gradlew --version
+
+      - name: Show detected JDK toolchains
+        run: ./gradlew -q javaToolchains
+
+      - name: Compile test sources
+        run: ./gradlew compileTestKotlinJvm --parallel --max-workers=12 --stacktrace
+
+      - name: jvmTest
+        run: ./gradlew jvmTest --parallel --max-workers=12 --stacktrace
+
+      - name: Upload JUnit XML
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-xml-linux
+          path: build/test-results/jvmTest/**
+          if-no-files-found: warn
+
+      - name: Upload HTML report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report-html-linux
+          path: build/reports/tests/jvmTest/**
+          if-no-files-found: warn
