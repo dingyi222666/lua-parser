@@ -43,6 +43,22 @@ class SemanticPipeline(
     }
 
     /**
+     * Light pipeline for fingerprint-only consumers (the workspace engine's pre-plan
+     * upsert pass): parse-attach + bind + type-resolve WITHOUT the checker or model
+     * build — the two dominant analysis costs. Callers read global symbols off the
+     * resolved binder and re-run the full pipeline for the authoritative snapshot.
+     */
+    internal fun bindForGlobalFingerprint(
+        chunk: ChunkNode,
+        context: SemanticWorkspaceContext
+    ): Pair<BinderPassResult, SemanticWorkspaceContext> {
+        val effectiveContext = context.withWorkspaceImportEffects()
+        val comments = commentAttachPass.attach(chunk)
+        val bound = binderPass.bind(chunk, comments, effectiveContext.overlayGlobals)
+        return typeResolver.resolve(bound) to effectiveContext
+    }
+
+    /**
      * Internal pipeline snapshot used by compatibility adapters and focused tests.
      *
      * Well-formed binding-only locals with no type/call/unused surface report
@@ -53,13 +69,28 @@ class SemanticPipeline(
         context: SemanticWorkspaceContext = SemanticWorkspaceContext()
     ): SemanticPipelineSnapshot {
         val effectiveContext = context.withWorkspaceImportEffects()
+        val perfT0 = System.nanoTime()
         val comments = commentAttachPass.attach(chunk)
+        val perfT1 = System.nanoTime()
         val bound = binderPass.bind(chunk, comments, effectiveContext.overlayGlobals)
+        val perfT2 = System.nanoTime()
         val resolvedBinder = typeResolver.resolve(bound)
+        val perfT3 = System.nanoTime()
         // CheckerPass is re-entered per call with a fresh expression checker; no pipeline-owned
         // diagnostic buffer is retained between analyzes.
         val checker = checkerPass.check(chunk, resolvedBinder, effectiveContext)
+        val perfT4 = System.nanoTime()
         val model = semanticModelBuilder.build(chunk, checker.binder, checker.diagnostics, effectiveContext)
+        val perfT5 = System.nanoTime()
+        if (System.getenv("LUA_PARSER_PERF") != null) {
+            fun ms(from: Long, to: Long) = (to - from) / 1_000_000
+            println(
+                "PIPE lines=${chunk.range.end.line - chunk.range.start.line + 1} " +
+                    "comments=${ms(perfT0, perfT1)} bind=${ms(perfT1, perfT2)} " +
+                    "resolve=${ms(perfT2, perfT3)} check=${ms(perfT3, perfT4)} " +
+                    "model=${ms(perfT4, perfT5)}"
+            )
+        }
         val publicDiagnostics = model.getDiagnostics()
         val result = SemanticAnalysisResult(
             model = model,

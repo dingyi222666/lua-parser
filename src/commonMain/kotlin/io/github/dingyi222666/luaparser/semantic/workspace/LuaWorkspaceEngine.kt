@@ -224,13 +224,38 @@ open class LuaWorkspaceEngine(
         // analysis is the bounded price of making global-surface changes visible to the planner
         // within the same update that produced them.
         if (parsingTargets.isNotEmpty()) {
-            val provisionalInput = LuaWorkspaceInput(
-                files = nextSources,
-                metadata = nextMetadata,
-                standardLibraryOverlayVersion = baseSnapshot.builtinOverlay.version
-            )
+            // LIGHT pre-plan pass: the planner only needs each upsert's global-symbols
+            // fingerprint, so run bind+resolve WITHOUT the checker/model (the two dominant
+            // analysis costs) instead of a full analyzePathInto. attachSemanticState
+            // re-runs the full pipeline for the authoritative snapshot right after.
             parsingTargets.forEach { path ->
-                analyzePathInto(nextFiles, path, nextSources, previous, provisionalInput, baseSnapshot)
+                val fileSnapshot = nextFiles[path] ?: return@forEach
+                val carriedOver = previous?.files?.get(path)?.semanticFile ?: fileSnapshot.semanticFile
+                val parsed = nextSources[path]?.let { source -> parseWorkspaceResult(path, source) }
+                val chunk = parsed?.chunk ?: carriedOver?.chunk ?: return@forEach
+                val provisionalContext = workspaceContext(
+                    LuaWorkspaceInput(
+                        files = nextSources,
+                        metadata = nextMetadata,
+                        standardLibraryOverlayVersion = baseSnapshot.builtinOverlay.version
+                    ),
+                    path,
+                    baseSnapshot
+                )
+                val (resolvedBinder, effectiveContext) = semanticPipeline.bindForGlobalFingerprint(
+                    chunk,
+                    provisionalContext
+                )
+                val evaluator = ExpressionTypeEvaluator(resolvedBinder, effectiveContext)
+                val publicFingerprint = (fileSnapshot.publicFingerprint
+                    ?: WorkspacePublicFingerprint.from(fileSnapshot.documentFacts, fileSnapshot.moduleExportSurface))
+                    .copy(
+                        globalSymbolsFingerprint = globalSymbolsFingerprint(
+                            resolvedBinder.declarationIndex.declarations,
+                            evaluator
+                        )
+                    )
+                nextFiles[path] = fileSnapshot.copy(publicFingerprint = publicFingerprint)
             }
         }
 
