@@ -120,6 +120,7 @@ open class LuaWorkspaceEngine(
         standardLibraryOverlayVersion: LuaVersion = previous.builtinOverlay.version,
         reporter: ProgressReporter = ProgressReporter.NONE
     ): WorkspaceUpdateResult {
+        val perfU0 = if (System.getenv("LUA_PARSER_PERF") != null) System.nanoTime() else 0L
         useParserVersion(standardLibraryOverlayVersion)
         val builtinOverlay = builtinOverlay(standardLibraryOverlayVersion)
         val nextMetadata = delta.metadata ?: previous.metadata
@@ -169,6 +170,9 @@ open class LuaWorkspaceEngine(
             )
         }
 
+        if (perfU0 != 0L) {
+            println("PERF entry-segment (merge+analyzeFile upserts)=${(System.nanoTime() - perfU0) / 1_000_000}ms")
+        }
         val parsingTargets = delta.upserts.keys.sortedBy { it.value }
         val nextFiles = previous.files.toMutableMap()
         delta.removals.forEach(nextFiles::remove)

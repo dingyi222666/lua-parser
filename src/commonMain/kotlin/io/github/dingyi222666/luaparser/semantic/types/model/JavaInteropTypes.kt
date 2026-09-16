@@ -52,16 +52,32 @@ data class JavaClassType(
     override val displayName: String
         get() = javaName.canonicalName
 
+    // JavaClassType is immutable: the flattened member maps are deterministic per
+    // instance, so memoize them in the body (body properties stay out of data-class
+    // equals/hashCode/copy). Hierarchy walks used to rebuild 500+-entry maps on every
+    // member lookup - the dominant cost of repeated Android member resolution.
+    @kotlin.jvm.Transient
+    private var allStaticMembersCache: Map<String, JavaStaticMemberType>? = null
+
+    @kotlin.jvm.Transient
+    private var allInstanceMembersCache: Map<String, JavaInstanceMemberType>? = null
+
+    @kotlin.jvm.Transient
+    private var allInnerClassesCache: Map<String, JavaClassType>? = null
+
     fun allStaticMembers(): Map<String, JavaStaticMemberType> {
-        return collectStaticMembers(linkedSetOf())
+        allStaticMembersCache?.let { return it }
+        return collectStaticMembers(linkedSetOf()).also { allStaticMembersCache = it }
     }
 
     fun allInstanceMembers(): Map<String, JavaInstanceMemberType> {
-        return collectInstanceMembers(linkedSetOf())
+        allInstanceMembersCache?.let { return it }
+        return collectInstanceMembers(linkedSetOf()).also { allInstanceMembersCache = it }
     }
 
     fun allInnerClasses(): Map<String, JavaClassType> {
-        return collectInnerClasses(linkedSetOf())
+        allInnerClassesCache?.let { return it }
+        return collectInnerClasses(linkedSetOf()).also { allInnerClassesCache = it }
     }
 
     private fun collectStaticMembers(visited: MutableSet<String>): Map<String, JavaStaticMemberType> {

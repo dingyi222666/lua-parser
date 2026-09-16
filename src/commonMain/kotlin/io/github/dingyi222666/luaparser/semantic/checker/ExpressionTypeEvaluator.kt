@@ -134,21 +134,40 @@ class ExpressionTypeEvaluator internal constructor(
         setOf("bindClass", "newInstance", "createProxy", "loadLib", "getContext") + luaJavaArrayHelperNames
     // TASK-379: hydrate Android-Lua load* aliases once per evaluator; View/Menu/Bitmap
     // surfaces from android.jar are large and must not be rebuilt on every call/local.
-    private val androidLuaHydratedSurfaceCache = mutableMapOf<String, Type>()
-    private val layoutViewClassTypeCache = mutableMapOf<String, Type>()
-    private val layoutSuggestionsCache = mutableMapOf<String, List<LuaLayoutPropertySuggestion>>()
+    // Android/layout surfaces are deterministic per (name, workspace config) and costly to
+    // rebuild (reflection maps over hundreds of members). They live in a PROCESS-GLOBAL
+    // store shared across analyses/evaluators so repeat analyses start warm; invalidated
+    // via ExpressionTypeEvaluator.clearSharedCaches() when workspace configuration changes.
+    private val androidLuaHydratedSurfaceCache = SharedSurfaceCaches.androidLuaHydratedSurface
+    private val layoutViewClassTypeCache = SharedSurfaceCaches.layoutViewClassType
+    private val layoutSuggestionsCache = SharedSurfaceCaches.layoutSuggestions
+
+    internal object SharedSurfaceCaches {
+        val androidLuaHydratedSurface = mutableMapOf<String, Type>()
+        val layoutViewClassType = mutableMapOf<String, Type>()
+        val layoutSuggestions = mutableMapOf<String, List<LuaLayoutPropertySuggestion>>()
+
+        fun clear() {
+            androidLuaHydratedSurface.clear()
+            layoutViewClassType.clear()
+            layoutSuggestions.clear()
+        }
+    }
+
+
     private val loadlayoutIdsTableTypeCache = mutableMapOf<DeclarationId, Type>()
     // Root-name -> member assignments, built once per evaluator. Replaces the per-value
     // full-declaration scans in visibleMemberDeclarationsForValue / nested path collection
     // (O(declarations) per typed value was quadratic across a document).
     private var memberAssignmentsByRoot: Map<String, List<MemberAssignmentAnchor>>? = null
+    private val perfEnabled get() = ExpressionUsageChecker.UsagePerfCounters.ENABLED
     // One-shot loadlayout(…, ids) → layout-table index for the whole binder root.
     private var loadlayoutRootUsageIndex: Map<String, List<TableConstructorExpression>>? = null
 
     fun evaluate(node: ExpressionNode): Type {
         expressionTypeCache[node]?.let { return it }
-        val perfT0 = if (System.getenv("LUA_PARSER_PERF") != null) System.nanoTime() else 0L
-        if (perfT0 != 0L) {
+        val perfT0 = if (perfEnabled) System.nanoTime() else 0L
+        if (perfEnabled) {
             ExpressionUsageChecker.UsagePerfCounters.EVAL_COUNT.incrementAndGet()
         }
         val result = evaluateInternal(node)
@@ -3788,3 +3807,8 @@ data class LuaLayoutClassMatch(
     val sourceName: String,
     val type: Type
 )
+
+/** Configuration changes (androidJar, import prefixes, metadata) invalidate shared caches. */
+internal fun invalidateSharedSurfaceCaches() {
+    ExpressionTypeEvaluator.SharedSurfaceCaches.clear()
+}

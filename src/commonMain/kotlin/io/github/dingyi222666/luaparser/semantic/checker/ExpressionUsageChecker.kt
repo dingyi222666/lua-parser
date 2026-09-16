@@ -70,6 +70,8 @@ internal class ExpressionUsageChecker(
     private val readLocalDeclarationIds = linkedSetOf<DeclarationId>()
 
     object UsagePerfCounters {
+        val ENABLED = System.getenv("LUA_PARSER_PERF") != null
+
         val EVAL_COUNT = java.util.concurrent.atomic.AtomicLong()
         val EVAL_NANOS = java.util.concurrent.atomic.AtomicLong()
         val MEMBER_COUNT = java.util.concurrent.atomic.AtomicLong()
@@ -77,11 +79,11 @@ internal class ExpressionUsageChecker(
     }
 
     fun check(chunk: ChunkNode): List<Diagnostic> {
-        if (System.getenv("LUA_PARSER_PERF") != null) {
+        if (UsagePerfCounters.ENABLED) {
             UsagePerfCounters.EVAL_COUNT.set(0); UsagePerfCounters.EVAL_NANOS.set(0)
             UsagePerfCounters.MEMBER_COUNT.set(0); UsagePerfCounters.MEMBER_NANOS.set(0)
         }
-        val perfT0 = if (System.getenv("LUA_PARSER_PERF") != null) System.nanoTime() else 0L
+        val perfT0 = if (UsagePerfCounters.ENABLED) System.nanoTime() else 0L
         val diagnostics = mutableListOf<Diagnostic>()
         if (perfT0 != 0L) {
             println(
@@ -314,7 +316,7 @@ internal class ExpressionUsageChecker(
     override fun visitMemberExpression(node: MemberExpression, value: MutableList<Diagnostic>) {
         // Only the base can be a local read; the member identifier is a field/method name.
         visitExpressionNode(node.base, value)
-        val perfT0 = if (System.getenv("LUA_PARSER_PERF") != null) System.nanoTime() else 0L
+        val perfT0 = if (UsagePerfCounters.ENABLED) System.nanoTime() else 0L
         UsagePerfCounters.MEMBER_COUNT.incrementAndGet()
         val lexicalScopeId = scopeIdFor(node)
         val baseType = evaluator.evaluate(node.base)
