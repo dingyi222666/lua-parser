@@ -1851,11 +1851,33 @@ internal class ReferenceQueries(
         sharedGlobalsCache?.let { return it }
         val resolver = workspaceContext.workspaceResolver ?: return emptyList()
         val path = workspaceContext.currentPath ?: return emptyList()
-        val all = resolver.allSharedGlobalSymbols(path)
+        val all = resolver.allSharedGlobalSymbols(path) + loadlayoutInjectedGlobalSymbols()
         sharedGlobalsCache = all
         val localNames = visibleValueDeclarationsWithoutImports(position).mapTo(HashSet()) { it.name }
         val importedNames = workspaceContext.importedSymbols.keys
         return all.filter { symbol -> symbol.alias !in localNames && symbol.alias !in importedNames }
+    }
+
+    /**
+     * Ids this document's `loadlayout(t)` / `loadlayout(t, nil)` calls register into _G
+     * (typed as their layout-row view class). Same shared-environment enumeration surface
+     * as cross-file globals, scoped to the current document's layout calls.
+     */
+    private fun loadlayoutInjectedGlobalSymbols(): List<WorkspaceImportedSymbol> {
+        val path = workspaceContext.currentPath ?: return emptyList()
+        val globals = evaluator.loadlayoutInjectedGlobals(
+            ExpressionTypeEvaluator.Context(lexicalScopeId = binder.scopeGraph.rootScope.id)
+        )
+        return globals.map { (name, type) ->
+            WorkspaceImportedSymbol(
+                alias = name,
+                moduleName = "loadlayout",
+                providerPath = path,
+                moduleType = ModuleType(moduleName = "LuaLayoutIds"),
+                valueType = type,
+                kind = SymbolKind.VARIABLE
+            )
+        }
     }
 
     private fun importedVisibleDeclarations(position: Position): List<VisibleDeclaration> {

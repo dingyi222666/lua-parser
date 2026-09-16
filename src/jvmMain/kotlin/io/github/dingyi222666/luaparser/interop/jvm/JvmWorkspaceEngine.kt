@@ -90,7 +90,9 @@ class JvmWorkspaceEngine(
             cachedResolverPaths += path
             return cached
         }
-        val fresh = io.github.dingyi222666.luaparser.semantic.workspace.WorkspaceModuleResolver(snapshot)
+        val fresh = io.github.dingyi222666.luaparser.semantic.workspace.WorkspaceModuleResolver(snapshot) { candidate ->
+            cachedChunkFor(snapshot.files, candidate)
+        }
         cachedResolverSnapshot = snapshot
         cachedResolver = fresh
         cachedResolverPaths.clear()

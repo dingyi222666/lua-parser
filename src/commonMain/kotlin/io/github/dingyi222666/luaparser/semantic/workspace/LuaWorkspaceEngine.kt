@@ -311,7 +311,9 @@ open class LuaWorkspaceEngine(
     ): SemanticWorkspaceContext {
         return SemanticWorkspaceContext(
             currentPath = path,
-            workspaceResolver = WorkspaceModuleResolver(snapshot),
+            workspaceResolver = WorkspaceModuleResolver(snapshot) { candidate ->
+                cachedChunkFor(snapshot.files, candidate)
+            },
             overlayGlobals = snapshot.builtinOverlay.globals,
             layoutPropertyExtensions = LuaLayoutPropertiesMetadata.parse(snapshot.metadata)
         )
@@ -426,7 +428,9 @@ open class LuaWorkspaceEngine(
         // composed lambdas (which DO capture the stale per-document resolver) and recomposing
         // against the final resolver loses nothing.
         val assembledSnapshot = baseSnapshot.copy(files = files.toMap())
-        val finalResolver = WorkspaceModuleResolver(assembledSnapshot)
+        val finalResolver = WorkspaceModuleResolver(assembledSnapshot) { candidate ->
+            cachedChunkFor(assembledSnapshot.files, candidate)
+        }
         val repointedFiles = assembledSnapshot.files.mapValues { (_, fileSnapshot) ->
             val semanticFile = fileSnapshot.semanticFile ?: return@mapValues fileSnapshot
             val storedContext = semanticFile.snapshot.workspaceContext
@@ -690,6 +694,19 @@ open class LuaWorkspaceEngine(
 
     protected fun parseWorkspaceSource(path: VirtualPath, source: String): ChunkNode =
         parseWorkspaceResult(path, source).chunk
+
+    /**
+     * Parse-cache chunk lookup for [path], valid only while the snapshot's stored source is
+     * the one the chunk was parsed from (cacheKey comparison). Backs the module resolver's
+     * layout-path resolution: non-queried documents keep `semanticFile = null` in the
+     * snapshot, but their parsed chunk is here.
+     */
+    protected fun cachedChunkFor(files: Map<VirtualPath, WorkspaceSnapshot.FileSnapshot>, path: VirtualPath): ChunkNode? {
+        val fileSnapshot = files[path] ?: return null
+        val cached = parsedChunks[path] ?: return null
+        val (source, result) = cached
+        return if (workspaceFingerprintHash(source) == fileSnapshot.cacheKey) result.chunk else null
+    }
 
     /** Cached parse for [path], including the recovery diagnostics the chunk was produced with. */
     private fun parseWorkspaceResult(path: VirtualPath, source: String): LuaParseResult {

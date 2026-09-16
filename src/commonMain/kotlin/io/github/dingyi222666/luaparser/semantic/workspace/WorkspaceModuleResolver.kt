@@ -1,6 +1,7 @@
 package io.github.dingyi222666.luaparser.semantic.workspace
 
 import io.github.dingyi222666.luaparser.parser.ast.node.AssignmentStatement
+import io.github.dingyi222666.luaparser.parser.ast.node.ChunkNode
 import io.github.dingyi222666.luaparser.parser.ast.node.ExpressionNode
 import io.github.dingyi222666.luaparser.parser.ast.node.Identifier
 import io.github.dingyi222666.luaparser.parser.ast.node.MemberExpression
@@ -23,7 +24,14 @@ import io.github.dingyi222666.luaparser.semantic.types.model.UnknownType
 import io.github.dingyi222666.luaparser.semantic.types.model.VarargType
 
 internal class WorkspaceModuleResolver(
-    private val snapshot: WorkspaceSnapshot
+    private val snapshot: WorkspaceSnapshot,
+    /**
+     * Parse-cache fallback for files whose full semantic state was never attached
+     * (non-queried documents keep `semanticFile = null`, but their chunk is parsed and
+     * cached by the engine). Lets layout-path resolution read `.aly` chunks without
+     * forcing analysis of every layout file.
+     */
+    private val chunkFor: ((VirtualPath) -> ChunkNode?)? = null
 ) {
     private companion object {
         private const val COMPLETION_MODULE_NAME_LIMIT = 300
@@ -93,6 +101,49 @@ internal class WorkspaceModuleResolver(
         return fileSnapshot(provider.path)?.moduleExportSurface
             ?: syntheticAlyLayoutSurface(provider)
     }
+
+    /**
+     * The analyzed semantic file for [path] when the snapshot holds it (Lua or `.aly`).
+     * Callers that need the already-parsed chunk — e.g. loadlayout string paths reading a
+     * layout file's `return <table>` — must reuse this instead of re-parsing the source.
+     */
+    fun workspaceSourceFile(path: VirtualPath): WorkspaceSemanticFile? =
+        fileSnapshot(path)?.semanticFile
+
+    /**
+     * Resolves an AndroLua layout path (`loadlayout("layout/main")`) to the parsed `.aly`
+     * chunk. Candidate snapshot paths are tried directly first, then prefix-tolerant
+     * suffix matches — synthetic-root prefixes (`workspace/layout/main.aly`) and multi-root
+     * folders must not sever the lookup — and finally the dotted-module provider form the
+     * module graph may index. Non-queried documents keep `semanticFile = null` in the
+     * snapshot, so [chunkFor] (the engine parse cache) completes the chain without forcing
+     * analysis of every layout file.
+     */
+    fun workspaceLayoutChunk(layoutPath: String): ChunkNode? {
+        val moduleName = layoutPath.trim().removeSuffix(".aly")
+        if (moduleName.isEmpty()) {
+            return null
+        }
+        layoutChunkCache[moduleName]?.let { return it }
+        val resolved = layoutFileCandidates("$moduleName.aly")
+            .firstNotNullOfOrNull { path -> workspaceSourceFile(path)?.chunk ?: chunkFor?.invoke(path) }
+        layoutChunkCache[moduleName] = resolved
+        return resolved
+    }
+
+    private fun layoutFileCandidates(relative: String): List<VirtualPath> {
+        val suffix = "/$relative"
+        val matches = (snapshot.files.keys.asSequence() + snapshot.extraProviders.keys.asSequence())
+            .filter { it.value == relative || it.value.endsWith(suffix) }
+            .toMutableList()
+        runCatching { VirtualPath.of(relative) }.getOrNull()?.let(matches::add)
+        activeProvider(relative.removeSuffix(".aly").replace('/', '.'))
+            ?.takeIf { it.path.value.endsWith(".aly") }
+            ?.let { matches.add(it.path) }
+        return matches
+    }
+
+    private val layoutChunkCache = mutableMapOf<String, ChunkNode?>()
 
     fun resolveRequire(consumerPath: VirtualPath, moduleName: String): ResolvedRequire? {
         val dependency = snapshot.graph.resolvedDependencies[consumerPath]

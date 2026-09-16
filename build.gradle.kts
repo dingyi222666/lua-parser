@@ -192,6 +192,10 @@ tasks.withType<Test>().configureEach {
     maxParallelForks = 5
     // Avoid one hung suite blocking the whole fork forever without bound
     // (individual tests still use JUnit defaults unless annotated)
+    // Android.jar interop suites mount real class hierarchies per service instance
+    // (LSP tests build a fresh engine per test method); the 512m default worker heap
+    // OOMs under that fan-out even though a live server holds one long-lived service.
+    maxHeapSize = "2g"
 }
 
 tasks.register<JavaExec>("runLuaLanguageServer") {

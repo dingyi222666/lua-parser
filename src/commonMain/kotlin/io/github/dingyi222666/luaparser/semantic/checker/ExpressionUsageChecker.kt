@@ -247,6 +247,11 @@ internal class ExpressionUsageChecker(
         if (isLayoutDocument()) {
             return // T1: alyloader layout tables resolve ids at layout-load time.
         }
+        // T5: `loadlayout(t)` / `loadlayout(t, nil)` registers the layout's `id="..."`
+        // views into _G at layout-load time — same epistemic state as T1, host page side.
+        if (evaluator.isLoadlayoutInjectedGlobal(name)) {
+            return
+        }
         // T2: AndroLua runtime helpers (luajava numeric coercions, apply) that the
         // overlay catalog does not model — gated to the AndroLua flavor so plain-Lua
         // workspaces keep diagnosing typos of user globals with these plausible names.

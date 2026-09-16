@@ -161,8 +161,11 @@ class ExpressionTypeEvaluator internal constructor(
     // (O(declarations) per typed value was quadratic across a document).
     private var memberAssignmentsByRoot: Map<String, List<MemberAssignmentAnchor>>? = null
     private val perfEnabled get() = ExpressionUsageChecker.UsagePerfCounters.ENABLED
-    // One-shot loadlayout(…, ids) → layout-table index for the whole binder root.
-    private var loadlayoutRootUsageIndex: Map<String, List<TableConstructorExpression>>? = null
+    // One-shot loadlayout(...) usage index for the whole binder root: each call records
+    // where its layout spec table comes from and where the runtime registers the ids.
+    private var loadlayoutUsages: List<LoadlayoutUsage>? = null
+    private val loadlayoutSinkFieldsCache = mutableMapOf<LoadlayoutIdsSink, Map<String, Type>>()
+    private var loadlayoutGlobalIdNames: Set<String>? = null
 
     fun evaluate(node: ExpressionNode): Type {
         expressionTypeCache[node]?.let { return it }
@@ -237,6 +240,9 @@ class ExpressionTypeEvaluator internal constructor(
             }
         }
         imported?.let { return it.valueType }
+        // AndroLua loadlayout registers `id="..."` views into _G when no ids table is
+        // passed (`loadlayout("layout/main")`); type those reads from the layout row class.
+        loadlayoutInjectedGlobalType(node.name, context)?.let { return it }
         if (node.name == "self") {
             implicitSelfType(node)?.let { return it }
         }
@@ -397,6 +403,13 @@ class ExpressionTypeEvaluator internal constructor(
     }
 
     private fun evaluateIndexExpression(node: IndexExpression, context: Context): Type {
+        // `loadlayout(src, _pageids[i])` registers ids onto the BASE table's elements, so
+        // every `_pageids[k]` read surfaces the ids table (recy/progress/...) — checked
+        // before plain index resolution, which on an empty `{}` table yields nothing.
+        (node.base as? Identifier)?.let { base ->
+            loadlayoutSinkIdFields(LoadlayoutIdsSink.Elements(base.name), context).takeIf { it.isNotEmpty() }
+                ?.let { return loadlayoutIdsTableSurface(it) }
+        }
         val baseType = evaluateReferenceBaseType(node.base, context)
             .hydrateJavaProviderType(workspaceContext.resolveImportTarget)
         val indexType = evaluate(node.index, context)
@@ -2200,28 +2213,25 @@ class ExpressionTypeEvaluator internal constructor(
             return null
         }
         loadlayoutIdsTableTypeCache[declaration.id]?.let { return it }
-        val layoutTables = loadlayoutRootUsageIndex()[declaration.name].orEmpty()
-        if (layoutTables.isEmpty()) {
+        val fields = loadlayoutSinkIdFields(LoadlayoutIdsSink.Named(declaration.name), context)
+        if (fields.isEmpty()) {
             return null
         }
-        val fields = linkedMapOf<String, Type>()
-        layoutTables.forEach { table ->
-            fields.putAll(layoutIdFields(table, context))
-        }
-        val viewType = androidLuaHydratedSurface("AndroidView")
-        // Prefer a ModuleType named LuaLayoutIds so hover displayName matches tests, while still
-        // exposing concrete id fields for member resolution (ids.title.setText).
-        val result = ModuleType(
+        val result = loadlayoutIdsTableSurface(fields)
+        loadlayoutIdsTableTypeCache[declaration.id] = result
+        return result
+    }
+
+    /** The synthesized surface for a table holding loadlayout-registered view ids. */
+    private fun loadlayoutIdsTableSurface(fields: Map<String, Type>): Type =
+        ModuleType(
             moduleName = "LuaLayoutIds",
             fields = fields,
             indexSignature = ModuleType.IndexSignature(
                 keyType = PrimitiveType.STRING,
-                valueType = viewType
+                valueType = androidLuaHydratedSurface("AndroidView")
             )
         )
-        loadlayoutIdsTableTypeCache[declaration.id] = result
-        return result
-    }
 
     private fun isPotentialLoadlayoutIdsLocal(declaration: BinderDeclaration): Boolean {
         if (declaration.kind != DeclarationKind.LOCAL) {
@@ -2232,18 +2242,153 @@ class ExpressionTypeEvaluator internal constructor(
     }
 
     /**
-     * Build a name → layout-table index for `loadlayout(layout, ids)` once per evaluator.
-     * Bounded by identity visited set + hard node budget; never re-enters via parent chain.
+     * Merged id fields for one [LoadlayoutIdsSink]: every `loadlayout(layout, sink)` call's
+     * layout spec contributes its `id="..."` rows (view-class typed). Built once per sink
+     * from the one-shot usage index; layout sources resolve without re-entering evaluate().
      */
-    private fun loadlayoutRootUsageIndex(): Map<String, List<TableConstructorExpression>> {
-        loadlayoutRootUsageIndex?.let { return it }
-        val collected = linkedMapOf<String, MutableList<TableConstructorExpression>>()
+    private fun loadlayoutSinkIdFields(sink: LoadlayoutIdsSink, context: Context): Map<String, Type> {
+        loadlayoutSinkFieldsCache[sink]?.let { return it }
+        val fields = linkedMapOf<String, Type>()
+        loadlayoutUsages().forEach { usage ->
+            if (usage.sink != sink) {
+                return@forEach
+            }
+            layoutTableFor(usage.source, context)?.let { table ->
+                fields.putAll(layoutIdFields(table))
+            }
+        }
+        val frozen = fields.toMap()
+        loadlayoutSinkFieldsCache[sink] = frozen
+        return frozen
+    }
+
+    private fun layoutTableFor(source: LoadlayoutLayoutSource, context: Context): TableConstructorExpression? = when (source) {
+        is LoadlayoutLayoutSource.Inline -> source.table
+        is LoadlayoutLayoutSource.LocalTable -> localTableInitializerFor(source.name, source.from, context)
+        is LoadlayoutLayoutSource.WorkspaceLayout -> loadlayoutPathLayoutTable(source.path)
+        is LoadlayoutLayoutSource.CalleeReturn -> calleeReturnLayoutTable(source.callee, source.from, context)
+    }
+
+    /**
+     * Layout spec variable (`loadlayout(parentLayout, ids)`): resolve through the binder's
+     * scope-aware declaration lookup at the call site — AST `parent` pointers are not
+     * reliably set on call arguments, so the historical parent-chain block walk silently
+     * returned null (Delegates.notNull parent throws on unset access).
+     */
+    private fun localTableInitializerFor(name: String, from: BaseASTNode, context: Context): TableConstructorExpression? {
+        val declaration = findVisibleValueDeclaration(name, from.range.start, context)
+        return declaration?.let { localDeclarationInitializer(it) } as? TableConstructorExpression
+    }
+
+    /**
+     * `loadlayout("layout/main")` — resolve the workspace `.aly` file alyloader would load
+     * for the path. The chunk is already parsed by the engine; this only reads its wrapped
+     * `return <table>`.
+     */
+    private fun loadlayoutPathLayoutTable(path: String): TableConstructorExpression? {
+        val resolver = workspaceContext.workspaceResolver ?: return null
+        return resolver.workspaceLayoutChunk(path)?.let(::topLevelLayoutTable)
+    }
+
+    /** `.aly` layout chunks parse as `return <table>` (alyloader's bare-table wrap). */
+    private fun topLevelLayoutTable(chunk: io.github.dingyi222666.luaparser.parser.ast.node.ChunkNode): TableConstructorExpression? {
+        val returnStatement = chunk.body.returnStatement
+            ?: chunk.body.statements.filterIsInstance<ReturnStatement>().firstOrNull()
+            ?: return null
+        return returnStatement.arguments.filterIsInstance<TableConstructorExpression>().firstOrNull()
+    }
+
+    /**
+     * `loadlayout(addTab(...), nil, ...)` — the layout spec is the callee's first returned
+     * table constructor (`local function addTab() return { ... } end`). The callee resolves
+     * through the scope-aware declaration lookup at the call site, not AST parent walking.
+     */
+    private fun calleeReturnLayoutTable(callee: String, from: BaseASTNode, context: Context): TableConstructorExpression? {
+        val declaration = findVisibleValueDeclaration(callee, from.range.start, context) ?: return null
+        val function = functionNodeForDeclaration(declaration) ?: return null
+        val body = function.body ?: return null
+        return body.statements.asSequence()
+            .filterIsInstance<ReturnStatement>()
+            .firstNotNullOfOrNull { it.arguments.filterIsInstance<TableConstructorExpression>().firstOrNull() }
+    }
+
+    /**
+     * Structural id names loadlayout registers into `_G` at runtime (`loadlayout(t)` /
+     * `loadlayout(t, nil)` — no ids table passed). Names only: descends into call rows
+     * (`MyTabLayout { id = "parent" }`) whose view-class typing we deliberately skip, so a
+     * runtime-injected id never flags `checker.global.unresolved` even when its typed
+     * surface stays unknown.
+     */
+    fun loadlayoutInjectedGlobalNames(): Set<String> {
+        loadlayoutGlobalIdNames?.let { return it }
+        val names = linkedSetOf<String>()
+        // Name collection is purely structural: a root-scoped Context satisfies the shared
+        // layout-table resolver, which never deep-evaluates through this path.
+        val unusedNamesContext = Context(lexicalScopeId = binder.scopeGraph.rootScope.id)
+        loadlayoutUsages().forEach { usage ->
+            if (usage.sink == LoadlayoutIdsSink.Globals) {
+                layoutTableFor(usage.source, unusedNamesContext)?.let { collectLayoutIdNames(it, names) }
+            }
+        }
+        loadlayoutGlobalIdNames = names
+        return names
+    }
+
+    fun isLoadlayoutInjectedGlobal(name: String): Boolean = name in loadlayoutInjectedGlobalNames()
+
+    /** The typed `_G` surface for a loadlayout-injected id, when its row class resolves. */
+    fun loadlayoutInjectedGlobalType(name: String, context: Context): Type? =
+        loadlayoutInjectedGlobals(context)[name]
+
+    /**
+     * All typed ids loadlayout registers into `_G` for this document (no ids table
+     * passed). Powers identifier typing and completion enumeration; ids whose row class
+     * could not be resolved are absent (they stay unknown rather than mis-typed).
+     */
+    fun loadlayoutInjectedGlobals(context: Context): Map<String, Type> =
+        loadlayoutSinkIdFields(LoadlayoutIdsSink.Globals, context)
+
+    private fun collectLayoutIdNames(table: TableConstructorExpression, output: MutableSet<String>) {
+        val visited = hashSetOf<BaseASTNode>()
+        var budget = LOADLAYOUT_ID_TABLE_NODE_BUDGET
+        fun walk(node: TableConstructorExpression) {
+            if (budget <= 0 || !visited.add(node)) {
+                return
+            }
+            budget--
+            node.fields.forEach { field ->
+                if (budget <= 0) {
+                    return
+                }
+                val keyName = staticTableKeyName(field)
+                val value = field.value
+                when {
+                    keyName == "id" -> stringLiteralOf(value)?.let(output::add)
+                    value is TableConstructorExpression -> walk(value)
+                    // Call rows wrap their spec table (`ModuleClass { id = ... }`).
+                    value is TableCallExpression -> (value.arguments.asSequence()
+                        .filterIsInstance<TableConstructorExpression>().firstOrNull())?.let(::walk)
+                    value is FunctionDeclaration || value is LambdaDeclaration -> Unit
+                    else -> Unit
+                }
+            }
+        }
+        walk(table)
+    }
+
+    /**
+     * Build the one-shot `loadlayout(...)` usage index once per evaluator. Bounded by an
+     * identity visited set + hard node budget; never re-enters via parent chain.
+     */
+    private fun loadlayoutUsages(): List<LoadlayoutUsage> {
+        loadlayoutUsages?.let { return it }
+        val collected = mutableListOf<LoadlayoutUsage>()
         // AST nodes use reference equality (no equals/hashCode overrides), so a plain set is
         // identity-based already.
         val visited = hashSetOf<BaseASTNode>()
         val nodesRemaining = intArrayOf(LOADLAYOUT_COLLECT_NODE_BUDGET)
         binder.scopeGraph.rootScope.ownerNode?.let { root ->
-            collectLoadlayoutRootUsages(root, collected, visited, nodesRemaining)
+            collectLoadlayoutUsages(root, collected, visited, nodesRemaining)
         }
         // Fallback: outermost AST root of any declaration anchor, single entry only.
         if (collected.isEmpty()) {
@@ -2258,16 +2403,15 @@ class ExpressionTypeEvaluator internal constructor(
                 val parent = runCatching { root!!.parent }.getOrNull() ?: break
                 root = parent
             }
-            root?.let { collectLoadlayoutRootUsages(it, collected, visited, nodesRemaining) }
+            root?.let { collectLoadlayoutUsages(it, collected, visited, nodesRemaining) }
         }
-        val frozen = collected.mapValues { (_, tables) -> tables.toList() }
-        loadlayoutRootUsageIndex = frozen
-        return frozen
+        loadlayoutUsages = collected
+        return collected
     }
 
-    private fun collectLoadlayoutRootUsages(
+    private fun collectLoadlayoutUsages(
         node: BaseASTNode,
-        output: MutableMap<String, MutableList<TableConstructorExpression>>,
+        output: MutableList<LoadlayoutUsage>,
         visited: MutableSet<BaseASTNode>,
         nodesRemaining: IntArray
     ) {
@@ -2281,13 +2425,13 @@ class ExpressionTypeEvaluator internal constructor(
 
         when (node) {
             is CallExpression -> {
-                recordLoadlayoutIdsUsage(node, output)
+                recordLoadlayoutUsage(node, output)
                 // Walk call arguments for nested loadlayout(...), but never descend into
                 // table-constructor layout specs here — those trees are huge and ids sinks
                 // are statement-level (CallStatement / local init), not nested table fields.
                 node.arguments.forEach { argument ->
                     if (argument !is TableConstructorExpression) {
-                        collectLoadlayoutRootUsages(argument, output, visited, nodesRemaining)
+                        collectLoadlayoutUsages(argument, output, visited, nodesRemaining)
                     } else {
                         // Still mark the table visited so a later path cannot re-enter it.
                         visited.add(argument)
@@ -2295,58 +2439,72 @@ class ExpressionTypeEvaluator internal constructor(
                     }
                 }
             }
-            is CallStatement -> collectLoadlayoutRootUsages(node.expression, output, visited, nodesRemaining)
+            is CallStatement -> collectLoadlayoutUsages(node.expression, output, visited, nodesRemaining)
             is BlockNode -> {
-                node.statements.forEach { collectLoadlayoutRootUsages(it, output, visited, nodesRemaining) }
+                node.statements.forEach { collectLoadlayoutUsages(it, output, visited, nodesRemaining) }
                 node.returnStatement?.arguments?.forEach { argument ->
                     if (argument !is TableConstructorExpression) {
-                        collectLoadlayoutRootUsages(argument, output, visited, nodesRemaining)
+                        collectLoadlayoutUsages(argument, output, visited, nodesRemaining)
                     }
                 }
             }
             is LocalStatement -> node.variables.forEach { variable ->
                 if (variable !is TableConstructorExpression) {
-                    collectLoadlayoutRootUsages(variable, output, visited, nodesRemaining)
+                    collectLoadlayoutUsages(variable, output, visited, nodesRemaining)
                 }
             }
             is FunctionDeclaration -> {
-                // Do not open nested function bodies for ids discovery. loadlayout(ids)
-                // targets are top-level / enclosing-block statements; descending into every
-                // onClick/onItemClick body re-walks layout tables and OOMs android fixtures.
+                // Named/anonymous function BODIES are entered (a `loadlayout(...)` inside a
+                // local helper is exactly where the demo binds ids sinks), but layout-table
+                // constructors reached from here are skipped at their LocalStatement /
+                // call-argument sites, so the historical layout-tree OOM cannot reappear.
+                // The node budget above is the hard backstop.
+                node.body?.let { collectLoadlayoutUsages(it, output, visited, nodesRemaining) }
             }
             is IfStatement -> node.causes.forEach { cause ->
                 when (cause) {
-                    is IfClause -> collectLoadlayoutRootUsages(cause.body, output, visited, nodesRemaining)
-                    is ElseIfClause -> collectLoadlayoutRootUsages(cause.body, output, visited, nodesRemaining)
-                    is ElseClause -> collectLoadlayoutRootUsages(cause.body, output, visited, nodesRemaining)
+                    is IfClause -> collectLoadlayoutUsages(cause.body, output, visited, nodesRemaining)
+                    is ElseIfClause -> collectLoadlayoutUsages(cause.body, output, visited, nodesRemaining)
+                    is ElseClause -> collectLoadlayoutUsages(cause.body, output, visited, nodesRemaining)
                 }
             }
-            is DoStatement -> collectLoadlayoutRootUsages(node.body, output, visited, nodesRemaining)
-            is WhileStatement -> collectLoadlayoutRootUsages(node.body, output, visited, nodesRemaining)
-            is RepeatStatement -> collectLoadlayoutRootUsages(node.body, output, visited, nodesRemaining)
-            is ForGenericStatement -> collectLoadlayoutRootUsages(node.body, output, visited, nodesRemaining)
-            is ForNumericStatement -> collectLoadlayoutRootUsages(node.body, output, visited, nodesRemaining)
+            is DoStatement -> collectLoadlayoutUsages(node.body, output, visited, nodesRemaining)
+            is WhileStatement -> collectLoadlayoutUsages(node.body, output, visited, nodesRemaining)
+            is RepeatStatement -> collectLoadlayoutUsages(node.body, output, visited, nodesRemaining)
+            is ForGenericStatement -> collectLoadlayoutUsages(node.body, output, visited, nodesRemaining)
+            is ForNumericStatement -> collectLoadlayoutUsages(node.body, output, visited, nodesRemaining)
             // Explicitly ignore TableConstructorExpression roots — layout specs are not walked.
             else -> Unit
         }
     }
 
-    private fun recordLoadlayoutIdsUsage(
-        node: CallExpression,
-        output: MutableMap<String, MutableList<TableConstructorExpression>>
-    ) {
+    private fun recordLoadlayoutUsage(node: CallExpression, output: MutableList<LoadlayoutUsage>) {
         val base = effectiveCallBase(node) as? Identifier ?: return
-        if (base.name !in setOf("loadlayout", "loadlayout2", "loadlayout3")) {
+        if (base.name !in LOADLAYOUT_FAMILY_NAMES) {
             return
         }
         val args = callArguments(node)
-        val idsIdent = args.getOrNull(1) as? Identifier ?: return
-        val layoutTables = output.getOrPut(idsIdent.name) { mutableListOf() }
-        (args.getOrNull(0) as? TableConstructorExpression)?.let(layoutTables::add)
-        val layoutIdent = args.getOrNull(0) as? Identifier
-        if (layoutIdent != null) {
-            findLocalTableInitializer(layoutIdent.name, layoutIdent)?.let(layoutTables::add)
+        // Sink: `loadlayout(layout, ids)` names an ids table; `_pageids[i]` targets the
+        // elements of its base table; a missing/nil second arg registers ids into _G.
+        val sink = when (val second = args.getOrNull(1)) {
+            is Identifier -> LoadlayoutIdsSink.Named(second.name)
+            is IndexExpression -> (second.base as? Identifier)
+                ?.let { LoadlayoutIdsSink.Elements(it.name) }
+                ?: LoadlayoutIdsSink.Globals
+            else -> LoadlayoutIdsSink.Globals
         }
+        val source = when (val first = args.getOrNull(0)) {
+            is TableConstructorExpression -> LoadlayoutLayoutSource.Inline(first)
+            is Identifier -> LoadlayoutLayoutSource.LocalTable(first.name, first)
+            is ConstantNode -> stringLiteralOf(first)
+                ?.let { LoadlayoutLayoutSource.WorkspaceLayout(it) }
+                ?: return
+            is CallExpression -> (first.base as? Identifier)
+                ?.let { LoadlayoutLayoutSource.CalleeReturn(it.name, first) }
+                ?: return
+            else -> return
+        }
+        output.add(LoadlayoutUsage(sink, source))
     }
 
     private fun findLocalTableInitializer(name: String, from: BaseASTNode): TableConstructorExpression? {
@@ -2370,11 +2528,9 @@ class ExpressionTypeEvaluator internal constructor(
         return null
     }
 
-    private fun layoutIdFields(table: TableConstructorExpression, context: Context): Map<String, Type> {
-        // `context` is unused intentionally: id-field collection must never re-enter
-        // evaluate()/hydrate paths (listener bodies, nested call typing).
-        @Suppress("UNUSED_PARAMETER")
-        val _ctx = context
+    private fun layoutIdFields(table: TableConstructorExpression): Map<String, Type> {
+        // Id-field collection must never re-enter evaluate()/hydrate paths (listener
+        // bodies, nested call typing) — this walk is purely structural.
         val fields = linkedMapOf<String, Type>()
         val tableVisited = hashSetOf<BaseASTNode>()
         var nodesVisited = 0
@@ -3715,6 +3871,7 @@ class ExpressionTypeEvaluator internal constructor(
         private const val NESTED_MEMBER_PATH_MAX_DEPTH = 4
         private const val LOADLAYOUT_PARENT_WALK_LIMIT = 64
         private const val LAYOUT_COMPLETION_NODE_BUDGET = 1_024
+        private val LOADLAYOUT_FAMILY_NAMES = setOf("loadlayout", "loadlayout2", "loadlayout3")
 
         private val LAYOUT_SPEC_KEYS = setOf(
             "id",
@@ -3798,6 +3955,36 @@ data class LuaLayoutPropertySuggestion(
     val label: String,
     val detail: String?
 )
+
+/**
+ * Where a `loadlayout(...)` call's layout spec table comes from, kept symbolic at
+ * collection time so the one-shot usage walk never resolves types or workspace files.
+ */
+private sealed class LoadlayoutLayoutSource {
+    /** Inline layout table literal as the first argument. */
+    class Inline(val table: TableConstructorExpression) : LoadlayoutLayoutSource()
+
+    /** First argument names a local table variable (`loadlayout(parentLayout, ids)`). */
+    class LocalTable(val name: String, val from: BaseASTNode) : LoadlayoutLayoutSource()
+
+    /** First argument is a layout path string (`loadlayout("layout/main")`). */
+    class WorkspaceLayout(val path: String) : LoadlayoutLayoutSource()
+
+    /** First argument is a call whose body returns the spec table (`addTab(...)`). */
+    class CalleeReturn(val callee: String, val from: BaseASTNode) : LoadlayoutLayoutSource()
+}
+
+/**
+ * Where the AndroLua runtime registers a loadlayout call's `id="..."` views: a named ids
+ * table, the elements of a base table (`_pageids[i]`), or `_G` when no ids table passed.
+ */
+private sealed class LoadlayoutIdsSink {
+    data class Named(val name: String) : LoadlayoutIdsSink()
+    data class Elements(val baseName: String) : LoadlayoutIdsSink()
+    object Globals : LoadlayoutIdsSink()
+}
+
+private class LoadlayoutUsage(val sink: LoadlayoutIdsSink, val source: LoadlayoutLayoutSource)
 
 /**
  * The view class in force at a layout-table position: [sourceName] is the identifier as
