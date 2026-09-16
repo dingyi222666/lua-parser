@@ -246,13 +246,11 @@ open class LuaWorkspaceEngine(
                     chunk,
                     provisionalContext
                 )
-                val evaluator = ExpressionTypeEvaluator(resolvedBinder, effectiveContext)
                 val publicFingerprint = (fileSnapshot.publicFingerprint
                     ?: WorkspacePublicFingerprint.from(fileSnapshot.documentFacts, fileSnapshot.moduleExportSurface))
                     .copy(
                         globalSymbolsFingerprint = globalSymbolsFingerprint(
-                            resolvedBinder.declarationIndex.declarations,
-                            evaluator
+                            resolvedBinder.declarationIndex.declarations
                         )
                     )
                 nextFiles[path] = fileSnapshot.copy(publicFingerprint = publicFingerprint)
@@ -536,13 +534,11 @@ open class LuaWorkspaceEngine(
         // snapshot ends up with the authoritative value for its final semantic state. The
         // evaluator is the same expression evaluator the module resolver uses for provider
         // globals, so the fingerprint tracks exactly what consumers re-bind through it.
-        val globalTypeEvaluator = ExpressionTypeEvaluator(semanticSnapshot.binder, semanticSnapshot.workspaceContext)
         val publicFingerprint = (fileSnapshot.publicFingerprint
             ?: WorkspacePublicFingerprint.from(fileSnapshot.documentFacts, fileSnapshot.moduleExportSurface))
             .copy(
                 globalSymbolsFingerprint = globalSymbolsFingerprint(
-                    semanticSnapshot.binder.declarationIndex.declarations,
-                    globalTypeEvaluator
+                    semanticSnapshot.binder.declarationIndex.declarations
                 )
             )
         files[path] = fileSnapshot.copy(publicFingerprint = publicFingerprint, semanticFile = semanticFile)

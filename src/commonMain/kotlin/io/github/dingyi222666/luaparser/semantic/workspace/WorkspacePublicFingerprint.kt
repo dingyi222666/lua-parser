@@ -2,6 +2,17 @@ package io.github.dingyi222666.luaparser.semantic.workspace
 
 import io.github.dingyi222666.luaparser.parser.ast.node.ExpressionNode
 import io.github.dingyi222666.luaparser.semantic.binder.BinderDeclaration
+import io.github.dingyi222666.luaparser.parser.ast.node.AssignmentStatement
+import io.github.dingyi222666.luaparser.parser.ast.node.BinaryExpression
+import io.github.dingyi222666.luaparser.parser.ast.node.CallExpression
+import io.github.dingyi222666.luaparser.parser.ast.node.ConstantNode
+import io.github.dingyi222666.luaparser.parser.ast.node.FunctionDeclaration
+import io.github.dingyi222666.luaparser.parser.ast.node.Identifier
+import io.github.dingyi222666.luaparser.parser.ast.node.LambdaDeclaration
+import io.github.dingyi222666.luaparser.parser.ast.node.MemberExpression
+import io.github.dingyi222666.luaparser.parser.ast.node.StringCallExpression
+import io.github.dingyi222666.luaparser.parser.ast.node.TableConstructorExpression
+import io.github.dingyi222666.luaparser.parser.ast.node.UnaryExpression
 import io.github.dingyi222666.luaparser.semantic.binder.DeclarationKind
 import io.github.dingyi222666.luaparser.semantic.binder.DeclarationOrigin
 import io.github.dingyi222666.luaparser.semantic.checker.ExpressionTypeEvaluator
@@ -345,8 +356,7 @@ private const val GLOBAL_FINGERPRINT_FIELD_LIMIT = 256
  * never the head, so ordinary files hash deterministically.
  */
 internal fun globalSymbolsFingerprint(
-    declarations: List<BinderDeclaration>,
-    typeEvaluator: ExpressionTypeEvaluator? = null
+    declarations: List<BinderDeclaration>
 ): String {
     val payload = declarations.asSequence()
         .filter { it.kind == DeclarationKind.GLOBAL && it.origin == DeclarationOrigin.AST }
@@ -358,7 +368,7 @@ internal fun globalSymbolsFingerprint(
                 append(':')
                 append(declaration.kind.name.take(GLOBAL_FINGERPRINT_FIELD_LIMIT))
                 append(':')
-                append(globalValueTypeDisplayName(declaration, typeEvaluator).take(GLOBAL_FINGERPRINT_FIELD_LIMIT))
+                append(globalValueShape(declaration).take(GLOBAL_FINGERPRINT_FIELD_LIMIT))
             }
         }
     return workspaceFingerprintHash(payload)
@@ -369,15 +379,67 @@ internal fun globalSymbolsFingerprint(
  * type when an evaluator is available and the anchor is an expression, otherwise the
  * annotation-declared type (empty for un-annotated non-expression globals).
  */
-private fun globalValueTypeDisplayName(
-    declaration: BinderDeclaration,
-    typeEvaluator: ExpressionTypeEvaluator?
-): String {
-    if (typeEvaluator != null) {
-        val anchor = declaration.anchorNode as? ExpressionNode
-        if (anchor != null) {
-            return typeEvaluator.evaluate(anchor).displayName
+/**
+ * Structural shape of the global's assigned VALUE expression (node kinds, identifiers,
+ * literals; depth/length capped), read straight off the assignment AST - NO type
+ * evaluation, which dominated per-update fingerprint cost. Distinguishes literal and
+ * expression changes (`42` vs `'forty-two'`, `f(1)` vs `f(2)` by argument kinds).
+ */
+private fun globalValueShape(declaration: BinderDeclaration): String {
+    val anchor = declaration.anchorNode ?: return declaration.declaredType?.displayName.orEmpty()
+    val assignment = runCatching { anchor.parent }.getOrNull() as? AssignmentStatement
+    if (assignment != null) {
+        val index = assignment.init.indexOf(anchor)
+        val rhs = assignment.variables.getOrNull(index)
+        if (rhs != null) {
+            return buildString { expressionShape(rhs, this, 0) }
         }
     }
+    val functionBody = (anchor.parent as? FunctionDeclaration ?: run {
+        val member = anchor.parent as? MemberExpression
+        member?.parent as? FunctionDeclaration
+    })
+    if (functionBody != null) {
+        return "function"
+    }
     return declaration.declaredType?.displayName.orEmpty()
+}
+
+private fun expressionShape(node: ExpressionNode, sb: StringBuilder, depth: Int) {
+    if (depth > 4 || sb.length > GLOBAL_FINGERPRINT_FIELD_LIMIT) {
+        return
+    }
+    sb.append(node::class.simpleName).append('(')
+    when (node) {
+        is Identifier -> sb.append(node.name)
+        is ConstantNode -> {
+            sb.append(node.constantType.name).append(':')
+            sb.append(node.stringOf()?.toString() ?: node.rawValue?.toString() ?: "?")
+        }
+        is MemberExpression -> {
+            expressionShape(node.base, sb, depth + 1)
+            sb.append('.').append(node.identifier.name)
+        }
+        is CallExpression -> {
+            expressionShape(node.base, sb, depth + 1)
+            node.arguments.forEach { arg ->
+                sb.append(',')
+                expressionShape(arg, sb, depth + 1)
+            }
+        }
+        is StringCallExpression -> sb.append("str")
+        is BinaryExpression -> {
+            node.left?.let { expressionShape(it, sb, depth + 1) }
+            sb.append(node.operator.name)
+            node.right?.let { expressionShape(it, sb, depth + 1) }
+        }
+        is UnaryExpression -> {
+            sb.append(node.operator.name)
+            node.arg?.let { expressionShape(it, sb, depth + 1) }
+        }
+        is TableConstructorExpression -> sb.append("table")
+        is FunctionDeclaration, is LambdaDeclaration -> sb.append("function")
+        else -> Unit
+    }
+    sb.append(')')
 }

@@ -1839,9 +1839,27 @@ internal class ReferenceQueries(
         }
     }
 
+    private var sharedGlobalsCache: List<WorkspaceImportedSymbol>? = null
+
+    /**
+     * AndroLua project scripts share one Lua global environment: chunk-level globals
+     * assigned in any project file are runtime-visible in every other file. Enumerate
+     * them (excluding locally-visible and imported names) once per model so completion
+     * offers cross-file globals without an import edge.
+     */
+    private fun sharedWorkspaceGlobals(position: Position): List<WorkspaceImportedSymbol> {
+        sharedGlobalsCache?.let { return it }
+        val resolver = workspaceContext.workspaceResolver ?: return emptyList()
+        val path = workspaceContext.currentPath ?: return emptyList()
+        val all = resolver.allSharedGlobalSymbols(path)
+        sharedGlobalsCache = all
+        val localNames = visibleValueDeclarationsWithoutImports(position).mapTo(HashSet()) { it.name }
+        val importedNames = workspaceContext.importedSymbols.keys
+        return all.filter { symbol -> symbol.alias !in localNames && symbol.alias !in importedNames }
+    }
+
     private fun importedVisibleDeclarations(position: Position): List<VisibleDeclaration> {
-        return importedSymbolsAt(position)
-            .values
+        return (importedSymbolsAt(position).values + sharedWorkspaceGlobals(position))
             .sortedBy { it.alias }
             .map { imported ->
                 VisibleDeclaration(

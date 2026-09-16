@@ -201,12 +201,16 @@ class WorkspaceImportVisibilityTddTest {
             )
         }
 
+        // AndroLua project scripts share one Lua global environment: globals assigned in
+        // mods/util.lua are runtime-visible in a sibling that never imported it, so the
+        // shared-environment fallback surfaces them here too. Import-scoped resolution is
+        // still asserted above for the import/require consumers.
         val siblingCompletions = harness.queries.completions(
             harness.path("sibling.lua"),
             harness.positionOf("sibling.lua", "AppUtil")
         ).map { it.label }
-        assertTrue("AppUtil" !in siblingCompletions)
-        assertTrue("globalHelper" !in siblingCompletions)
+        assertTrue("AppUtil" in siblingCompletions, "shared-environment global must be offered; got $siblingCompletions")
+        assertTrue("globalHelper" in siblingCompletions, "shared-environment global must be offered; got $siblingCompletions")
     }
 
     @Test

@@ -36,6 +36,7 @@ internal class WorkspaceModuleResolver(
     private val importedSymbolsCache = mutableMapOf<VirtualPath, Map<String, WorkspaceImportedSymbol>>()
     private val providerGlobalSymbolsCache = mutableMapOf<VirtualPath, List<WorkspaceImportedSymbol>>()
     private val sharedGlobalSymbolsCache = mutableMapOf<String, List<WorkspaceImportedSymbol>>()
+    private val sharedGlobalInFlight = mutableSetOf<String>()
 
     /**
      * Real workspace module names for require / import string-literal completions: user
@@ -344,7 +345,11 @@ internal class WorkspaceModuleResolver(
         val file = snapshot.files[provider.path] ?: return emptyList()
         val semanticSnapshot = file.semanticFile?.snapshot ?: return emptyList()
         val binder = semanticSnapshot.binder
-        val evaluator = ExpressionTypeEvaluator(binder, semanticSnapshot.workspaceContext)
+        // Strip the shared-global fallback lambda from the evaluation context: evaluating
+        // one provider's global anchors must not re-enter sharedGlobalSymbol for the same
+        // alias via another file (order-dependent ping-pong / overflow). Deterministic.
+        val evaluationContext = semanticSnapshot.workspaceContext.copy(resolveImportedSymbol = null)
+        val evaluator = ExpressionTypeEvaluator(binder, evaluationContext)
         val providerModuleType = file.moduleExportSurface?.moduleType ?: ModuleType(provider.moduleName)
         val globals = binder.declarationIndex.declarations
             .asReversed()
@@ -487,31 +492,79 @@ internal class WorkspaceModuleResolver(
      * contribute their member surfaces); the consumer's own file is excluded so a same-name
      * read inside the defining file still resolves through its own scope first.
      */
+    /**
+     * ALL chunk-level globals defined in OTHER project files (AndroLua shared global
+     * environment), deduped by alias, sorted by defining path. Used by completion
+     * enumeration so cross-file globals are offered without an import edge.
+     */
+    fun allSharedGlobalSymbols(consumerPath: VirtualPath): List<WorkspaceImportedSymbol> {
+        val result = linkedMapOf<String, WorkspaceImportedSymbol>()
+        snapshot.graph.providersByModuleName.values.asSequence()
+            .flatten()
+            .filter { provider ->
+                provider.path != consumerPath &&
+                    (provider.path.value.endsWith(".lua") || provider.path.value.endsWith(".aly"))
+            }
+            .distinctBy { it.path }
+            .sortedBy { it.path.value }
+            .forEach { provider ->
+                providerGlobalSymbols(provider).forEach { symbol ->
+                    result.putIfAbsent(symbol.alias, symbol)
+                }
+            }
+        return result.values.toList()
+    }
+
     private fun sharedGlobalSymbol(consumerPath: VirtualPath, alias: String): WorkspaceImportedSymbol? {
         if (alias.isBlank()) {
             return null
         }
-        // Candidate list is consumer-independent (the cache is shared per alias); the
-        // consumer's own file is excluded at read time so same-name resolution inside the
-        // defining file still goes through its own scope first.
-        val candidates = sharedGlobalSymbolsCache.getOrPut(alias) {
-            snapshot.graph.providersByModuleName.values.asSequence()
-                .flatten()
-                .filter { provider ->
-                    provider.path.value.endsWith(".lua") || provider.path.value.endsWith(".aly")
-                }
-                .distinctBy { it.path }
-                .sortedBy { it.path.value }
-                .mapNotNull { provider ->
-                    providerGlobalSymbols(provider).firstOrNull { symbol -> symbol.alias == alias }
-                }
-                .toList()
+        // Re-entrancy guard: evaluating a candidate file's global anchor can itself fall
+        // back to this lookup for the SAME alias from another defining file, ping-ponging
+        // between files until the stack overflows. One in-flight resolution per alias.
+        if (alias in sharedGlobalInFlight) {
+            return null
         }
-        return candidates
-            .filter { it.providerPath != consumerPath }
-            .reduceOrNull { merged, next ->
+        sharedGlobalInFlight += alias
+        try {
+            return computeSharedGlobalSymbol(alias)
+        } finally {
+            sharedGlobalInFlight -= alias
+        }
+    }
+
+    private fun computeSharedGlobalSymbol(alias: String): WorkspaceImportedSymbol? {
+        if (alias.isBlank()) {
+            return null
+        }
+        // In-flight marker wraps the WHOLE scan: evaluating candidate anchors can
+        // re-enter this lookup for the same alias from other files, and any throw
+        // mid-scan must not leave the alias blocked for later queries.
+        sharedGlobalInFlight += alias
+        println("SG-COMPUTE enter alias=$alias")
+        try {
+            val candidates = sharedGlobalSymbolsCache.getOrPut(alias) {
+                snapshot.graph.providersByModuleName.values.asSequence()
+                    .flatten()
+                    .filter { provider ->
+                        provider.path.value.endsWith(".lua") || provider.path.value.endsWith(".aly")
+                    }
+                    .distinctBy { it.path }
+                    .sortedBy { it.path.value }
+                    .mapNotNull { provider ->
+                        providerGlobalSymbols(provider).firstOrNull { symbol -> symbol.alias == alias }
+                    }
+                    .toList()
+            }
+            return candidates.reduceOrNull { merged, next ->
                 merged.copy(valueType = mergeWorkspaceGlobalExtension(merged.valueType, next.valueType))
             }
+        } catch (error: Throwable) {
+            // Deep or pathological anchor evaluation degrades this alias to "unresolved"
+            // for this query instead of poisoning/crashing the completion pipeline.
+            println("SG-FALLBACK-ERROR alias=$alias ${error::class.simpleName}")
+            return null
+        }
     }
 
     fun importTargetSymbol(target: String): WorkspaceImportedSymbol? {
