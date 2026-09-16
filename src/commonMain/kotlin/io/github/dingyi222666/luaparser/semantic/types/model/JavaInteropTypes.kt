@@ -52,33 +52,40 @@ data class JavaClassType(
     override val displayName: String
         get() = javaName.canonicalName
 
-    // JavaClassType is immutable: the flattened member maps are deterministic per
-    // instance, so memoize them in the body (body properties stay out of data-class
-    // equals/hashCode/copy). Hierarchy walks used to rebuild 500+-entry maps on every
-    // member lookup - the dominant cost of repeated Android member resolution.
-    @kotlin.jvm.Transient
-    private var allStaticMembersCache: Map<String, JavaStaticMemberType>? = null
-
-    @kotlin.jvm.Transient
-    private var allInstanceMembersCache: Map<String, JavaInstanceMemberType>? = null
-
-    @kotlin.jvm.Transient
-    private var allInnerClassesCache: Map<String, JavaClassType>? = null
-
-    fun allStaticMembers(): Map<String, JavaStaticMemberType> {
-        allStaticMembersCache?.let { return it }
-        return collectStaticMembers(linkedSetOf()).also { allStaticMembersCache = it }
+    private companion object {
+        // Flattened hierarchy maps are deterministic per instance identity of the member
+        // maps: copies made by with*Surface/copy() share the same member map references
+        // and therefore the same cache entry, so re-flattening the whole hierarchy per
+        // evaluation (hundreds of members x hundreds of lookups) disappears.
+        private val flattenCache = HashMap<String, Any>()
     }
 
-    fun allInstanceMembers(): Map<String, JavaInstanceMemberType> {
-        allInstanceMembersCache?.let { return it }
-        return collectInstanceMembers(linkedSetOf()).also { allInstanceMembersCache = it }
+    private fun <T> flattenCached(kind: String, compute: () -> T): T {
+        val key = javaName.binaryName + '#' + kind +
+            '#' + System.identityHashCode(instanceMembers) +
+            '#' + System.identityHashCode(staticMembers) +
+            '#' + System.identityHashCode(innerClasses) +
+            '#' + System.identityHashCode(superClass) +
+            '#' + System.identityHashCode(interfaces) +
+            '#' + typeParameters.hashCode()
+        @Suppress("UNCHECKED_CAST")
+        val cached = flattenCache[key] as? T
+        if (cached != null) {
+            return cached
+        }
+        val computed = compute()
+        flattenCache[key] = computed as Any
+        return computed
     }
 
-    fun allInnerClasses(): Map<String, JavaClassType> {
-        allInnerClassesCache?.let { return it }
-        return collectInnerClasses(linkedSetOf()).also { allInnerClassesCache = it }
-    }
+    fun allStaticMembers(): Map<String, JavaStaticMemberType> =
+        flattenCached("S") { collectStaticMembers(linkedSetOf()) }
+
+    fun allInstanceMembers(): Map<String, JavaInstanceMemberType> =
+        flattenCached("I") { collectInstanceMembers(linkedSetOf()) }
+
+    fun allInnerClasses(): Map<String, JavaClassType> =
+        flattenCached("C") { collectInnerClasses(linkedSetOf()) }
 
     private fun collectStaticMembers(visited: MutableSet<String>): Map<String, JavaStaticMemberType> {
         if (!visited.add(javaName.binaryName)) {

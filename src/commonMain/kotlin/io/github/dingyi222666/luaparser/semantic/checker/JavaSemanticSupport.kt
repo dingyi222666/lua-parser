@@ -125,6 +125,7 @@ internal fun JavaInstanceType.allReadableInstanceJavaBeanProperties(): List<Java
 }
 
 internal fun Type.hydrateJavaProviderType(resolveImportTarget: JavaImportResolver): Type {
+
     return when (this) {
         is AppliedType -> hydrateAppliedJavaProviderType(resolveImportTarget)
         is ClassType -> hydrateJavaClassType(resolveImportTarget)
