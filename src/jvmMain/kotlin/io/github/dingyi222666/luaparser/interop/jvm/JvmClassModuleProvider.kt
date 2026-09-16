@@ -1276,6 +1276,19 @@ class JvmClassModuleProvider(
      * Binary/dotted/underscore AndroLua aliases remain loadable via candidateClassNames and
      * path recovery; they are not fingerprint claims. Never invents names outside reflection.
      */
+    /**
+     * Module name for a reflected class provider. Nested Android resource classes reflect
+     * with lowercase simple names (android.R$string → "string"); a bare claim of those
+     * names outranks the Lua standard library overlay for the same module name and strips
+     * every string.* member from completion/hover. Qualify only std-colliding nested
+     * names ("R.string"); ordinary classes keep the bare simple name.
+     */
+    private fun classModuleSimpleName(clazz: Class<*>): String {
+        val simple = clazz.simpleName
+        val enclosing = clazz.enclosingClass ?: return simple
+        return if (simple in LUA_STD_MODULE_NAMES) "${enclosing.simpleName}.$simple" else simple
+    }
+
     private fun reflectedClassProviderModuleNames(clazz: Class<*>): Set<String> {
         val simple = clazz.simpleName.takeIf(String::isNotBlank)
             ?: clazz.name.substringAfterLast('$').substringAfterLast('.').takeIf(String::isNotBlank)
@@ -1346,7 +1359,7 @@ class JvmClassModuleProvider(
         val shellClassType = runCatching { typeReferenceForJavaClass(clazz) }
             .getOrElse { JavaClassType(javaName = javaTypeNameFor(clazz)) }
         return ModuleType(
-            moduleName = clazz.simpleName,
+            moduleName = classModuleSimpleName(clazz),
             fields = linkedMapOf("__class" to JavaInstanceType(shellClassType))
         )
     }
@@ -1394,7 +1407,7 @@ class JvmClassModuleProvider(
             }
 
         return ModuleType(
-            moduleName = clazz.simpleName,
+            moduleName = classModuleSimpleName(clazz),
             fields = fields,
             methods = methods
         ).also { shallowModuleTypeCache[cacheKey] = it }
@@ -1522,7 +1535,7 @@ class JvmClassModuleProvider(
             }
 
         return ModuleType(
-            moduleName = clazz.simpleName,
+            moduleName = classModuleSimpleName(clazz),
             fields = fields,
             methods = methods
         )
@@ -2017,6 +2030,11 @@ class JvmClassModuleProvider(
 
     companion object {
         private const val MAX_REFLECTED_INNER_CLASS_DEPTH = 1
+        // Lua standard library module names a reflected nested class simple name must never
+        // claim bare (android.R$string → "string" used to shadow the string library).
+        private val LUA_STD_MODULE_NAMES = setOf(
+            "bit32", "coroutine", "debug", "io", "math", "os", "package", "string", "table", "utf8"
+        )
         // Cycle guard + practical member expand depth for deep class providers.
         private const val MAX_DEEP_HIERARCHY_EXPAND_DEPTH = 2
         // Lightweight hierarchy skeleton depth for assignability (transitive supers/interfaces).

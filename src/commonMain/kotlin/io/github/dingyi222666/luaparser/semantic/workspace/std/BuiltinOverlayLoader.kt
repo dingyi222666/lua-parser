@@ -1539,6 +1539,12 @@ object BuiltinOverlayLoader {
             normalizedVersion = LuaVersion.ANDROLUA_5_3,
             versionSegment = "androlua5.3",
             globalsResourcePath = ANDROLUA_RESOURCE_ROOT + "_G.lua",
+            // LuaJ (AndroLua's host) keeps the 5.2-era bit32 API available under 5.3; real
+            // projects call it (bit32.band(app.applicationInfo.flags, ...)), so the AndroLua
+            // flavor mounts a full bit32 provider while stock Lua 5.3 keeps the compat global.
+            providerModuleResourcePaths = lua53.providerModuleResourcePaths + (
+                "bit32" to "/io/github/dingyi222666/luaparser/semantic/workspace/std/lua53/bit32.lua"
+                ),
             rawProviderModuleResources = linkedMapOf(
                 "luajava" to RawProviderModuleResource(
                     resourcePath = ANDROLUA_LUAJAVA_RESOURCE,
@@ -1577,6 +1583,10 @@ object BuiltinOverlayLoader {
             ),
             moduleFieldNames = linkedMapOf(
                 *lua53.moduleFieldNames.entries.map { it.key to it.value }.toTypedArray(),
+                "bit32" to linkedSetOf(
+                    "arshift", "band", "bnot", "bor", "bswap", "btest", "bxor",
+                    "extract", "lshift", "replace", "rshift", "tobit", "tohex"
+                ),
                 "activity" to emptySet<String>(),
                 "service" to emptySet<String>(),
                 "this" to emptySet<String>(),
@@ -2386,7 +2396,20 @@ object BuiltinOverlayLoader {
         "test",
         "toast",
         "xml",
-        "xml2table"
+        "xml2table",
+        // Lua standard library module names: android resource classes reflect as lowercase
+        // simple names (android.R$string → "string", R$layout → "layout") and must never
+        // claim the std module a global identifier resolves to.
+        "bit32",
+        "coroutine",
+        "debug",
+        "io",
+        "math",
+        "os",
+        "package",
+        "string",
+        "table",
+        "utf8"
     )
     private val DOCUMENTED_CALLABLE_GLOBAL_VALUE_NAMES = setOf("ipairs", "pairs")
     private val LUJAVA_SURFACE_FIELD_NAMES = setOf("loaded", "imported", "ids", "luadir")

@@ -11,7 +11,9 @@ import kotlin.test.assertTrue
  * TASK-342 corpus: package.path / provider search order — first hit wins deterministically.
  *
  * Product model (WorkspaceModuleGraphBuilder.providerComparator):
- * - Provider sources rank: LEGACY_TOP_LEVEL < VIRTUAL_PATH < EXTRA < STANDARD_LIBRARY_OVERLAY.
+ * - Provider sources rank: LEGACY_TOP_LEVEL < VIRTUAL_PATH < STANDARD_LIBRARY_OVERLAY < EXTRA
+ *   (the std overlay must outrank the mounted JVM class catalog — android.R$string used to
+ *   claim module name "string" and strip the string library surface).
  * - Within a rank, lower path.value sorts first → activeProviders = providers.first().
  * - This is the workspace analogue of package.path template order (first match wins).
  *
