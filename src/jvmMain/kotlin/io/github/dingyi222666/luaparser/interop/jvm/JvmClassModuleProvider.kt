@@ -1065,18 +1065,17 @@ class JvmClassModuleProvider(
      * members (LuaActivity.get/set/call/showToast/…) without host-specific configuration.
      * Null when the resource is absent (never invents classes).
      */
+    /**
+     * Per-instance view of the process-wide bundled runtime jar ([Companion.bundledAndroLuaRuntimeJarShared]).
+     * Kept as an instance lazy because provider instances are created per workspace update —
+     * the shared lazy below is what guarantees exactly one temp extraction per JVM.
+     */
     private val bundledAndroLuaRuntimeJar: File? by lazy {
-        runCatching {
-            val resource = JvmClassModuleProvider::class.java
-                .getResourceAsStream("/io/github/dingyi222666/luaparser/interop/jvm/androlua-runtime.jar")
-                ?: return@lazy null
-            val target = Files.createTempFile("androlua-runtime", ".jar")
-            resource.use { input ->
-                Files.copy(input, target, java.nio.file.StandardCopyOption.REPLACE_EXISTING)
-            }
-            target.toFile().takeIf { it.isFile && it.length() > 0 }
-        }.getOrNull()
+        companionRuntimeJarRef
     }
+
+    /** Test surface: two provider instances must observe the SAME extracted jar file. */
+    internal fun bundledRuntimeJarForDiagnostics(): File? = bundledAndroLuaRuntimeJar
 
     private fun resolveReflectiveClasspathFiles(configuration: JvmWorkspaceConfiguration): List<File> {
         val entries = mutableListOf<File>()
@@ -2030,6 +2029,30 @@ class JvmClassModuleProvider(
 
     companion object {
         private const val MAX_REFLECTED_INNER_CLASS_DEPTH = 1
+
+        /**
+         * Process-wide single extraction of the bundled runtime jar.
+         *
+         * Provider instances are created per workspace update (per keystroke in an LSP
+         * session); an instance-level temp extraction used to leak one 1.3MB copy per
+         * update into java.io.tmpdir — ~36k copies / ~45GiB over a long demo session.
+         * One shared lazy + deleteOnExit caps the cost at one file per JVM, removed on
+         * clean exit.
+         */
+        private val companionRuntimeJarRef: File? by lazy {
+            runCatching {
+                val resource = JvmClassModuleProvider::class.java
+                    .getResourceAsStream("/io/github/dingyi222666/luaparser/interop/jvm/androlua-runtime.jar")
+                    ?: return@lazy null
+                val target = Files.createTempFile("androlua-runtime", ".jar")
+                resource.use { input ->
+                    Files.copy(input, target, java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+                }
+                val file = target.toFile().takeIf { it.isFile && it.length() > 0 }
+                file?.deleteOnExit()
+                file
+            }.getOrNull()
+        }
         // Lua standard library module names a reflected nested class simple name must never
         // claim bare (android.R$string → "string" used to shadow the string library).
         private val LUA_STD_MODULE_NAMES = setOf(
