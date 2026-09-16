@@ -69,8 +69,27 @@ internal class ExpressionUsageChecker(
     private val seenDiagnostics = linkedSetOf<String>()
     private val readLocalDeclarationIds = linkedSetOf<DeclarationId>()
 
+    object UsagePerfCounters {
+        val EVAL_COUNT = java.util.concurrent.atomic.AtomicLong()
+        val EVAL_NANOS = java.util.concurrent.atomic.AtomicLong()
+        val MEMBER_COUNT = java.util.concurrent.atomic.AtomicLong()
+        val MEMBER_NANOS = java.util.concurrent.atomic.AtomicLong()
+    }
+
     fun check(chunk: ChunkNode): List<Diagnostic> {
+        if (System.getenv("LUA_PARSER_PERF") != null) {
+            UsagePerfCounters.EVAL_COUNT.set(0); UsagePerfCounters.EVAL_NANOS.set(0)
+            UsagePerfCounters.MEMBER_COUNT.set(0); UsagePerfCounters.MEMBER_NANOS.set(0)
+        }
+        val perfT0 = if (System.getenv("LUA_PARSER_PERF") != null) System.nanoTime() else 0L
         val diagnostics = mutableListOf<Diagnostic>()
+        if (perfT0 != 0L) {
+            println(
+                "PERF usage-check total=${(System.nanoTime() - perfT0) / 1_000_000}ms " +
+                    "eval=${UsagePerfCounters.EVAL_COUNT.get()}(${UsagePerfCounters.EVAL_NANOS.get() / 1_000_000}ms) " +
+                    "member=${UsagePerfCounters.MEMBER_COUNT.get()}(${UsagePerfCounters.MEMBER_NANOS.get() / 1_000_000}ms)"
+            )
+        }
         workspaceContext.unresolvedLuaJavaTargets.forEach { target ->
             addDiagnostic(
                 diagnostics = diagnostics,
@@ -295,6 +314,8 @@ internal class ExpressionUsageChecker(
     override fun visitMemberExpression(node: MemberExpression, value: MutableList<Diagnostic>) {
         // Only the base can be a local read; the member identifier is a field/method name.
         visitExpressionNode(node.base, value)
+        val perfT0 = if (System.getenv("LUA_PARSER_PERF") != null) System.nanoTime() else 0L
+        UsagePerfCounters.MEMBER_COUNT.incrementAndGet()
         val lexicalScopeId = scopeIdFor(node)
         val baseType = evaluator.evaluate(node.base)
             .hydrateJavaProviderType(workspaceContext.resolveImportTarget)
@@ -304,6 +325,9 @@ internal class ExpressionUsageChecker(
             preferMethod = node.indexer == ":",
             lexicalScopeId = lexicalScopeId
         )
+        if (perfT0 != 0L) {
+            UsagePerfCounters.MEMBER_NANOS.addAndGet(System.nanoTime() - perfT0)
+        }
         if (!resolution.isSuccess && isJavaDiagnosticSurface(resolution.baseType ?: baseType, lexicalScopeId)) {
             addDiagnostic(
                 diagnostics = value,

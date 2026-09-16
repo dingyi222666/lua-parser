@@ -147,6 +147,19 @@ class ExpressionTypeEvaluator internal constructor(
 
     fun evaluate(node: ExpressionNode): Type {
         expressionTypeCache[node]?.let { return it }
+        val perfT0 = if (System.getenv("LUA_PARSER_PERF") != null) System.nanoTime() else 0L
+        if (perfT0 != 0L) {
+            ExpressionUsageChecker.UsagePerfCounters.EVAL_COUNT.incrementAndGet()
+        }
+        val result = evaluateInternal(node)
+        if (perfT0 != 0L) {
+            ExpressionUsageChecker.UsagePerfCounters.EVAL_NANOS.addAndGet(System.nanoTime() - perfT0)
+        }
+        return result
+    }
+
+    private fun evaluateInternal(node: ExpressionNode): Type {
+        expressionTypeCache[node]?.let { return it }
         val scopeId = binder.positionQueries.getScopeAt(node.range.start)?.id ?: binder.scopeGraph.rootScope.id
         val type = evaluate(node, Context(lexicalScopeId = scopeId))
         expressionTypeCache[node] = type

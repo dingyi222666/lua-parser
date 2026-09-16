@@ -541,7 +541,6 @@ internal class WorkspaceModuleResolver(
         // re-enter this lookup for the same alias from other files, and any throw
         // mid-scan must not leave the alias blocked for later queries.
         sharedGlobalInFlight += alias
-        println("SG-COMPUTE enter alias=$alias")
         try {
             val candidates = sharedGlobalSymbolsCache.getOrPut(alias) {
                 snapshot.graph.providersByModuleName.values.asSequence()
@@ -562,7 +561,6 @@ internal class WorkspaceModuleResolver(
         } catch (error: Throwable) {
             // Deep or pathological anchor evaluation degrades this alias to "unresolved"
             // for this query instead of poisoning/crashing the completion pipeline.
-            println("SG-FALLBACK-ERROR alias=$alias ${error::class.simpleName}")
             return null
         }
     }
