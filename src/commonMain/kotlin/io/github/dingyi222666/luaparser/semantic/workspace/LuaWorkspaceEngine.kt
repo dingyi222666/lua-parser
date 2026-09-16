@@ -282,7 +282,8 @@ open class LuaWorkspaceEngine(
             baseSnapshot = baseSnapshot,
             sources = nextSources,
             pathsToAnalyze = pathsToAnalyze,
-            previous = previous
+            previous = previous,
+            upserts = delta.upserts.keys
         )
         retainCachedDocuments(nextSources.keys)
         reportBindingProgress(pathsToAnalyze.sortedBy { it.value }, parsingTargets.size, totalFiles, reporter)
@@ -318,7 +319,8 @@ open class LuaWorkspaceEngine(
         baseSnapshot: WorkspaceSnapshot,
         sources: Map<VirtualPath, String>,
         pathsToAnalyze: Set<VirtualPath>,
-        previous: WorkspaceSnapshot?
+        previous: WorkspaceSnapshot?,
+        upserts: Set<VirtualPath> = pathsToAnalyze
     ): WorkspaceSnapshot {
         val files = linkedMapOf<VirtualPath, WorkspaceSnapshot.FileSnapshot>()
         baseSnapshot.files.forEach { (path, fileSnapshot) ->
@@ -372,7 +374,10 @@ open class LuaWorkspaceEngine(
             // complete, so the first pass bound against their final state and the sweep
             // would deterministically re-produce it (a full pipeline run per keystroke
             // for single-file edits otherwise).
-            scc.any { peer -> peer != path && peer in pathsToAnalyze }
+            // Compare against UPSERTS (actually re-edited files), not the affected set:
+            // an affected peer carries its completed semantic file from the previous
+            // snapshot, so the first pass already bound against its final state.
+            scc.any { peer -> peer != path && peer in upserts }
         }
         if (cycleReAnalysis.isNotEmpty()) {
             // Bounded fixpoint, capped at MAX_CYCLE_REANALYSIS_PASSES sweeps. One sweep lets each

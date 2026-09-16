@@ -68,3 +68,4 @@ sh.exe.stackdump
 tools/monaco-lsp-demo/workspace/libs/
 tools/monaco-lsp-demo/workspace/image/
 tools/monaco-lsp-demo/workspace/.using
+.idea/

@@ -138,6 +138,10 @@ class ExpressionTypeEvaluator internal constructor(
     private val layoutViewClassTypeCache = mutableMapOf<String, Type>()
     private val layoutSuggestionsCache = mutableMapOf<String, List<LuaLayoutPropertySuggestion>>()
     private val loadlayoutIdsTableTypeCache = mutableMapOf<DeclarationId, Type>()
+    // Root-name -> member assignments, built once per evaluator. Replaces the per-value
+    // full-declaration scans in visibleMemberDeclarationsForValue / nested path collection
+    // (O(declarations) per typed value was quadratic across a document).
+    private var memberAssignmentsByRoot: Map<String, List<MemberAssignmentAnchor>>? = null
     // One-shot loadlayout(…, ids) → layout-table index for the whole binder root.
     private var loadlayoutRootUsageIndex: Map<String, List<TableConstructorExpression>>? = null
 
@@ -3147,25 +3151,28 @@ class ExpressionTypeEvaluator internal constructor(
         // resolution below (the assignment's root must resolve to THIS declaration), and
         // field declarations may be owned by scope nodes outside the query position's
         // owner chain (callbacks assigned to member functions, etc.).
-        val candidates = binder.declarationIndex.declarations.filter { candidate ->
-            candidate.kind in setOf(DeclarationKind.FIELD, DeclarationKind.METHOD) &&
-                candidate.anchorNode != null
-        }
         val grouped = linkedMapOf<List<String>, MutableList<Pair<String, Type>>>()
-        candidates.forEach { candidate ->
-            val anchorMember = candidate.anchorNode?.parent as? MemberExpression ?: return@forEach
-            // Walk the LHS chain: segments between the root identifier and the assigned
-            // member form the sub-table path (data.scrollData.last → path [scrollData]).
+        memberAssignmentsByRootName()[declaration.name].orEmpty().forEach { anchor ->
+            val candidate = anchor.declaration
+            val anchorMember = anchor.anchorMember
+            // Segments between the root identifier and the assigned member form the
+            // sub-table path (data.scrollData.last → path [scrollData]).
             val segments = ArrayDeque<String>()
             var cursor: ExpressionNode = anchorMember
             while (cursor is MemberExpression) {
                 segments.addFirst(cursor.identifier.name)
                 cursor = cursor.base
             }
-            val root = cursor as? Identifier ?: return@forEach
-            if (root.name != declaration.name || segments.isEmpty()) {
+            if (segments.isEmpty()) {
                 return@forEach
             }
+            // The bucket matched the root NAME; the root must also RESOLVE to this
+            // declaration (same-named locals in other scopes must not merge in).
+            var rootCursor: ExpressionNode = anchorMember
+            while (rootCursor is MemberExpression) {
+                rootCursor = rootCursor.base
+            }
+            val root = rootCursor as? Identifier ?: return@forEach
             val scopeId = binder.positionQueries.getScopeAt(root.range.start)?.id ?: context.lexicalScopeId
             val resolvedRoot = findVisibleValueDeclaration(
                 root.name,
@@ -3224,25 +3231,58 @@ class ExpressionTypeEvaluator internal constructor(
         }
     }
 
+    /**
+     * One member-assignment declaration grouped by the ROOT identifier name of its LHS
+     * chain (`data.scrollData.last = b` -> root "data"), plus the full LHS member
+     * expression for path/segment inspection.
+     */
+    private data class MemberAssignmentAnchor(
+        val declaration: BinderDeclaration,
+        val rootName: String,
+        val anchorMember: MemberExpression
+    )
+
+    /** Root-name index over member-assignment declarations, built once per evaluator. */
+    private fun memberAssignmentsByRootName(): Map<String, List<MemberAssignmentAnchor>> {
+        memberAssignmentsByRoot?.let { return it }
+        val index = linkedMapOf<String, MutableList<MemberAssignmentAnchor>>()
+        binder.declarationIndex.declarations.forEach { candidate ->
+            if (candidate.kind != DeclarationKind.FIELD && candidate.kind != DeclarationKind.METHOD) {
+                return@forEach
+            }
+            val anchorMember = candidate.anchorNode?.parent as? MemberExpression ?: return@forEach
+            var cursor: ExpressionNode = anchorMember
+            while (cursor is MemberExpression) {
+                cursor = cursor.base
+            }
+            val root = cursor as? Identifier ?: return@forEach
+            index.getOrPut(root.name) { mutableListOf() }.add(
+                MemberAssignmentAnchor(candidate, root.name, anchorMember)
+            )
+        }
+        memberAssignmentsByRoot = index
+        return index
+    }
+
     private fun visibleMemberDeclarationsForValue(
         declaration: BinderDeclaration,
         context: Context
     ): List<BinderDeclaration> {
         val valueName = declaration.name
         val lexicalOwner = binder.scopeGraph.getScope(context.lexicalScopeId)?.ownerNode
+        val candidates = memberAssignmentsByRootName()[valueName].orEmpty()
+            .map { it.declaration }
         val scopedMatches = lexicalOwner?.let { owner ->
-            binder.declarationIndex.declarations.filter { candidate ->
-                candidate.kind in setOf(DeclarationKind.FIELD, DeclarationKind.METHOD) &&
-                    isDeclaredInLexicalOwnerChain(candidate, owner) &&
+            candidates.filter { candidate ->
+                isDeclaredInLexicalOwnerChain(candidate, owner) &&
                     isMemberBoundToValueDeclaration(candidate, declaration, valueName, context)
             }
         }.orEmpty()
         if (scopedMatches.isNotEmpty()) {
             return scopedMatches
         }
-        return binder.declarationIndex.declarations.filter { candidate ->
-            candidate.kind in setOf(DeclarationKind.FIELD, DeclarationKind.METHOD) &&
-                isMemberBoundToValueDeclaration(candidate, declaration, valueName, context)
+        return candidates.filter { candidate ->
+            isMemberBoundToValueDeclaration(candidate, declaration, valueName, context)
         }
     }
 
