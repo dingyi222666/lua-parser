@@ -74,6 +74,22 @@ class JvmClassModuleProvider(
     // classpath fields + env values + well-known SDK roots); env and the filesystem SDK roots
     // cannot change mid-process, so entries are intentionally never invalidated.
     private val reflectiveClasspathFilesCache = linkedMapOf<String, List<File>>()
+    // Negative Class.forName cache: CNFE carries a full stack trace, and probing
+    // thousands of absent names (import guesses, wildcard expansions) dominated analysis
+    // time. Keyed per resolved classloader string so a classpath change re-probes.
+    private val classLoadMisses = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
+
+    private fun loadClassOrNull(className: String, classLoader: ClassLoader): Class<*>? {
+        val key = className + '#' + System.identityHashCode(classLoader)
+        if (classLoadMisses.containsKey(key)) {
+            return null
+        }
+        val loaded = runCatching { Class.forName(className, false, classLoader) }.getOrNull()
+        if (loaded == null) {
+            classLoadMisses[key] = true
+        }
+        return loaded
+    }
 
     fun providersFor(metadata: Map<String, String>): Map<VirtualPath, WorkspaceSnapshot.FileSnapshot> {
         return providersFor(JvmWorkspaceConfiguration.fromMetadata(metadata))
@@ -89,8 +105,7 @@ class JvmClassModuleProvider(
 
         return requested.mapNotNull { request ->
             // Never invent framework members: only mount classes that Class.forName can load.
-            runCatching { Class.forName(request.className, false, request.classLoader) }
-                .getOrNull()
+            loadClassOrNull(request.className, request.classLoader)
                 ?.let(::providerForClass)
         }.associate { it.first to it.second }
     }
@@ -253,7 +268,7 @@ class JvmClassModuleProvider(
             allowPackageEnumeration = false
         )
         val clazz = loads.firstOrNull()?.let { request ->
-            runCatching { Class.forName(request.className, false, request.classLoader) }.getOrNull()
+            loadClassOrNull(request.className, request.classLoader)
         } ?: return null
         val (providerPath, _) = providerForClass(clazz)
         return WorkspaceImportedSymbol(
@@ -377,7 +392,7 @@ class JvmClassModuleProvider(
     ): List<Class<*>> {
         return resolveClassLoads(importText, importPrefixes, classLoader, configuration)
             .mapNotNull { request ->
-                runCatching { Class.forName(request.className, false, request.classLoader) }.getOrNull()
+                loadClassOrNull(request.className, request.classLoader)
             }
     }
 
