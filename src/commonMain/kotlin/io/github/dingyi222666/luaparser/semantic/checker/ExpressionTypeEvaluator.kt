@@ -419,6 +419,17 @@ class ExpressionTypeEvaluator internal constructor(
     }
 
     private fun evaluateCallExpression(node: CallExpression, context: Context): Type {
+        // `f{table}` sugar: the parser emits a bare CallExpression whose base is the
+        // TableCallExpression carrying the real member and its table argument. Evaluating
+        // the wrapper as-is would call the inner call's RESULT with zero arguments and
+        // dead-end every fluent chain through a table argument
+        // (`animator.addListener{...}.start()`). Delegate to the inner call instead.
+        if (node.arguments.isEmpty() && !node.bad) {
+            val tableCallBase = node.base as? TableCallExpression
+            if (tableCallBase != null) {
+                return evaluateCallExpression(tableCallBase, context)
+            }
+        }
         resolveBuiltinRequire(node, context)?.let { return it }
         resolveDynamicImportCall(node, context)?.let { return it }
         resolveLuaJavaHelperColonCall(node, context)?.let { return it }
@@ -575,13 +586,6 @@ class ExpressionTypeEvaluator internal constructor(
         declaration: BinderDeclaration?,
         priorFailure: CallFailureReason?
     ): Type? {
-        // Only recover from ranking / non-callable shells that still expose Java signatures.
-        if (priorFailure != null &&
-            priorFailure != CallFailureReason.NO_MATCHING_SIGNATURE &&
-            priorFailure != CallFailureReason.NON_CALLABLE
-        ) {
-            return null
-        }
         val callableResolution = callChecker.resolveCallable(callableType, lexicalScopeId, declaration)
         val signatures = callableResolution.signatures
         if (signatures.isEmpty()) {
@@ -592,7 +596,21 @@ class ExpressionTypeEvaluator internal constructor(
         val arityCompatible = signatures.filter { signature ->
             javaCallArityCompatible(signature, argumentTypes.size)
         }
-        if (arityCompatible.isEmpty()) {
+        // ALua luajava: a void-returning instance method yields the receiver, so fluent
+        // chains keep working (`animator.addListener{...}.start()`), and listener tables /
+        // functions adapt to interface parameters at runtime even when static assignability
+        // cannot prove them (that rejection surfaces as ARGUMENT_MISMATCH and must not gate
+        // this recovery). When every arity-compatible overload returns void, report NIL —
+        // aluaJavaFluentReturnType substitutes the receiver surface. Non-void overloads keep
+        // the conservative TASK-659 refusal (never invent an unproven return).
+        if (arityCompatible.isNotEmpty() && arityCompatible.all { it.returnType == PrimitiveType.NIL }) {
+            return PrimitiveType.NIL
+        }
+        // Only recover from ranking / non-callable shells that still expose Java signatures.
+        if (priorFailure != null &&
+            priorFailure != CallFailureReason.NO_MATCHING_SIGNATURE &&
+            priorFailure != CallFailureReason.NON_CALLABLE
+        ) {
             return null
         }
         val softCompatible = arityCompatible.filter { signature ->
