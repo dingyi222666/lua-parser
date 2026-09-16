@@ -30,6 +30,9 @@ internal class WorkspaceModuleResolver(
     }
 
     private val activeProviderCache = mutableMapOf<String, WorkspaceModuleGraph.ModuleProvider?>()
+    // Lazy alias index over snapshot.extraProviders (the mounted android.jar catalog is
+    // thousands of entries): alias/simple-name -> provider, classes-entries preferred.
+    private var extraProviderAliasIndex: Pair<Map<String, WorkspaceModuleGraph.ModuleProvider>, Map<String, WorkspaceModuleGraph.ModuleProvider>>? = null
     private val importedSymbolsCache = mutableMapOf<VirtualPath, Map<String, WorkspaceImportedSymbol>>()
     private val providerGlobalSymbolsCache = mutableMapOf<VirtualPath, List<WorkspaceImportedSymbol>>()
     private val sharedGlobalSymbolsCache = mutableMapOf<String, List<WorkspaceImportedSymbol>>()
@@ -706,35 +709,43 @@ internal class WorkspaceModuleResolver(
         // Prefer reflective class modules under __jvm__/classes so package providers and
         // non-class extras never win simple-name recovery for Android-Lua source imports
         // (import "File" / import "BigDecimal" under default or custom importPrefixes).
-        val classMatch = snapshot.extraProviders.entries.firstOrNull { (path, file) ->
-            val value = path.value
-            if (!value.startsWith("__jvm__/classes/")) {
-                return@firstOrNull false
+        // The alias index is built once per resolver: the provider catalog spans thousands
+        // of entries and this lookup runs on every Java member resolution.
+        val (classIndex, otherIndex) = extraProviderAliasIndex ?: run {
+            val classEntries = linkedMapOf<String, WorkspaceModuleGraph.ModuleProvider>()
+            val otherEntries = linkedMapOf<String, WorkspaceModuleGraph.ModuleProvider>()
+            fun register(index: MutableMap<String, WorkspaceModuleGraph.ModuleProvider>, key: String, provider: WorkspaceModuleGraph.ModuleProvider) {
+                if (key.isBlank()) {
+                    return
+                }
+                index.putIfAbsent(key, provider)
             }
-            val moduleName = file.moduleExportSurface?.moduleType?.moduleName
-            moduleName == alias ||
-                moduleName == simpleAlias ||
-                value.endsWith("/$simpleAlias.lua") ||
-                value.endsWith("\$$simpleAlias.lua") ||
-                value.endsWith("/$alias.lua") ||
-                value.endsWith("\$$alias.lua")
+            snapshot.extraProviders.forEach { (path, file) ->
+                val value = path.value
+                val moduleName = file.moduleExportSurface?.moduleType?.moduleName
+                val provider = WorkspaceModuleGraph.ModuleProvider(
+                    moduleName = moduleName ?: simpleAlias,
+                    path = path,
+                    source = WorkspaceModuleGraph.ProviderSource.EXTRA_WORKSPACE_PROVIDER
+                )
+                val index = if (value.startsWith("__jvm__/classes/")) classEntries else otherEntries
+                moduleName?.let { name ->
+                    register(index, name, provider)
+                    register(index, name.substringAfterLast('.').substringAfterLast('$').substringAfterLast('_'), provider)
+                }
+                val segment = value.substringAfterLast('/')
+                if (segment.endsWith(".lua")) {
+                    val base = segment.removeSuffix(".lua")
+                    register(index, base, provider)
+                    register(index, base.substringAfterLast('$'), provider)
+                }
+            }
+            val pair = classEntries to otherEntries
+            extraProviderAliasIndex = pair
+            pair
         }
-        val match = classMatch ?: snapshot.extraProviders.entries.firstOrNull { (path, file) ->
-            val moduleName = file.moduleExportSurface?.moduleType?.moduleName
-            moduleName == alias ||
-                moduleName == simpleAlias ||
-                path.value.endsWith("/$simpleAlias.lua") ||
-                path.value.endsWith("\$$simpleAlias.lua") ||
-                path.value.endsWith("/$alias.lua") ||
-                path.value.endsWith("\$$alias.lua")
-        } ?: return null
-        val moduleName = match.value.moduleExportSurface?.moduleType?.moduleName
-            ?: simpleAlias
-        return WorkspaceModuleGraph.ModuleProvider(
-            moduleName = moduleName,
-            path = match.key,
-            source = WorkspaceModuleGraph.ProviderSource.EXTRA_WORKSPACE_PROVIDER
-        )
+        return (classIndex[alias] ?: classIndex[simpleAlias])
+            ?: (otherIndex[alias] ?: otherIndex[simpleAlias])
     }
 
     /**
