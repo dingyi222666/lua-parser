@@ -25,6 +25,7 @@ import io.github.dingyi222666.luaparser.semantic.binder.DeclarationOrigin
 import io.github.dingyi222666.luaparser.semantic.binder.DeclarationOwner
 import io.github.dingyi222666.luaparser.semantic.binder.ScopeId
 import io.github.dingyi222666.luaparser.semantic.binder.isChunkGlobalFunctionDeclaration
+import io.github.dingyi222666.luaparser.semantic.binder.rangeContains
 import io.github.dingyi222666.luaparser.semantic.checker.CallChecker
 import io.github.dingyi222666.luaparser.semantic.checker.CallResolution
 import io.github.dingyi222666.luaparser.semantic.checker.ExpressionTypeEvaluator
@@ -378,7 +379,7 @@ internal class SignatureHelpProvider(
 
         arguments.forEachIndexed { index, argument ->
             val range = argument.range
-            if (containsExclusive(range, position)) {
+            if (rangeContains(range, position)) {
                 return receiverOffset + index
             }
 
@@ -548,7 +549,6 @@ internal class SignatureHelpProvider(
         signatures: List<FunctionType> = emptyList()
     ): List<TypeParameterType> {
         signatures.firstOrNull { it.typeParameters.isNotEmpty() }?.typeParameters
-            ?.takeIf { it.isNotEmpty() }
             ?.let { return normalizeTypeParameters(it) }
 
         val fromCallable = (callableType as? CallableType)
@@ -849,7 +849,7 @@ internal class SignatureHelpProvider(
             ?: binder.scopeGraph.rootScope.id
         val parameterDeclarations = binder.declarationIndex
             .getOwnedDeclarations(DeclarationOwner.Declaration(declaration.id))
-            .filter { it.kind.name == "PARAMETER" }
+            .filter { it.kind == DeclarationKind.PARAMETER }
         val parameterDeclarationsByName = parameterDeclarations.associateBy { it.name }
         val parameterTags = declaration.documentation?.docComment?.tags.orEmpty().filterIsInstance<ParamTagSyntax>()
         val declaredSignature = (declaration.declaredType as? CallableType)?.callSignatures?.firstOrNull()
@@ -920,7 +920,7 @@ internal class SignatureHelpProvider(
         for (returnSite in returnSites) {
             val returnedIdentifier = returnSite.statement?.arguments?.singleOrNull() as? Identifier ?: return null
             val returnedDeclaration = findVisibleValueDeclaration(returnedIdentifier.name, returnedIdentifier.range.start)
-            if (returnedDeclaration?.kind?.name != "PARAMETER" || returnedDeclaration.owner != DeclarationOwner.Declaration(declaration.id)) {
+            if (returnedDeclaration?.kind != DeclarationKind.PARAMETER || returnedDeclaration.owner != DeclarationOwner.Declaration(declaration.id)) {
                 return null
             }
             val returnedType = parameterTypesByName[returnedIdentifier.name]
@@ -1010,7 +1010,7 @@ internal class SignatureHelpProvider(
         while (scope != null) {
             val lexicalOwner = scope.ownerNode
             val declaration = binder.declarationIndex.declarations.firstOrNull { candidate ->
-                candidate.kind.name == "METHOD" &&
+                candidate.kind == DeclarationKind.METHOD &&
                     lexicalOwner != null &&
                     isDeclaredInLexicalOwnerChain(candidate, lexicalOwner) &&
                     isMethodBoundToBaseIdentifier(binder, candidate, baseIdentifier.name) &&
@@ -1022,7 +1022,7 @@ internal class SignatureHelpProvider(
             scope = scope.parentId?.let(binder.scopeGraph::getScope)
         }
         return binder.declarationIndex.declarations.firstOrNull { candidate ->
-            candidate.kind.name == "METHOD" &&
+            candidate.kind == DeclarationKind.METHOD &&
                 isMethodBoundToBaseIdentifier(binder, candidate, baseIdentifier.name) &&
                 isVisibleAt(candidate, node.identifier.range.start)
         }
@@ -1085,7 +1085,7 @@ internal class SignatureHelpProvider(
                 declaration.owner == io.github.dingyi222666.luaparser.semantic.binder.DeclarationOwner.Declaration(ownerName.id)
         }
         return ownerMembers.firstOrNull { declaration ->
-            if (preferMethod) declaration.kind.name == "METHOD" else true
+            if (preferMethod) declaration.kind == DeclarationKind.METHOD else true
         } ?: ownerMembers.firstOrNull()
     }
 
@@ -1093,7 +1093,7 @@ internal class SignatureHelpProvider(
         val normalized = io.github.dingyi222666.luaparser.semantic.types.resolve.TypeExpansion.expandForSurface(baseType, lexicalScopeId, binder)
         val displayName = normalized.displayName.substringBefore('<')
         return binder.declarationIndex.declarations.firstOrNull { declaration ->
-            declaration.kind.name == "CLASS" && declaration.name == displayName
+            declaration.kind == DeclarationKind.CLASS && declaration.name == displayName
         }
     }
 
@@ -1343,10 +1343,6 @@ internal class SignatureHelpProvider(
 
     private fun contains(range: Range, position: Position): Boolean {
         return compare(position, range.start) >= 0 && compare(position, range.end) <= 0
-    }
-
-    private fun containsExclusive(range: Range, position: Position): Boolean {
-        return compare(position, range.start) >= 0 && compare(position, range.end) < 0
     }
 
     private fun compare(left: Position, right: Position): Int {

@@ -5,12 +5,12 @@ import io.github.dingyi222666.luaparser.parser.ast.node.CallExpression
 import io.github.dingyi222666.luaparser.parser.ast.node.ConstantNode
 import io.github.dingyi222666.luaparser.parser.ast.node.Identifier
 import io.github.dingyi222666.luaparser.parser.ast.node.Position
-import io.github.dingyi222666.luaparser.parser.ast.node.Range
 import io.github.dingyi222666.luaparser.parser.ast.node.TableConstructorExpression
 import io.github.dingyi222666.luaparser.parser.ast.node.TableKey
 import io.github.dingyi222666.luaparser.parser.ast.node.TableKeyString
 import io.github.dingyi222666.luaparser.semantic.api.CompletionItem
 import io.github.dingyi222666.luaparser.semantic.api.CompletionItemKind
+import io.github.dingyi222666.luaparser.semantic.binder.rangeContains
 import io.github.dingyi222666.luaparser.semantic.checker.ExpressionTypeEvaluator
 
 /**
@@ -141,14 +141,6 @@ internal class LuaLayoutCompletionProvider(
 
             else -> null
         }
-    }
-
-    private fun rangeContains(range: Range, position: Position): Boolean {
-        val afterStart = range.start.line < position.line ||
-            (range.start.line == position.line && range.start.column <= position.column)
-        val beforeEnd = range.end.line > position.line ||
-            (range.end.line == position.line && range.end.column > position.column)
-        return afterStart && beforeEnd
     }
 
     /**

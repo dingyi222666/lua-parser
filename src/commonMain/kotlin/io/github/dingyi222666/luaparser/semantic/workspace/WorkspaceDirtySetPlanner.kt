@@ -16,8 +16,12 @@ object WorkspaceDirtySetPlanner {
         previous: WorkspaceSnapshot,
         current: WorkspaceSnapshot
     ): Result {
-        val changedFiles = changedFiles(previous, current)
-        val publicSurfaceChangedFiles = publicSurfaceChangedFiles(previous, current)
+        // Both changed-file comparisons run over the same (files, extraProviders) merged views;
+        // built once here instead of inside each comparison.
+        val previousSnapshots = previous.files + previous.extraProviders
+        val currentSnapshots = current.files + current.extraProviders
+        val changedFiles = changedFiles(previousSnapshots, currentSnapshots)
+        val publicSurfaceChangedFiles = publicSurfaceChangedFiles(previousSnapshots, currentSnapshots)
         val activeProviderChangedModuleNames = activeProviderChangedModuleNames(previous.graph, current.graph)
         val filesWithRequireResolutionChanged = filesWithRequireResolutionChanged(previous.graph, current.graph)
         val seeAllFallbackDocuments = seeAllFallbackDocumentsWithBuiltinGlobalsChanged(previous, current)
@@ -55,18 +59,20 @@ object WorkspaceDirtySetPlanner {
         )
     }
 
-    private fun changedFiles(previous: WorkspaceSnapshot, current: WorkspaceSnapshot): Set<VirtualPath> {
-        val previousSnapshots = previous.files + previous.extraProviders
-        val currentSnapshots = current.files + current.extraProviders
+    private fun changedFiles(
+        previousSnapshots: Map<VirtualPath, WorkspaceSnapshot.FileSnapshot>,
+        currentSnapshots: Map<VirtualPath, WorkspaceSnapshot.FileSnapshot>
+    ): Set<VirtualPath> {
         val allPaths = previousSnapshots.keys + currentSnapshots.keys
         return allPaths.filterTo(linkedSetOf()) { path ->
             previousSnapshots[path] != currentSnapshots[path]
         }
     }
 
-    private fun publicSurfaceChangedFiles(previous: WorkspaceSnapshot, current: WorkspaceSnapshot): Set<VirtualPath> {
-        val previousSnapshots = previous.files + previous.extraProviders
-        val currentSnapshots = current.files + current.extraProviders
+    private fun publicSurfaceChangedFiles(
+        previousSnapshots: Map<VirtualPath, WorkspaceSnapshot.FileSnapshot>,
+        currentSnapshots: Map<VirtualPath, WorkspaceSnapshot.FileSnapshot>
+    ): Set<VirtualPath> {
         val allPaths = previousSnapshots.keys + currentSnapshots.keys
         return allPaths.filterTo(linkedSetOf()) { path ->
             val previousFingerprint = previousSnapshots[path]?.publicFingerprint

@@ -70,12 +70,13 @@ internal class ApiAdapters(
     }
 
     fun toSymbol(symbol: BinderSymbol, declaration: BinderDeclaration): Symbol {
+        val declaredTypeInfo = toTypeInfo(declaration.declaredType, declaration)
         return Symbol(
             name = symbol.name,
             kind = declaration.kind.toSymbolKind(),
             range = declarationDisplayRange(declaration),
-            type = toTypeInfo(declaration.declaredType, declaration),
-            declaredType = toTypeInfo(declaration.declaredType, declaration),
+            type = declaredTypeInfo,
+            declaredType = declaredTypeInfo,
             detail = declaration.declaredType?.displayName,
             symbolId = binderHandle(symbol.id.value)
         )
