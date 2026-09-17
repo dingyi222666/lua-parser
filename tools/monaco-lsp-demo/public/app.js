@@ -718,27 +718,6 @@ async function loadFileList() {
       /* fall through */
     }
 
-    const candidates = [
-      HTTP_BASE + "/api/files/" + encodeURIComponent(file.name),
-      HTTP_BASE + "/api/file?uri=" + encodeURIComponent(file.uri),
-      HTTP_BASE + "/api/file?name=" + encodeURIComponent(file.name),
-    ];
-    for (let i = 0; i < candidates.length; i++) {
-      try {
-        const res = await fetch(candidates[i], { cache: "no-store" });
-        if (!res.ok) continue;
-        const ct = res.headers.get("content-type") || "";
-        if (ct.indexOf("application/json") >= 0) {
-          const j = await res.json();
-          if (typeof j.text === "string") return j.text;
-          if (typeof j.content === "string") return j.content;
-          continue;
-        }
-        return await res.text();
-      } catch (_) {
-        /* try next */
-      }
-    }
     logErr("Could not load file content for " + file.name + "; opening empty buffer");
     return "";
   }
@@ -1430,26 +1409,21 @@ async function loadFileList() {
                 labelObj && typeof labelObj === "object"
                   ? labelObj.label
                   : String(labelObj || "");
-              const insertText =
-                item.insertText != null
-                  ? item.insertText
-                  : label;
-              const insert = item.textEdit && item.textEdit.newText != null
-                ? item.textEdit.newText
-                : (item.insertText != null ? item.insertText : label);
+              const text =
+                item.textEdit && item.textEdit.newText != null
+                  ? item.textEdit.newText
+                  : item.insertText != null
+                    ? item.insertText
+                    : label;
               const rangeApplies =
-                typeof insert === "string" &&
-                insert.toLowerCase().startsWith(String(swallowed || "").toLowerCase());
+                typeof text === "string" &&
+                text.toLowerCase().startsWith(String(swallowed || "").toLowerCase());
               const itemRange =
                 item.textEdit && item.textEdit.range
                   ? rangeFromLsp(item.textEdit.range)
                   : rangeApplies
                     ? defaultRangeWithContinuation
                     : defaultRange;
-              const text =
-                item.textEdit && item.textEdit.newText != null
-                  ? item.textEdit.newText
-                  : insertText;
               return {
                 label: label,
                 kind: completionKindFromLsp(item.kind),
@@ -2086,19 +2060,12 @@ async function loadFileList() {
             try {
               const files = await fetchJson(HTTP_BASE + "/api/files");
               const list = Array.isArray(files) ? files : [];
-              if (list.length) {
-                const main =
-                  list.find(function (f) {
-                    return f.name === "main.lua";
-                  }) || list[0];
-                if (main) await openDocument(main.uri, main);
-              } else {
-                const main =
-                  workspaceFiles.find(function (f) {
-                    return f.name === "main.lua";
-                  }) || workspaceFiles[0];
-                if (main) await openDocument(main.uri, main);
-              }
+              const source = list.length ? list : workspaceFiles;
+              const main =
+                source.find(function (f) {
+                  return f.name === "main.lua";
+                }) || source[0];
+              if (main) await openDocument(main.uri, main);
             } catch (e) {
               logErr("auto-open: " + (e.message || e));
             }
