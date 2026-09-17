@@ -166,12 +166,6 @@ class ConstantNode(
         }
     }
 
-    fun booleanOf(): Boolean {
-        return _value as Boolean
-    }
-
-    fun nilOf(): ConstantNode = NIL
-
     override fun toString(): String {
         return "ConstantsNode(type=$constantType, value=$_value)"
     }
