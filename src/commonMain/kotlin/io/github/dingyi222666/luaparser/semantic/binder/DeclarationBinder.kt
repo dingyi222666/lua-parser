@@ -123,10 +123,9 @@ internal class DeclarationBinder(
                                 // on the read.
                                 read.range.end.column == end.column && read.range.end.line == end.line
                             }
-                            val selfReadAtCaret = sameNameReadEndsAtEnd
                             Position(
                                 end.line,
-                                if (selfReadAtCaret) end.column else (end.column - 1).coerceAtLeast(1)
+                                if (sameNameReadEndsAtEnd) end.column else (end.column - 1).coerceAtLeast(1)
                             )
                         }
                         ?: node.range.end

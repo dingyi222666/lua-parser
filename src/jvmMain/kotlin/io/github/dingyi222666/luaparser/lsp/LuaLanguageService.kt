@@ -28,6 +28,7 @@ import io.github.dingyi222666.luaparser.semantic.model.NodePositionIndex
 import io.github.dingyi222666.luaparser.semantic.workspace.WorkspaceLocation
 
 import io.github.dingyi222666.luaparser.semantic.workspace.WorkspaceSemanticFile
+import io.github.dingyi222666.luaparser.semantic.api.DIAGNOSTIC_TAG_UNNECESSARY
 import io.github.dingyi222666.luaparser.semantic.api.CompletionItemKind
 import io.github.dingyi222666.luaparser.semantic.api.DiagnosticSeverity
 import io.github.dingyi222666.luaparser.semantic.api.SymbolKind as SemanticSymbolKind
@@ -3689,9 +3690,6 @@ class LuaLanguageService(
 
 /** Matches ExpressionUsageChecker unused-local code; filtered from LSP publish. */
 private const val UNUSED_LOCAL_DIAGNOSTIC_CODE = "checker.local.unused"
-
-/** org.eclipse.lsp4j.DiagnosticTag.Unnecessary — emitted by checker.local.unused. */
-private const val DIAGNOSTIC_TAG_UNNECESSARY = 1
 
 /** org.eclipse.lsp4j.DiagnosticTag.Deprecated. */
 private const val DIAGNOSTIC_TAG_DEPRECATED = 2

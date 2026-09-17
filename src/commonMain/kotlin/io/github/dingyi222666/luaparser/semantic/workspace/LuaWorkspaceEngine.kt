@@ -10,6 +10,7 @@ import io.github.dingyi222666.luaparser.parser.ast.node.Position
 import io.github.dingyi222666.luaparser.parser.ast.node.Range
 import io.github.dingyi222666.luaparser.semantic.SemanticPipeline
 import io.github.dingyi222666.luaparser.semantic.SemanticWorkspaceContext
+import io.github.dingyi222666.luaparser.semantic.binder.BinderDeclaration
 import io.github.dingyi222666.luaparser.semantic.binder.DeclarationKind
 import io.github.dingyi222666.luaparser.semantic.binder.DeclarationOrigin
 import io.github.dingyi222666.luaparser.semantic.checker.ExpressionTypeEvaluator
@@ -234,7 +235,7 @@ open class LuaWorkspaceEngine(
             // re-runs the full pipeline for the authoritative snapshot right after.
             parsingTargets.forEach { path ->
                 val fileSnapshot = nextFiles[path] ?: return@forEach
-                val carriedOver = previous?.files?.get(path)?.semanticFile ?: fileSnapshot.semanticFile
+                val carriedOver = previous.files[path]?.semanticFile ?: fileSnapshot.semanticFile
                 val parsed = nextSources[path]?.let { source -> parseWorkspaceResult(path, source) }
                 val chunk = parsed?.chunk ?: carriedOver?.chunk ?: return@forEach
                 val provisionalContext = workspaceContext(
@@ -250,14 +251,9 @@ open class LuaWorkspaceEngine(
                     chunk,
                     provisionalContext
                 )
-                val publicFingerprint = (fileSnapshot.publicFingerprint
-                    ?: WorkspacePublicFingerprint.from(fileSnapshot.documentFacts, fileSnapshot.moduleExportSurface))
-                    .copy(
-                        globalSymbolsFingerprint = globalSymbolsFingerprint(
-                            resolvedBinder.declarationIndex.declarations
-                        )
-                    )
-                nextFiles[path] = fileSnapshot.copy(publicFingerprint = publicFingerprint)
+                nextFiles[path] = fileSnapshot.withGlobalSymbolsFingerprint(
+                    resolvedBinder.declarationIndex.declarations
+                )
             }
         }
 
@@ -542,15 +538,24 @@ open class LuaWorkspaceEngine(
         // snapshot ends up with the authoritative value for its final semantic state. The
         // evaluator is the same expression evaluator the module resolver uses for provider
         // globals, so the fingerprint tracks exactly what consumers re-bind through it.
-        val publicFingerprint = (fileSnapshot.publicFingerprint
-            ?: WorkspacePublicFingerprint.from(fileSnapshot.documentFacts, fileSnapshot.moduleExportSurface))
-            .copy(
-                globalSymbolsFingerprint = globalSymbolsFingerprint(
-                    semanticSnapshot.binder.declarationIndex.declarations
-                )
-            )
-        files[path] = fileSnapshot.copy(publicFingerprint = publicFingerprint, semanticFile = semanticFile)
+        files[path] = fileSnapshot
+            .withGlobalSymbolsFingerprint(semanticSnapshot.binder.declarationIndex.declarations)
+            .copy(semanticFile = semanticFile)
     }
+
+    /**
+     * Joins the analysis-derived global-surface fingerprint onto this snapshot's stored
+     * [WorkspaceSnapshot.FileSnapshot.publicFingerprint], creating the document-facts baseline
+     * when none was stored yet. Shared by [analyzePathInto] (full + cycle re-analysis passes)
+     * and the update() pre-plan upsert pass so both join the value identically.
+     */
+    private fun WorkspaceSnapshot.FileSnapshot.withGlobalSymbolsFingerprint(
+        declarations: List<BinderDeclaration>
+    ): WorkspaceSnapshot.FileSnapshot = copy(
+        publicFingerprint = (publicFingerprint
+            ?: WorkspacePublicFingerprint.from(documentFacts, moduleExportSurface))
+            .copy(globalSymbolsFingerprint = globalSymbolsFingerprint(declarations))
+    )
 
     private fun semanticAnalysisOrder(
         pathsToAnalyze: Set<VirtualPath>,

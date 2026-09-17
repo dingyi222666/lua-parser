@@ -2,6 +2,7 @@ package io.github.dingyi222666.luaparser.semantic.workspace
 
 import io.github.dingyi222666.luaparser.parser.ast.node.Position
 import io.github.dingyi222666.luaparser.parser.ast.node.Range
+import io.github.dingyi222666.luaparser.semantic.binder.positionLt
 import io.github.dingyi222666.luaparser.semantic.types.model.ModuleType
 import io.github.dingyi222666.luaparser.semantic.types.model.Type
 
@@ -17,21 +18,18 @@ data class LegacyModuleEnvironment(
         val bindings: Map<String, Type>
     )
 
+    // Position comparisons share the binder's PositionOrdering helpers (same line/column
+    // order): `positionLt(position, start)` is false exactly when the caret sits at or after
+    // the segment start, and before the segment end closes the half-open range.
     fun segmentAt(position: Position): Segment? =
         segments.firstOrNull { segment ->
-            positionAtOrAfter(position, segment.range.start) && positionBefore(position, segment.range.end)
+            !positionLt(position, segment.range.start) && positionLt(position, segment.range.end)
         }
 
     companion object {
         val EMPTY = LegacyModuleEnvironment()
     }
 }
-
-internal fun positionAtOrAfter(left: Position, right: Position): Boolean =
-    left.line > right.line || (left.line == right.line && left.column >= right.column)
-
-internal fun positionBefore(left: Position, right: Position): Boolean =
-    left.line < right.line || (left.line == right.line && left.column < right.column)
 
 internal fun legacyEnvironmentBindings(moduleName: String): Map<String, Type> {
     val packageName = moduleName.substringBeforeLast('.', missingDelimiterValue = "")

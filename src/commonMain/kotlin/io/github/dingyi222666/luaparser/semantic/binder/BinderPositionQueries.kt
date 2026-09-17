@@ -84,7 +84,8 @@ class BinderPositionQueries(
     private fun loopBodyTailScopeAt(position: Position): Scope? {
         var innermost: Scope? = null
         forLoopBodyScopes.forEach { scope ->
-            val body = scope.ownerNode as? BlockNode ?: return@forEach
+            // `forLoopBodyScopes` only yields LOOP scopes whose ownerNode is a BlockNode.
+            val body = scope.ownerNode as BlockNode
             // `parent` is a not-null delegate that can still throw on synthetic/detached
             // trees; treat those as non-candidates like CompletionProvider does.
             val statement = runCatching { body.parent }.getOrNull() ?: return@forEach
