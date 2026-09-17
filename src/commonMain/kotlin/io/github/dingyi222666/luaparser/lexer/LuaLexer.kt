@@ -7,7 +7,7 @@ import kotlin.jvm.JvmOverloads
 class LuaLexer @JvmOverloads constructor(
     source: CharSequence,
     private val supportAndroLuaKeywords: Boolean = true
-) : Iterator<Pair<LuaTokenTypes, String>> {
+) {
 
     /**
      * Source buffer with a single leading UTF-8 BOM (`U+FEFF`) stripped when present.
@@ -760,7 +760,7 @@ class LuaLexer @JvmOverloads constructor(
         /** UTF-8 BOM character (`U+FEFF`). Leading occurrence is stripped from the source buffer. */
         private const val BOM_CHAR: Char = '\uFEFF'
 
-        val keywords = TrieTree<LuaTokenTypes>()
+        private val keywords = TrieTree<LuaTokenTypes>()
 
         init {
             run {
@@ -919,16 +919,6 @@ class LuaLexer @JvmOverloads constructor(
 
     }
 
-    override fun hasNext(): Boolean {
-        return offset + tokenLength < bufferLen
-    }
-
-    override fun next(): Pair<LuaTokenTypes, String> {
-        val currentToken = nextToken()
-
-        return Pair(currentToken, tokenText.toString())
-    }
-
 }
 
 
@@ -946,5 +936,5 @@ enum class LuaTokenTypes {
      URSHIFT_ASSIGN,*/
     DOUBLE_DIV_ASSIGN,
 
-    NAME, NUMBER, PLUS, DOT, MINUS, LBRACK, ASSIGN, RBRACK, GETN, NOT, GT, LT, BIT_TILDE, MULT, MOD, DIV, LPAREN, RPAREN, LCURLY, RCURLY, COMMA, SEMI, COLON, EXP, BIT_AND, BIT_OR, STRING, LONG_STRING, CONCAT, IN, IF, OR, DO, EQ, SHEBANG, NE, GE, BIT_RTRT, LE, BIT_LTLT, DOUBLE_DIV, DOUBLE_COLON, AND, SHORT_COMMENT, ELLIPSIS, END, NIL, LEF, MEAN, FOR, DOC_COMMENT, ELSE, GOTO, CASE, TRUE, THEN, BLOCK_COMMENT, BREAK, LOCAL, FALSE, UNTIL, WHILE, RETURN, REPEAT, ELSEIF, CONTINUE, SWITCH, DEFAULT, FUNCTION, LABEL, WHEN, LAMBDA, EOF
+    NAME, NUMBER, PLUS, DOT, MINUS, LBRACK, ASSIGN, RBRACK, GETN, NOT, GT, LT, BIT_TILDE, MULT, MOD, DIV, LPAREN, RPAREN, LCURLY, RCURLY, COMMA, SEMI, COLON, EXP, BIT_AND, BIT_OR, STRING, LONG_STRING, CONCAT, IN, IF, OR, DO, EQ, NE, GE, BIT_RTRT, LE, BIT_LTLT, DOUBLE_DIV, DOUBLE_COLON, AND, SHORT_COMMENT, ELLIPSIS, END, NIL, FOR, DOC_COMMENT, ELSE, GOTO, CASE, TRUE, THEN, BLOCK_COMMENT, BREAK, LOCAL, FALSE, UNTIL, WHILE, RETURN, REPEAT, ELSEIF, CONTINUE, SWITCH, DEFAULT, FUNCTION, WHEN, LAMBDA, EOF
 }
