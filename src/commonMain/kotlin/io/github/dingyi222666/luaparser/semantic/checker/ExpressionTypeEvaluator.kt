@@ -1151,8 +1151,8 @@ class ExpressionTypeEvaluator internal constructor(
             is Identifier -> {
                 val declaration = callableDeclaration(base, context)
                 when {
-                    declaration != null && isLuaJavaArrayAlias(declaration, context, "createArray") -> "createArray"
-                    declaration != null && isLuaJavaArrayAlias(declaration, context, "newArray") -> "newArray"
+                    declaration != null && declarationResolvesToLuaJavaHelper(declaration, context, "createArray") -> "createArray"
+                    declaration != null && declarationResolvesToLuaJavaHelper(declaration, context, "newArray") -> "newArray"
                     isUnshadowedBareLuaJavaHelper(base, declaration, context, "newArray") -> "newArray"
                     isUnshadowedBareLuaJavaHelper(base, declaration, context, "createArray") -> "createArray"
                     else -> null
@@ -1261,10 +1261,6 @@ class ExpressionTypeEvaluator internal constructor(
                 callChecker.checkCallValues(constructorType, argumentSequences, context.lexicalScopeId)
             }
         return instanceType.hydrateJavaProviderType(workspaceContext.resolveImportTarget)
-    }
-
-    private fun isLuaJavaArrayAlias(declaration: BinderDeclaration, context: Context, helperName: String): Boolean {
-        return declarationResolvesToLuaJavaHelper(declaration, context, helperName)
     }
 
     private fun isLuaJavaHelperMember(member: MemberExpression, context: Context, helperName: String): Boolean {
@@ -1454,38 +1450,12 @@ class ExpressionTypeEvaluator internal constructor(
      * expected context helpers. Do not invent android.jar-only members here.
      */
     private fun resolveGetContextCall(node: CallExpression, context: Context): Type? {
-        val base = effectiveCallBase(node)
-        val isGetContextCall = when (base) {
-            is MemberExpression -> isLuaJavaHelperMember(base, context, "getContext")
-            is Identifier -> {
-                val declaration = callableDeclaration(base, context)
-                    ?: findVisibleValueDeclarationIgnoringScope(
-                        base.name,
-                        base.range.start,
-                        context.excludedDeclarations
-                    )
-                when {
-                    isUnshadowedBareLuaJavaHelper(base, declaration, context, "getContext") -> true
-                    declaration != null && isGetContextAlias(declaration, context) -> true
-                    declaration != null && declarationResolvesToLuaJavaHelperByDeclarationChain(
-                        declaration,
-                        "getContext",
-                        context.excludedDeclarations,
-                        linkedSetOf()
-                    ) -> true
-                    else -> false
-                }
-            }
-            else -> false
-        }
-        if (!isGetContextCall) {
+        // Identical recognition surface to every other LuaJava helper: member form via
+        // isLuaJavaHelperMember, bare/alias/chain form via isLuaJavaCallBase.
+        if (!isLuaJavaCallBase(effectiveCallBase(node), context, "getContext")) {
             return null
         }
         return androidLuaContextSurface()
-    }
-
-    private fun isGetContextAlias(declaration: BinderDeclaration, context: Context): Boolean {
-        return declarationResolvesToLuaJavaHelper(declaration, context, "getContext")
     }
 
     /**
@@ -1750,13 +1720,8 @@ class ExpressionTypeEvaluator internal constructor(
     }
 
     private fun effectiveCallBase(node: CallExpression): ExpressionNode {
-        return if (node.base is StringCallExpression && node.arguments.isEmpty()) {
-            node.base
-        } else {
-            node.base
-        }.let { base ->
-            if (base is StringCallExpression) base.base else base
-        }
+        val base = node.base
+        return if (base is StringCallExpression) base.base else base
     }
 
     private fun importTargets(node: CallExpression): List<String> {
@@ -2749,7 +2714,17 @@ class ExpressionTypeEvaluator internal constructor(
 
     private fun deriveFunctionDeclarationValueType(declaration: BinderDeclaration, context: Context): Type {
         // Builtin/overlay function declarations (loadlayout/print/etc.) often have no AST body.
-        // Preserve declaredType instead of collapsing to unknown.
+        // Preserve declaredType instead of collapsing to unknown (handled in the shared tail).
+        return declaredOrInferredFunctionValueType(declaration, context)
+    }
+
+    /**
+     * Shared declared-vs-inferred callable derivation for FUNCTION/GLOBAL function values:
+     * resolve the owning function node, infer the body type, then merge with the declared
+     * signature preferring the declared return. Globals keep their extra non-callable
+     * declaredType short-circuit and assignment-value check before entering here.
+     */
+    private fun declaredOrInferredFunctionValueType(declaration: BinderDeclaration, context: Context): Type {
         val functionNode = functionNodeForDeclaration(declaration)
             ?: return declaration.declaredType ?: UnknownType
         val inferred = inferImplementationFunctionType(functionNode)
@@ -2770,17 +2745,7 @@ class ExpressionTypeEvaluator internal constructor(
             return declaredType
         }
         globalAssignmentValueType(declaration, context)?.let { return it }
-        val functionNode = functionNodeForDeclaration(declaration)
-        if (functionNode == null) {
-            return declaredType ?: UnknownType
-        }
-        val inferred = inferImplementationFunctionType(functionNode)
-        val declared = declaredType as? CallableType
-            ?: return inferred
-                ?: declaredType
-                ?: evaluateFunctionDeclaration(functionNode, context)
-        val inferredCallable = inferred as? CallableType ?: return declared
-        return mergeDeclaredAndInferredCallableType(declaration, declared, inferredCallable, preferDeclaredReturn = true)
+        return declaredOrInferredFunctionValueType(declaration, context)
     }
 
     private fun globalAssignmentValueType(declaration: BinderDeclaration, context: Context): Type? {
@@ -2887,20 +2852,49 @@ class ExpressionTypeEvaluator internal constructor(
     private fun luaJavaHelperCallType(call: CallExpression, target: String, context: Context): Type? {
         return when {
             isLuaJavaCallBase(effectiveCallBase(call), context, "bindClass") ->
-                resolveLuaJavaImportTarget(target)?.moduleType
+                luaJavaHelperCallReturn("bindClass", call, target, context)
 
             isLuaJavaCallBase(effectiveCallBase(call), context, "newInstance") ->
-                resolveLuaJavaImportTarget(target)?.moduleType?.let { moduleType ->
-                    if (!newInstanceConstructorShapeMatches(moduleType, call, context)) {
-                        UnknownType
-                    } else {
-                        moduleType.javaInstanceSurface()
-                            ?.hydrateLuaJavaProviderType()
-                            ?: UnknownType
-                    }
-                }
+                luaJavaHelperCallReturn("newInstance", call, target, context)
 
-            isLuaJavaCallBase(effectiveCallBase(call), context, "createProxy") -> {
+            isLuaJavaCallBase(effectiveCallBase(call), context, "createProxy") ->
+                luaJavaHelperCallReturn("createProxy", call, target, context)
+
+            isLuaJavaCallBase(effectiveCallBase(call), context, "loadLib") ->
+                luaJavaHelperCallReturn("loadLib", call, target, context)
+
+            else -> null
+        }
+    }
+
+    /**
+     * Shared LuaJava helper return typing for a recognized helper call
+     * (bindClass / newInstance / createProxy / loadLib). Single source of truth for the
+     * direct-initializer path ([luaJavaHelperCallType]) and the transitive
+     * declaration-chain path ([luaJavaHelperCallTypeFromDeclarationChain]); null means
+     * "helper not applicable here", letting the caller fall through.
+     */
+    private fun luaJavaHelperCallReturn(
+        helperName: String,
+        call: CallExpression,
+        target: String,
+        context: Context
+    ): Type? {
+        return when (helperName) {
+            "bindClass" -> resolveLuaJavaImportTarget(target)?.moduleType
+
+            "newInstance" -> {
+                val moduleType = resolveLuaJavaImportTarget(target)?.moduleType ?: return null
+                if (!newInstanceConstructorShapeMatches(moduleType, call, context)) {
+                    UnknownType
+                } else {
+                    moduleType.javaInstanceSurface()
+                        ?.hydrateLuaJavaProviderType()
+                        ?: UnknownType
+                }
+            }
+
+            "createProxy" -> {
                 val interfaceTypes = createProxyTargets(call).mapNotNull { interfaceTarget ->
                     resolveLuaJavaImportTarget(interfaceTarget)?.moduleType?.javaInstanceSurface()
                         ?.hydrateLuaJavaProviderType()
@@ -2911,7 +2905,7 @@ class ExpressionTypeEvaluator internal constructor(
                 }
             }
 
-            isLuaJavaCallBase(effectiveCallBase(call), context, "loadLib") -> {
+            "loadLib" -> {
                 if (!hasValidLoadLibArguments(call)) {
                     UnknownType
                 } else {
@@ -2919,7 +2913,6 @@ class ExpressionTypeEvaluator internal constructor(
                     resolveLoadLibMemberType(target, memberName, context)
                 }
             }
-
 
             else -> null
         }
@@ -2945,38 +2938,7 @@ class ExpressionTypeEvaluator internal constructor(
                 ?: binder.scopeGraph.rootScope.id,
             excludedDeclarations = excluded
         )
-        return when (helperName) {
-            "bindClass" -> resolveLuaJavaImportTarget(target)?.moduleType
-            "newInstance" -> {
-                val moduleType = resolveLuaJavaImportTarget(target)?.moduleType ?: return null
-                if (!newInstanceConstructorShapeMatches(moduleType, call, chainContext)) {
-                    UnknownType
-                } else {
-                    moduleType.javaInstanceSurface()
-                        ?.hydrateLuaJavaProviderType()
-                }
-            }
-            "createProxy" -> {
-                val interfaceTypes = createProxyTargets(call).mapNotNull { interfaceTarget ->
-                    resolveLuaJavaImportTarget(interfaceTarget)?.moduleType?.javaInstanceSurface()
-                        ?.hydrateLuaJavaProviderType()
-                }
-                when {
-                    interfaceTypes.isEmpty() -> UnknownType
-                    else -> intersectionTypeOf(interfaceTypes)
-                }
-            }
-            "loadLib" -> {
-                if (!hasValidLoadLibArguments(call)) {
-                    UnknownType
-                } else {
-                    val memberName = stringCallTarget(call, argumentIndex = 1) ?: return UnknownType
-                    resolveLoadLibMemberType(target, memberName, chainContext)
-                }
-            }
-
-            else -> null
-        }
+        return luaJavaHelperCallReturn(helperName, call, target, chainContext)
     }
 
     private fun declarationResolvesToLuaJavaHelperByDeclarationChain(

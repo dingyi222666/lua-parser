@@ -4,7 +4,6 @@ import io.github.dingyi222666.luaparser.parser.ast.node.ConstantNode
 import io.github.dingyi222666.luaparser.parser.ast.node.ExpressionNode
 import io.github.dingyi222666.luaparser.semantic.binder.BinderPassResult
 import io.github.dingyi222666.luaparser.semantic.binder.ScopeId
-import io.github.dingyi222666.luaparser.semantic.types.model.AppliedType
 import io.github.dingyi222666.luaparser.semantic.types.model.ArrayType
 import io.github.dingyi222666.luaparser.semantic.types.model.CallableType
 import io.github.dingyi222666.luaparser.semantic.types.model.ClassType
@@ -35,7 +34,7 @@ class MemberResolver(
 ) {
 
     fun resolveMember(baseType: Type, memberName: String, preferMethod: Boolean, lexicalScopeId: ScopeId): MemberResolution {
-        val receiverType = receiverBindingType(baseType)
+        val receiverType = baseType
         val normalized = TypeExpansion.expandForMemberSurface(baseType, lexicalScopeId, binder)
 
         return when (normalized) {
@@ -310,7 +309,7 @@ class MemberResolver(
                     // Index access is never colon sugar; keep free-function callable shape.
                     type = bindMethodReceiver(
                         it,
-                        receiverBindingType(tableType),
+                        tableType,
                         MemberAccessKind.METHOD,
                         preferMethod = false
                     ),
@@ -339,12 +338,12 @@ class MemberResolver(
         }
         classType.getAllMethods()[key]?.let {
             val resolvedType = if (classType.isJavaProviderClassReference()) {
-                it.withJavaCallableSurface(receiverType = receiverBindingType(classType), includeReceiver = false)
+                it.withJavaCallableSurface(receiverType = classType, includeReceiver = false)
             } else {
                 // Index access is never colon sugar; keep free-function callable shape.
                 bindMethodReceiver(
                     it,
-                    receiverBindingType(classType),
+                    classType,
                     MemberAccessKind.METHOD,
                     preferMethod = false
                 )
@@ -427,7 +426,7 @@ class MemberResolver(
                     // Index access is never colon sugar; keep free-function callable shape.
                     bindMethodReceiver(
                         it,
-                        receiverBindingType(moduleType),
+                        moduleType,
                         MemberAccessKind.METHOD,
                         preferMethod = false
                     )
@@ -553,11 +552,6 @@ class MemberResolver(
             returnType = signature.returnType,
             typeParameters = signature.typeParameters
         )
-    }
-
-    private fun receiverBindingType(baseType: Type): Type {
-        val normalized = baseType
-        return if (normalized is AppliedType) normalized else normalized
     }
 
     private fun javaAccessKind(memberKind: JavaMemberKind, valueType: Type): MemberAccessKind {
