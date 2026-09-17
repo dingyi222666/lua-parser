@@ -228,14 +228,7 @@ internal class DeclarationBinder(
         builder.pushScope(lambdaScopeId)
         try {
             node.params.forEach { parameter ->
-                builder.addDeclarationWithSymbol(
-                    parameterDeclaration(
-                        id = builder.nextDeclarationId(),
-                        name = parameter.name,
-                        owner = DeclarationOwner.Lexical(node),
-                        anchorNode = parameter
-                    )
-                )
+                bindParameter(parameter, DeclarationOwner.Lexical(node))
             }
             visitExpressionNode(node.expression, value)
         } finally {
@@ -492,16 +485,25 @@ internal class DeclarationBinder(
             ?: DeclarationOwner.Lexical(node.body ?: node)
 
         node.params.forEach { parameter ->
-            builder.addDeclarationWithSymbol(
-                parameterDeclaration(
-                    id = builder.nextDeclarationId(),
-                    name = parameter.name,
-                    owner = owner,
-                    anchorNode = parameter,
-                    documentation = documentation
-                )
-            )
+            bindParameter(parameter, owner, documentation)
         }
+    }
+
+    /** Shared parameter binding for function declarations and lambda expressions. */
+    private fun bindParameter(
+        parameter: Identifier,
+        owner: DeclarationOwner,
+        documentation: DeclarationDocumentation? = null
+    ) {
+        builder.addDeclarationWithSymbol(
+            parameterDeclaration(
+                id = builder.nextDeclarationId(),
+                name = parameter.name,
+                owner = owner,
+                anchorNode = parameter,
+                documentation = documentation
+            )
+        )
     }
 
     private fun bindFunctionTypeParameters(
