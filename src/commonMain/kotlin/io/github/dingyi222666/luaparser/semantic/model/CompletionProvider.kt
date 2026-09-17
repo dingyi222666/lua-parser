@@ -141,16 +141,8 @@ internal class CompletionProvider(
             .sortedBy(CompletionItem::sortText)
     }
 
-    private fun completionItem(symbol: Symbol, category: String, depth: Int): CompletionItem {
-        val detail = symbol.declaredType?.displayName ?: symbol.type?.displayName
-        return CompletionItem(
-            label = symbol.name,
-            kind = lexicalCompletionKind(symbol),
-            detail = detail,
-            insertText = symbol.name,
-            sortText = "$category:${depth.toString().padStart(4, '0')}:${symbol.name}"
-        )
-    }
+    private fun completionItem(symbol: Symbol, category: String, depth: Int): CompletionItem =
+        buildCompletionItem(symbol, lexicalCompletionKind(symbol), category, depth)
 
     /**
      * Free-identifier completions should surface binder declaredType when present:
@@ -188,11 +180,20 @@ internal class CompletionProvider(
      * declarations sometimes arrive as value kinds (LOCAL/VARIABLE); hover still reports
      * [SymbolKind.FIELD] via member resolution.
      */
-    private fun memberCompletionItem(symbol: Symbol, category: String, depth: Int): CompletionItem {
+    private fun memberCompletionItem(symbol: Symbol, category: String, depth: Int): CompletionItem =
+        buildCompletionItem(symbol, memberCompletionKind(symbol), category, depth)
+
+    /** Shared item construction; lexical and member surfaces differ only in kind mapping. */
+    private fun buildCompletionItem(
+        symbol: Symbol,
+        kind: CompletionItemKind,
+        category: String,
+        depth: Int
+    ): CompletionItem {
         val detail = symbol.declaredType?.displayName ?: symbol.type?.displayName
         return CompletionItem(
             label = symbol.name,
-            kind = memberCompletionKind(symbol),
+            kind = kind,
             detail = detail,
             insertText = symbol.name,
             sortText = "$category:${depth.toString().padStart(4, '0')}:${symbol.name}"

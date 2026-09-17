@@ -82,7 +82,7 @@ class FunctionSignatureChecker(
         // keep exactly the historical emission sets.
         varargIndices.drop(1).forEach { index ->
             diagnostics += Diagnostic(
-                message = "Function declaration may only declare one vararg parameter.",
+                message = MULTIPLE_VARARG_MESSAGE,
                 range = params.getOrNull(index)?.range ?: functionRange,
                 code = "checker.function.signature.multipleVararg"
             )
@@ -90,7 +90,7 @@ class FunctionSignatureChecker(
 
         varargIndices.filter { it != params.lastIndex }.forEach { index ->
             diagnostics += Diagnostic(
-                message = "Vararg parameter must be the last parameter.",
+                message = VARARG_NOT_LAST_MESSAGE,
                 range = params.getOrNull(index)?.range ?: functionRange,
                 code = "checker.function.signature.varargNotLast"
             )
@@ -130,7 +130,7 @@ class FunctionSignatureChecker(
 
             if (parameter.vararg && parameter.name != "...") {
                 diagnostics += Diagnostic(
-                    message = "Only the trailing '...' parameter may be marked vararg.",
+                    message = NAMED_VARARG_MESSAGE,
                     range = astParameter?.range ?: functionRange,
                     code = "checker.function.signature.namedVararg"
                 )
@@ -138,14 +138,14 @@ class FunctionSignatureChecker(
 
             if (parameter.vararg && seenVararg) {
                 diagnostics += Diagnostic(
-                    message = "Function declaration may only declare one vararg parameter.",
+                    message = MULTIPLE_VARARG_MESSAGE,
                     range = astParameter?.range ?: functionRange,
                     code = "checker.function.signature.multipleVararg"
                 )
             }
             if (parameter.vararg && index != signature.parameters.lastIndex) {
                 diagnostics += Diagnostic(
-                    message = "Vararg parameter must be the last parameter.",
+                    message = VARARG_NOT_LAST_MESSAGE,
                     range = astParameter?.range ?: functionRange,
                     code = "checker.function.signature.varargNotLast"
                 )
@@ -193,7 +193,7 @@ class FunctionSignatureChecker(
 
             if (tag.vararg && tag.name != "...") {
                 diagnostics += Diagnostic(
-                    message = "Only the trailing '...' parameter may be marked vararg.",
+                    message = NAMED_VARARG_MESSAGE,
                     range = params.firstOrNull { it.name == tag.name }?.range ?: functionRange,
                     code = "checker.function.signature.namedVararg"
                 )
@@ -219,5 +219,11 @@ class FunctionSignatureChecker(
                 )
             }
         }
+    }
+
+    private companion object {
+        const val MULTIPLE_VARARG_MESSAGE = "Function declaration may only declare one vararg parameter."
+        const val VARARG_NOT_LAST_MESSAGE = "Vararg parameter must be the last parameter."
+        const val NAMED_VARARG_MESSAGE = "Only the trailing '...' parameter may be marked vararg."
     }
 }

@@ -13,12 +13,9 @@ object WorkspaceModuleGraphBuilder {
 
         files.forEach { (path, snapshot) ->
             graphFiles[path] = snapshot
+            // providersFor already merges the path-derived `.aly` aliases into its claims on
+            // every branch (null facts, empty fact claims, and the fact+aly merge).
             providersFor(path, snapshot.documentFacts).forEach { provider ->
-                providerClaims.getOrPut(provider.moduleName) { mutableListOf() } += provider
-            }
-            // Also claim free-form `.aly` layout modules by path-derived module names even when
-            // DocumentFacts omitted VIRTUAL_PATH candidates (sparse parse / empty chunk recovery).
-            alyPathProviders(path).forEach { provider ->
                 providerClaims.getOrPut(provider.moduleName) { mutableListOf() } += provider
             }
         }
@@ -177,14 +174,11 @@ object WorkspaceModuleGraphBuilder {
             }
 
         val fromFacts = (explicit + derived).toList()
-        if (fromFacts.isNotEmpty()) {
-            // Keep fact-derived claims and also merge any path-only `.aly` aliases so layout
-            // modules remain require()-able under their full virtual-path module name.
-            val aly = alyPathProviders(path)
-            return (fromFacts + aly).distinctBy { it.moduleName to it.path }
-        }
-        // Fallback: path-derived `.aly` claim when facts omitted VIRTUAL_PATH candidates.
-        return alyPathProviders(path)
+        // Keep fact-derived claims and also merge any path-only `.aly` aliases so layout
+        // modules remain require()-able under their full virtual-path module name; when facts
+        // omitted VIRTUAL_PATH candidates the merged list is exactly the path-derived `.aly`
+        // claim.
+        return (fromFacts + alyPathProviders(path)).distinctBy { it.moduleName to it.path }
     }
 
     private fun virtualPathModuleAliases(moduleName: String): Sequence<String> {
