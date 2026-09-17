@@ -64,14 +64,17 @@ class WrapperLuaLexer(
         dropHistoryHeadMatchingCurrent()
         if (currentStates.isNotEmpty()) {
             currentStates.addFirst(currentState)
+            // Must NOT fall through to doAdvance() here: that would rescan a brand-new
+            // token instead of leaving the requeued one as the next replay entry.
             return
         }
         currentLexer.pushBack(size)
         doAdvance()
 
-        if (currentStates.isEmpty()) {
-            currentStates.addFirst(currentState)
-        }
+        // After the real pushback + rescan, currentStates is always empty at this
+        // point (nothing was queued on this path, and doAdvance/pushBack never touch
+        // the queue), so this requeue always runs.
+        currentStates.addFirst(currentState)
     }
 
     private fun dropHistoryHeadMatchingCurrent() {

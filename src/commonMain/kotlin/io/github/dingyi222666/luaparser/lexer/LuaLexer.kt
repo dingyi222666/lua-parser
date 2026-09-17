@@ -669,13 +669,19 @@ class LuaLexer @JvmOverloads constructor(
         return count
     }
 
-    private fun scanDecimalExponentIfPresent(): Boolean {
+    /**
+     * Shared exponent scan for decimal (`e`/`E`) and hex (`p`/`P`) number lexemes.
+     * An absent exponent marker still yields a valid number; a present marker must
+     * be followed by at least one digit (after an optional sign) or the lexeme is
+     * malformed.
+     */
+    private fun scanExponentIfPresent(firstMarker: Char, secondMarker: Char): Boolean {
         if (offset + tokenLength >= bufferLen) {
             return true
         }
 
         val ch = charAt()
-        if (ch != 'e' && ch != 'E') {
+        if (ch != firstMarker && ch != secondMarker) {
             return true
         }
 
@@ -684,20 +690,9 @@ class LuaLexer @JvmOverloads constructor(
         return scanDecimalDigits() > 0
     }
 
-    private fun scanHexExponentIfPresent(): Boolean {
-        if (offset + tokenLength >= bufferLen) {
-            return true
-        }
+    private fun scanDecimalExponentIfPresent(): Boolean = scanExponentIfPresent('e', 'E')
 
-        val ch = charAt()
-        if (ch != 'p' && ch != 'P') {
-            return true
-        }
-
-        tokenLength++
-        scanExponentSign()
-        return scanDecimalDigits() > 0
-    }
+    private fun scanHexExponentIfPresent(): Boolean = scanExponentIfPresent('p', 'P')
 
     private fun scanExponentSign() {
         if (offset + tokenLength < bufferLen && (charAt() == '+' || charAt() == '-')) {
@@ -885,12 +880,8 @@ class LuaLexer @JvmOverloads constructor(
 
         }
 
-        private fun isDigit(c: Char): Boolean {
-            return ((c in '0'..'9') || (c in 'A'..'F') || (c in 'a'..'f'))
-        }
-
         private fun isHexDigit(c: Char): Boolean {
-            return isDigit(c)
+            return ((c in '0'..'9') || (c in 'A'..'F') || (c in 'a'..'f'))
         }
 
         private fun isPrimeDigit(c: Char): Boolean {
