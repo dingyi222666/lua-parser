@@ -881,30 +881,7 @@ class ExpressionTypeEvaluator internal constructor(
     private fun resolveBindClassCall(node: CallExpression, context: Context): ModuleType? {
         val target = stringCallTarget(node) ?: return null
         val base = effectiveCallBase(node)
-        val isBindClassCall = when (base) {
-            is MemberExpression -> isLuaJavaHelperMember(base, context, "bindClass")
-            is Identifier -> {
-                val declaration = callableDeclaration(base, context)
-                    ?: findVisibleValueDeclarationIgnoringScope(
-                        base.name,
-                        base.range.start,
-                        context.excludedDeclarations
-                    )
-                when {
-                    isUnshadowedBareLuaJavaHelper(base, declaration, context, "bindClass") -> true
-                    declaration != null && isBindClassAlias(declaration, context) -> true
-                    declaration != null && declarationResolvesToLuaJavaHelperByDeclarationChain(
-                        declaration,
-                        "bindClass",
-                        context.excludedDeclarations,
-                        linkedSetOf()
-                    ) -> true
-                    else -> false
-                }
-            }
-            else -> false
-        }
-        if (!isBindClassCall) {
+        if (!isLuaJavaCallBase(base, context, "bindClass")) {
             return null
         }
         return resolveLuaJavaImportTarget(target)?.moduleType
@@ -923,7 +900,7 @@ class ExpressionTypeEvaluator internal constructor(
     }
 
     private fun resolveNewInstanceCall(node: CallExpression, context: Context): Type? {
-        if (!isNewInstanceCallBase(effectiveCallBase(node), context)) {
+        if (!isLuaJavaCallBase(effectiveCallBase(node), context, "newInstance")) {
             return null
         }
         // Dynamic / non-literal class names must not inherit the JavaObject stub return from
@@ -1020,7 +997,7 @@ class ExpressionTypeEvaluator internal constructor(
         if (interfaceTargets.isEmpty()) {
             return null
         }
-        if (!isCreateProxyCallBase(effectiveCallBase(node), context)) {
+        if (!isLuaJavaCallBase(effectiveCallBase(node), context, "createProxy")) {
             return null
         }
         val interfaceTypes = interfaceTargets.mapNotNull { target ->
@@ -1034,7 +1011,7 @@ class ExpressionTypeEvaluator internal constructor(
     }
 
     private fun resolveLoadLibCall(node: CallExpression, context: Context): Type? {
-        if (!isLoadLibCallBase(effectiveCallBase(node), context)) {
+        if (!isLuaJavaCallBase(effectiveCallBase(node), context, "loadLib")) {
             return null
         }
         // TASK-593: recognized loadLib with missing/invalid args must not keep a silent
@@ -1137,7 +1114,7 @@ class ExpressionTypeEvaluator internal constructor(
     internal fun isInvalidLoadLibArgumentCall(node: CallExpression): Boolean {
         val scopeId = binder.positionQueries.getScopeAt(node.range.start)?.id ?: binder.scopeGraph.rootScope.id
         val context = Context(lexicalScopeId = scopeId)
-        if (!isLoadLibCallBase(effectiveCallBase(node), context)) {
+        if (!isLuaJavaCallBase(effectiveCallBase(node), context, "loadLib")) {
             return false
         }
         return !hasValidLoadLibArguments(node)
@@ -1286,22 +1263,6 @@ class ExpressionTypeEvaluator internal constructor(
         return instanceType.hydrateJavaProviderType(workspaceContext.resolveImportTarget)
     }
 
-    private fun isBindClassAlias(declaration: BinderDeclaration, context: Context): Boolean {
-        return declarationResolvesToLuaJavaHelper(declaration, context, "bindClass")
-    }
-
-    private fun isNewInstanceAlias(declaration: BinderDeclaration, context: Context): Boolean {
-        return declarationResolvesToLuaJavaHelper(declaration, context, "newInstance")
-    }
-
-    private fun isCreateProxyAlias(declaration: BinderDeclaration, context: Context): Boolean {
-        return declarationResolvesToLuaJavaHelper(declaration, context, "createProxy")
-    }
-
-    private fun isLoadLibAlias(declaration: BinderDeclaration, context: Context): Boolean {
-        return declarationResolvesToLuaJavaHelper(declaration, context, "loadLib")
-    }
-
     private fun isLuaJavaArrayAlias(declaration: BinderDeclaration, context: Context, helperName: String): Boolean {
         return declarationResolvesToLuaJavaHelper(declaration, context, helperName)
     }
@@ -1311,10 +1272,6 @@ class ExpressionTypeEvaluator internal constructor(
         return member.indexer == "." &&
             member.identifier.name == helperName &&
             isLuaJavaHelperOwner(owner, context)
-    }
-
-    private fun isLuaJavaHelperExpression(expression: ExpressionNode, context: Context, helperName: String): Boolean {
-        return expressionResolvesToLuaJavaHelper(expression, context, helperName, linkedSetOf())
     }
 
     private fun declarationResolvesToLuaJavaHelper(
@@ -1356,15 +1313,25 @@ class ExpressionTypeEvaluator internal constructor(
             return false
         }
         val declaration = findVisibleValueDeclaration(owner.name, owner.range.start, context)
-        // TASK-572: Any non-builtin binding (typically a local table/value) shadows the LuaJava
-        // helper table. Unshadowed `luajava` remains the helper owner so real/realiased helpers
+        // TASK-572: Unshadowed `luajava` remains the helper owner so real/realiased helpers
         // and transitive local alias chains keep working when the builtin is not position-visible.
+        return isUnshadowedBuiltinHelperDeclaration(declaration)
+    }
+
+    /**
+     * TASK-572: Any visible non-builtin binding (local function, local, parameter, free global
+     * invent) shadows LuaJava helper surfaces; only true builtin free helpers keep them, so
+     * local `function bindClass/createProxy/...` stays ordinary Lua.
+     */
+    private fun isUnshadowedBuiltinHelperDeclaration(declaration: BinderDeclaration?): Boolean {
         if (declaration == null) {
             return true
         }
         if (declaration.origin != DeclarationOrigin.BUILTIN) {
             return false
         }
+        // Builtin helpers are never LOCAL/FUNCTION/PARAMETER; reject those kinds defensively
+        // so a mis-originated local never re-enters helper typing.
         return declaration.kind != DeclarationKind.LOCAL &&
             declaration.kind != DeclarationKind.FUNCTION &&
             declaration.kind != DeclarationKind.PARAMETER
@@ -1379,20 +1346,7 @@ class ExpressionTypeEvaluator internal constructor(
         if (base.name != helperName || context.localOverrides.containsKey(base.name)) {
             return false
         }
-        // TASK-572: Any visible non-builtin VALUE binding (local function, local, parameter,
-        // free global invent) shadows bare helper names. Only true builtin free helpers keep
-        // LuaJava surfaces; local `function bindClass/createProxy/...` stays ordinary Lua.
-        if (declaration == null) {
-            return true
-        }
-        if (declaration.origin != DeclarationOrigin.BUILTIN) {
-            return false
-        }
-        // Builtin helpers are never LOCAL/FUNCTION/PARAMETER; reject those kinds defensively
-        // so a mis-originated local never re-enters helper typing.
-        return declaration.kind != DeclarationKind.LOCAL &&
-            declaration.kind != DeclarationKind.FUNCTION &&
-            declaration.kind != DeclarationKind.PARAMETER
+        return isUnshadowedBuiltinHelperDeclaration(declaration)
     }
 
     private fun resolveLuaJavaImportTarget(target: String) =
@@ -1867,7 +1821,7 @@ class ExpressionTypeEvaluator internal constructor(
             return null
         }
         val target = stringCallTarget(call) ?: return null
-        if (!isLoadLibCallBase(effectiveCallBase(call), context)) {
+        if (!isLuaJavaCallBase(effectiveCallBase(call), context, "loadLib")) {
             return null
         }
         return resolveLoadLibMemberType(target, node.stringOf(), context).takeIf { it != UnknownType }
@@ -1881,7 +1835,7 @@ class ExpressionTypeEvaluator internal constructor(
         if (callArguments(call).firstOrNull() !== node) {
             return null
         }
-        if (!isBindClassCallBase(effectiveCallBase(call), context)) {
+        if (!isLuaJavaCallBase(effectiveCallBase(call), context, "bindClass")) {
             return null
         }
         return resolveLuaJavaImportTarget(node.stringOf())?.moduleType
@@ -1898,9 +1852,9 @@ class ExpressionTypeEvaluator internal constructor(
         return null
     }
 
-    private fun isLoadLibCallBase(base: ExpressionNode, context: Context): Boolean {
+    private fun isLuaJavaCallBase(base: ExpressionNode, context: Context, helperName: String): Boolean {
         return when (base) {
-            is MemberExpression -> isLuaJavaHelperMember(base, context, "loadLib")
+            is MemberExpression -> isLuaJavaHelperMember(base, context, helperName)
             is Identifier -> {
                 val declaration = callableDeclaration(base, context)
                     ?: findVisibleValueDeclarationIgnoringScope(
@@ -1909,89 +1863,11 @@ class ExpressionTypeEvaluator internal constructor(
                         context.excludedDeclarations
                     )
                 when {
-                    isUnshadowedBareLuaJavaHelper(base, declaration, context, "loadLib") -> true
-                    declaration != null && isLoadLibAlias(declaration, context) -> true
+                    isUnshadowedBareLuaJavaHelper(base, declaration, context, helperName) -> true
+                    declaration != null && declarationResolvesToLuaJavaHelper(declaration, context, helperName) -> true
                     declaration != null && declarationResolvesToLuaJavaHelperByDeclarationChain(
                         declaration,
-                        "loadLib",
-                        context.excludedDeclarations,
-                        linkedSetOf()
-                    ) -> true
-                    else -> false
-                }
-            }
-            else -> false
-        }
-    }
-
-    private fun isCreateProxyCallBase(base: ExpressionNode, context: Context): Boolean {
-        return when (base) {
-            is MemberExpression -> isLuaJavaHelperMember(base, context, "createProxy")
-            is Identifier -> {
-                val declaration = callableDeclaration(base, context)
-                    ?: findVisibleValueDeclarationIgnoringScope(
-                        base.name,
-                        base.range.start,
-                        context.excludedDeclarations
-                    )
-                when {
-                    isUnshadowedBareLuaJavaHelper(base, declaration, context, "createProxy") -> true
-                    declaration != null && isCreateProxyAlias(declaration, context) -> true
-                    declaration != null && declarationResolvesToLuaJavaHelperByDeclarationChain(
-                        declaration,
-                        "createProxy",
-                        context.excludedDeclarations,
-                        linkedSetOf()
-                    ) -> true
-                    else -> false
-                }
-            }
-            else -> false
-        }
-    }
-
-    private fun isBindClassCallBase(base: ExpressionNode, context: Context): Boolean {
-        return when (base) {
-            is MemberExpression -> isLuaJavaHelperMember(base, context, "bindClass")
-            is Identifier -> {
-                val declaration = callableDeclaration(base, context)
-                    ?: findVisibleValueDeclarationIgnoringScope(
-                        base.name,
-                        base.range.start,
-                        context.excludedDeclarations
-                    )
-                when {
-                    isUnshadowedBareLuaJavaHelper(base, declaration, context, "bindClass") -> true
-                    declaration != null && isBindClassAlias(declaration, context) -> true
-                    declaration != null && declarationResolvesToLuaJavaHelperByDeclarationChain(
-                        declaration,
-                        "bindClass",
-                        context.excludedDeclarations,
-                        linkedSetOf()
-                    ) -> true
-                    else -> false
-                }
-            }
-            else -> false
-        }
-    }
-
-    private fun isNewInstanceCallBase(base: ExpressionNode, context: Context): Boolean {
-        return when (base) {
-            is MemberExpression -> isLuaJavaHelperMember(base, context, "newInstance")
-            is Identifier -> {
-                val declaration = callableDeclaration(base, context)
-                    ?: findVisibleValueDeclarationIgnoringScope(
-                        base.name,
-                        base.range.start,
-                        context.excludedDeclarations
-                    )
-                when {
-                    isUnshadowedBareLuaJavaHelper(base, declaration, context, "newInstance") -> true
-                    declaration != null && isNewInstanceAlias(declaration, context) -> true
-                    declaration != null && declarationResolvesToLuaJavaHelperByDeclarationChain(
-                        declaration,
-                        "newInstance",
+                        helperName,
                         context.excludedDeclarations,
                         linkedSetOf()
                     ) -> true
@@ -2525,27 +2401,6 @@ class ExpressionTypeEvaluator internal constructor(
         output.add(LoadlayoutUsage(sink, source))
     }
 
-    private fun findLocalTableInitializer(name: String, from: BaseASTNode): TableConstructorExpression? {
-        var current: BaseASTNode? = from
-        var hops = 0
-        while (current != null && hops < LOADLAYOUT_PARENT_WALK_LIMIT) {
-            hops++
-            if (current is BlockNode) {
-                current.statements.forEach { statement ->
-                    if (statement is LocalStatement) {
-                        statement.init.forEachIndexed { index, ident ->
-                            if (ident.name == name) {
-                                return statement.variables.getOrNull(index) as? TableConstructorExpression
-                            }
-                        }
-                    }
-                }
-            }
-            current = runCatching { current.parent }.getOrNull()
-        }
-        return null
-    }
-
     private fun layoutIdFields(table: TableConstructorExpression): Map<String, Type> {
         // Id-field collection must never re-enter evaluate()/hydrate paths (listener
         // bodies, nested call typing) — this walk is purely structural.
@@ -3017,9 +2872,9 @@ class ExpressionTypeEvaluator internal constructor(
             // Dynamic class-name newInstance/bindClass/loadLib must stay unknown rather than
             // falling through to the JavaObject stub declaredType (TASK-682).
             val base = effectiveCallBase(initializer)
-            if (isNewInstanceCallBase(base, initializerContext) ||
-                isBindClassCallBase(base, initializerContext) ||
-                isLoadLibCallBase(base, initializerContext)
+            if (isLuaJavaCallBase(base, initializerContext, "newInstance") ||
+                isLuaJavaCallBase(base, initializerContext, "bindClass") ||
+                isLuaJavaCallBase(base, initializerContext, "loadLib")
             ) {
                 return UnknownType
             }
@@ -3031,10 +2886,10 @@ class ExpressionTypeEvaluator internal constructor(
 
     private fun luaJavaHelperCallType(call: CallExpression, target: String, context: Context): Type? {
         return when {
-            isBindClassCallBase(effectiveCallBase(call), context) ->
+            isLuaJavaCallBase(effectiveCallBase(call), context, "bindClass") ->
                 resolveLuaJavaImportTarget(target)?.moduleType
 
-            isNewInstanceCallBase(effectiveCallBase(call), context) ->
+            isLuaJavaCallBase(effectiveCallBase(call), context, "newInstance") ->
                 resolveLuaJavaImportTarget(target)?.moduleType?.let { moduleType ->
                     if (!newInstanceConstructorShapeMatches(moduleType, call, context)) {
                         UnknownType
@@ -3045,7 +2900,7 @@ class ExpressionTypeEvaluator internal constructor(
                     }
                 }
 
-            isCreateProxyCallBase(effectiveCallBase(call), context) -> {
+            isLuaJavaCallBase(effectiveCallBase(call), context, "createProxy") -> {
                 val interfaceTypes = createProxyTargets(call).mapNotNull { interfaceTarget ->
                     resolveLuaJavaImportTarget(interfaceTarget)?.moduleType?.javaInstanceSurface()
                         ?.hydrateLuaJavaProviderType()
@@ -3056,7 +2911,7 @@ class ExpressionTypeEvaluator internal constructor(
                 }
             }
 
-            isLoadLibCallBase(effectiveCallBase(call), context) -> {
+            isLuaJavaCallBase(effectiveCallBase(call), context, "loadLib") -> {
                 if (!hasValidLoadLibArguments(call)) {
                     UnknownType
                 } else {
@@ -3527,22 +3382,6 @@ class ExpressionTypeEvaluator internal constructor(
         }
     }
 
-    private fun inferDeclaredFunctionValueType(functionNode: FunctionDeclaration, context: Context): Type {
-        val parameters = functionNode.params.map { parameterNode ->
-            val parameterType = context.localOverrides[parameterNode.name] ?: UnknownType
-            FunctionParameter(
-                name = parameterNode.name,
-                type = parameterType,
-                vararg = parameterNode.name == "..." || parameterType is VarargType
-            )
-        }
-        // A nested non-vararg function owns no `...`; never inherit the enclosing vararg
-        // element type (that `...` belongs to the outer function's scope).
-        val varargType = parameters.lastOrNull { it.vararg }?.type ?: VarargType(UnknownType)
-        val childContext = buildFunctionBodyContext(functionNode, parameters, context.lexicalScopeId, varargType)
-        return evaluateFunctionDeclaration(functionNode, childContext)
-    }
-
     private fun mergeDeclaredAndInferredCallableType(
         declaration: BinderDeclaration,
         declared: CallableType,
@@ -3560,27 +3399,17 @@ class ExpressionTypeEvaluator internal constructor(
         } else {
             0
         }
-        val mergedParameters = when {
-            declaration.kind == DeclarationKind.METHOD -> inferredSignature.parameters.mapIndexed { index, parameter ->
-                val declaredParameter = declaredSignature.parameters.getOrNull(index + declaredParameterOffset)
-                val parameterType = when {
-                    declaredParameter == null -> parameter.type
-                    parameter.type == UnknownType -> declaredParameter.type
-                    declaredParameter.type == UnknownType -> parameter.type
-                    else -> declaredParameter.type
-                }
-                parameter.copy(type = parameterType)
+        // METHOD callers shift by 1 when the declared signature leads with an implicit `self`
+        // that body inference omitted; otherwise offset is 0 and this is a plain positional merge.
+        val mergedParameters = inferredSignature.parameters.mapIndexed { index, parameter ->
+            val declaredParameter = declaredSignature.parameters.getOrNull(index + declaredParameterOffset)
+            val parameterType = when {
+                declaredParameter == null -> parameter.type
+                parameter.type == UnknownType -> declaredParameter.type
+                declaredParameter.type == UnknownType -> parameter.type
+                else -> declaredParameter.type
             }
-            else -> inferredSignature.parameters.mapIndexed { index, parameter ->
-                val declaredParameter = declaredSignature.parameters.getOrNull(index)
-                val parameterType = when {
-                    declaredParameter == null -> parameter.type
-                    parameter.type == UnknownType -> declaredParameter.type
-                    declaredParameter.type == UnknownType -> parameter.type
-                    else -> declaredParameter.type
-                }
-                parameter.copy(type = parameterType)
-            }
+            parameter.copy(type = parameterType)
         }
         val returnType = when {
             preferDeclaredReturn && declaredSignature.returnType != UnknownType -> declaredSignature.returnType

@@ -46,31 +46,21 @@ data class ClassType(
         return result
     }
 
-    fun getAllFields(): Map<String, Type> = collectAllFields(mutableListOf())
+    fun getAllFields(): Map<String, Type> = collectAll(mutableListOf()) { fields }
 
-    fun getAllMethods(): Map<String, Type> = collectAllMethods(mutableListOf())
+    fun getAllMethods(): Map<String, Type> = collectAll(mutableListOf()) { methods }
 
-    private fun collectAllFields(visited: MutableList<ClassType>): Map<String, Type> {
+    private fun collectAll(
+        visited: MutableList<ClassType>,
+        own: ClassType.() -> Map<String, Type>
+    ): Map<String, Type> {
         if (visited.any { it === this }) {
-            return fields
+            return this.own()
         }
         visited += this
         val result = buildMap {
-            superClass?.collectAllFields(visited)?.let(::putAll)
-            putAll(fields)
-        }
-        visited.removeAt(visited.lastIndex)
-        return result
-    }
-
-    private fun collectAllMethods(visited: MutableList<ClassType>): Map<String, Type> {
-        if (visited.any { it === this }) {
-            return methods
-        }
-        visited += this
-        val result = buildMap {
-            superClass?.collectAllMethods(visited)?.let(::putAll)
-            putAll(methods)
+            superClass?.collectAll(visited, own)?.let(::putAll)
+            putAll(this@ClassType.own())
         }
         visited.removeAt(visited.lastIndex)
         return result
