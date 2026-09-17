@@ -595,7 +595,7 @@ internal class ExpressionUsageChecker(
         if (type == UnknownType) {
             return false
         }
-        return when (val normalized = TypeExpansion.expandForMemberSurface(type, lexicalScopeId, binder)) {
+        return when (val normalized = TypeExpansion.expandForSurface(type, lexicalScopeId, binder)) {
             is JavaClassType,
             is JavaInstanceType,
             is JavaArrayType -> true

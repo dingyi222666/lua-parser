@@ -602,7 +602,7 @@ internal class ReferenceQueries(
         }
         val resolvedType = resolution.type?.hydrateJavaProviderType(workspaceContext.resolveImportTarget)
 
-        val normalizedBase = TypeExpansion.expandForMemberSurface(baseType, lexicalScopeId, binder)
+        val normalizedBase = TypeExpansion.expandForSurface(baseType, lexicalScopeId, binder)
         val workspaceMember = workspaceModuleMember(expression.base, normalizedBase, expression.identifier.name)
         val memberType = workspaceMember?.type
             ?.hydrateJavaProviderType(workspaceContext.resolveImportTarget)
@@ -680,7 +680,7 @@ internal class ReferenceQueries(
         baseType: Type,
         lexicalScopeId: ScopeId
     ): Symbol? {
-        val normalizedBase = TypeExpansion.expandForMemberSurface(baseType, lexicalScopeId, binder)
+        val normalizedBase = TypeExpansion.expandForSurface(baseType, lexicalScopeId, binder)
         if (!isJavaMemberProviderBase(normalizedBase)) {
             return null
         }
@@ -1293,7 +1293,7 @@ internal class ReferenceQueries(
     }
 
     private fun collectMemberSurface(type: Type, lexicalScopeId: ScopeId): Map<String, MemberSurface> {
-        val normalized = TypeExpansion.expandForMemberSurface(
+        val normalized = TypeExpansion.expandForSurface(
             type.hydrateJavaProviderType(workspaceContext.resolveImportTarget),
             lexicalScopeId,
             binder

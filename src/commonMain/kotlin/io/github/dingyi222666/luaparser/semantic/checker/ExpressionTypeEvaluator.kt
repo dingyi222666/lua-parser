@@ -939,9 +939,7 @@ class ExpressionTypeEvaluator internal constructor(
             }
             val argumentCount = argumentSequences.size
             val arityMatches = signatures.any { signature ->
-                val required = signature.parameters.count { !it.optional && !it.vararg }
-                val hasVararg = signature.parameters.any { it.vararg }
-                argumentCount >= required && (hasVararg || argumentCount <= signature.parameters.size)
+                javaCallArityCompatible(signature, argumentCount)
             }
             if (arityMatches) {
                 return true
