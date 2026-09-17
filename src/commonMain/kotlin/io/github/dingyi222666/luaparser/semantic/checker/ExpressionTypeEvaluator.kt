@@ -861,11 +861,8 @@ class ExpressionTypeEvaluator internal constructor(
 
     private fun resolveBindClassCall(node: CallExpression, context: Context): ModuleType? {
         val target = stringCallTarget(node) ?: return null
-        val base = effectiveCallBase(node)
-        if (!isLuaJavaCallBase(base, context, "bindClass")) {
-            return null
-        }
-        return resolveLuaJavaImportTarget(target)?.moduleType
+        if (!isLuaJavaCallBase(effectiveCallBase(node), context, "bindClass")) return null
+        return luaJavaHelperCallReturn("bindClass", node, target, context) as? ModuleType
     }
 
     private fun resolveLuaJavaHelperColonCall(node: CallExpression, context: Context): Type? {
