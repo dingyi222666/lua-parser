@@ -505,17 +505,13 @@ class LuaLanguageService(
         }
 
         // Enrich documentation when absent; keep client-provided docs intact.
+        // toLspMarkdownDoc is the shared blank-guard + markdown-MarkupContent builder.
         if (resolved.documentation == null) {
-            val docs = buildCompletionResolveDocumentation(
+            buildCompletionResolveDocumentation(
                 label = resolved.label,
                 kind = resolved.kind,
                 detail = resolved.detail
-            )
-            if (!docs.isNullOrBlank()) {
-                resolved.documentation = Either.forRight(
-                    MarkupContent(MarkupKind.MARKDOWN, docs)
-                )
-            }
+            )?.toLspMarkdownDoc()?.let { docs -> resolved.documentation = docs }
         }
 
         // Never blank insertText when the unresolved item had one.

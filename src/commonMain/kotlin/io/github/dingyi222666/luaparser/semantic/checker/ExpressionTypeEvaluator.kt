@@ -8,8 +8,6 @@ import io.github.dingyi222666.luaparser.parser.ast.node.CaseCause
 import io.github.dingyi222666.luaparser.parser.ast.node.ConstantNode
 import io.github.dingyi222666.luaparser.parser.ast.node.DefaultCause
 import io.github.dingyi222666.luaparser.parser.ast.node.DoStatement
-import io.github.dingyi222666.luaparser.parser.ast.node.ElseClause
-import io.github.dingyi222666.luaparser.parser.ast.node.ElseIfClause
 import io.github.dingyi222666.luaparser.parser.ast.node.ExpressionNode
 import io.github.dingyi222666.luaparser.parser.ast.node.ExpressionOperator
 import io.github.dingyi222666.luaparser.parser.ast.node.ForGenericStatement
@@ -2298,11 +2296,9 @@ class ExpressionTypeEvaluator internal constructor(
                 node.body?.let { collectLoadlayoutUsages(it, output, visited, nodesRemaining) }
             }
             is IfStatement -> node.causes.forEach { cause ->
-                when (cause) {
-                    is IfClause -> collectLoadlayoutUsages(cause.body, output, visited, nodesRemaining)
-                    is ElseIfClause -> collectLoadlayoutUsages(cause.body, output, visited, nodesRemaining)
-                    is ElseClause -> collectLoadlayoutUsages(cause.body, output, visited, nodesRemaining)
-                }
+                // causes is List<IfClause> (ElseIf/Else are subtypes) and the per-subtype
+                // arms were identical, so one call covers all cause kinds.
+                collectLoadlayoutUsages(cause.body, output, visited, nodesRemaining)
             }
             is DoStatement -> collectLoadlayoutUsages(node.body, output, visited, nodesRemaining)
             is WhileStatement -> collectLoadlayoutUsages(node.body, output, visited, nodesRemaining)
@@ -3514,11 +3510,10 @@ class ExpressionTypeEvaluator internal constructor(
     }
 
     private fun collectStatementReturns(statement: StatementNode, context: Context, output: MutableList<ReturnSite>) {
+        // IfClause covers ElseIfClause/ElseClause too (they are subtypes) and every
+        // subtype arm recursed into the same body.
         when (statement) {
             is IfClause -> collectReturnTypes(statement.body, context, output)
-            is ElseIfClause -> collectReturnTypes(statement.body, context, output)
-            is ElseClause -> collectReturnTypes(statement.body, context, output)
-            is FunctionDeclaration -> Unit
             else -> Unit
         }
     }

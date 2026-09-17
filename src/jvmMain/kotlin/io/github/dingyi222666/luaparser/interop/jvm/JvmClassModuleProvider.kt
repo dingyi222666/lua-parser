@@ -991,6 +991,25 @@ class JvmClassModuleProvider(
     }
 
     /**
+     * Bundled Android-Lua runtime classes (com.androlua.*, com.luajava.*, compiled from the
+     * Android-Lua app sources, MIT license — see LICENSE attribution in the source repo).
+     * Extracted once to a temp file so the reflective classloader can mount real runtime
+     * members (LuaActivity.get/set/call/showToast/…) without host-specific configuration.
+     * Null when the resource is absent (never invents classes).
+     */
+    /**
+     * Per-instance view of the process-wide bundled runtime jar ([Companion.companionRuntimeJarRef]).
+     * Kept as an instance lazy because provider instances are created per workspace update —
+     * the shared lazy below is what guarantees exactly one temp extraction per JVM.
+     */
+    private val bundledAndroLuaRuntimeJar: File? by lazy {
+        companionRuntimeJarRef
+    }
+
+    /** Test surface: two provider instances must observe the SAME extracted jar file. */
+    internal fun bundledRuntimeJarForDiagnostics(): File? = bundledAndroLuaRuntimeJar
+
+    /**
      * Existing reflective classpath files for ClassLoader + package enumeration.
      *
      * Uses [JvmWorkspaceConfiguration.reflectionClasspathEntries] first. When an explicit
@@ -1004,25 +1023,6 @@ class JvmClassModuleProvider(
      * Never hard-requires G:, a missing AppData android-35 path alone, or a macOS-only
      * absolute path.
      */
-    /**
-     * Bundled Android-Lua runtime classes (com.androlua.*, com.luajava.*, compiled from the
-     * Android-Lua app sources, MIT license — see LICENSE attribution in the source repo).
-     * Extracted once to a temp file so the reflective classloader can mount real runtime
-     * members (LuaActivity.get/set/call/showToast/…) without host-specific configuration.
-     * Null when the resource is absent (never invents classes).
-     */
-    /**
-     * Per-instance view of the process-wide bundled runtime jar ([Companion.bundledAndroLuaRuntimeJarShared]).
-     * Kept as an instance lazy because provider instances are created per workspace update —
-     * the shared lazy below is what guarantees exactly one temp extraction per JVM.
-     */
-    private val bundledAndroLuaRuntimeJar: File? by lazy {
-        companionRuntimeJarRef
-    }
-
-    /** Test surface: two provider instances must observe the SAME extracted jar file. */
-    internal fun bundledRuntimeJarForDiagnostics(): File? = bundledAndroLuaRuntimeJar
-
     private fun resolveReflectiveClasspathFiles(configuration: JvmWorkspaceConfiguration): List<File> {
         val entries = mutableListOf<File>()
         // The bundled runtime always leads the classpath: it carries the AndroLua-facing
@@ -1183,17 +1183,6 @@ class JvmClassModuleProvider(
     }
 
     /**
-     * Module names advertised on a reflected class provider public fingerprint.
-     *
-     * Always the reflection simple name only (String / Locale / TextView / State / Entry /
-     * String[]). Nested types such as Thread$State and Map$Entry must not expand binary,
-     * dotted, or underscore aliases into providedModuleNames — that over-broad set broke
-     * Thread.State fingerprint equality (expected {State}).
-     *
-     * Binary/dotted/underscore AndroLua aliases remain loadable via candidateClassNames and
-     * path recovery; they are not fingerprint claims. Never invents names outside reflection.
-     */
-    /**
      * Module name for a reflected class provider. Nested Android resource classes reflect
      * with lowercase simple names (android.R$string → "string"); a bare claim of those
      * names outranks the Lua standard library overlay for the same module name and strips
@@ -1206,6 +1195,17 @@ class JvmClassModuleProvider(
         return if (simple in LUA_STD_MODULE_NAMES) "${enclosing.simpleName}.$simple" else simple
     }
 
+    /**
+     * Module names advertised on a reflected class provider public fingerprint.
+     *
+     * Always the reflection simple name only (String / Locale / TextView / State / Entry /
+     * String[]). Nested types such as Thread$State and Map$Entry must not expand binary,
+     * dotted, or underscore aliases into providedModuleNames — that over-broad set broke
+     * Thread.State fingerprint equality (expected {State}).
+     *
+     * Binary/dotted/underscore AndroLua aliases remain loadable via candidateClassNames and
+     * path recovery; they are not fingerprint claims. Never invents names outside reflection.
+     */
     private fun reflectedClassProviderModuleNames(clazz: Class<*>): Set<String> {
         val simple = clazz.simpleName.takeIf(String::isNotBlank)
             ?: clazz.name.substringAfterLast('$').substringAfterLast('.').takeIf(String::isNotBlank)
@@ -1346,15 +1346,6 @@ class JvmClassModuleProvider(
     }
 
     /**
-     * Package-wildcard class type: no recursive super/interface *member* expand (TASK-611),
-     * but instance members use the full public reflection surface ([Class.getMethods] /
-     * [Class.getFields]) so inherited View APIs appear on `button.` after
-     * `import "android.widget.*"`. The static member surface uses the same reflected
-     * helpers as the explicit-import deep surface so inherited statics
-     * (`TextView.VISIBLE` from View) match the explicit import exactly.
-     * Super/interfaces stay name-only type references.
-     */
-    /**
      * Reflected member surfaces shared verbatim by the shallow (wildcard) and deep
      * (explicit import) [JavaClassType] builders: public static/instance fields and
      * methods with identical owner/kind/signature-metadata mapping.
@@ -1440,6 +1431,15 @@ class JvmClassModuleProvider(
         )
     }
 
+    /**
+     * Package-wildcard class type: no recursive super/interface *member* expand (TASK-611),
+     * but instance members use the full public reflection surface ([Class.getMethods] /
+     * [Class.getFields]) so inherited View APIs appear on `button.` after
+     * `import "android.widget.*"`. The static member surface uses the same reflected
+     * helpers as the explicit-import deep surface so inherited statics
+     * (`TextView.VISIBLE` from View) match the explicit import exactly.
+     * Super/interfaces stay name-only type references.
+     */
     private fun shallowJavaClassTypeFor(clazz: Class<*>): JavaClassType {
         // Name-only super/interface edges — no recursive member expand for wildcards.
         return reflectedJavaClassType(
@@ -1578,29 +1578,25 @@ class JvmClassModuleProvider(
     }
 
 
+    /** Shared public, non-synthetic field filter; [static] picks the static vs instance surface. */
+    private fun publicFields(clazz: Class<*>, static: Boolean): List<Field> {
+        return clazz.fields
+            .filter { field ->
+                Modifier.isPublic(field.modifiers) &&
+                    Modifier.isStatic(field.modifiers) == static &&
+                    !field.isSynthetic
+            }
+    }
+
     /**
      * Public, non-synthetic static fields used by Android-Lua scripts (RESULT_*, MODE_*,
      * ACTION_*, FLAG_*, service-name constants such as ACTIVITY_SERVICE /
      * LAYOUT_INFLATER_SERVICE / CLIPBOARD_SERVICE on [android.content.Context]).
      * Never invents names that reflection cannot see from the host android.jar.
      */
-    private fun publicStaticFields(clazz: Class<*>): List<Field> {
-        return clazz.fields
-            .filter { field ->
-                Modifier.isPublic(field.modifiers) &&
-                    Modifier.isStatic(field.modifiers) &&
-                    !field.isSynthetic
-            }
-    }
+    private fun publicStaticFields(clazz: Class<*>): List<Field> = publicFields(clazz, static = true)
 
-    private fun publicInstanceFields(clazz: Class<*>): List<Field> {
-        return clazz.fields
-            .filter { field ->
-                Modifier.isPublic(field.modifiers) &&
-                    !Modifier.isStatic(field.modifiers) &&
-                    !field.isSynthetic
-            }
-    }
+    private fun publicInstanceFields(clazz: Class<*>): List<Field> = publicFields(clazz, static = false)
 
     /**
      * Public, non-synthetic/non-bridge methods. [Class.getMethods] already returns the
@@ -1770,53 +1766,17 @@ class JvmClassModuleProvider(
                 range = null
             )
         }
-        if (type is JavaInstanceType) {
-            // Nested / interface static helpers (Map$Entry.comparingByKey) live on the class
-            // surface. Export them under __class so workspace export lookup, goto, and
-            // fingerprint can resolve binary-name bindClass mounts without inventing members.
-            type.classType.allStaticMembers().forEach { (name, member) ->
-                addExport(
-                    name,
-                    symbolKindForJavaMember(member.memberKind, member.valueType),
-                    member.valueType
-                )
-            }
-            type.classType.allInnerClasses().forEach { (name, innerClass) ->
-                addExport(name, io.github.dingyi222666.luaparser.semantic.api.SymbolKind.CLASS, innerClass)
-            }
-            type.allInstanceMembers().forEach { (name, member) ->
-                // Prefer static METHOD exports when names collide with instance members.
-                addExport(
-                    name,
-                    symbolKindForJavaMember(member.memberKind, member.valueType),
-                    member.valueType
-                )
-            }
-        } else if (type is JavaClassType) {
-            type.allStaticMembers().forEach { (name, member) ->
-                addExport(
-                    name,
-                    symbolKindForJavaMember(member.memberKind, member.valueType),
-                    member.valueType
-                )
-            }
-            type.allInnerClasses().forEach { (name, innerClass) ->
-                addExport(name, io.github.dingyi222666.luaparser.semantic.api.SymbolKind.CLASS, innerClass)
-            }
-            type.allInstanceMembers().forEach { (name, member) ->
-                addExport(
-                    name,
-                    symbolKindForJavaMember(member.memberKind, member.valueType),
-                    member.valueType
-                )
-            }
-        } else {
-            val classType = type as? ClassType ?: return emptyList()
-            classType.getAllFields().forEach { (name, memberType) ->
-                addExport(name, io.github.dingyi222666.luaparser.semantic.api.SymbolKind.FIELD, memberType)
-            }
-            classType.getAllMethods().forEach { (name, memberType) ->
-                addExport(name, io.github.dingyi222666.luaparser.semantic.api.SymbolKind.METHOD, memberType)
+        when (type) {
+            is JavaInstanceType -> appendClassExports(type.classType, type.allInstanceMembers(), ::addExport)
+            is JavaClassType -> appendClassExports(type, type.allInstanceMembers(), ::addExport)
+            else -> {
+                val classType = type as? ClassType ?: return emptyList()
+                classType.getAllFields().forEach { (name, memberType) ->
+                    addExport(name, io.github.dingyi222666.luaparser.semantic.api.SymbolKind.FIELD, memberType)
+                }
+                classType.getAllMethods().forEach { (name, memberType) ->
+                    addExport(name, io.github.dingyi222666.luaparser.semantic.api.SymbolKind.METHOD, memberType)
+                }
             }
         }
         // Bounded export surface (adversarial audit): a hard per-class cap is applied AFTER
@@ -1833,6 +1793,32 @@ class JvmClassModuleProvider(
                 )
             )
             .take(MAX_CLASS_EXPORT_MEMBERS)
+    }
+
+    /**
+     * Export loop shared verbatim by the instance-shell and bare-class [classMembers]
+     * branches: static members + inner classes of [classType], then [instanceMembers] —
+     * in that order, so the [addExport] dedupe keeps the documented precedence
+     * (statics win name collisions over instance members).
+     */
+    private fun appendClassExports(
+        classType: JavaClassType,
+        instanceMembers: Map<String, JavaInstanceMemberType>,
+        addExport: (String, io.github.dingyi222666.luaparser.semantic.api.SymbolKind, Type) -> Unit
+    ) {
+        // Nested / interface static helpers (Map$Entry.comparingByKey) live on the class
+        // surface. Export them under __class so workspace export lookup, goto, and
+        // fingerprint can resolve binary-name bindClass mounts without inventing members.
+        classType.allStaticMembers().forEach { (name, member) ->
+            addExport(name, symbolKindForJavaMember(member.memberKind, member.valueType), member.valueType)
+        }
+        classType.allInnerClasses().forEach { (name, innerClass) ->
+            addExport(name, io.github.dingyi222666.luaparser.semantic.api.SymbolKind.CLASS, innerClass)
+        }
+        instanceMembers.forEach { (name, member) ->
+            // Prefer static METHOD exports when names collide with instance members.
+            addExport(name, symbolKindForJavaMember(member.memberKind, member.valueType), member.valueType)
+        }
     }
 
     private fun symbolKindForJavaMember(
