@@ -28,6 +28,7 @@ import io.github.dingyi222666.luaparser.semantic.WorkspaceImportedSymbol
 import io.github.dingyi222666.luaparser.semantic.workspace.DocumentFacts
 import io.github.dingyi222666.luaparser.semantic.workspace.DocumentFactsCollector
 import io.github.dingyi222666.luaparser.semantic.workspace.LuaWorkspaceEngine
+import io.github.dingyi222666.luaparser.semantic.workspace.LuaLayoutPropertiesMetadata
 import io.github.dingyi222666.luaparser.semantic.workspace.LuaWorkspaceInput
 import io.github.dingyi222666.luaparser.semantic.workspace.VirtualPath
 import io.github.dingyi222666.luaparser.semantic.workspace.WorkspaceSnapshot
@@ -196,12 +197,10 @@ class JvmWorkspaceEngine(
             putAll(sourceImports)
         }
         val workspaceResolver = workspaceResolverFor(snapshot, path)
-        // Compose on the common-engine base context so currentPath / overlayGlobals /
-        // layoutPropertyExtensions derive from one place; only the JVM-specific layers
-        // (per-update resolver, configured+source imports, dynamic target resolution,
-        // unresolved LuaJava diagnostics) are stacked on top via copy.
-        return super.workspaceContext(input, path, snapshot).copy(
+        return SemanticWorkspaceContext(
+            currentPath = path,
             workspaceResolver = workspaceResolver,
+            overlayGlobals = snapshot.builtinOverlay.globals,
             // Only base configured imports go in the context map; document source imports are
             // re-applied by SemanticWorkspaceContext.withWorkspaceImportEffects() for this path.
             // Keep activeImports here so current-file analysis already sees both layers.
@@ -218,7 +217,8 @@ class JvmWorkspaceEngine(
                 currentFacts,
                 resolvedConfiguration,
                 workspaceResolver
-            )
+            ),
+            layoutPropertyExtensions = LuaLayoutPropertiesMetadata.parse(snapshot.metadata)
         )
     }
 

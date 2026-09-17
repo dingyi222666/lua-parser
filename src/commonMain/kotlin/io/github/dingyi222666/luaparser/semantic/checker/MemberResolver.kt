@@ -305,9 +305,13 @@ class MemberResolver(
             }
             tableType.methods[literalKey]?.let {
                 return MemberResolution(
-                    // Index access is never colon sugar; keep free-function callable shape
-                    // (bindMethodReceiver is identity at preferMethod=false).
-                    type = it,
+                    // Index access is never colon sugar; keep free-function callable shape.
+                    type = bindMethodReceiver(
+                        it,
+                        tableType,
+                        MemberAccessKind.METHOD,
+                        preferMethod = false
+                    ),
                     accessKind = MemberAccessKind.METHOD,
                     baseType = tableType
                 )
@@ -335,9 +339,13 @@ class MemberResolver(
             val resolvedType = if (classType.isJavaProviderClassReference()) {
                 it.withJavaCallableSurface(receiverType = classType, includeReceiver = false)
             } else {
-                // Index access is never colon sugar; keep free-function callable shape
-                // (bindMethodReceiver would be identity at preferMethod=false).
-                it
+                // Index access is never colon sugar; keep free-function callable shape.
+                bindMethodReceiver(
+                    it,
+                    classType,
+                    MemberAccessKind.METHOD,
+                    preferMethod = false
+                )
             }
             return MemberResolution(
                 type = resolvedType,
@@ -414,9 +422,13 @@ class MemberResolver(
                 val resolvedType = if (moduleType.isJavaBackedModule()) {
                     it.withJavaCallableSurface()
                 } else {
-                    // Index access is never colon sugar; keep free-function callable shape
-                    // (bindMethodReceiver would be identity at preferMethod=false).
-                    it
+                    // Index access is never colon sugar; keep free-function callable shape.
+                    bindMethodReceiver(
+                        it,
+                        moduleType,
+                        MemberAccessKind.METHOD,
+                        preferMethod = false
+                    )
                 }
                 return MemberResolution(
                     type = resolvedType,
