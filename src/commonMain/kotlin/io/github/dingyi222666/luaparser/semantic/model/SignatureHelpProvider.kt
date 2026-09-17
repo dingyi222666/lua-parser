@@ -1090,7 +1090,7 @@ internal class SignatureHelpProvider(
     }
 
     private fun memberOwnerName(baseType: Type, lexicalScopeId: ScopeId): BinderDeclaration? {
-        val normalized = io.github.dingyi222666.luaparser.semantic.types.resolve.TypeExpansion.expandForMemberSurface(baseType, lexicalScopeId, binder)
+        val normalized = io.github.dingyi222666.luaparser.semantic.types.resolve.TypeExpansion.expandForSurface(baseType, lexicalScopeId, binder)
         val displayName = normalized.displayName.substringBefore('<')
         return binder.declarationIndex.declarations.firstOrNull { declaration ->
             declaration.kind.name == "CLASS" && declaration.name == displayName
