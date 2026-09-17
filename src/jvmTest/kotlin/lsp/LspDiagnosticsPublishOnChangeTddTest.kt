@@ -23,7 +23,6 @@ import java.lang.reflect.Proxy
 import java.util.concurrent.CompletableFuture
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 /**
@@ -222,13 +221,6 @@ class LspDiagnosticsPublishOnChangeTddTest {
 
     private fun openParams(uri: String, text: String, version: Int = 1): DidOpenTextDocumentParams {
         return DidOpenTextDocumentParams(TextDocumentItem(uri, "lua", version, text))
-    }
-
-    private fun fullChange(uri: String, version: Int?, text: String): DidChangeTextDocumentParams {
-        return DidChangeTextDocumentParams(
-            VersionedTextDocumentIdentifier(uri, version),
-            listOf(TextDocumentContentChangeEvent(text))
-        )
     }
 
     private fun closeParams(uri: String): DidCloseTextDocumentParams {

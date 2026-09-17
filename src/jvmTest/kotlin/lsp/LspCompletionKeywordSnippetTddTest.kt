@@ -4,13 +4,11 @@ import io.github.dingyi222666.luaparser.lsp.LuaLanguageService
 import org.eclipse.lsp4j.CompletionItem
 import org.eclipse.lsp4j.CompletionItemKind
 import org.eclipse.lsp4j.DidOpenTextDocumentParams
-import org.eclipse.lsp4j.InitializeParams
 import org.eclipse.lsp4j.InsertTextFormat
 import org.eclipse.lsp4j.Position
 import org.eclipse.lsp4j.TextDocumentItem
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
@@ -227,12 +225,6 @@ class LspCompletionKeywordSnippetTddTest {
     // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------
-
-    private fun service(): LuaLanguageService {
-        return LuaLanguageService().apply {
-            initialize(InitializeParams())
-        }
-    }
 
     private fun LuaLanguageService.open(path: String, source: String): OpenDocument {
         val document = OpenDocument(path = path, source = source)

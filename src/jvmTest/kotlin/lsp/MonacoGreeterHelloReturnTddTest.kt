@@ -1,7 +1,6 @@
 package lsp
 
 import io.github.dingyi222666.luaparser.lsp.LuaLanguageService
-import org.eclipse.lsp4j.Hover
 import org.eclipse.lsp4j.HoverParams
 import org.eclipse.lsp4j.InitializeParams
 import org.eclipse.lsp4j.Position
@@ -179,21 +178,6 @@ class MonacoGreeterHelloReturnTddTest {
 
     private fun hoverParams(file: WorkspaceFile, needle: String, occurrence: Int = 1): HoverParams =
         HoverParams(TextDocumentIdentifier(file.uri), file.positionOf(needle, occurrence))
-
-    private fun hoverMarkup(hover: Hover): String {
-        val contents = hover.contents ?: return ""
-        return when {
-            contents.isRight -> contents.right?.value.orEmpty()
-            contents.isLeft -> contents.left.orEmpty().joinToString("\n") { either ->
-                when {
-                    either.isRight -> either.right?.value.orEmpty()
-                    either.isLeft -> either.left?.toString().orEmpty()
-                    else -> ""
-                }
-            }
-            else -> hover.toString()
-        }
-    }
 
     private fun isBareUnknownOnly(text: String, symbol: String): Boolean {
         val normalized = text.lowercase()

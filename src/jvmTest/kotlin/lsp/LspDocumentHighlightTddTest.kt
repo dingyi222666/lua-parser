@@ -1,13 +1,11 @@
 package lsp
 
-import io.github.dingyi222666.luaparser.interop.jvm.JvmClassModuleProvider
 import io.github.dingyi222666.luaparser.lsp.LuaLanguageService
 import io.github.dingyi222666.luaparser.lsp.LuaTextDocumentService
 import org.eclipse.lsp4j.DidOpenTextDocumentParams
 import org.eclipse.lsp4j.DocumentHighlight
 import org.eclipse.lsp4j.DocumentHighlightKind
 import org.eclipse.lsp4j.DocumentHighlightParams
-import org.eclipse.lsp4j.InitializeParams
 import org.eclipse.lsp4j.Position
 import org.eclipse.lsp4j.Range
 import org.eclipse.lsp4j.TextDocumentIdentifier
@@ -16,7 +14,6 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
-import kotlin.test.fail
 
 /**
  * TASK-250 — LSP document highlight same-symbol corpus.
@@ -48,7 +45,7 @@ class LspDocumentHighlightTddTest {
 
     @Test
     fun document_highlight_local_reads_and_declaration_cover_all_same_file_occurrences() {
-        val service = service()
+        val service = serviceWithMetadata()
         val document = service.open(
             "workspace/highlight-local-reads.lua",
             """
@@ -76,7 +73,7 @@ class LspDocumentHighlightTddTest {
 
     @Test
     fun document_highlight_write_and_read_kinds_for_local_with_assignment() {
-        val service = service()
+        val service = serviceWithMetadata()
         val document = service.open(
             "workspace/highlight-write-read-kinds.lua",
             """
@@ -132,7 +129,7 @@ class LspDocumentHighlightTddTest {
 
     @Test
     fun document_highlight_stays_inside_requesting_file_for_local_symbol() {
-        val service = service()
+        val service = serviceWithMetadata()
         // Open a second file with a same-named local that must not leak into highlights.
         service.open(
             "workspace/highlight-other.lua",
@@ -163,7 +160,7 @@ class LspDocumentHighlightTddTest {
 
     @Test
     fun document_highlight_missing_symbol_returns_empty_list_not_error() {
-        val service = service()
+        val service = serviceWithMetadata()
         val document = service.open(
             "workspace/highlight-missing.lua",
             """
@@ -204,7 +201,7 @@ class LspDocumentHighlightTddTest {
 
     @Test
     fun text_document_service_document_highlight_wraps_same_symbol_results() {
-        val languageService = service()
+        val languageService = serviceWithMetadata()
         val textDocuments = LuaTextDocumentService(languageService)
         val document = OpenDocument(
             path = "workspace/highlight-text-document.lua",
@@ -239,15 +236,6 @@ class LspDocumentHighlightTddTest {
     // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------
-
-    private fun service(metadata: Map<String, String> = emptyMap()): LuaLanguageService {
-        return LuaLanguageService().apply {
-            initialize(InitializeParams())
-            if (metadata.isNotEmpty()) {
-                setWorkspaceMetadata(metadata)
-            }
-        }
-    }
 
     private fun LuaLanguageService.open(path: String, source: String): OpenDocument {
         val document = OpenDocument(path = path, source = source.trimIndent())

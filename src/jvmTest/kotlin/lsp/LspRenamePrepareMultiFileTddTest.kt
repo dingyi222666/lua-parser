@@ -17,8 +17,6 @@ import org.eclipse.lsp4j.WorkspaceEdit
 import org.eclipse.lsp4j.WorkspaceFolder
 import java.nio.file.Files
 import java.nio.file.Path
-import java.util.concurrent.CompletionException
-import java.util.concurrent.ExecutionException
 import kotlin.io.path.createDirectories
 import kotlin.io.path.writeText
 import kotlin.test.Test
@@ -641,26 +639,6 @@ class LspRenamePrepareMultiFileTddTest {
                 "$label start character must match occurrence $occurrence of '$identifier'"
             )
         }
-    }
-
-    private fun unwrap(error: Throwable): Throwable {
-        var current = error
-        while (
-            (current is ExecutionException || current is CompletionException) &&
-            current.cause != null
-        ) {
-            current = current.cause!!
-        }
-        return current
-    }
-
-    private fun isUnsupportedOperation(error: Throwable): Boolean {
-        if (error is UnsupportedOperationException) {
-            return true
-        }
-        val message = error.message.orEmpty()
-        return message.contains("UnsupportedOperationException") ||
-            message.contains("not implemented", ignoreCase = true)
     }
 
     private sealed class PrepareRenameOutcome {

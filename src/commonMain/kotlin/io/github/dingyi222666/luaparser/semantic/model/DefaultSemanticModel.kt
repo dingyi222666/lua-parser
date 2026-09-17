@@ -14,14 +14,10 @@ import io.github.dingyi222666.luaparser.semantic.binder.BinderPassResult
 import io.github.dingyi222666.luaparser.semantic.binder.SymbolId
 
 /**
- * Lets callers that already hold a [SemanticModel] reuse its position index instead of building a
- * second one over the same chunk. Indexing is a full-AST walk, so the workspace file and the
- * language server share the model's copy rather than each rebuilding it.
+ * The only [SemanticModel] implementation the pipeline produces. Callers that already hold one
+ * (the workspace file, the language server) reuse its [nodePositionIndex] instead of building a
+ * second one over the same chunk — indexing is a full-AST walk, so they share the model's copy.
  */
-internal interface NodePositionIndexProvider {
-    val nodePositionIndex: NodePositionIndex
-}
-
 internal class DefaultSemanticModel(
     private val binder: BinderPassResult,
     private val adapters: ApiAdapters,
@@ -32,7 +28,7 @@ internal class DefaultSemanticModel(
     luaLayoutCompletionProvider: Lazy<LuaLayoutCompletionProvider>,
     signatureHelpProvider: Lazy<SignatureHelpProvider>,
     private val diagnostics: List<Diagnostic>
-) : SemanticModel, NodePositionIndexProvider {
+) : SemanticModel {
     override val nodePositionIndex by nodePositionIndex
     private val completionProvider by completionProvider
     private val luaLayoutCompletionProvider by luaLayoutCompletionProvider

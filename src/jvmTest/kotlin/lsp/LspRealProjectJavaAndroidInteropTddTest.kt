@@ -4,7 +4,6 @@ import io.github.dingyi222666.luaparser.interop.jvm.JvmClassModuleProvider
 import io.github.dingyi222666.luaparser.interop.jvm.JvmWorkspaceConfiguration
 import io.github.dingyi222666.luaparser.lsp.LuaLanguageService
 import io.github.dingyi222666.luaparser.lsp.LuaWorkspaceService
-import org.eclipse.lsp4j.CompletionParams
 import org.eclipse.lsp4j.DefinitionParams
 import org.eclipse.lsp4j.DidChangeConfigurationParams
 import org.eclipse.lsp4j.DidOpenTextDocumentParams
@@ -1125,21 +1124,6 @@ class LspRealProjectJavaAndroidInteropTddTest {
     private fun softContainsAnyOrEmpty(labels: List<String>, expected: List<String>) {
         if (labels.isEmpty()) return
         softContainsAny(labels, expected)
-    }
-
-    private fun hoverMarkup(hover: org.eclipse.lsp4j.Hover): String {
-        val contents = hover.contents ?: return ""
-        return when {
-            contents.isRight -> contents.right?.value.orEmpty()
-            contents.isLeft -> contents.left.orEmpty().joinToString("\n") { either ->
-                when {
-                    either.isRight -> either.right?.value.orEmpty()
-                    either.isLeft -> either.left?.toString().orEmpty()
-                    else -> ""
-                }
-            }
-            else -> hover.toString()
-        }
     }
 
     private data class OpenDocument(

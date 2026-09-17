@@ -186,21 +186,6 @@ class MonacoAndroidBuildReturnTddTest {
         return Position(line, offset - lineStart)
     }
 
-    private fun hoverMarkup(hover: Hover): String {
-        val contents = hover.contents ?: return ""
-        return when {
-            contents.isRight -> contents.right?.value.orEmpty()
-            contents.isLeft -> contents.left.orEmpty().joinToString("\n") { either ->
-                when {
-                    either.isRight -> either.right?.value.orEmpty()
-                    either.isLeft -> either.left?.toString().orEmpty()
-                    else -> ""
-                }
-            }
-            else -> hover.toString()
-        }
-    }
-
     companion object {
         private val DEMO_SOURCE = """
             --- Android-Lua-ish sample (needs jvm.androidJar + imports for full surface).

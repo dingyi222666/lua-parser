@@ -2,9 +2,7 @@ package lsp
 
 import io.github.dingyi222666.luaparser.lsp.LuaLanguageService
 import org.eclipse.lsp4j.DidOpenTextDocumentParams
-import org.eclipse.lsp4j.InitializeParams
 import org.eclipse.lsp4j.TextDocumentItem
-import org.eclipse.lsp4j.WorkspaceFolder
 import kotlin.test.Test
 import kotlin.test.assertTrue
 
@@ -31,7 +29,7 @@ class LspSelfMemberCompletionTddTest {
 
     @Test
     fun self_dot_completion_inside_colon_method_lists_class_fields() {
-        val service = service()
+        val service = workspaceService()
         val source = FLAT_SOURCE.trimIndent()
         val uri = open(service, "self-flat.lua", source)
         val line = lineOf(source, "  self.r")
@@ -46,7 +44,7 @@ class LspSelfMemberCompletionTddTest {
 
     @Test
     fun nested_field_completion_reaches_field_only_class() {
-        val service = service()
+        val service = workspaceService()
         val source = NESTED_SOURCE.trimIndent()
         val uri = open(service, "self-nested.lua", source)
         val line = lineOf(source, "  self.readyBuild.s")
@@ -62,7 +60,7 @@ class LspSelfMemberCompletionTddTest {
 
     @Test
     fun explicit_self_parameter_still_completes_class_members() {
-        val service = service()
+        val service = workspaceService()
         val source = EXPLICIT_SOURCE.trimIndent()
         val uri = open(service, "self-explicit.lua", source)
         val line = lineOf(source, "  self.r")
@@ -75,16 +73,6 @@ class LspSelfMemberCompletionTddTest {
 
     private fun lineOf(source: String, needle: String): Int =
         source.lines().indexOfFirst { it == needle }.also { check(it >= 0) { "Missing '$needle'." } }
-
-    private fun service(): LuaLanguageService {
-        return LuaLanguageService().apply {
-            initialize(
-                InitializeParams().apply {
-                    workspaceFolders = listOf(WorkspaceFolder("file:///workspace", "workspace"))
-                }
-            )
-        }
-    }
 
     private fun open(service: LuaLanguageService, name: String, source: String): String {
         val uri = "file:///workspace/$name"

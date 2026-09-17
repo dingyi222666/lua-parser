@@ -4,14 +4,10 @@ import io.github.dingyi222666.luaparser.interop.jvm.JvmClassModuleProvider
 import io.github.dingyi222666.luaparser.lsp.LuaLanguageService
 import io.github.dingyi222666.luaparser.lsp.LuaWorkspaceService
 import org.eclipse.lsp4j.DidOpenTextDocumentParams
-import org.eclipse.lsp4j.InitializeParams
 import org.eclipse.lsp4j.SymbolInformation
-import org.eclipse.lsp4j.SymbolKind
 import org.eclipse.lsp4j.TextDocumentItem
-import org.eclipse.lsp4j.WorkspaceSymbolParams
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 /**
@@ -56,7 +52,7 @@ class LspWorkspaceSymbolPrefixTddTest {
 
     @Test
     fun workspace_symbols_exact_name_query_hits_open_file_local() {
-        val service = service()
+        val service = serviceWithMetadata()
         service.open(
             "workspace/ws-prefix-exact.lua",
             """
@@ -82,7 +78,7 @@ class LspWorkspaceSymbolPrefixTddTest {
 
     @Test
     fun workspace_symbols_leading_prefix_matches_name_start() {
-        val service = service()
+        val service = serviceWithMetadata()
         service.open(
             "workspace/ws-prefix-leading.lua",
             """
@@ -108,7 +104,7 @@ class LspWorkspaceSymbolPrefixTddTest {
 
     @Test
     fun blank_workspace_symbol_query_returns_all_open_file_symbols() {
-        val service = service()
+        val service = serviceWithMetadata()
         service.open(
             "workspace/ws-prefix-blank-a.lua",
             """
@@ -145,7 +141,7 @@ class LspWorkspaceSymbolPrefixTddTest {
 
     @Test
     fun workspace_symbols_prefix_matches_provider_module_and_member() {
-        val service = service(jdkMetadata)
+        val service = serviceWithMetadata(jdkMetadata)
         service.open(
             "workspace/ws-prefix-provider.lua",
             """
@@ -183,15 +179,6 @@ class LspWorkspaceSymbolPrefixTddTest {
     // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------
-
-    private fun service(metadata: Map<String, String> = emptyMap()): LuaLanguageService {
-        return LuaLanguageService().apply {
-            initialize(InitializeParams())
-            if (metadata.isNotEmpty()) {
-                setWorkspaceMetadata(metadata)
-            }
-        }
-    }
 
     private fun LuaLanguageService.open(path: String, source: String) {
         didOpen(

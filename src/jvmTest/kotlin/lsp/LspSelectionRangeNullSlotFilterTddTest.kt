@@ -3,7 +3,6 @@ package lsp
 import io.github.dingyi222666.luaparser.lsp.LuaLanguageService
 import io.github.dingyi222666.luaparser.lsp.LuaTextDocumentService
 import org.eclipse.lsp4j.DidOpenTextDocumentParams
-import org.eclipse.lsp4j.InitializeParams
 import org.eclipse.lsp4j.Position
 import org.eclipse.lsp4j.SelectionRangeParams
 import org.eclipse.lsp4j.TextDocumentIdentifier
@@ -77,10 +76,6 @@ class LspSelectionRangeNullSlotFilterTddTest {
     }
 
     // --- helpers -----------------------------------------------------------------
-
-    private fun service(): LuaLanguageService {
-        return LuaLanguageService().also { it.initialize(InitializeParams()) }
-    }
 
     private fun open(service: LuaLanguageService, path: String, source: String): String {
         val uri = "file:///$path"

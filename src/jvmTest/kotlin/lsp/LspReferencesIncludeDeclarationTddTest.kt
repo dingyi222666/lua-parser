@@ -1,10 +1,8 @@
 package lsp
 
-import io.github.dingyi222666.luaparser.interop.jvm.JvmClassModuleProvider
 import io.github.dingyi222666.luaparser.lsp.LuaLanguageService
 import io.github.dingyi222666.luaparser.lsp.LuaTextDocumentService
 import org.eclipse.lsp4j.DidOpenTextDocumentParams
-import org.eclipse.lsp4j.InitializeParams
 import org.eclipse.lsp4j.Location
 import org.eclipse.lsp4j.Position
 import org.eclipse.lsp4j.ReferenceContext
@@ -47,7 +45,7 @@ class LspReferencesIncludeDeclarationTddTest {
 
     @Test
     fun references_include_declaration_true_covers_local_decl_and_uses() {
-        val service = service()
+        val service = serviceWithMetadata()
         val document = service.open(
             "workspace/refs-include-decl-true.lua",
             """
@@ -84,7 +82,7 @@ class LspReferencesIncludeDeclarationTddTest {
 
     @Test
     fun references_include_declaration_false_on_local_is_ideal_or_currently_accepts() {
-        val service = service()
+        val service = serviceWithMetadata()
         val document = service.open(
             "workspace/refs-include-decl-false.lua",
             """
@@ -137,7 +135,7 @@ class LspReferencesIncludeDeclarationTddTest {
 
     @Test
     fun references_include_declaration_true_and_false_are_both_invokable_without_throw() {
-        val service = service()
+        val service = serviceWithMetadata()
         val document = service.open(
             "workspace/refs-include-decl-safe.lua",
             """
@@ -180,7 +178,7 @@ class LspReferencesIncludeDeclarationTddTest {
 
     @Test
     fun text_document_service_references_forward_include_declaration_context_dual_path() {
-        val languageService = service()
+        val languageService = serviceWithMetadata()
         val textDocuments = LuaTextDocumentService(languageService)
         val document = OpenDocument(
             path = "workspace/refs-include-decl-text-document.lua",
@@ -222,7 +220,7 @@ class LspReferencesIncludeDeclarationTddTest {
 
     @Test
     fun include_declaration_false_and_true_share_use_sites_when_true_has_decl() {
-        val service = service()
+        val service = serviceWithMetadata()
         val document = service.open(
             "workspace/refs-include-decl-shared-uses.lua",
             """
@@ -312,15 +310,6 @@ class LspReferencesIncludeDeclarationTddTest {
         IDEAL,
         CURRENTLY_ACCEPTS,
         REJECTED
-    }
-
-    private fun service(metadata: Map<String, String> = emptyMap()): LuaLanguageService {
-        return LuaLanguageService().apply {
-            initialize(InitializeParams())
-            if (metadata.isNotEmpty()) {
-                setWorkspaceMetadata(metadata)
-            }
-        }
     }
 
     private fun LuaLanguageService.open(path: String, source: String): OpenDocument {

@@ -12,8 +12,6 @@ import org.eclipse.lsp4j.TextDocumentIdentifier
 import org.eclipse.lsp4j.TextDocumentItem
 import org.eclipse.lsp4j.TextEdit
 import org.junit.Assume
-import java.util.concurrent.CompletionException
-import java.util.concurrent.ExecutionException
 import kotlin.test.Test
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
@@ -369,12 +367,6 @@ class LspRangeFormattingTableBodyTddTest {
     // Helpers
     // -------------------------------------------------------------------------
 
-    private fun service(): LuaLanguageService {
-        return LuaLanguageService().apply {
-            initialize(InitializeParams())
-        }
-    }
-
     private fun LuaTextDocumentService.open(path: String, source: String): OpenDocument {
         val document = OpenDocument(path = path, source = source.trimIndent())
         didOpen(
@@ -623,26 +615,6 @@ class LspRangeFormattingTableBodyTddTest {
                 ?: "<null-text>"
             "$span -> \"$textPreview\""
         }
-    }
-
-    private fun unwrap(error: Throwable): Throwable {
-        var current = error
-        while (
-            (current is ExecutionException || current is CompletionException) &&
-            current.cause != null
-        ) {
-            current = current.cause!!
-        }
-        return current
-    }
-
-    private fun isUnsupportedOperation(error: Throwable): Boolean {
-        if (error is UnsupportedOperationException) {
-            return true
-        }
-        val message = error.message.orEmpty()
-        return message.contains("UnsupportedOperationException") ||
-            message.contains("not implemented", ignoreCase = true)
     }
 
     private sealed class RangeFormatOutcome {

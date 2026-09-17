@@ -182,12 +182,6 @@ class LspHoverMarkupContentTddTest {
     // Helpers
     // -------------------------------------------------------------------------
 
-    private fun service(): LuaLanguageService {
-        return LuaLanguageService().apply {
-            initialize(InitializeParams())
-        }
-    }
-
     private fun LuaLanguageService.open(path: String, source: String): OpenDocument {
         val document = OpenDocument(path = path, source = source.trimIndent())
         didOpen(
@@ -290,21 +284,6 @@ class LspHoverMarkupContentTddTest {
      * - right [MarkupContent] → value
      * - left MarkedString list → joined plain / language-string values
      */
-    private fun hoverMarkup(hover: Hover): String {
-        val contents = hover.contents ?: return ""
-        return when {
-            contents.isRight -> contents.right?.value.orEmpty()
-            contents.isLeft -> contents.left.orEmpty().joinToString("\n") { either ->
-                when {
-                    either.isRight -> either.right?.value.orEmpty()
-                    either.isLeft -> either.left?.toString().orEmpty()
-                    else -> ""
-                }
-            }
-            else -> hover.toString()
-        }
-    }
-
     private data class OpenDocument(
         val path: String,
         val source: String

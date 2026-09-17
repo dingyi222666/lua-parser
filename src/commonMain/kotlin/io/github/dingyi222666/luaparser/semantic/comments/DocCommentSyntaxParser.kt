@@ -118,7 +118,7 @@ class DocCommentSyntaxParser(
             typeText = parsedType?.typeText,
             optional = optional,
             vararg = vararg,
-            description = parsedType?.description ?: remainder.takeIf { it.isNotBlank() && parsedType == null }.orEmpty(),
+            description = fallbackDescription(parsedType, remainder),
             range = tokenRange(lineInfo, nameToken.removeSuffix("?"))
         )
     }
@@ -192,7 +192,7 @@ class DocCommentSyntaxParser(
             name = nameToken.removeSuffix("?"),
             typeText = parsedType?.typeText,
             optional = nameToken.endsWith("?"),
-            description = parsedType?.description ?: remainder.takeIf { it.isNotBlank() && parsedType == null }.orEmpty(),
+            description = fallbackDescription(parsedType, remainder),
             range = tokenRange(lineInfo, nameToken.removeSuffix("?"))
         )
     }
@@ -292,14 +292,14 @@ class DocCommentSyntaxParser(
     }
 
     private fun parseAliasTag(content: String, lineInfo: DocLineInfo): AliasTagSyntax {
-        val (nameToken, remainder) = splitAliasHeader(content)
+        val (nameToken, remainder) = splitFirstToken(content)
         val parsedType = parseTypePrefix(remainder)
         val (name, declaredTypeParameters) = parseNamedTypeHeader(nameToken)
         return AliasTagSyntax(
             name = name,
             declaredTypeParameters = declaredTypeParameters,
             targetTypeText = parsedType?.typeText,
-            description = parsedType?.description ?: remainder.takeIf { it.isNotBlank() && parsedType == null }.orEmpty(),
+            description = fallbackDescription(parsedType, remainder),
             range = tokenRange(lineInfo, name)
         )
     }
@@ -319,14 +319,6 @@ class DocCommentSyntaxParser(
             part.trim().takeIf(String::isNotEmpty)
         }
         return name to parameters
-    }
-
-    private fun splitAliasHeader(text: String): Pair<String, String> {
-        val trimmed = text.trim()
-        if (trimmed.isEmpty()) {
-            return "" to ""
-        }
-        return splitTopLevelToken(trimmed)
     }
 
     private fun parseMethodTag(content: String, lineInfo: DocLineInfo): MethodTagSyntax {
@@ -455,6 +447,11 @@ class DocCommentSyntaxParser(
         }
 
         return splitTopLevelToken(trimmed)
+    }
+
+    /** Shared tag-tail rule: the parsed type's description, else the unconsumed remainder text. */
+    private fun fallbackDescription(parsedType: ParsedTypeText?, remainder: String): String {
+        return parsedType?.description ?: remainder.takeIf { it.isNotBlank() && parsedType == null }.orEmpty()
     }
 
     private fun stripVisibilityModifier(text: String): String {

@@ -13,7 +13,6 @@ import io.github.dingyi222666.luaparser.semantic.binder.BinderPassResult
 import io.github.dingyi222666.luaparser.semantic.binder.BinderSymbol
 import io.github.dingyi222666.luaparser.semantic.binder.DeclarationKind
 import io.github.dingyi222666.luaparser.semantic.binder.DeclarationId
-import io.github.dingyi222666.luaparser.semantic.binder.DeclarationOwner
 import io.github.dingyi222666.luaparser.semantic.binder.ScopeId
 import io.github.dingyi222666.luaparser.semantic.comments.AliasTagSyntax
 import io.github.dingyi222666.luaparser.semantic.comments.ClassTagSyntax
@@ -240,8 +239,4 @@ private fun io.github.dingyi222666.luaparser.semantic.binder.ScopeKind.toApiScop
         io.github.dingyi222666.luaparser.semantic.binder.ScopeKind.LOOP -> ScopeKind.LOOP
         io.github.dingyi222666.luaparser.semantic.binder.ScopeKind.CONDITIONAL -> ScopeKind.CONDITIONAL
     }
-}
-
-internal fun BinderDeclaration.isOwnedBy(owner: BinderDeclaration): Boolean {
-    return this.owner == DeclarationOwner.Declaration(owner.id)
 }

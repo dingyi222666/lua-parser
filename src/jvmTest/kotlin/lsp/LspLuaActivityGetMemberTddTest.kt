@@ -3,11 +3,8 @@ package lsp
 import io.github.dingyi222666.luaparser.lsp.LuaLanguageService
 import org.eclipse.lsp4j.Diagnostic
 import org.eclipse.lsp4j.DidOpenTextDocumentParams
-import org.eclipse.lsp4j.InitializeParams
 import org.eclipse.lsp4j.TextDocumentItem
-import org.eclipse.lsp4j.WorkspaceFolder
 import kotlin.test.Test
-import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 /**
@@ -22,7 +19,7 @@ class LspLuaActivityGetMemberTddTest {
 
     @Test
     fun activity_get_call_site_is_not_reported_as_unknown_java_member() {
-        val service = service()
+        val service = workspaceService()
         val diagnostics = openAndGetDiagnostics(service, "luaactivity-get.lua", CALL_SITES)
 
         val memberMissing = diagnostics.filter { codeOf(it) == "checker.member.missing" }
@@ -34,7 +31,7 @@ class LspLuaActivityGetMemberTddTest {
 
     @Test
     fun get_is_offered_on_activity_member_completion_surface() {
-        val service = service()
+        val service = workspaceService()
         val source = CALL_SITES.trimIndent()
         val uri = "file:///workspace/luaactivity-get-completion.lua"
         service.didOpen(DidOpenTextDocumentParams(TextDocumentItem(uri, "lua", 1, source)))
@@ -48,7 +45,7 @@ class LspLuaActivityGetMemberTddTest {
 
     @Test
     fun bundled_runtime_reflection_surfaces_real_members_beyond_stub_fields() {
-        val service = service()
+        val service = workspaceService()
         val source = CALL_SITES.trimIndent()
         val uri = "file:///workspace/luaactivity-reflection.lua"
         service.didOpen(DidOpenTextDocumentParams(TextDocumentItem(uri, "lua", 1, source)))
@@ -67,7 +64,7 @@ class LspLuaActivityGetMemberTddTest {
 
     @Test
     fun unrelated_unknown_members_are_still_diagnosed() {
-        val service = service()
+        val service = workspaceService()
         val diagnostics = openAndGetDiagnostics(service, "luaactivity-bogus.lua", BOGUS_MEMBER)
 
         assertTrue(
@@ -78,11 +75,6 @@ class LspLuaActivityGetMemberTddTest {
 
     // --- helpers -----------------------------------------------------------------
 
-    private fun codeOf(diagnostic: Diagnostic): String? {
-        val code = diagnostic.code ?: return null
-        return if (code.isLeft) code.left else code.right?.toString()
-    }
-
     private fun openAndGetDiagnostics(
         service: LuaLanguageService,
         name: String,
@@ -91,16 +83,6 @@ class LspLuaActivityGetMemberTddTest {
         val uri = "file:///workspace/$name"
         service.didOpen(DidOpenTextDocumentParams(TextDocumentItem(uri, "lua", 1, source.trimIndent())))
         return service.diagnosticsForUri(uri).diagnostics
-    }
-
-    private fun service(): LuaLanguageService {
-        return LuaLanguageService().apply {
-            initialize(
-                InitializeParams().apply {
-                    workspaceFolders = listOf(WorkspaceFolder("file:///workspace", "workspace"))
-                }
-            )
-        }
     }
 
     private companion object {

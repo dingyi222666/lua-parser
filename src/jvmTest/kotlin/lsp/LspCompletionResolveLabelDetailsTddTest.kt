@@ -1,10 +1,8 @@
 package lsp
 
-import io.github.dingyi222666.luaparser.lsp.LuaLanguageService
 import org.eclipse.lsp4j.CompletionItem
 import org.eclipse.lsp4j.CompletionItemKind
 import org.eclipse.lsp4j.CompletionItemLabelDetails
-import org.eclipse.lsp4j.InitializeParams
 import org.eclipse.lsp4j.InsertTextFormat
 import org.eclipse.lsp4j.InsertTextMode
 import kotlin.test.Test
@@ -83,7 +81,4 @@ class LspCompletionResolveLabelDetailsTddTest {
         assertEquals(InsertTextMode.AsIs, resolved.insertTextMode)
     }
 
-    private fun service(): LuaLanguageService {
-        return LuaLanguageService().also { it.initialize(InitializeParams()) }
-    }
 }
