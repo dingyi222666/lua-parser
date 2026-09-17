@@ -65,17 +65,7 @@ class LuaWorkspaceEngineCycleReanalysisTest {
         val consumerSymbol = WorkspaceModuleResolver(result.snapshot)
             .importedSymbolsFor(VirtualPath.of("main.lua"))
             .getValue("DERIVED_VALUE")
-        val valueType = consumerSymbol.valueType
-        assertFalse(
-            valueType is UnknownType,
-            "provider-global valueType must not be UnknownType; got ${valueType.displayName}"
-        )
-        val isConcreteNumber = valueType == PrimitiveType.NUMBER ||
-            (valueType is LiteralType && valueType.baseType == PrimitiveType.NUMBER)
-        assertTrue(
-            isConcreteNumber,
-            "provider-global valueType must be a concrete number; got ${valueType.displayName}"
-        )
+        assertConcreteNumber(consumerSymbol.valueType, "provider-global")
     }
 
     @Test
