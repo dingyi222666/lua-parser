@@ -1120,28 +1120,9 @@ class LuaLanguageService(
         if (!hasLocalAstBinding) {
             return null
         }
-        val highlights = try {
-            queries.documentHighlights(path, parserPosition)
-        } catch (_: Exception) {
-            emptyList()
-        }.filter { it.path == path }
-        val refs = if (highlights.isEmpty()) {
-            try {
-                queries.references(path, parserPosition)
-            } catch (_: Exception) {
-                emptyList()
-            }.filter { it.path == path }
-        } else {
-            highlights
-        }
-        if (refs.isEmpty() && highlights.isEmpty()) {
-            // Still allow pure declaration-site when AST local binding exists.
-            return RenameTarget(
-                placeholder = lexerName.text,
-                identifierRange = lexerName.range,
-                parserPosition = parserPosition
-            )
-        }
+        // Same return for every reached path (declaration-site rename is accepted whenever a
+        // same-file local AST binding exists); the highlight/reference probes that used to
+        // gate two identical returns were pure reads with no effect on the result.
         return RenameTarget(
             placeholder = lexerName.text,
             identifierRange = lexerName.range,
@@ -1703,7 +1684,7 @@ class LuaLanguageService(
             normalizeLspFileUriPath(uri)
                 ?.normalizeWorkspacePathPrefix()
                 ?.takeIf { it.isNotBlank() }
-                ?.let { workspaceFolderUriPrefixes[normalizeUriPrefixKey(it)] = "" }
+                ?.let { workspaceFolderUriPrefixes[it.normalizeWorkspacePathPrefix()] = "" }
         }
     }
 
@@ -3110,13 +3091,9 @@ class LuaLanguageService(
                     identifier.range.start.column == position.column
             }?.let { return it }
 
+            // nodeAt is package-internal on WorkspaceSemanticFile; use identifiers + AST index.
             semanticFile.identifiers.lastOrNull { identifier ->
                 rangeContainsHighlight(identifier.range, position)
-            }?.let { return it }
-
-            // nodeAt is package-internal on WorkspaceSemanticFile; use identifiers + AST index.
-            semanticFile.identifiers.firstOrNull { id ->
-                rangeContainsHighlight(id.range, position)
             }?.let { return it }
         }
 
@@ -3423,11 +3400,6 @@ class LuaLanguageService(
                 }
             ) ?: findIdentifierAtRange(chunk, site.range)
                 ?: continue
-            // Only treat as a call site when parent chain includes CallExpression with this base.
-            if (!isCallSiteIdentifier(siteId)) {
-                // Still allow plain references that sit inside a caller's body (soft).
-                // Prefer true call sites.
-            }
             val caller = enclosingLocalFunctionAllowSelf(siteId) ?: continue
             val agg = byCaller.getOrPut(caller) {
                 IncomingAgg(caller, mutableListOf())
@@ -3449,7 +3421,7 @@ class LuaLanguageService(
                 override fun visitCallExpression(node: CallExpression, value: Unit) {
                     val baseName = callBaseIdentifier(node)
                     if (baseName != null && baseName.name == targetName.name) {
-                        val caller = enclosingLocalFunction(node, exclude = null)
+                        val caller = enclosingLocalFunctionAllowSelf(node)
                         if (caller != null) {
                             val agg = byCaller.getOrPut(caller) {
                                 IncomingAgg(caller, mutableListOf())
@@ -3567,50 +3539,6 @@ class LuaLanguageService(
         }
     }
 
-    private fun isCallSiteIdentifier(identifier: Identifier): Boolean {
-        var current: BaseASTNode? = identifier
-        var depth = 0
-        while (current != null && depth < 16) {
-            val parent = runCatching { current!!.parent }.getOrNull() ?: return false
-            if (parent is CallExpression) {
-                val base = parent.base
-                return base === current ||
-                    (base is MemberExpression && base.identifier === identifier)
-            }
-            if (parent is MemberExpression && parent.identifier === current) {
-                current = parent
-                depth += 1
-                continue
-            }
-            return false
-        }
-        return false
-    }
-
-    private fun enclosingLocalFunction(
-        node: BaseASTNode,
-        exclude: FunctionDeclaration?
-    ): FunctionDeclaration? {
-        var current: BaseASTNode? = node
-        var depth = 0
-        while (current != null && depth < 256) {
-            if (current is FunctionDeclaration && isLocalFunctionDeclaration(current)) {
-                if (exclude == null || current !== exclude) {
-                    // When walking from a call site, the first enclosing local function is the caller.
-                    return current
-                }
-                // If exclude matches (e.g. we started at the declaration name), keep walking.
-            }
-            current = runCatching { current!!.parent }.getOrNull()
-            depth += 1
-        }
-        // Retry without exclude if we only hit the excluded decl.
-        if (exclude != null) {
-            return enclosingLocalFunctionAllowSelf(node)
-        }
-        return null
-    }
-
     private fun enclosingLocalFunctionAllowSelf(node: BaseASTNode): FunctionDeclaration? {
         var current: BaseASTNode? = node
         var depth = 0
@@ -3622,19 +3550,6 @@ class LuaLanguageService(
             depth += 1
         }
         return null
-    }
-
-    private fun isNodeInside(node: BaseASTNode, container: BaseASTNode): Boolean {
-        var current: BaseASTNode? = node
-        var depth = 0
-        while (current != null && depth < 256) {
-            if (current === container) {
-                return true
-            }
-            current = runCatching { current!!.parent }.getOrNull()
-            depth += 1
-        }
-        return false
     }
 
     private fun sameLspRange(left: org.eclipse.lsp4j.Range, right: org.eclipse.lsp4j.Range): Boolean {
@@ -4102,10 +4017,6 @@ private fun String.syntheticWorkspaceRelativePath(enabled: Boolean): String {
 
 private fun String.normalizeWorkspacePathPrefix(): String {
     return replace('\\', '/').trimEnd('/')
-}
-
-private fun normalizeUriPrefixKey(path: String): String {
-    return path.replace('\\', '/').trimEnd('/')
 }
 
 private fun String.looksLikeUri(): Boolean {

@@ -525,24 +525,11 @@ class JvmWorkspaceEngine(
     }
 
     private fun isWildcardOrPackageTarget(importText: String): Boolean {
+        // Same membership as [packageNameAliasPrefix] (dotted lowercase segments, >=2 segments,
+        // not a loadable-class shape) plus the explicit `pkg.*` wildcard form.
         val normalized = importText.removePrefix("import ").trim()
         val target = normalized.substringAfter(':', normalized).trim()
-        if (target.isBlank()) {
-            return false
-        }
-        if (target.endsWith(".*")) {
-            return true
-        }
-        // Package-name aliases (android.widget / java.util) are dotted lowercase segments.
-        if ('.' !in target) {
-            return false
-        }
-        val segments = target.split('.')
-        return segments.size >= 2 && segments.all { segment ->
-            segment.isNotEmpty() &&
-                segment.first().isLowerCase() &&
-                segment.all { ch -> ch.isLetterOrDigit() || ch == '_' }
-        }
+        return target.endsWith(".*") || packageNameAliasPrefix(importText) != null
     }
 
     /** `import "x"` / `import { ... }` keep the callee under a compact short-call node. */
@@ -601,7 +588,7 @@ class JvmWorkspaceEngine(
         // Package modules power widget./util. member completions and hover moduleName.
         return buildSet {
             fun maybeAddPackageTarget(importText: String) {
-                if (wildcardImportPrefix(importText) != null || isPackageNameAliasTarget(importText)) {
+                if (wildcardImportPrefix(importText) != null || packageNameAliasPrefix(importText) != null) {
                     add(importText)
                 }
             }
@@ -704,10 +691,6 @@ class JvmWorkspaceEngine(
         )
     }
 
-
-    private fun isPackageNameAliasTarget(importText: String): Boolean {
-        return packageNameAliasPrefix(importText) != null
-    }
 
     private fun packageNameAliasPrefix(importText: String): String? {
         val normalized = importText.removePrefix("import ").trim()

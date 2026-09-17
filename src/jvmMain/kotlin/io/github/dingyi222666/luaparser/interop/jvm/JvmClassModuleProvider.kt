@@ -176,31 +176,15 @@ class JvmClassModuleProvider(
         return providers
     }
 
-    internal fun requestedClasses(metadata: Map<String, String>): Set<String> {
-        val configuration = JvmWorkspaceConfiguration.fromMetadata(metadata)
-        return requestedClasses(configuration, configuration.classLoader ?: classLoaderFor(configuration))
-    }
-
     internal fun requestedClasses(configuration: JvmWorkspaceConfiguration): Set<String> {
         val normalized = configuration.normalized(defaultImportPrefixes)
         return requestedClasses(normalized, normalized.classLoader ?: classLoaderFor(normalized))
     }
 
-    internal fun resolveImport(importText: String): String? {
-        val configuration = JvmWorkspaceConfiguration().normalized(defaultImportPrefixes)
-        return resolveImport(importText, configuration, configuration.classLoader ?: classLoaderFor(configuration))
-    }
-
-    internal fun resolveImport(importText: String, configuration: JvmWorkspaceConfiguration): String? {
-        val normalized = configuration.normalized(defaultImportPrefixes)
-        val classLoader = normalized.classLoader ?: classLoaderFor(normalized)
-        return resolveImport(importText, normalized, classLoader)
-    }
-
     internal fun importedClassName(importText: String, configuration: JvmWorkspaceConfiguration): String? {
         val normalized = configuration.normalized(defaultImportPrefixes)
         val classLoader = normalized.classLoader ?: classLoaderFor(normalized)
-        return resolveImport(importText, normalized, classLoader)
+        return resolveImports(importText, normalized.importPrefixes, classLoader, normalized).firstOrNull()
     }
 
     internal fun importedClassNames(importText: String, configuration: JvmWorkspaceConfiguration): List<String> {
@@ -304,15 +288,6 @@ class JvmClassModuleProvider(
         )
     }
 
-    private fun importedPackageProvider(
-        importText: String,
-        configuration: JvmWorkspaceConfiguration,
-        classLoader: ClassLoader
-    ): Pair<VirtualPath, WorkspaceSnapshot.FileSnapshot>? {
-        val packageName = packageNameFromImport(importText, configuration, classLoader) ?: return null
-        return packageProviderFor(packageName, configuration, classLoader)
-    }
-
     private fun packageProviderFor(
         packageName: String,
         configuration: JvmWorkspaceConfiguration,
@@ -356,22 +331,6 @@ class JvmClassModuleProvider(
             .flatMap { resolveClassLoads(it, configuration.importPrefixes, classLoader, configuration) }
         return (explicit + imports)
             .distinctBy { it.className }
-    }
-
-    private fun resolveImport(importText: String, importPrefixes: List<String>, classLoader: ClassLoader): String? {
-        return resolveImports(importText, importPrefixes, classLoader).firstOrNull()
-    }
-
-    private fun resolveImport(
-        importText: String,
-        configuration: JvmWorkspaceConfiguration,
-        classLoader: ClassLoader
-    ): String? {
-        return resolveImports(importText, configuration.importPrefixes, classLoader, configuration).firstOrNull()
-    }
-
-    private fun resolveImports(importText: String, importPrefixes: List<String>, classLoader: ClassLoader): List<String> {
-        return resolveImports(importText, importPrefixes, classLoader, JvmWorkspaceConfiguration())
     }
 
     private fun resolveImports(
@@ -1161,30 +1120,27 @@ class JvmClassModuleProvider(
      * classLoaders become the parent chain only — they must not hide the jar.
      */
     private fun classLoaderForPackageEnumeration(configuration: JvmWorkspaceConfiguration): ClassLoader {
-        val parent = configuration.classLoader ?: baseClassLoader
-        val entries = reflectiveClasspathFiles(configuration)
-        if (entries.isEmpty()) {
-            return parent
-        }
-        val cacheKey = classLoaderCacheKey("package", parent, entries)
-        classLoaderCache[cacheKey]?.let { return it }
-        val urls = entries
-            .map(File::toURI)
-            .map { it.toURL() }
-            .toTypedArray()
-        return URLClassLoader(urls, parent).also { classLoaderCache[cacheKey] = it }
+        return classLoaderFor(configuration, cacheKeyKind = "package")
     }
 
     private fun classLoaderFor(configuration: JvmWorkspaceConfiguration): ClassLoader {
         // Only existing reflective classpath entries are mounted. Missing android.jar paths
         // (including G:/ candidates) never invent framework classes; host SDK soft-fallback
         // mounts only when discovery finds a real jar (see reflectiveClasspathFiles).
+        return classLoaderFor(configuration, cacheKeyKind = "class")
+    }
+
+    /** Shared loader construction behind [classLoaderFor] / [classLoaderForPackageEnumeration]. */
+    private fun classLoaderFor(
+        configuration: JvmWorkspaceConfiguration,
+        cacheKeyKind: String
+    ): ClassLoader {
+        val parent = configuration.classLoader ?: baseClassLoader
         val entries = reflectiveClasspathFiles(configuration)
         if (entries.isEmpty()) {
-            return configuration.classLoader ?: baseClassLoader
+            return parent
         }
-        val parent = configuration.classLoader ?: baseClassLoader
-        val cacheKey = classLoaderCacheKey("class", parent, entries)
+        val cacheKey = classLoaderCacheKey(cacheKeyKind, parent, entries)
         classLoaderCache[cacheKey]?.let { return it }
         val urls = entries
             .map(File::toURI)
@@ -1229,38 +1185,13 @@ class JvmClassModuleProvider(
         return provider
     }
 
-    private fun classProviderSnapshot(
-        clazz: Class<*>,
-        moduleType: ModuleType
-    ): Pair<VirtualPath, WorkspaceSnapshot.FileSnapshot> {
-        val path = VirtualPath.of("__jvm__/classes/${clazz.name.replace('.', '/')}.lua")
-        val source = buildString {
-            append("-- reflected JVM class provider for ")
-            append(clazz.name)
-            append('\n')
-        }
-        val surface = ModuleExportSurface(
-            moduleType = moduleType,
-            sourceForm = ModuleExportSurface.SourceForm.RETURN_TABLE_LITERAL,
-            members = moduleMembers(moduleType)
-        )
-        val fingerprintPayload = buildString {
-            append(clazz.name)
-            append('\n')
-            append(moduleType.displayName)
-            append('\n')
-            append(surface.members.joinToString("|") { "${it.kind}:${it.name}:${it.type.displayName}" })
-        }
-        return path to WorkspaceSnapshot.FileSnapshot(
-            cacheKey = workspaceFingerprintHash(source),
-            moduleExportSurface = surface,
-            publicFingerprint = io.github.dingyi222666.luaparser.semantic.workspace.WorkspacePublicFingerprint(
-                // Fingerprint module-name surface is the simple name only (Locale / State /
-                // Entry / String[]). Nested binary/dotted/underscore aliases resolve via
-                // Class.forName candidates and path recovery, not providedModuleNames.
-                providedModuleNames = reflectedClassProviderModuleNames(clazz),
-                value = workspaceFingerprintHash(fingerprintPayload)
-            )
+    private fun classProviderSnapshot(clazz: Class<*>, moduleType: ModuleType): Pair<VirtualPath, WorkspaceSnapshot.FileSnapshot> {
+        return moduleProviderSnapshot(
+            providerPath = VirtualPath.of("__jvm__/classes/${clazz.name.replace('.', '/')}.lua"),
+            providerKind = "class",
+            claimName = clazz.name,
+            providedModuleNames = reflectedClassProviderModuleNames(clazz),
+            moduleType = moduleType
         )
     }
 
@@ -1302,10 +1233,34 @@ class JvmClassModuleProvider(
         packageName: String,
         moduleType: ModuleType
     ): Pair<VirtualPath, WorkspaceSnapshot.FileSnapshot> {
-        val path = VirtualPath.of("__jvm__/packages/${packageName.replace('.', '/')}.lua")
+        return moduleProviderSnapshot(
+            providerPath = VirtualPath.of("__jvm__/packages/${packageName.replace('.', '/')}.lua"),
+            providerKind = "package",
+            claimName = packageName,
+            providedModuleNames = linkedSetOf(moduleType.moduleName),
+            moduleType = moduleType
+        )
+    }
+
+    /**
+     * Shared reflected-provider snapshot builder behind [classProviderSnapshot] and
+     * [providerForPackage]: identical ModuleExportSurface shape, fingerprint payload
+     * (`claimName + displayName + sorted member triplets`) and cacheKey derivation;
+     * only the virtual-path prefix, source comment, claim name and advertised module
+     * names differ.
+     */
+    private fun moduleProviderSnapshot(
+        providerPath: VirtualPath,
+        providerKind: String,
+        claimName: String,
+        providedModuleNames: Set<String>,
+        moduleType: ModuleType
+    ): Pair<VirtualPath, WorkspaceSnapshot.FileSnapshot> {
         val source = buildString {
-            append("-- reflected JVM package provider for ")
-            append(packageName)
+            append("-- reflected JVM ")
+            append(providerKind)
+            append(" provider for ")
+            append(claimName)
             append('\n')
         }
         val surface = ModuleExportSurface(
@@ -1314,17 +1269,20 @@ class JvmClassModuleProvider(
             members = moduleMembers(moduleType)
         )
         val fingerprintPayload = buildString {
-            append(packageName)
+            append(claimName)
             append('\n')
             append(moduleType.displayName)
             append('\n')
             append(surface.members.joinToString("|") { "${it.kind}:${it.name}:${it.type.displayName}" })
         }
-        return path to WorkspaceSnapshot.FileSnapshot(
+        return providerPath to WorkspaceSnapshot.FileSnapshot(
             cacheKey = workspaceFingerprintHash(source),
             moduleExportSurface = surface,
             publicFingerprint = io.github.dingyi222666.luaparser.semantic.workspace.WorkspacePublicFingerprint(
-                providedModuleNames = linkedSetOf(moduleType.moduleName),
+                // Fingerprint module-name surface is the simple name only (Locale / State /
+                // Entry / String[]). Nested binary/dotted/underscore aliases resolve via
+                // Class.forName candidates and path recovery, not providedModuleNames.
+                providedModuleNames = providedModuleNames,
                 value = workspaceFingerprintHash(fingerprintPayload)
             )
         )
@@ -1377,39 +1335,10 @@ class JvmClassModuleProvider(
     private fun shallowModuleTypeFor(clazz: Class<*>): ModuleType {
         val cacheKey = reflectedClassCacheKey(clazz)
         shallowModuleTypeCache[cacheKey]?.let { return it }
-        val classType = shallowJavaClassTypeFor(clazz)
-        val instanceType = JavaInstanceType(classType)
-        val fields = linkedMapOf<String, Type>("__class" to instanceType)
-        val methods = linkedMapOf<String, Type>()
-
-        if (classType.constructors.isNotEmpty) {
-            fields["__call"] = classType
-        }
-
-        // Reflected public static fields incl. inherited ones (TextView.VISIBLE from View,
-        // File.separator, TextView.AUTO_SIZE_*, …) — same helper as the deep explicit surface.
-        publicStaticFields(clazz).forEach { field ->
-            fields[field.name] = javaTypeToType(field.genericType)
-        }
-
         // Nested public types as type references only (no recursive deep module expand).
-        clazz.classes
-            .filter { Modifier.isPublic(it.modifiers) }
-            .forEach { innerClass ->
-                fields[innerClass.simpleName] = typeReferenceForJavaClass(innerClass)
-            }
-
-        publicStaticMethods(clazz)
-            .groupBy(Method::getName)
-            .forEach { (name, overloads) ->
-                methods[name] = javaMethodType(overloads)
-            }
-
-        return ModuleType(
-            moduleName = classModuleSimpleName(clazz),
-            fields = fields,
-            methods = methods
-        ).also { shallowModuleTypeCache[cacheKey] = it }
+        return classModuleTypeFor(clazz, shallowJavaClassTypeFor(clazz)) { innerClass ->
+            typeReferenceForJavaClass(innerClass)
+        }.also { shallowModuleTypeCache[cacheKey] = it }
     }
 
     /**
@@ -1438,8 +1367,19 @@ class JvmClassModuleProvider(
      * (`TextView.VISIBLE` from View) match the explicit import exactly.
      * Super/interfaces stay name-only type references.
      */
-    private fun shallowJavaClassTypeFor(clazz: Class<*>): JavaClassType {
-        val javaName = javaTypeNameFor(clazz)
+    /**
+     * Reflected member surfaces shared verbatim by the shallow (wildcard) and deep
+     * (explicit import) [JavaClassType] builders: public static/instance fields and
+     * methods with identical owner/kind/signature-metadata mapping.
+     */
+    private class ReflectedMemberMaps(
+        val staticFields: Map<String, JavaStaticMemberType>,
+        val staticMethods: Map<String, JavaStaticMemberType>,
+        val instanceFields: Map<String, JavaInstanceMemberType>,
+        val instanceMethods: Map<String, JavaInstanceMemberType>
+    )
+
+    private fun reflectedMemberMapsFor(clazz: Class<*>): ReflectedMemberMaps {
         val staticFields = publicStaticFields(clazz)
             .associate { field ->
                 field.name to JavaStaticMemberType(
@@ -1482,11 +1422,17 @@ class JvmClassModuleProvider(
                     signatureMetadata = overloads.map { javaSignatureMetadata(it, it.genericReturnType) }
                 )
             }
+        return ReflectedMemberMaps(staticFields, staticMethods, instanceFields, instanceMethods)
+    }
+
+    private fun shallowJavaClassTypeFor(clazz: Class<*>): JavaClassType {
+        val javaName = javaTypeNameFor(clazz)
+        val members = reflectedMemberMapsFor(clazz)
         return JavaClassType(
             javaName = javaName,
             constructors = constructorTypesFor(clazz, javaName),
-            staticMembers = (staticFields + staticMethods).toSortedMap(),
-            instanceMembers = (instanceFields + instanceMethods).toSortedMap(),
+            staticMembers = (members.staticFields + members.staticMethods).toSortedMap(),
+            instanceMembers = (members.instanceFields + members.instanceMethods).toSortedMap(),
             innerClasses = clazz.classes
                 .filter { Modifier.isPublic(it.modifiers) }
                 .associate { it.simpleName to typeReferenceForJavaClass(it) }
@@ -1504,7 +1450,26 @@ class JvmClassModuleProvider(
         innerClassDepth: Int
     ): ModuleType {
         val nextReflectedClassStack = reflectedClassStack + clazz.name
-        val classType = javaClassTypeFor(clazz)
+        return classModuleTypeFor(clazz, javaClassTypeFor(clazz)) { innerClass ->
+            reflectedInnerClassTypeFor(
+                innerClass = innerClass,
+                reflectedClassStack = nextReflectedClassStack,
+                innerClassDepth = innerClassDepth
+            )
+        }
+    }
+
+    /**
+     * Shared module-table core behind [shallowModuleTypeFor] and the deep
+     * [moduleTypeFor]: `__class`/`__call` fields, reflected public static fields and
+     * static method overloads, nested public types (depth policy supplied by
+     * [nestedClassType]) and the `classModuleSimpleName` module name.
+     */
+    private fun classModuleTypeFor(
+        clazz: Class<*>,
+        classType: JavaClassType,
+        nestedClassType: (Class<*>) -> Type
+    ): ModuleType {
         val instanceType = JavaInstanceType(classType)
         val fields = linkedMapOf<String, Type>("__class" to instanceType)
         val methods = linkedMapOf<String, Type>()
@@ -1513,6 +1478,8 @@ class JvmClassModuleProvider(
             fields["__call"] = classType
         }
 
+        // Reflected public static fields incl. inherited ones (TextView.VISIBLE from View,
+        // File.separator, TextView.AUTO_SIZE_*, …) — same helper as the deep explicit surface.
         publicStaticFields(clazz).forEach { field ->
             fields[field.name] = javaTypeToType(field.genericType)
         }
@@ -1520,11 +1487,7 @@ class JvmClassModuleProvider(
         clazz.classes
             .filter { Modifier.isPublic(it.modifiers) }
             .forEach { innerClass ->
-                fields[innerClass.simpleName] = reflectedInnerClassTypeFor(
-                    innerClass = innerClass,
-                    reflectedClassStack = nextReflectedClassStack,
-                    innerClassDepth = innerClassDepth
-                )
+                fields[innerClass.simpleName] = nestedClassType(innerClass)
             }
 
         publicStaticMethods(clazz)
@@ -1579,51 +1542,12 @@ class JvmClassModuleProvider(
         }
         val nextHierarchyStack = hierarchyStack + clazz.name
         val javaName = javaTypeNameFor(clazz)
-        val staticFields = publicStaticFields(clazz)
-            .associate { field ->
-                field.name to JavaStaticMemberType(
-                    owner = javaTypeNameFor(field.declaringClass),
-                    memberName = field.name,
-                    valueType = javaTypeToType(field.genericType),
-                    memberKind = JavaMemberKind.FIELD
-                )
-            }
-        val staticMethods = publicStaticMethods(clazz)
-            .groupBy(Method::getName)
-            .mapValues { (name, overloads) ->
-                JavaStaticMemberType(
-                    owner = javaTypeNameFor(overloads.first().declaringClass),
-                    memberName = name,
-                    valueType = javaMethodType(overloads),
-                    memberKind = JavaMemberKind.METHOD,
-                    signatureMetadata = overloads.map { javaSignatureMetadata(it, it.genericReturnType) }
-                )
-            }
-        val instanceFields = publicInstanceFields(clazz)
-            .associate { field ->
-                field.name to JavaInstanceMemberType(
-                    owner = javaTypeNameFor(field.declaringClass),
-                    memberName = field.name,
-                    valueType = javaTypeToType(field.genericType),
-                    memberKind = JavaMemberKind.FIELD
-                )
-            }
-        val instanceMethods = publicInstanceMethods(clazz)
-            .groupBy(Method::getName)
-            .mapValues { (name, overloads) ->
-                JavaInstanceMemberType(
-                    owner = javaTypeNameFor(overloads.first().declaringClass),
-                    memberName = name,
-                    valueType = javaMethodType(overloads),
-                    memberKind = JavaMemberKind.METHOD,
-                    signatureMetadata = overloads.map { javaSignatureMetadata(it, it.genericReturnType) }
-                )
-            }
+        val members = reflectedMemberMapsFor(clazz)
         return JavaClassType(
             javaName = javaName,
             constructors = constructorTypesFor(clazz, javaName),
-            staticMembers = (staticFields + staticMethods).toSortedMap(),
-            instanceMembers = (instanceFields + instanceMethods).toSortedMap(),
+            staticMembers = (members.staticFields + members.staticMethods).toSortedMap(),
+            instanceMembers = (members.instanceFields + members.instanceMethods).toSortedMap(),
             innerClasses = clazz.classes
                 .filter { Modifier.isPublic(it.modifiers) }
                 .associate { it.simpleName to typeReferenceForJavaClass(it) }
