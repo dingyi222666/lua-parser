@@ -6,26 +6,11 @@ import kotlin.jvm.Transient
 import kotlin.math.pow
 import kotlin.properties.Delegates
 
-private fun <T : BaseASTNode> T.copyExpressionCloneMetadataFrom(source: BaseASTNode): T = also {
-    range = source.range.copy()
-    bad = source.bad
-}
-
-private fun <T : BaseASTNode> T.withExpressionCloneParent(parentNode: BaseASTNode): T = also {
-    parent = parentNode
-}
-
-private fun BlockNode.cloneExpressionBlockFor(parentNode: BaseASTNode): BlockNode =
-    clone().copyExpressionCloneMetadataFrom(this).withExpressionCloneParent(parentNode).also { block ->
-        block.statements.forEach { it.parent = block }
-        block.returnStatement?.parent = block
-    }
-
 private fun <T : CallExpression> T.copyCallExpressionFrom(source: CallExpression): T =
-    copyExpressionCloneMetadataFrom(source).also { expression ->
-        expression.base = source.base.clone().withExpressionCloneParent(expression)
+    copyCloneMetadataFrom(source).also { expression ->
+        expression.base = source.base.clone().withCloneParent(expression)
         for (argument in source.arguments) {
-            expression.arguments.add(argument.clone().withExpressionCloneParent(expression))
+            expression.arguments.add(argument.clone().withCloneParent(expression))
         }
     }
 
@@ -47,7 +32,7 @@ open class Identifier(open var name: String = "") : ExpressionNode, ASTNode() {
     }
 
     override fun clone(): Identifier {
-        return Identifier(name = name).copyExpressionCloneMetadataFrom(this).also {
+        return Identifier(name = name).copyCloneMetadataFrom(this).also {
             it.isLocal = isLocal
         }
     }
@@ -69,7 +54,7 @@ class AttributeIdentifier(
     }
 
     override fun clone(): AttributeIdentifier {
-        return AttributeIdentifier(name = name, attributeName = attributeName).copyExpressionCloneMetadataFrom(this).also {
+        return AttributeIdentifier(name = name, attributeName = attributeName).copyCloneMetadataFrom(this).also {
             it.isLocal = true
         }
     }
@@ -171,7 +156,7 @@ class ConstantNode(
     }
 
     override fun clone(): ConstantNode =
-        ConstantNode(constantType = this.constantType, value = this.rawValue).copyExpressionCloneMetadataFrom(this)
+        ConstantNode(constantType = this.constantType, value = this.rawValue).copyCloneMetadataFrom(this)
 
     override fun <T> accept(visitor: ASTVisitor<T>, value: T) {
         visitor.visitConstantNode(this, value)
@@ -446,9 +431,9 @@ class MemberExpression : ExpressionNode, ASTNode() {
     }
 
     override fun clone(): MemberExpression {
-        return MemberExpression().copyExpressionCloneMetadataFrom(this).also {
-            it.identifier = identifier.clone().withExpressionCloneParent(it)
-            it.base = base.clone().withExpressionCloneParent(it)
+        return MemberExpression().copyCloneMetadataFrom(this).also {
+            it.identifier = identifier.clone().withCloneParent(it)
+            it.base = base.clone().withCloneParent(it)
             it.indexer = indexer
         }
     }
@@ -468,9 +453,9 @@ class IndexExpression : ExpressionNode, ASTNode() {
     }
 
     override fun clone(): IndexExpression {
-        return IndexExpression().copyExpressionCloneMetadataFrom(this).also {
-            it.base = base.clone().withExpressionCloneParent(it)
-            it.index = index.clone().withExpressionCloneParent(it)
+        return IndexExpression().copyCloneMetadataFrom(this).also {
+            it.base = base.clone().withCloneParent(it)
+            it.index = index.clone().withCloneParent(it)
         }
     }
 }
@@ -486,7 +471,7 @@ class VarargLiteral : ExpressionNode, ASTNode() {
     }
 
     override fun clone(): VarargLiteral {
-        return VarargLiteral().copyExpressionCloneMetadataFrom(this)
+        return VarargLiteral().copyCloneMetadataFrom(this)
     }
 }
 
@@ -502,9 +487,9 @@ class UnaryExpression : ExpressionNode, ASTNode() {
     }
 
     override fun clone(): UnaryExpression {
-        return UnaryExpression().copyExpressionCloneMetadataFrom(this).also {
+        return UnaryExpression().copyCloneMetadataFrom(this).also {
             it.operator = operator
-            it.arg = arg.clone().withExpressionCloneParent(it)
+            it.arg = arg.clone().withCloneParent(it)
         }
     }
 
@@ -524,10 +509,10 @@ class BinaryExpression : ExpressionNode, ASTNode() {
     }
 
     override fun clone(): BinaryExpression {
-        return BinaryExpression().copyExpressionCloneMetadataFrom(this).also {
+        return BinaryExpression().copyCloneMetadataFrom(this).also {
             it.operator = operator
-            it.left = left?.clone()?.withExpressionCloneParent(it)
-            it.right = right?.clone()?.withExpressionCloneParent(it)
+            it.left = left?.clone()?.withCloneParent(it)
+            it.right = right?.clone()?.withCloneParent(it)
         }
     }
 }
@@ -544,9 +529,9 @@ class TableConstructorExpression : ExpressionNode, ASTNode() {
     }
 
     override fun clone(): TableConstructorExpression {
-        return TableConstructorExpression().copyExpressionCloneMetadataFrom(this).also {
+        return TableConstructorExpression().copyCloneMetadataFrom(this).also {
             for (field in fields) {
-                it.fields.add(field.clone().withExpressionCloneParent(it))
+                it.fields.add(field.clone().withCloneParent(it))
             }
         }
     }
@@ -564,9 +549,9 @@ class ArrayConstructorExpression : ExpressionNode, ASTNode() {
     }
 
     override fun clone(): ArrayConstructorExpression {
-        return ArrayConstructorExpression().copyExpressionCloneMetadataFrom(this).also {
+        return ArrayConstructorExpression().copyCloneMetadataFrom(this).also {
             for (value in values) {
-                it.values.add(value.clone().withExpressionCloneParent(it))
+                it.values.add(value.clone().withCloneParent(it))
             }
         }
     }
@@ -597,12 +582,12 @@ class LambdaDeclaration : ExpressionNode, ASTNode() {
     }
 
     override fun clone(): LambdaDeclaration {
-        return LambdaDeclaration().copyExpressionCloneMetadataFrom(this).also { declaration ->
+        return LambdaDeclaration().copyCloneMetadataFrom(this).also { declaration ->
             params.forEach {
-                declaration.params.add(it.clone().withExpressionCloneParent(declaration))
+                declaration.params.add(it.clone().withCloneParent(declaration))
             }
 
-            declaration.expression = expression.clone().withExpressionCloneParent(declaration)
+            declaration.expression = expression.clone().withCloneParent(declaration)
         }
     }
 }
@@ -622,12 +607,12 @@ class FunctionDeclaration : ExpressionNode, StatementNode, ASTNode() {
     }
 
     override fun clone(): FunctionDeclaration {
-        return FunctionDeclaration().copyExpressionCloneMetadataFrom(this).also { declaration ->
-            declaration.body = body?.cloneExpressionBlockFor(declaration)
+        return FunctionDeclaration().copyCloneMetadataFrom(this).also { declaration ->
+            declaration.body = body?.cloneBlockFor(declaration)
             params.forEach {
-                declaration.params.add(it.clone().withExpressionCloneParent(declaration))
+                declaration.params.add(it.clone().withCloneParent(declaration))
             }
-            declaration.identifier = identifier?.clone()?.withExpressionCloneParent(declaration)
+            declaration.identifier = identifier?.clone()?.withCloneParent(declaration)
             declaration.isLocal = isLocal
         }
     }
