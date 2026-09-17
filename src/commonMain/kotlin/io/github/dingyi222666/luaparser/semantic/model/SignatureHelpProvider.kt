@@ -1076,20 +1076,17 @@ internal class SignatureHelpProvider(
         lexicalScopeId: ScopeId
     ): BinderDeclaration? {
         val ownerName = memberOwnerName(baseType, lexicalScopeId) ?: return null
-        return binder.declarationIndex.declarations
-            .filter { declaration ->
-                declaration.name == memberName &&
-                    declaration.kind.namespace == DeclarationNamespace.MEMBER &&
-                    declaration.owner == io.github.dingyi222666.luaparser.semantic.binder.DeclarationOwner.Declaration(ownerName.id)
-            }
-            .firstOrNull { declaration ->
-                if (preferMethod) declaration.kind.name == "METHOD" else true
-            }
-            ?: binder.declarationIndex.declarations.firstOrNull { declaration ->
-                declaration.name == memberName &&
-                    declaration.kind.namespace == DeclarationNamespace.MEMBER &&
-                    declaration.owner == io.github.dingyi222666.luaparser.semantic.binder.DeclarationOwner.Declaration(ownerName.id)
-            }
+        // Filter the owner's MEMBER declarations once; the preferMethod pass and the
+        // fallback previously re-filtered the full declaration index with the identical
+        // predicate twice.
+        val ownerMembers = binder.declarationIndex.declarations.filter { declaration ->
+            declaration.name == memberName &&
+                declaration.kind.namespace == DeclarationNamespace.MEMBER &&
+                declaration.owner == io.github.dingyi222666.luaparser.semantic.binder.DeclarationOwner.Declaration(ownerName.id)
+        }
+        return ownerMembers.firstOrNull { declaration ->
+            if (preferMethod) declaration.kind.name == "METHOD" else true
+        } ?: ownerMembers.firstOrNull()
     }
 
     private fun memberOwnerName(baseType: Type, lexicalScopeId: ScopeId): BinderDeclaration? {

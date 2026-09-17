@@ -1614,14 +1614,10 @@ internal class ReferenceQueries(
         return binder.declarationIndex
             .getOwnedDeclarations(io.github.dingyi222666.luaparser.semantic.binder.DeclarationOwner.Declaration(classDeclaration.id))
             .firstOrNull { it.kind == expectedKind && it.name == memberName }
-            ?: if (expectedKind == DeclarationKind.FIELD) {
-                classType.superClass?.let { superClass ->
-                    findBackingMemberDeclaration(superClass, memberName, accessKind)
-                }
-            } else {
-                classType.superClass?.let { superClass ->
-                    findBackingMemberDeclaration(superClass, memberName, accessKind)
-                }
+            ?: classType.superClass?.let { superClass ->
+                // FIELD and METHOD lookups walk the superclass chain identically; the
+                // FIELD/METHOD if/else this replaces held two byte-identical branches.
+                findBackingMemberDeclaration(superClass, memberName, accessKind)
             }
     }
 

@@ -80,28 +80,11 @@ import io.github.dingyi222666.luaparser.semantic.types.model.TypeParameterType
 import io.github.dingyi222666.luaparser.semantic.types.model.UnionType
 import io.github.dingyi222666.luaparser.semantic.types.model.UnknownType
 import io.github.dingyi222666.luaparser.semantic.types.model.VarargType
-import io.github.dingyi222666.luaparser.semantic.types.resolve.DocFunctionTypeSyntaxParser
 import io.github.dingyi222666.luaparser.semantic.types.resolve.TypeResolutionContext
 import io.github.dingyi222666.luaparser.semantic.types.resolve.intersectionTypeOf
 import io.github.dingyi222666.luaparser.semantic.types.resolve.unionTypeOf
 import io.github.dingyi222666.luaparser.semantic.types.resolve.isAssignableFrom
 import io.github.dingyi222666.luaparser.semantic.checker.resolveOwningFunctionDeclaration
-import io.github.dingyi222666.luaparser.semantic.types.syntax.ArrayTypeSyntax
-import io.github.dingyi222666.luaparser.semantic.types.syntax.FunctionTypeSyntax
-import io.github.dingyi222666.luaparser.semantic.types.syntax.GenericTypeSyntax
-import io.github.dingyi222666.luaparser.semantic.types.syntax.IdentifierObjectFieldNameSyntax
-import io.github.dingyi222666.luaparser.semantic.types.syntax.IndexTableTypeSyntax
-import io.github.dingyi222666.luaparser.semantic.types.syntax.IntersectionTypeSyntax
-import io.github.dingyi222666.luaparser.semantic.types.syntax.LiteralTypeSyntax
-import io.github.dingyi222666.luaparser.semantic.types.syntax.MultiReturnTypeSyntax
-import io.github.dingyi222666.luaparser.semantic.types.syntax.NamedTypeSyntax
-import io.github.dingyi222666.luaparser.semantic.types.syntax.NullableTypeSyntax
-import io.github.dingyi222666.luaparser.semantic.types.syntax.ObjectTypeSyntax
-import io.github.dingyi222666.luaparser.semantic.types.syntax.QuotedObjectFieldNameSyntax
-import io.github.dingyi222666.luaparser.semantic.types.syntax.TupleTypeSyntax
-import io.github.dingyi222666.luaparser.semantic.types.syntax.TypeSyntax
-import io.github.dingyi222666.luaparser.semantic.types.syntax.UnionTypeSyntax
-import io.github.dingyi222666.luaparser.semantic.types.syntax.VarargTypeSyntax
 
 class ExpressionTypeEvaluator internal constructor(
     private val binder: BinderPassResult,
@@ -3548,117 +3531,6 @@ class ExpressionTypeEvaluator internal constructor(
 
     private fun collectReturnTuple(arguments: List<ExpressionNode>, context: Context): ValueSequence {
         return ValueSequence.fromExpressionResults(arguments.map { evaluate(it, context) })
-    }
-
-    private fun resolveTypeSyntax(typeSyntax: TypeSyntax, context: TypeResolutionContext): Type = when (typeSyntax) {
-        is NamedTypeSyntax -> resolveNamedType(typeSyntax.name, context)
-        is LiteralTypeSyntax -> normalizeLiteral(typeSyntax.value)
-        is UnionTypeSyntax -> unionTypeOf(typeSyntax.options.map { resolveTypeSyntax(it, context) })
-        is IntersectionTypeSyntax -> intersectionTypeOf(typeSyntax.types.map { resolveTypeSyntax(it, context) })
-        is ArrayTypeSyntax -> ArrayType(resolveTypeSyntax(typeSyntax.elementType, context))
-        is GenericTypeSyntax -> resolveGenericType(typeSyntax, context)
-        is NullableTypeSyntax -> unionTypeOf(resolveTypeSyntax(typeSyntax.innerType, context), PrimitiveType.NIL)
-        is TupleTypeSyntax -> TupleType(typeSyntax.elements.map { resolveTypeSyntax(it, context) })
-        is MultiReturnTypeSyntax -> MultiReturnType(typeSyntax.types.map { resolveTypeSyntax(it, context) })
-        is VarargTypeSyntax -> VarargType(resolveTypeSyntax(typeSyntax.elementType, context))
-        is FunctionTypeSyntax -> resolveFunctionTypeSyntax(typeSyntax, context)
-        is ObjectTypeSyntax -> resolveObjectTypeSyntax(typeSyntax, context)
-        is IndexTableTypeSyntax -> TableType(
-            indexSignature = TableType.IndexSignature(
-                keyType = resolveTypeSyntax(typeSyntax.keyType, context),
-                valueType = resolveTypeSyntax(typeSyntax.valueType, context)
-            )
-        )
-    }
-
-    private fun resolveNamedType(name: String, context: TypeResolutionContext): Type {
-        primitiveTypeFor(name)?.let { return it }
-        val declaration = context.resolveTypeReference(name) ?: return io.github.dingyi222666.luaparser.semantic.types.model.CustomType(name)
-        return if (declaration.kind == DeclarationKind.TYPE_PARAMETER) {
-            TypeParameterType(
-                name = declaration.name,
-                constraint = declaration.declaredTypeSyntax?.let { resolveTypeSyntax(it, context) },
-                defaultType = declaration.declaredType
-            )
-        } else {
-            binder.declarationIndex.getDeclaration(declaration.id)?.declaredType
-                ?: declaration.declaredType
-                ?: io.github.dingyi222666.luaparser.semantic.types.model.CustomType(name)
-        }
-    }
-
-    private fun resolveGenericType(typeSyntax: GenericTypeSyntax, context: TypeResolutionContext): Type {
-        val baseName = (typeSyntax.baseType as? NamedTypeSyntax)?.name
-            ?: resolveTypeSyntax(typeSyntax.baseType, context).displayName
-        val arguments = typeSyntax.arguments.map { resolveTypeSyntax(it, context) }
-        return if (baseName == "table" && arguments.size == 2) {
-            TableType(indexSignature = TableType.IndexSignature(arguments[0], arguments[1]))
-        } else {
-            AppliedType(baseName = baseName, typeArguments = arguments)
-        }
-    }
-
-    private fun resolveFunctionTypeSyntax(typeSyntax: FunctionTypeSyntax, context: TypeResolutionContext): FunctionType {
-        val parameters = typeSyntax.parameters.map { parameter ->
-            val baseType = resolveTypeSyntax(parameter.type, context)
-            FunctionParameter(
-                name = parameter.name ?: if (parameter.vararg) "..." else "_",
-                type = if (parameter.vararg) VarargType(baseType) else baseType,
-                optional = parameter.optional,
-                vararg = parameter.vararg
-            )
-        }
-        val returnType = resolveTypeSyntax(typeSyntax.returnType, context)
-        return FunctionType(parameters = parameters, returnType = returnType)
-    }
-
-    private fun resolveObjectTypeSyntax(typeSyntax: ObjectTypeSyntax, context: TypeResolutionContext): Type {
-        val fields = linkedMapOf<String, Type>()
-        typeSyntax.fields.forEach { field ->
-            val name = when (val fieldName = field.name) {
-                is IdentifierObjectFieldNameSyntax -> fieldName.value
-                is QuotedObjectFieldNameSyntax -> fieldName.literal.removeSurrounding("\"").removeSurrounding("'")
-            }
-            val valueType = resolveTypeSyntax(field.type, context)
-            fields[name] = if (field.optional) unionTypeOf(valueType, PrimitiveType.NIL) else valueType
-        }
-
-        val indexSignature = typeSyntax.indexers.firstOrNull()?.let { indexer ->
-            TableType.IndexSignature(
-                keyType = resolveTypeSyntax(indexer.keyType, context),
-                valueType = resolveTypeSyntax(indexer.valueType, context)
-            )
-        }
-        return TableType(fields = fields, indexSignature = indexSignature)
-    }
-
-    private fun normalizeLiteral(value: String): Type {
-        val normalized = value.trim()
-        return when {
-            normalized == "true" -> LiteralType(true, PrimitiveType.BOOLEAN)
-            normalized == "false" -> LiteralType(false, PrimitiveType.BOOLEAN)
-            normalized == "nil" -> PrimitiveType.NIL
-            normalized.startsWith("\"") || normalized.startsWith("'") -> {
-                LiteralType(normalized.removeSurrounding("\"").removeSurrounding("'"), PrimitiveType.STRING)
-            }
-
-            normalized.contains('.') -> LiteralType(normalized.toDoubleOrNull() ?: normalized, PrimitiveType.NUMBER)
-            else -> LiteralType(normalized.toLongOrNull() ?: normalized, PrimitiveType.NUMBER)
-        }
-    }
-
-    private fun primitiveTypeFor(name: String): Type? = when (name) {
-        "string" -> PrimitiveType.STRING
-        "number", "integer" -> PrimitiveType.NUMBER
-        "boolean", "bool" -> PrimitiveType.BOOLEAN
-        "nil", "void" -> PrimitiveType.NIL
-        "function" -> PrimitiveType.FUNCTION
-        "table" -> PrimitiveType.TABLE
-        "thread" -> PrimitiveType.THREAD
-        "userdata" -> PrimitiveType.USERDATA
-        "any" -> PrimitiveType.ANY
-        "unknown" -> UnknownType
-        else -> null
     }
 
     private fun primitiveArrayElementTypeFor(name: String): Type? = when (name) {

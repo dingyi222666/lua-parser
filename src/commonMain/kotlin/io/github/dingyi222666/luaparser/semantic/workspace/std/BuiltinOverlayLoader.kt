@@ -241,6 +241,24 @@ object BuiltinOverlayLoader {
         members: List<ModuleExportSurface.MemberExport>,
         analyzedSurface: ModuleExportSurface?
     ): ModuleExportSurface {
+        val (fields, methods) = topLevelFieldsAndMethods(members)
+        return ModuleExportSurface(
+            moduleType = ModuleType(moduleName = moduleName, fields = fields, methods = methods),
+            sourceForm = ModuleExportSurface.SourceForm.RETURN_IDENTIFIER,
+            hasSeeAllFallback = analyzedSurface?.hasSeeAllFallback ?: false,
+            moduleEnvironmentMode = analyzedSurface?.moduleEnvironmentMode,
+            members = members
+        )
+    }
+
+    /**
+     * Split a member list into the ModuleType fields/methods maps. Shared by
+     * [surfaceFromMembers] and [mergeSyntheticSurface] (previously two identical loops);
+     * only depth-1 members map onto the module surface, nested paths stay members-only.
+     */
+    private fun topLevelFieldsAndMethods(
+        members: Iterable<ModuleExportSurface.MemberExport>
+    ): Pair<LinkedHashMap<String, Type>, LinkedHashMap<String, Type>> {
         val fields = linkedMapOf<String, Type>()
         val methods = linkedMapOf<String, Type>()
         members.forEach { member ->
@@ -252,13 +270,7 @@ object BuiltinOverlayLoader {
                 }
             }
         }
-        return ModuleExportSurface(
-            moduleType = ModuleType(moduleName = moduleName, fields = fields, methods = methods),
-            sourceForm = ModuleExportSurface.SourceForm.RETURN_IDENTIFIER,
-            hasSeeAllFallback = analyzedSurface?.hasSeeAllFallback ?: false,
-            moduleEnvironmentMode = analyzedSurface?.moduleEnvironmentMode,
-            members = members
-        )
+        return fields to methods
     }
 
     private fun mergeSyntheticSurface(
@@ -278,17 +290,7 @@ object BuiltinOverlayLoader {
             }
         }
 
-        val fields = linkedMapOf<String, Type>()
-        val methods = linkedMapOf<String, Type>()
-        membersByPath.values.forEach { member ->
-            if (member.exportPath.size == 1) {
-                if (member.kind == SymbolKind.METHOD) {
-                    methods[member.name] = member.type
-                } else {
-                    fields[member.name] = member.type
-                }
-            }
-        }
+        val (fields, methods) = topLevelFieldsAndMethods(membersByPath.values)
 
         return documentedSurface.copy(
             moduleType = documentedSurface.moduleType.copy(

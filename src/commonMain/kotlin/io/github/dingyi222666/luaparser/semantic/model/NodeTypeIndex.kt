@@ -194,24 +194,21 @@ internal class NodeTypeIndex(
         val functionNode = resolveOwningFunctionDeclaration(binder, declaration)
         val inferred = functionNode?.let(evaluator::inferImplementationFunctionType)
 
-        return when {
-            declared == null -> {
-                if (declaration.kind == DeclarationKind.METHOD && inferred != null) {
-                    enrichMethodCallableType(binder, declaration, inferred)
-                } else {
-                    inferred
-                }
+        val declaredCallable = declared ?: return inferred?.let {
+            if (declaration.kind == DeclarationKind.METHOD) {
+                enrichMethodCallableType(binder, declaration, it)
+            } else {
+                it
             }
-            inferred == null -> {
-                if (declaration.kind == DeclarationKind.METHOD) {
-                    enrichMethodCallableType(binder, declaration, declared)
-                } else {
-                    declared
-                }
-            }
-            declaration.kind == DeclarationKind.METHOD -> mergeCallableInference(declaration, declared, inferred)
-            else -> mergeCallableInference(declaration, declared, inferred)
         }
+        val inferredCallable = inferred ?: return if (declaration.kind == DeclarationKind.METHOD) {
+            enrichMethodCallableType(binder, declaration, declaredCallable)
+        } else {
+            declaredCallable
+        }
+        // Both arms converge on the same merge; the offset picked inside
+        // mergeCallableInference already distinguishes METHOD from the rest.
+        return mergeCallableInference(declaration, declaredCallable, inferredCallable)
     }
 
     private fun mergeCallableInference(

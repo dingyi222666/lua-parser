@@ -24,6 +24,7 @@ import io.github.dingyi222666.luaparser.semantic.binder.DeclarationId
 import io.github.dingyi222666.luaparser.semantic.binder.DeclarationKind
 import io.github.dingyi222666.luaparser.semantic.binder.DeclarationOrigin
 import io.github.dingyi222666.luaparser.semantic.binder.DeclarationOwner
+import io.github.dingyi222666.luaparser.semantic.binder.comparePositions
 import io.github.dingyi222666.luaparser.semantic.types.model.CallableType
 import io.github.dingyi222666.luaparser.semantic.types.model.ClassType
 import io.github.dingyi222666.luaparser.semantic.types.model.ModuleType
@@ -1946,13 +1947,11 @@ class LuaWorkspaceQueryFacade(
             val declaration = localDeclarationForSymbol(semanticFile, symbol?.symbolId)
                 ?: visibleLocalValueDeclaration(semanticFile, receiver.name, receiver.range.start)
             if (declaration != null) {
-                importCallTargetModuleName(semanticFile, pathOf(semanticFile), declaration)?.let { return it }
+                importCallTargetModuleName(semanticFile, semanticFile.path, declaration)?.let { return it }
             }
         }
         return null
     }
-
-    private fun pathOf(semanticFile: WorkspaceSemanticFile): VirtualPath = semanticFile.path
 
     private fun importCallTargetModuleName(
         semanticFile: WorkspaceSemanticFile,
@@ -2712,14 +2711,11 @@ class LuaWorkspaceQueryFacade(
         return comparePositions(range.start, position) <= 0
     }
 
-    private fun comparePositions(left: Position, right: Position): Int {
-        val lineComparison = left.line.compareTo(right.line)
-        if (lineComparison != 0) {
-            return lineComparison
-        }
-        return left.column.compareTo(right.column)
-    }
-
+    // Position comparisons share the binder's PositionOrdering helpers (same line/column
+    // order); the private copies that mirrored them byte-for-byte were removed. Note the
+    // binder's rangeContains is END-EXCLUSIVE while this facade's is END-INCLUSIVE on
+    // purpose: hover/definition membership here treats a caret exactly at range.end as
+    // inside (see memberCompletionRangeContains for the same +1 tolerance).
 
     private fun syntheticModuleRange(moduleName: String): Range {
         return Range(

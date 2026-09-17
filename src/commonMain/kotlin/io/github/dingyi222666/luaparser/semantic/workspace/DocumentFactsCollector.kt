@@ -338,7 +338,7 @@ object DocumentFactsCollector {
         }
 
         private fun collectCallFacts(call: CallExpression, isTopLevel: Boolean) {
-            if (isLuaJavaHelperColonCall(call)) {
+            if (isLuaJavaHelperColonMember(effectiveCallBase(call))) {
                 return
             }
             val calleeName = calleeName(effectiveCallBase(call)) ?: return
@@ -364,13 +364,6 @@ object DocumentFactsCollector {
                     collectJvmClassLoadFact(call, calleeName, kind)
                 }
             }
-        }
-
-        private fun isLuaJavaHelperColonCall(call: CallExpression): Boolean {
-            val member = effectiveCallBase(call) as? MemberExpression ?: return false
-            return member.indexer == ":" &&
-                member.identifier.name in luaJavaHelperKinds &&
-                identifierName(member.base) == "luajava"
         }
 
         private fun collectRequireFact(call: CallExpression) {
@@ -454,10 +447,6 @@ object DocumentFactsCollector {
         }
 
         /**
-         * True for `local x = x` / `x = x` identity captures of the outer binding.
-         * These must not register a null-kind local shadow for LuaJava helper resolution.
-         */
-        /**
          * True when [value] still READS the bare global `require` somewhere (binary
          * expressions like `require or print`, parenthesized forms) — the rebind keeps
          * the real loader alive, so the require-alias seed must not retire.
@@ -474,6 +463,10 @@ object DocumentFactsCollector {
             return false
         }
 
+        /**
+         * True for `local x = x` / `x = x` identity captures of the outer binding.
+         * These must not register a null-kind local shadow for LuaJava helper resolution.
+         */
         private fun isIdentityAliasRebind(aliasName: String, value: ExpressionNode?): Boolean {
             val identifier = value as? Identifier ?: return false
             return identifier.name == aliasName

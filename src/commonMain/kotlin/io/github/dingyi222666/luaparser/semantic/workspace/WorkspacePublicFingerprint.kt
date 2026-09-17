@@ -117,8 +117,6 @@ data class WorkspacePublicFingerprint(
             javaClassStack: MutableSet<String>
         ): String = typeParameters.joinToString("|") { serializeType(it, javaClassStack) }
 
-        private fun serializeType(type: Type): String = serializeType(type, linkedSetOf())
-
         private fun serializeType(type: Type, javaClassStack: MutableSet<String>): String = when (type) {
             is ModuleType -> "module(${serializeModuleType(type, javaClassStack)})"
             is TableType -> buildString {
