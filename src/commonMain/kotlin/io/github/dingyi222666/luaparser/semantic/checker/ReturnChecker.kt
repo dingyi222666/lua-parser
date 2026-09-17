@@ -106,31 +106,11 @@ class ReturnChecker internal constructor(
         }
 
         repeat(comparisonLimit) { index ->
-            val expectedType = expected.typeAt(index)
-            val actualType = actual.typeAt(index)
-            if (expectedType == UnknownType || actualType == UnknownType) {
-                return@repeat
-            }
-            if (!expectedType.isAssignableFrom(actualType)) {
-                diagnostics += Diagnostic(
-                    message = "Return value ${index + 1} has type ${actualType.displayName}, expected ${expectedType.displayName}.",
-                    range = range,
-                    code = "checker.function.return.typeMismatch"
-                )
-            }
+            emitReturnTypeMismatch(expected, actual, index, range, diagnostics)
         }
 
         if (expected.isOpenEnded && actual.isOpenEnded) {
-            val index = comparisonLimit
-            val expectedType = expected.typeAt(index)
-            val actualType = actual.typeAt(index)
-            if (expectedType != UnknownType && actualType != UnknownType && !expectedType.isAssignableFrom(actualType)) {
-                diagnostics += Diagnostic(
-                    message = "Return value ${index + 1} has type ${actualType.displayName}, expected ${expectedType.displayName}.",
-                    range = range,
-                    code = "checker.function.return.typeMismatch"
-                )
-            }
+            emitReturnTypeMismatch(expected, actual, comparisonLimit, range, diagnostics)
         }
 
         // Bare UnknownType is a single closed ValueSequence slot, but freeform /
@@ -153,5 +133,31 @@ class ReturnChecker internal constructor(
         }
 
         return diagnostics
+    }
+
+    /**
+     * Shared per-slot return comparison used for both fixed slots (`0 until limit`) and the
+     * open-ended tail slot (`limit`). Unknown on either side stays silent; everything else
+     * emits the structured typeMismatch diagnostic.
+     */
+    private fun emitReturnTypeMismatch(
+        expected: ValueSequence,
+        actual: ValueSequence,
+        index: Int,
+        range: Range?,
+        diagnostics: MutableList<Diagnostic>
+    ) {
+        val expectedType = expected.typeAt(index)
+        val actualType = actual.typeAt(index)
+        if (expectedType == UnknownType || actualType == UnknownType) {
+            return
+        }
+        if (!expectedType.isAssignableFrom(actualType)) {
+            diagnostics += Diagnostic(
+                message = "Return value ${index + 1} has type ${actualType.displayName}, expected ${expectedType.displayName}.",
+                range = range,
+                code = "checker.function.return.typeMismatch"
+            )
+        }
     }
 }

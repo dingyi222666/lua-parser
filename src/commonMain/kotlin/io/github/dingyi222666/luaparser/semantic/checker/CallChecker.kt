@@ -122,24 +122,23 @@ class CallChecker(
             is UnionType -> {
                 val signatures = normalized.types.map { asCallableType(it, lexicalScopeId) ?: return null }
                     .flatMap { it.callSignatures }
-                when (signatures.size) {
-                    0 -> null
-                    1 -> signatures.single()
-                    else -> OverloadedFunctionType(signatures)
-                }
+                singleOrOverloaded(signatures)
             }
 
             is IntersectionType -> {
                 val signatures = normalized.types.mapNotNull { asCallableType(it, lexicalScopeId)?.callSignatures }.flatten()
-                when (signatures.size) {
-                    0 -> null
-                    1 -> signatures.single()
-                    else -> OverloadedFunctionType(signatures)
-                }
+                singleOrOverloaded(signatures)
             }
 
             else -> null
         }
+    }
+
+    /** Empty is not callable; a single signature stays bare; 2+ wrap as one overload. */
+    private fun singleOrOverloaded(signatures: List<FunctionType>): CallableType? = when (signatures.size) {
+        0 -> null
+        1 -> signatures.single()
+        else -> OverloadedFunctionType(signatures)
     }
 
     private fun resolveOverloadSignatures(declaration: BinderDeclaration?): List<FunctionType> {
