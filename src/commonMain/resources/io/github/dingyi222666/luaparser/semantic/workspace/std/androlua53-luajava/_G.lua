@@ -58,18 +58,57 @@ local Bitmap = {}
 ---@field newActivity fun(path: string, arg?: table)
 ---@field newTask fun(src: string|function, callback?: function): JavaObject
 ---@field newThread fun(src: string|function): JavaObject
+---@field setContentView fun(view: AndroidView|LuaLayoutSpec|any)
+---@field getMenu fun(): AndroidMenu
+---@field getSystemService fun(name: string): any
 local AndroidLuaContext = {}
 
 ---@class android.content.Context
 ---@java-class android.content.Context
 local AndroidContentContext = {}
 
+--- Android-Lua adapter constructors, preloaded into the project global environment
+--- (layout `adapter = LuaMultiAdapter(activity, {...})` idiom). Reflected from the
+--- bundled runtime jar, so add/addAll/clear and the rest of the real surface resolve.
+---@class LuaAdapter
+---@java-class com.androlua.LuaAdapter
+---@type LuaAdapter
+LuaAdapter = LuaAdapter
+
+---@class LuaArrayAdapter: LuaAdapter
+---@java-class com.androlua.LuaArrayAdapter
+---@type LuaArrayAdapter
+LuaArrayAdapter = LuaArrayAdapter
+
+---@class LuaExAdapter: LuaAdapter
+---@java-class com.androlua.LuaExAdapter
+---@type LuaExAdapter
+LuaExAdapter = LuaExAdapter
+
+---@class LuaExpandableListAdapter
+---@java-class com.androlua.LuaExpandableListAdapter
+---@type LuaExpandableListAdapter
+LuaExpandableListAdapter = LuaExpandableListAdapter
+
+---@class LuaMultiAdapter
+---@java-class com.androlua.LuaMultiAdapter
+---@type LuaMultiAdapter
+LuaMultiAdapter = LuaMultiAdapter
+
 ---@class LuaActivity: AndroidLuaContext
----@java-class android.app.Activity
+--- Reflected from the Android-Lua runtime jar bundled with the JVM engine: the real
+--- com.androlua.LuaActivity surface extends android.app.Activity, so inherited framework
+--- methods (getPackageManager, startActivity, ...) resolve through reflection too.
+---@java-class com.androlua.LuaActivity
+--- Reads the Lua global `name` from the activity Lua state
+--- (runtime LuaActivity.get; `activity.get("_taskFinlshFunction")(data)` idiom).
+---@field get fun(name: string): any
 local LuaActivity = {}
 
 ---@class LuaService: AndroidLuaContext
----@java-class android.app.Service
+--- Reflected from the Android-Lua runtime jar bundled with the JVM engine
+--- (extends android.app.Service).
+---@java-class com.androlua.LuaService
 local LuaService = {}
 
 ---@type LuaActivity

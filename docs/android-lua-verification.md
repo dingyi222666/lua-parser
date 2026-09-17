@@ -57,7 +57,7 @@ The manifest records upstream paths, feature tags, verification focus, and defer
 
 ## TASK-035 Usage
 
-TASK-035 implements `src/jvmTest/kotlin/integration/AndroidLuaCorpusSemanticVerificationTest.kt` against the manifest. The test loads source files from the external Android-Lua checkout at runtime and keeps the upstream tree read-only.
+TASK-035 implemented `src/jvmTest/kotlin/integration/AndroidLuaCorpusSemanticVerificationTest.kt` against the manifest. The test loaded source files from the external Android-Lua checkout at runtime and kept the upstream tree read-only. (**This suite was deleted** in the 2026-07 test cull, e786c77 — coverage culled, pending reimplementation.)
 
 Recommended root resolution:
 

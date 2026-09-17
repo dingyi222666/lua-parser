@@ -9,6 +9,7 @@ import io.github.dingyi222666.luaparser.semantic.types.model.ModuleType
 import io.github.dingyi222666.luaparser.semantic.types.model.MultiReturnType
 import io.github.dingyi222666.luaparser.semantic.types.model.OverloadedFunctionType
 import io.github.dingyi222666.luaparser.semantic.types.model.TableType
+import io.github.dingyi222666.luaparser.semantic.types.model.VarargType
 import io.github.dingyi222666.luaparser.semantic.workspace.LuaWorkspaceEngine
 import io.github.dingyi222666.luaparser.semantic.workspace.LuaWorkspaceInput
 import io.github.dingyi222666.luaparser.semantic.workspace.VirtualPath
@@ -80,9 +81,9 @@ class BuiltinOverlayLoaderTest {
         val stringSurface = assertNotNull(lua53.providerModules.values.first { it.moduleName == "string" }.file.moduleExportSurface)
         val gmatch = assertIs<FunctionType>(assertNotNull(stringSurface.members.singleOrNull { it.name == "gmatch" }).type)
         val iterator = assertIs<FunctionType>(gmatch.returnType)
-        val iteratorReturn = assertIs<MultiReturnType>(iterator.returnType)
-        assertEquals(listOf("string", "table"), iteratorReturn.types.map { it.displayName })
-        assertEquals("fun(): string, table", iterator.displayName)
+        val iteratorReturn = assertIs<VarargType>(iterator.returnType)
+        assertEquals("string", iteratorReturn.elementType.displayName)
+        assertEquals("fun(): string...", iterator.displayName)
     }
 
     @Test

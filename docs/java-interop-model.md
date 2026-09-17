@@ -65,10 +65,10 @@ The current provider projection is:
 - `fields["__class"]` is a `ClassType` for the instance surface.
 - `fields["__call"]` is present when public constructors exist and contains a callable/overload whose return type is the reflected class reference.
 - Public static fields become module fields.
-- Public static methods become module methods, grouped into `OverloadedFunctionType` when needed.
+- Public static methods become module methods, grouped into `JavaOverloadType` when several overloads share a name (`JvmClassModuleProvider.javaMethodType`; a single method emits a plain `FunctionType`).
 - Public inner classes become module fields whose values are nested class modules.
 - Public instance fields and instance methods live on the `ClassType`.
-- The `ClassType` includes a superclass reference when reflection reports one other than `java.lang.Object`.
+- The `ClassType` includes a superclass reference whenever reflection reports one, **including `java.lang.Object`** — there is no Object exclusion. Deep class providers eagerly expand the super/interface chain (member expansion is depth-capped at 2 levels, after which a name-only hierarchy skeleton continues up to depth 16); shallow/wildcard providers keep super/interfaces as name-only type references.
 
 The current reflection-to-type conversion maps `void` to `nil`, booleans to `boolean`, numeric primitives/wrappers to `number`, `char`/`String`/`CharSequence` to `string`, arrays to `ArrayType`, unknown primitives to `any`, and other object references to a `ClassType` by fully qualified class name.
 
@@ -93,15 +93,9 @@ Metadata keys:
 - `jvm.androidJar`: explicit android.jar path.
 - `jvm.importPrefixes`: newline separated import prefixes.
 
-If no explicit `androidJar` metadata is set, `reflectionClasspathEntries()` appends `/Users/dingyi/Library/Android/sdk/platforms/android-35/android.jar` when that file exists. This is a convenience fallback, not a portability guarantee; callers should provide `jvm.androidJar` or a custom classloader for reproducible Android analysis.
+If no explicit `androidJar` metadata is set, `reflectionClasspathEntries()` appends the best android.jar found by SDK discovery: `ANDROID_HOME` / `ANDROID_SDK_ROOT` first (highest installed platform in the chosen root), then the well-known per-OS SDK roots (macOS `~/Library/Android/sdk`, Linux `~/Android/Sdk`, Windows `%LOCALAPPDATA%/Android/Sdk` plus user-home `AppData/Local/Android/Sdk` layouts), preferring `platforms/android-35` when present. On top of that, the provider soft-falls back to the same discovery (`resolveReflectiveClasspathFiles` / `shouldSoftFallbackToHostAndroidJar`) when a configured `jvm.androidJar` path is missing on the current host because it belongs to a different OS (foreign-host fixtures). Discovery is still a convenience fallback, not a portability guarantee; callers should provide `jvm.androidJar` or a custom classloader for reproducible Android analysis.
 
-**Host android.jar policy (docs-only honesty):** only the host paths
-`/Users/dingyi/Downloads/android.jar` and
-`/Users/dingyi/Library/Android/sdk/platforms/android-35/android.jar` may be
-referenced. Never hard-code `G:/` or other machine-local drive letters. WAVE36E
-host re-check: SDK `platforms/android-35/android.jar` is present (~27,092,450
-bytes); Downloads copy may be absent. Prefer `jvm.androidJar` → SDK android-35 →
-optional Downloads.
+**Host android.jar policy (docs-only honesty):** no host-specific path is hard-coded in production code; the absolute paths appearing in docs are examples of what discovery finds on one machine. Discovery is multi-root and cross-platform (env variables, then per-OS well-known SDK roots, plus the provider's foreign-host soft-fallback), so a jar under any of those roots is usable — not only the historical macOS host paths. The hard rules that remain: `G:/` and other machine-local drive-letter SDK roots are never auto-selected as defaults (env/metadata may still point there), and Downloads copies are metadata-only, never auto-selected. For reproducible analysis across hosts, pin `jvm.androidJar` explicitly. WAVE36E host re-check (historical, macOS host): SDK `platforms/android-35/android.jar` present (~27,092,450 bytes); the Downloads copy may be absent.
 
 Default import prefixes are `java.lang`, `java.util`, `java.io`, `android.app`, `android.content`, `android.view`, `android.widget`, and `com.androlua`.
 
@@ -308,4 +302,6 @@ Prefer these extension points for future interop work:
 
 This guide reflects the code shape reviewed for TASK-052, the listener setter assignability policy accepted for TASK-152 (documented under TASK-227), and the `createProxy` static model note added under TASK-454 (aligned with `ExpressionTypeEvaluator.resolveCreateProxyCall`, `DocumentFactsCollector` `CREATE_PROXY_CALL` split targets, TASK-394 SignatureHelp labels, and the LuaJava createProxy TDD suite). No Gradle, compile, or test command was run for this documentation task. Final verification is deferred to TASK-043, and Android-Lua behavior must be reconciled with TASK-037 before compatibility claims are broadened.
 
-Host android.jar paths only: `/Users/dingyi/Downloads/android.jar` and `/Users/dingyi/Library/Android/sdk/platforms/android-35/android.jar` — never `G:/`.
+Build/publish audit follow-up (FIXER-DOCS2, 2026-09-12): corrected three stale claims against current code — the overload model is `JavaOverloadType` (not `OverloadedFunctionType`), superclass references eagerly include `java.lang.Object` (no Object exclusion), and android.jar discovery is multi-root/cross-platform (env vars + per-OS well-known SDK roots + foreign-host soft-fallback), not macOS-host-path-only.
+
+Host android.jar discovery is env/SDK-root based (see Loading And Classloaders) — never hard-code machine-local paths and never auto-select `G:/`.

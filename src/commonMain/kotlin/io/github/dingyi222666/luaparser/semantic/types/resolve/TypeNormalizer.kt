@@ -12,7 +12,9 @@ import io.github.dingyi222666.luaparser.semantic.types.model.JavaArrayType
 import io.github.dingyi222666.luaparser.semantic.types.model.JavaClassType
 import io.github.dingyi222666.luaparser.semantic.types.model.JavaConstructorType
 import io.github.dingyi222666.luaparser.semantic.types.model.JavaInstanceMemberType
+import io.github.dingyi222666.luaparser.semantic.types.model.JavaSignatureMetadata
 import io.github.dingyi222666.luaparser.semantic.types.model.JavaInstanceType
+import io.github.dingyi222666.luaparser.semantic.types.model.JavaMemberType
 import io.github.dingyi222666.luaparser.semantic.types.model.JavaOverloadSet
 import io.github.dingyi222666.luaparser.semantic.types.model.JavaOverloadType
 import io.github.dingyi222666.luaparser.semantic.types.model.JavaPrimitiveType
@@ -55,9 +57,10 @@ object TypeNormalizer {
 
         is OverloadedFunctionType -> {
             val normalizedSignatures = type.callSignatures.map { normalize(it, aliasStack) as FunctionType }
-            when (normalizedSignatures.size) {
-                1 -> normalizedSignatures.single()
-                else -> OverloadedFunctionType(normalizedSignatures)
+            val dedupedSignatures = dedupeOverloadSignatures(normalizedSignatures)
+            when (dedupedSignatures.size) {
+                1 -> dedupedSignatures.single()
+                else -> OverloadedFunctionType(dedupedSignatures)
             }
         }
 
@@ -92,7 +95,8 @@ object TypeNormalizer {
             superType = type.superType?.let { normalize(it, aliasStack) },
             typeParameters = type.typeParameters.map { normalizeTypeParameter(it, aliasStack) },
             alias = type.alias?.let { normalizeAliasPreservingNode(it, aliasStack) },
-            javaClassName = type.javaClassName
+            javaClassName = type.javaClassName,
+            declarationId = type.declarationId
         )
 
         is UnionType -> normalizeUnion(type.types.map { normalize(it, aliasStack) })
@@ -110,6 +114,7 @@ object TypeNormalizer {
         is JavaConstructorType -> JavaConstructorType(
             owner = type.owner,
             signature = normalize(type.signature, aliasStack) as FunctionType,
+            signatureMetadata = type.signatureMetadata,
             visibility = type.visibility
         )
         is JavaStaticMemberType -> JavaStaticMemberType(
@@ -117,19 +122,22 @@ object TypeNormalizer {
             memberName = type.memberName,
             valueType = normalize(type.valueType, aliasStack),
             memberKind = type.memberKind,
-            visibility = type.visibility
+            visibility = type.visibility,
+            signatureMetadata = type.signatureMetadata
         )
         is JavaInstanceMemberType -> JavaInstanceMemberType(
             owner = type.owner,
             memberName = type.memberName,
             valueType = normalize(type.valueType, aliasStack),
             memberKind = type.memberKind,
-            visibility = type.visibility
+            visibility = type.visibility,
+            signatureMetadata = type.signatureMetadata
         )
         is JavaOverloadType -> JavaOverloadType(
             javaName = type.javaName,
             overloadName = type.overloadName,
-            callSignatures = type.callSignatures.map { normalize(it, aliasStack) as FunctionType }
+            callSignatures = type.callSignatures.map { normalize(it, aliasStack) as FunctionType },
+            signatureMetadata = type.signatureMetadata
         )
         is JavaArrayType -> JavaArrayType(
             elementType = normalize(type.elementType, aliasStack),
@@ -140,6 +148,42 @@ object TypeNormalizer {
         is TypeParameterType -> normalizeTypeParameter(type, aliasStack)
         is CustomType -> type
         UnknownType, ErrorType, NeverType -> type
+    }
+
+    /**
+     * Collapses a normalized overload set, keeping the first-declared survivor of each
+     * equivalence group: exact structural duplicates are dropped, and a later signature is
+     * dropped when an earlier KEPT signature already serves every call it can accept
+     * (equal return type, and the later arguments all flow into the earlier parameters).
+     */
+    private fun dedupeOverloadSignatures(signatures: List<FunctionType>): List<FunctionType> {
+        val kept = mutableListOf<FunctionType>()
+        for (signature in signatures) {
+            val isDuplicated = signature in kept || kept.any { earlier ->
+                earlier.returnType == signature.returnType &&
+                    subsumesOverload(earlier.parameters, signature.parameters)
+            }
+            if (!isDuplicated) {
+                kept += signature
+            }
+        }
+        return kept
+    }
+
+    /**
+     * STRICT subsumption for overload deletion — deliberately NOT the call-site-relaxed
+     * [TypeRelations.parameterListsCompatible], whose vararg/bivariance relaxations are
+     * valid for "can this handler be assigned" but unsound for "can this overload be
+     * deleted": dropping a vararg sibling makes variadic calls NO_MATCHING_SIGNATURE, and
+     * bivariant class params would delete overloads that later calls still match.
+     */
+    private fun subsumesOverload(earlier: List<FunctionParameter>, later: List<FunctionParameter>): Boolean {
+        if (earlier.size != later.size) {
+            return false
+        }
+        return earlier.zip(later).all { (earlierParameter, laterParameter) ->
+            TypeRelations.isAssignableForOverloadSubsumption(earlierParameter.type, laterParameter.type)
+        }
     }
 
     private fun normalizeJavaClass(type: JavaClassType, aliasStack: MutableList<AliasType>): JavaClassType {
@@ -208,20 +252,40 @@ object TypeNormalizer {
             }
         }
 
-        if (simplifiedMembers.any { it == PrimitiveType.ANY }) return PrimitiveType.ANY
-        if (simplifiedMembers.any { it == UnknownType }) return UnknownType
+        // A doc-declared Java member (no reflection metadata) and its reflected twin encode
+        // the SAME member; plain data-class equality would keep both in the union and
+        // duplicate completion / hover entries (see dedupeSignatureMetadataDuplicates).
+        val metadataDedupedMembers = dedupeSignatureMetadataDuplicates(simplifiedMembers)
 
-        val primitiveKinds = simplifiedMembers
+        if (metadataDedupedMembers.any { it == PrimitiveType.ANY }) return PrimitiveType.ANY
+        if (metadataDedupedMembers.any { it == UnknownType }) return UnknownType
+
+        val primitiveKinds = metadataDedupedMembers
             .filterIsInstance<PrimitiveType>()
             .map { it.kind }
             .toSet()
 
         val dedupedMembers = linkedSetOf<Type>()
-        simplifiedMembers.forEach { member ->
+        metadataDedupedMembers.forEach { member ->
             if (member is LiteralType && member.baseType.kind in primitiveKinds) {
                 return@forEach
             }
             dedupedMembers += member
+        }
+
+        // A union carrying BOTH boolean literals is exactly boolean — collapse the
+        // `true | false` pair so hover/completion render `boolean` instead of the
+        // literal pair (`true | boolean` / `false | boolean` already collapse above).
+        val booleanLiterals = dedupedMembers.filter {
+            it is LiteralType && it.baseType == PrimitiveType.BOOLEAN
+        }
+        if (LiteralType(true, PrimitiveType.BOOLEAN) in booleanLiterals &&
+            LiteralType(false, PrimitiveType.BOOLEAN) in booleanLiterals
+        ) {
+            dedupedMembers.removeAll { member ->
+                member is LiteralType && member.baseType == PrimitiveType.BOOLEAN
+            }
+            dedupedMembers += PrimitiveType.BOOLEAN
         }
 
         return when (dedupedMembers.size) {
@@ -229,6 +293,59 @@ object TypeNormalizer {
             1 -> dedupedMembers.single()
             else -> UnionType(dedupedMembers)
         }
+    }
+
+    /**
+     * Collapses Java members that differ ONLY in [JavaMemberType.signatureMetadata].
+     *
+     * A doc-declared member (empty metadata) and its reflected twin (varargs / generic
+     * metadata from the JVM index) are the same member; data-class equality would keep
+     * both in a union built via [unionTypeOf], duplicating completion and hover entries.
+     * Members are therefore keyed on every field EXCEPT signatureMetadata, and of each
+     * duplicate pair the metadata carrier is kept (it renders richer signature help);
+     * when both are bare the first occurrence wins so insertion order stays stable.
+     */
+    private fun dedupeSignatureMetadataDuplicates(members: Set<Type>): Set<Type> {
+        if (members.none { it is JavaMemberType }) {
+            return members
+        }
+
+        val deduped = linkedSetOf<Type>()
+        val carrierByKey = mutableMapOf<JavaMemberType, JavaMemberType>()
+        members.forEach { member ->
+            val javaMember = member as? JavaMemberType
+            if (javaMember == null) {
+                deduped += member
+                return@forEach
+            }
+            val key = javaMember.withoutSignatureMetadata()
+            val existing = carrierByKey[key]
+            when {
+                existing == null -> {
+                    deduped += javaMember
+                    carrierByKey[key] = javaMember
+                }
+                existing.javaMemberMetadata().isEmpty() && javaMember.javaMemberMetadata().isNotEmpty() -> {
+                    deduped.remove(existing)
+                    deduped += javaMember
+                    carrierByKey[key] = javaMember
+                }
+                // else: earlier member already carries the metadata (or both are bare).
+                else -> Unit
+            }
+        }
+        return deduped
+    }
+
+    private fun JavaMemberType.javaMemberMetadata(): List<JavaSignatureMetadata> = when (this) {
+        is JavaStaticMemberType -> signatureMetadata
+        is JavaInstanceMemberType -> signatureMetadata
+        else -> emptyList()
+    }
+
+    private fun JavaMemberType.withoutSignatureMetadata(): JavaMemberType = when (this) {
+        is JavaStaticMemberType -> copy(signatureMetadata = emptyList())
+        is JavaInstanceMemberType -> copy(signatureMetadata = emptyList())
     }
 
     private fun normalizeIntersection(types: Iterable<Type>): Type {

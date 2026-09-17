@@ -52,17 +52,40 @@ data class JavaClassType(
     override val displayName: String
         get() = javaName.canonicalName
 
-    fun allStaticMembers(): Map<String, JavaStaticMemberType> {
-        return collectStaticMembers(linkedSetOf())
+    private companion object {
+        // Flattened hierarchy maps are deterministic per instance identity of the member
+        // maps: copies made by with*Surface/copy() share the same member map references
+        // and therefore the same cache entry, so re-flattening the whole hierarchy per
+        // evaluation (hundreds of members x hundreds of lookups) disappears.
+        private val flattenCache = HashMap<String, Any>()
     }
 
-    fun allInstanceMembers(): Map<String, JavaInstanceMemberType> {
-        return collectInstanceMembers(linkedSetOf())
+    private fun <T> flattenCached(kind: String, compute: () -> T): T {
+        val key = javaName.binaryName + '#' + kind +
+            '#' + System.identityHashCode(instanceMembers) +
+            '#' + System.identityHashCode(staticMembers) +
+            '#' + System.identityHashCode(innerClasses) +
+            '#' + System.identityHashCode(superClass) +
+            '#' + System.identityHashCode(interfaces) +
+            '#' + typeParameters.hashCode()
+        @Suppress("UNCHECKED_CAST")
+        val cached = flattenCache[key] as? T
+        if (cached != null) {
+            return cached
+        }
+        val computed = compute()
+        flattenCache[key] = computed as Any
+        return computed
     }
 
-    fun allInnerClasses(): Map<String, JavaClassType> {
-        return collectInnerClasses(linkedSetOf())
-    }
+    fun allStaticMembers(): Map<String, JavaStaticMemberType> =
+        flattenCached("S") { collectStaticMembers(linkedSetOf()) }
+
+    fun allInstanceMembers(): Map<String, JavaInstanceMemberType> =
+        flattenCached("I") { collectInstanceMembers(linkedSetOf()) }
+
+    fun allInnerClasses(): Map<String, JavaClassType> =
+        flattenCached("C") { collectInnerClasses(linkedSetOf()) }
 
     private fun collectStaticMembers(visited: MutableSet<String>): Map<String, JavaStaticMemberType> {
         if (!visited.add(javaName.binaryName)) {

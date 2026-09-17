@@ -116,7 +116,8 @@ class LuaTextDocumentService(
                 )
             )
         } ?: return
-        publishDiagnostics(diagnostics)
+        // Edited document first, then every other open document the update affected.
+        diagnostics.forEach(publishDiagnostics)
     }
 
     override fun didClose(params: DidCloseTextDocumentParams) {
@@ -127,7 +128,7 @@ class LuaTextDocumentService(
             openDocuments.remove(params.textDocument.uri)
             languageService.didClose(params)
         }
-        publishDiagnostics(diagnostics)
+        diagnostics.forEach(publishDiagnostics)
     }
 
     override fun didSave(params: DidSaveTextDocumentParams) {
@@ -380,16 +381,14 @@ class LuaTextDocumentService(
     /**
      * TASK-540 — textDocument/selectionRange nested AST parent chains.
      * Soft-degrades to an empty list under quiet policies / unknown positions;
-     * never throws UnsupportedOperationException once wired.
+     * never throws UnsupportedOperationException once wired. Unresolvable positions
+     * are dropped by the service, so the list never carries null slots.
      */
     override fun selectionRange(params: SelectionRangeParams): CompletableFuture<List<SelectionRange>> {
         return guardedRequest(
             quietResponse = { CompletableFuture.completedFuture(emptyList()) }
         ) {
-            @Suppress("UNCHECKED_CAST")
-            CompletableFuture.completedFuture(
-                languageService.selectionRanges(params) as List<SelectionRange>
-            )
+            CompletableFuture.completedFuture(languageService.selectionRanges(params))
         }
     }
 
@@ -504,46 +503,6 @@ class LuaTextDocumentService(
         }
     }
 
-    private fun applyContentChanges(current: String, changes: List<TextDocumentContentChangeEvent>): String {
-        return changes.fold(current) { text, change ->
-            val range = change.range
-            if (range == null) {
-                change.text
-            } else {
-                val start = offsetAt(text, range.start)
-                val end = offsetAt(text, range.end).coerceAtLeast(start)
-                text.replaceRange(start, end, change.text)
-            }
-        }
-    }
-
-    private fun offsetAt(text: String, position: org.eclipse.lsp4j.Position): Int {
-        val lineStarts = mutableListOf(0)
-        text.forEachIndexed { index, character ->
-            if (character == '\n') {
-                lineStarts += index + 1
-            }
-        }
-
-        if (position.line <= 0) {
-            return position.character.coerceAtLeast(0).coerceAtMost(lineEnd(text, 0))
-        }
-
-        if (position.line >= lineStarts.size) {
-            return text.length
-        }
-
-        val lineStart = lineStarts[position.line]
-        val lineEnd = lineEnd(text, lineStart)
-        return (lineStart + position.character.coerceAtLeast(0)).coerceAtMost(lineEnd)
-    }
-
-    private fun lineEnd(text: String, lineStart: Int): Int {
-        val newline = text.indexOf('\n', lineStart)
-        val end = if (newline >= 0) newline else text.length
-        return if (end > lineStart && text[end - 1] == '\r') end - 1 else end
-    }
-
     private fun <T> nullFuture(): CompletableFuture<T> {
         @Suppress("UNCHECKED_CAST")
         return CompletableFuture.completedFuture(null) as CompletableFuture<T>
@@ -559,4 +518,52 @@ class LuaTextDocumentService(
         future.completeExceptionally(throwable)
         return future
     }
+}
+
+/**
+ * Incremental didChange application shared by [LuaTextDocumentService] and
+ * [LuaLanguageService] (previously two byte-identical private copies): a change
+ * without a range replaces the whole buffer; a ranged edit folds onto the current
+ * text with end clamped to the start.
+ */
+internal fun applyContentChanges(current: String, changes: List<TextDocumentContentChangeEvent>): String {
+    return changes.fold(current) { text, change ->
+        val range = change.range
+        if (range == null) {
+            change.text
+        } else {
+            val start = lspOffsetAt(text, range.start)
+            val end = lspOffsetAt(text, range.end).coerceAtLeast(start)
+            text.replaceRange(start, end, change.text)
+        }
+    }
+}
+
+/** LSP 0-based line/character position → string offset, clamped to the line end. */
+internal fun lspOffsetAt(text: String, position: org.eclipse.lsp4j.Position): Int {
+    val lineStarts = mutableListOf(0)
+    text.forEachIndexed { index, character ->
+        if (character == '\n') {
+            lineStarts += index + 1
+        }
+    }
+
+    if (position.line <= 0) {
+        return position.character.coerceAtLeast(0).coerceAtMost(lspLineEnd(text, 0))
+    }
+
+    if (position.line >= lineStarts.size) {
+        return text.length
+    }
+
+    val lineStart = lineStarts[position.line]
+    val lineEnd = lspLineEnd(text, lineStart)
+    return (lineStart + position.character.coerceAtLeast(0)).coerceAtMost(lineEnd)
+}
+
+/** Offset just past the last character of the line whose content starts at [lineStart]. */
+private fun lspLineEnd(text: String, lineStart: Int): Int {
+    val newline = text.indexOf('\n', lineStart)
+    val end = if (newline >= 0) newline else text.length
+    return if (end > lineStart && text[end - 1] == '\r') end - 1 else end
 }

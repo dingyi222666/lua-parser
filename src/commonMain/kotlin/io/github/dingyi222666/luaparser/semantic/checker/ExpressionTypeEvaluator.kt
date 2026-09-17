@@ -80,28 +80,11 @@ import io.github.dingyi222666.luaparser.semantic.types.model.TypeParameterType
 import io.github.dingyi222666.luaparser.semantic.types.model.UnionType
 import io.github.dingyi222666.luaparser.semantic.types.model.UnknownType
 import io.github.dingyi222666.luaparser.semantic.types.model.VarargType
-import io.github.dingyi222666.luaparser.semantic.types.resolve.DocFunctionTypeSyntaxParser
 import io.github.dingyi222666.luaparser.semantic.types.resolve.TypeResolutionContext
 import io.github.dingyi222666.luaparser.semantic.types.resolve.intersectionTypeOf
 import io.github.dingyi222666.luaparser.semantic.types.resolve.unionTypeOf
 import io.github.dingyi222666.luaparser.semantic.types.resolve.isAssignableFrom
 import io.github.dingyi222666.luaparser.semantic.checker.resolveOwningFunctionDeclaration
-import io.github.dingyi222666.luaparser.semantic.types.syntax.ArrayTypeSyntax
-import io.github.dingyi222666.luaparser.semantic.types.syntax.FunctionTypeSyntax
-import io.github.dingyi222666.luaparser.semantic.types.syntax.GenericTypeSyntax
-import io.github.dingyi222666.luaparser.semantic.types.syntax.IdentifierObjectFieldNameSyntax
-import io.github.dingyi222666.luaparser.semantic.types.syntax.IndexTableTypeSyntax
-import io.github.dingyi222666.luaparser.semantic.types.syntax.IntersectionTypeSyntax
-import io.github.dingyi222666.luaparser.semantic.types.syntax.LiteralTypeSyntax
-import io.github.dingyi222666.luaparser.semantic.types.syntax.MultiReturnTypeSyntax
-import io.github.dingyi222666.luaparser.semantic.types.syntax.NamedTypeSyntax
-import io.github.dingyi222666.luaparser.semantic.types.syntax.NullableTypeSyntax
-import io.github.dingyi222666.luaparser.semantic.types.syntax.ObjectTypeSyntax
-import io.github.dingyi222666.luaparser.semantic.types.syntax.QuotedObjectFieldNameSyntax
-import io.github.dingyi222666.luaparser.semantic.types.syntax.TupleTypeSyntax
-import io.github.dingyi222666.luaparser.semantic.types.syntax.TypeSyntax
-import io.github.dingyi222666.luaparser.semantic.types.syntax.UnionTypeSyntax
-import io.github.dingyi222666.luaparser.semantic.types.syntax.VarargTypeSyntax
 
 class ExpressionTypeEvaluator internal constructor(
     private val binder: BinderPassResult,
@@ -134,13 +117,53 @@ class ExpressionTypeEvaluator internal constructor(
         setOf("bindClass", "newInstance", "createProxy", "loadLib", "getContext") + luaJavaArrayHelperNames
     // TASK-379: hydrate Android-Lua load* aliases once per evaluator; View/Menu/Bitmap
     // surfaces from android.jar are large and must not be rebuilt on every call/local.
-    private val androidLuaHydratedSurfaceCache = mutableMapOf<String, Type>()
-    private val layoutViewClassTypeCache = mutableMapOf<String, Type>()
+    // Android/layout surfaces are deterministic per (name, workspace config) and costly to
+    // rebuild (reflection maps over hundreds of members). They live in a PROCESS-GLOBAL
+    // store shared across analyses/evaluators so repeat analyses start warm; invalidated
+    // via ExpressionTypeEvaluator.clearSharedCaches() when workspace configuration changes.
+    private val androidLuaHydratedSurfaceCache = SharedSurfaceCaches.androidLuaHydratedSurface
+    private val layoutViewClassTypeCache = SharedSurfaceCaches.layoutViewClassType
+    private val layoutSuggestionsCache = SharedSurfaceCaches.layoutSuggestions
+
+    internal object SharedSurfaceCaches {
+        val androidLuaHydratedSurface = mutableMapOf<String, Type>()
+        val layoutViewClassType = mutableMapOf<String, Type>()
+        val layoutSuggestions = mutableMapOf<String, List<LuaLayoutPropertySuggestion>>()
+
+        fun clear() {
+            androidLuaHydratedSurface.clear()
+            layoutViewClassType.clear()
+            layoutSuggestions.clear()
+        }
+    }
+
+
     private val loadlayoutIdsTableTypeCache = mutableMapOf<DeclarationId, Type>()
-    // One-shot loadlayout(…, ids) → layout-table index for the whole binder root.
-    private var loadlayoutRootUsageIndex: Map<String, List<TableConstructorExpression>>? = null
+    // Root-name -> member assignments, built once per evaluator. Replaces the per-value
+    // full-declaration scans in visibleMemberDeclarationsForValue / nested path collection
+    // (O(declarations) per typed value was quadratic across a document).
+    private var memberAssignmentsByRoot: Map<String, List<MemberAssignmentAnchor>>? = null
+    private val perfEnabled get() = ExpressionUsageChecker.UsagePerfCounters.ENABLED
+    // One-shot loadlayout(...) usage index for the whole binder root: each call records
+    // where its layout spec table comes from and where the runtime registers the ids.
+    private var loadlayoutUsages: List<LoadlayoutUsage>? = null
+    private val loadlayoutSinkFieldsCache = mutableMapOf<LoadlayoutIdsSink, Map<String, Type>>()
+    private var loadlayoutGlobalIdNames: Set<String>? = null
 
     fun evaluate(node: ExpressionNode): Type {
+        expressionTypeCache[node]?.let { return it }
+        val perfT0 = if (perfEnabled) System.nanoTime() else 0L
+        if (perfEnabled) {
+            ExpressionUsageChecker.UsagePerfCounters.EVAL_COUNT.incrementAndGet()
+        }
+        val result = evaluateInternal(node)
+        if (perfT0 != 0L) {
+            ExpressionUsageChecker.UsagePerfCounters.EVAL_NANOS.addAndGet(System.nanoTime() - perfT0)
+        }
+        return result
+    }
+
+    private fun evaluateInternal(node: ExpressionNode): Type {
         expressionTypeCache[node]?.let { return it }
         val scopeId = binder.positionQueries.getScopeAt(node.range.start)?.id ?: binder.scopeGraph.rootScope.id
         val type = evaluate(node, Context(lexicalScopeId = scopeId))
@@ -200,7 +223,34 @@ class ExpressionTypeEvaluator internal constructor(
             }
         }
         imported?.let { return it.valueType }
+        // AndroLua loadlayout registers `id="..."` views into _G when no ids table is
+        // passed (`loadlayout("layout/main")`); type those reads from the layout row class.
+        loadlayoutInjectedGlobalType(node.name, context)?.let { return it }
+        if (node.name == "self") {
+            implicitSelfType(node)?.let { return it }
+        }
         return UnknownType
+    }
+
+    /**
+     * The implicit `self` inside a colon-method body is not bound as a parameter, so plain
+     * identifier resolution falls through to UnknownType and every `self.` member query
+     * (completion / hover / member diagnostics) collapses to an empty surface. The method's
+     * binder declaration already carries the resolved `---@param self T` type
+     * (TypeResolver synthesizes the implicit first parameter for colon methods), so consult
+     * it before giving up. Explicit `self` parameters (`function f(self)`) are bound
+     * normally and never reach this path.
+     */
+    private fun implicitSelfType(node: Identifier): Type? {
+        val functionNode = findAncestorFunction(node) ?: return null
+        val anchor = when (val identifier = functionNode.identifier) {
+            is MemberExpression -> identifier.identifier
+            is Identifier -> identifier
+            else -> null
+        } ?: return null
+        return binder.declarationIndex.getDeclarations(anchor)
+            .mapNotNull { declaration -> declaration.documentation?.resolvedParameterTypes?.get("self") }
+            .firstOrNull()
     }
 
     private fun evaluateUnary(node: UnaryExpression): Type {
@@ -336,6 +386,13 @@ class ExpressionTypeEvaluator internal constructor(
     }
 
     private fun evaluateIndexExpression(node: IndexExpression, context: Context): Type {
+        // `loadlayout(src, _pageids[i])` registers ids onto the BASE table's elements, so
+        // every `_pageids[k]` read surfaces the ids table (recy/progress/...) — checked
+        // before plain index resolution, which on an empty `{}` table yields nothing.
+        (node.base as? Identifier)?.let { base ->
+            loadlayoutSinkIdFields(LoadlayoutIdsSink.Elements(base.name), context).takeIf { it.isNotEmpty() }
+                ?.let { return loadlayoutIdsTableSurface(it) }
+        }
         val baseType = evaluateReferenceBaseType(node.base, context)
             .hydrateJavaProviderType(workspaceContext.resolveImportTarget)
         val indexType = evaluate(node.index, context)
@@ -345,6 +402,17 @@ class ExpressionTypeEvaluator internal constructor(
     }
 
     private fun evaluateCallExpression(node: CallExpression, context: Context): Type {
+        // `f{table}` sugar: the parser emits a bare CallExpression whose base is the
+        // TableCallExpression carrying the real member and its table argument. Evaluating
+        // the wrapper as-is would call the inner call's RESULT with zero arguments and
+        // dead-end every fluent chain through a table argument
+        // (`animator.addListener{...}.start()`). Delegate to the inner call instead.
+        if (node.arguments.isEmpty() && !node.bad) {
+            val tableCallBase = node.base as? TableCallExpression
+            if (tableCallBase != null) {
+                return evaluateCallExpression(tableCallBase, context)
+            }
+        }
         resolveBuiltinRequire(node, context)?.let { return it }
         resolveDynamicImportCall(node, context)?.let { return it }
         resolveLuaJavaHelperColonCall(node, context)?.let { return it }
@@ -501,13 +569,6 @@ class ExpressionTypeEvaluator internal constructor(
         declaration: BinderDeclaration?,
         priorFailure: CallFailureReason?
     ): Type? {
-        // Only recover from ranking / non-callable shells that still expose Java signatures.
-        if (priorFailure != null &&
-            priorFailure != CallFailureReason.NO_MATCHING_SIGNATURE &&
-            priorFailure != CallFailureReason.NON_CALLABLE
-        ) {
-            return null
-        }
         val callableResolution = callChecker.resolveCallable(callableType, lexicalScopeId, declaration)
         val signatures = callableResolution.signatures
         if (signatures.isEmpty()) {
@@ -518,7 +579,21 @@ class ExpressionTypeEvaluator internal constructor(
         val arityCompatible = signatures.filter { signature ->
             javaCallArityCompatible(signature, argumentTypes.size)
         }
-        if (arityCompatible.isEmpty()) {
+        // ALua luajava: a void-returning instance method yields the receiver, so fluent
+        // chains keep working (`animator.addListener{...}.start()`), and listener tables /
+        // functions adapt to interface parameters at runtime even when static assignability
+        // cannot prove them (that rejection surfaces as ARGUMENT_MISMATCH and must not gate
+        // this recovery). When every arity-compatible overload returns void, report NIL —
+        // aluaJavaFluentReturnType substitutes the receiver surface. Non-void overloads keep
+        // the conservative TASK-659 refusal (never invent an unproven return).
+        if (arityCompatible.isNotEmpty() && arityCompatible.all { it.returnType == PrimitiveType.NIL }) {
+            return PrimitiveType.NIL
+        }
+        // Only recover from ranking / non-callable shells that still expose Java signatures.
+        if (priorFailure != null &&
+            priorFailure != CallFailureReason.NO_MATCHING_SIGNATURE &&
+            priorFailure != CallFailureReason.NON_CALLABLE
+        ) {
             return null
         }
         val softCompatible = arityCompatible.filter { signature ->
@@ -635,7 +710,7 @@ class ExpressionTypeEvaluator internal constructor(
             val parameter = signature.parameters.getOrNull(argumentIndex)
                 ?: signature.parameters.lastOrNull { it.vararg }
                 ?: return false
-            if (!isSoftJavaCallArgument(parameter.type, argumentType)) {
+            if (!isSoftJavaCallArgument(parameter, argumentType)) {
                 return false
             }
         }
@@ -647,7 +722,8 @@ class ExpressionTypeEvaluator internal constructor(
      * Mirrors common interop coercions (string/number/boolean/table containers/Object)
      * without inventing parameter types beyond the reflected signature surface.
      */
-    private fun isSoftJavaCallArgument(parameterType: Type, argumentType: Type): Boolean {
+    private fun isSoftJavaCallArgument(parameter: FunctionParameter, argumentType: Type): Boolean {
+        val parameterType = parameter.type
         if (parameterType.isAssignableFrom(argumentType) ||
             parameterType.isJavaListenerAssignableFrom(argumentType) ||
             parameterType.isJavaContainerAssignableFrom(argumentType)
@@ -656,6 +732,13 @@ class ExpressionTypeEvaluator internal constructor(
         }
         if (argumentType is UnknownType || parameterType is UnknownType) {
             // Soft unknown: keep arity fallback viable without inventing members later.
+            return true
+        }
+        if ((parameter.vararg || parameterType is VarargType) && argumentType is TableType) {
+            // LuaJava converts a simple Lua table argument into the vararg component array
+            // (ObjectAnimator.ofFloat(target, name, float...) called with {30, 0}). Kept in
+            // lockstep with CallChecker.isLuaTableForVarargSlot so the soft chain-recovery
+            // path never invents a return type for a call the strict checker rejects.
             return true
         }
         return when {
@@ -780,34 +863,7 @@ class ExpressionTypeEvaluator internal constructor(
 
     private fun resolveBindClassCall(node: CallExpression, context: Context): ModuleType? {
         val target = stringCallTarget(node) ?: return null
-        val base = effectiveCallBase(node)
-        val isBindClassCall = when (base) {
-            is MemberExpression -> isLuaJavaHelperMember(base, context, "bindClass")
-            is Identifier -> {
-                val declaration = callableDeclaration(base, context)
-                    ?: findVisibleValueDeclarationIgnoringScope(
-                        base.name,
-                        base.range.start,
-                        context.excludedDeclarations
-                    )
-                when {
-                    isUnshadowedBareLuaJavaHelper(base, declaration, context, "bindClass") -> true
-                    declaration != null && isBindClassAlias(declaration, context) -> true
-                    declaration != null && declarationResolvesToLuaJavaHelperByDeclarationChain(
-                        declaration,
-                        "bindClass",
-                        context.excludedDeclarations,
-                        linkedSetOf()
-                    ) -> true
-                    else -> false
-                }
-            }
-            else -> false
-        }
-        if (!isBindClassCall) {
-            return null
-        }
-        return resolveLuaJavaImportTarget(target)?.moduleType
+        return luaJavaHelperCallReturn("bindClass", node, target, context) as? ModuleType
     }
 
     private fun resolveLuaJavaHelperColonCall(node: CallExpression, context: Context): Type? {
@@ -823,7 +879,7 @@ class ExpressionTypeEvaluator internal constructor(
     }
 
     private fun resolveNewInstanceCall(node: CallExpression, context: Context): Type? {
-        if (!isNewInstanceCallBase(effectiveCallBase(node), context)) {
+        if (!isLuaJavaCallBase(effectiveCallBase(node), context, "newInstance")) {
             return null
         }
         // Dynamic / non-literal class names must not inherit the JavaObject stub return from
@@ -881,9 +937,7 @@ class ExpressionTypeEvaluator internal constructor(
             }
             val argumentCount = argumentSequences.size
             val arityMatches = signatures.any { signature ->
-                val required = signature.parameters.count { !it.optional && !it.vararg }
-                val hasVararg = signature.parameters.any { it.vararg }
-                argumentCount >= required && (hasVararg || argumentCount <= signature.parameters.size)
+                javaCallArityCompatible(signature, argumentCount)
             }
             if (arityMatches) {
                 return true
@@ -920,7 +974,7 @@ class ExpressionTypeEvaluator internal constructor(
         if (interfaceTargets.isEmpty()) {
             return null
         }
-        if (!isCreateProxyCallBase(effectiveCallBase(node), context)) {
+        if (!isLuaJavaCallBase(effectiveCallBase(node), context, "createProxy")) {
             return null
         }
         val interfaceTypes = interfaceTargets.mapNotNull { target ->
@@ -934,7 +988,7 @@ class ExpressionTypeEvaluator internal constructor(
     }
 
     private fun resolveLoadLibCall(node: CallExpression, context: Context): Type? {
-        if (!isLoadLibCallBase(effectiveCallBase(node), context)) {
+        if (!isLuaJavaCallBase(effectiveCallBase(node), context, "loadLib")) {
             return null
         }
         // TASK-593: recognized loadLib with missing/invalid args must not keep a silent
@@ -1037,7 +1091,7 @@ class ExpressionTypeEvaluator internal constructor(
     internal fun isInvalidLoadLibArgumentCall(node: CallExpression): Boolean {
         val scopeId = binder.positionQueries.getScopeAt(node.range.start)?.id ?: binder.scopeGraph.rootScope.id
         val context = Context(lexicalScopeId = scopeId)
-        if (!isLoadLibCallBase(effectiveCallBase(node), context)) {
+        if (!isLuaJavaCallBase(effectiveCallBase(node), context, "loadLib")) {
             return false
         }
         return !hasValidLoadLibArguments(node)
@@ -1074,8 +1128,8 @@ class ExpressionTypeEvaluator internal constructor(
             is Identifier -> {
                 val declaration = callableDeclaration(base, context)
                 when {
-                    declaration != null && isLuaJavaArrayAlias(declaration, context, "createArray") -> "createArray"
-                    declaration != null && isLuaJavaArrayAlias(declaration, context, "newArray") -> "newArray"
+                    declaration != null && declarationResolvesToLuaJavaHelper(declaration, context, "createArray") -> "createArray"
+                    declaration != null && declarationResolvesToLuaJavaHelper(declaration, context, "newArray") -> "newArray"
                     isUnshadowedBareLuaJavaHelper(base, declaration, context, "newArray") -> "newArray"
                     isUnshadowedBareLuaJavaHelper(base, declaration, context, "createArray") -> "createArray"
                     else -> null
@@ -1186,35 +1240,11 @@ class ExpressionTypeEvaluator internal constructor(
         return instanceType.hydrateJavaProviderType(workspaceContext.resolveImportTarget)
     }
 
-    private fun isBindClassAlias(declaration: BinderDeclaration, context: Context): Boolean {
-        return declarationResolvesToLuaJavaHelper(declaration, context, "bindClass")
-    }
-
-    private fun isNewInstanceAlias(declaration: BinderDeclaration, context: Context): Boolean {
-        return declarationResolvesToLuaJavaHelper(declaration, context, "newInstance")
-    }
-
-    private fun isCreateProxyAlias(declaration: BinderDeclaration, context: Context): Boolean {
-        return declarationResolvesToLuaJavaHelper(declaration, context, "createProxy")
-    }
-
-    private fun isLoadLibAlias(declaration: BinderDeclaration, context: Context): Boolean {
-        return declarationResolvesToLuaJavaHelper(declaration, context, "loadLib")
-    }
-
-    private fun isLuaJavaArrayAlias(declaration: BinderDeclaration, context: Context, helperName: String): Boolean {
-        return declarationResolvesToLuaJavaHelper(declaration, context, helperName)
-    }
-
     private fun isLuaJavaHelperMember(member: MemberExpression, context: Context, helperName: String): Boolean {
         val owner = member.base as? Identifier ?: return false
         return member.indexer == "." &&
             member.identifier.name == helperName &&
             isLuaJavaHelperOwner(owner, context)
-    }
-
-    private fun isLuaJavaHelperExpression(expression: ExpressionNode, context: Context, helperName: String): Boolean {
-        return expressionResolvesToLuaJavaHelper(expression, context, helperName, linkedSetOf())
     }
 
     private fun declarationResolvesToLuaJavaHelper(
@@ -1256,15 +1286,25 @@ class ExpressionTypeEvaluator internal constructor(
             return false
         }
         val declaration = findVisibleValueDeclaration(owner.name, owner.range.start, context)
-        // TASK-572: Any non-builtin binding (typically a local table/value) shadows the LuaJava
-        // helper table. Unshadowed `luajava` remains the helper owner so real/realiased helpers
+        // TASK-572: Unshadowed `luajava` remains the helper owner so real/realiased helpers
         // and transitive local alias chains keep working when the builtin is not position-visible.
+        return isUnshadowedBuiltinHelperDeclaration(declaration)
+    }
+
+    /**
+     * TASK-572: Any visible non-builtin binding (local function, local, parameter, free global
+     * invent) shadows LuaJava helper surfaces; only true builtin free helpers keep them, so
+     * local `function bindClass/createProxy/...` stays ordinary Lua.
+     */
+    private fun isUnshadowedBuiltinHelperDeclaration(declaration: BinderDeclaration?): Boolean {
         if (declaration == null) {
             return true
         }
         if (declaration.origin != DeclarationOrigin.BUILTIN) {
             return false
         }
+        // Builtin helpers are never LOCAL/FUNCTION/PARAMETER; reject those kinds defensively
+        // so a mis-originated local never re-enters helper typing.
         return declaration.kind != DeclarationKind.LOCAL &&
             declaration.kind != DeclarationKind.FUNCTION &&
             declaration.kind != DeclarationKind.PARAMETER
@@ -1279,20 +1319,7 @@ class ExpressionTypeEvaluator internal constructor(
         if (base.name != helperName || context.localOverrides.containsKey(base.name)) {
             return false
         }
-        // TASK-572: Any visible non-builtin VALUE binding (local function, local, parameter,
-        // free global invent) shadows bare helper names. Only true builtin free helpers keep
-        // LuaJava surfaces; local `function bindClass/createProxy/...` stays ordinary Lua.
-        if (declaration == null) {
-            return true
-        }
-        if (declaration.origin != DeclarationOrigin.BUILTIN) {
-            return false
-        }
-        // Builtin helpers are never LOCAL/FUNCTION/PARAMETER; reject those kinds defensively
-        // so a mis-originated local never re-enters helper typing.
-        return declaration.kind != DeclarationKind.LOCAL &&
-            declaration.kind != DeclarationKind.FUNCTION &&
-            declaration.kind != DeclarationKind.PARAMETER
+        return isUnshadowedBuiltinHelperDeclaration(declaration)
     }
 
     private fun resolveLuaJavaImportTarget(target: String) =
@@ -1400,38 +1427,12 @@ class ExpressionTypeEvaluator internal constructor(
      * expected context helpers. Do not invent android.jar-only members here.
      */
     private fun resolveGetContextCall(node: CallExpression, context: Context): Type? {
-        val base = effectiveCallBase(node)
-        val isGetContextCall = when (base) {
-            is MemberExpression -> isLuaJavaHelperMember(base, context, "getContext")
-            is Identifier -> {
-                val declaration = callableDeclaration(base, context)
-                    ?: findVisibleValueDeclarationIgnoringScope(
-                        base.name,
-                        base.range.start,
-                        context.excludedDeclarations
-                    )
-                when {
-                    isUnshadowedBareLuaJavaHelper(base, declaration, context, "getContext") -> true
-                    declaration != null && isGetContextAlias(declaration, context) -> true
-                    declaration != null && declarationResolvesToLuaJavaHelperByDeclarationChain(
-                        declaration,
-                        "getContext",
-                        context.excludedDeclarations,
-                        linkedSetOf()
-                    ) -> true
-                    else -> false
-                }
-            }
-            else -> false
-        }
-        if (!isGetContextCall) {
+        // Identical recognition surface to every other LuaJava helper: member form via
+        // isLuaJavaHelperMember, bare/alias/chain form via isLuaJavaCallBase.
+        if (!isLuaJavaCallBase(effectiveCallBase(node), context, "getContext")) {
             return null
         }
         return androidLuaContextSurface()
-    }
-
-    private fun isGetContextAlias(declaration: BinderDeclaration, context: Context): Boolean {
-        return declarationResolvesToLuaJavaHelper(declaration, context, "getContext")
     }
 
     /**
@@ -1696,13 +1697,8 @@ class ExpressionTypeEvaluator internal constructor(
     }
 
     private fun effectiveCallBase(node: CallExpression): ExpressionNode {
-        return if (node.base is StringCallExpression && node.arguments.isEmpty()) {
-            node.base
-        } else {
-            node.base
-        }.let { base ->
-            if (base is StringCallExpression) base.base else base
-        }
+        val base = node.base
+        return if (base is StringCallExpression) base.base else base
     }
 
     private fun importTargets(node: CallExpression): List<String> {
@@ -1767,7 +1763,7 @@ class ExpressionTypeEvaluator internal constructor(
             return null
         }
         val target = stringCallTarget(call) ?: return null
-        if (!isLoadLibCallBase(effectiveCallBase(call), context)) {
+        if (!isLuaJavaCallBase(effectiveCallBase(call), context, "loadLib")) {
             return null
         }
         return resolveLoadLibMemberType(target, node.stringOf(), context).takeIf { it != UnknownType }
@@ -1781,7 +1777,7 @@ class ExpressionTypeEvaluator internal constructor(
         if (callArguments(call).firstOrNull() !== node) {
             return null
         }
-        if (!isBindClassCallBase(effectiveCallBase(call), context)) {
+        if (!isLuaJavaCallBase(effectiveCallBase(call), context, "bindClass")) {
             return null
         }
         return resolveLuaJavaImportTarget(node.stringOf())?.moduleType
@@ -1798,9 +1794,9 @@ class ExpressionTypeEvaluator internal constructor(
         return null
     }
 
-    private fun isLoadLibCallBase(base: ExpressionNode, context: Context): Boolean {
+    private fun isLuaJavaCallBase(base: ExpressionNode, context: Context, helperName: String): Boolean {
         return when (base) {
-            is MemberExpression -> isLuaJavaHelperMember(base, context, "loadLib")
+            is MemberExpression -> isLuaJavaHelperMember(base, context, helperName)
             is Identifier -> {
                 val declaration = callableDeclaration(base, context)
                     ?: findVisibleValueDeclarationIgnoringScope(
@@ -1809,89 +1805,11 @@ class ExpressionTypeEvaluator internal constructor(
                         context.excludedDeclarations
                     )
                 when {
-                    isUnshadowedBareLuaJavaHelper(base, declaration, context, "loadLib") -> true
-                    declaration != null && isLoadLibAlias(declaration, context) -> true
+                    isUnshadowedBareLuaJavaHelper(base, declaration, context, helperName) -> true
+                    declaration != null && declarationResolvesToLuaJavaHelper(declaration, context, helperName) -> true
                     declaration != null && declarationResolvesToLuaJavaHelperByDeclarationChain(
                         declaration,
-                        "loadLib",
-                        context.excludedDeclarations,
-                        linkedSetOf()
-                    ) -> true
-                    else -> false
-                }
-            }
-            else -> false
-        }
-    }
-
-    private fun isCreateProxyCallBase(base: ExpressionNode, context: Context): Boolean {
-        return when (base) {
-            is MemberExpression -> isLuaJavaHelperMember(base, context, "createProxy")
-            is Identifier -> {
-                val declaration = callableDeclaration(base, context)
-                    ?: findVisibleValueDeclarationIgnoringScope(
-                        base.name,
-                        base.range.start,
-                        context.excludedDeclarations
-                    )
-                when {
-                    isUnshadowedBareLuaJavaHelper(base, declaration, context, "createProxy") -> true
-                    declaration != null && isCreateProxyAlias(declaration, context) -> true
-                    declaration != null && declarationResolvesToLuaJavaHelperByDeclarationChain(
-                        declaration,
-                        "createProxy",
-                        context.excludedDeclarations,
-                        linkedSetOf()
-                    ) -> true
-                    else -> false
-                }
-            }
-            else -> false
-        }
-    }
-
-    private fun isBindClassCallBase(base: ExpressionNode, context: Context): Boolean {
-        return when (base) {
-            is MemberExpression -> isLuaJavaHelperMember(base, context, "bindClass")
-            is Identifier -> {
-                val declaration = callableDeclaration(base, context)
-                    ?: findVisibleValueDeclarationIgnoringScope(
-                        base.name,
-                        base.range.start,
-                        context.excludedDeclarations
-                    )
-                when {
-                    isUnshadowedBareLuaJavaHelper(base, declaration, context, "bindClass") -> true
-                    declaration != null && isBindClassAlias(declaration, context) -> true
-                    declaration != null && declarationResolvesToLuaJavaHelperByDeclarationChain(
-                        declaration,
-                        "bindClass",
-                        context.excludedDeclarations,
-                        linkedSetOf()
-                    ) -> true
-                    else -> false
-                }
-            }
-            else -> false
-        }
-    }
-
-    private fun isNewInstanceCallBase(base: ExpressionNode, context: Context): Boolean {
-        return when (base) {
-            is MemberExpression -> isLuaJavaHelperMember(base, context, "newInstance")
-            is Identifier -> {
-                val declaration = callableDeclaration(base, context)
-                    ?: findVisibleValueDeclarationIgnoringScope(
-                        base.name,
-                        base.range.start,
-                        context.excludedDeclarations
-                    )
-                when {
-                    isUnshadowedBareLuaJavaHelper(base, declaration, context, "newInstance") -> true
-                    declaration != null && isNewInstanceAlias(declaration, context) -> true
-                    declaration != null && declarationResolvesToLuaJavaHelperByDeclarationChain(
-                        declaration,
-                        "newInstance",
+                        helperName,
                         context.excludedDeclarations,
                         linkedSetOf()
                     ) -> true
@@ -2131,28 +2049,25 @@ class ExpressionTypeEvaluator internal constructor(
             return null
         }
         loadlayoutIdsTableTypeCache[declaration.id]?.let { return it }
-        val layoutTables = loadlayoutRootUsageIndex()[declaration.name].orEmpty()
-        if (layoutTables.isEmpty()) {
+        val fields = loadlayoutSinkIdFields(LoadlayoutIdsSink.Named(declaration.name), context)
+        if (fields.isEmpty()) {
             return null
         }
-        val fields = linkedMapOf<String, Type>()
-        layoutTables.forEach { table ->
-            fields.putAll(layoutIdFields(table, context))
-        }
-        val viewType = androidLuaHydratedSurface("AndroidView")
-        // Prefer a ModuleType named LuaLayoutIds so hover displayName matches tests, while still
-        // exposing concrete id fields for member resolution (ids.title.setText).
-        val result = ModuleType(
+        val result = loadlayoutIdsTableSurface(fields)
+        loadlayoutIdsTableTypeCache[declaration.id] = result
+        return result
+    }
+
+    /** The synthesized surface for a table holding loadlayout-registered view ids. */
+    private fun loadlayoutIdsTableSurface(fields: Map<String, Type>): Type =
+        ModuleType(
             moduleName = "LuaLayoutIds",
             fields = fields,
             indexSignature = ModuleType.IndexSignature(
                 keyType = PrimitiveType.STRING,
-                valueType = viewType
+                valueType = androidLuaHydratedSurface("AndroidView")
             )
         )
-        loadlayoutIdsTableTypeCache[declaration.id] = result
-        return result
-    }
 
     private fun isPotentialLoadlayoutIdsLocal(declaration: BinderDeclaration): Boolean {
         if (declaration.kind != DeclarationKind.LOCAL) {
@@ -2163,18 +2078,153 @@ class ExpressionTypeEvaluator internal constructor(
     }
 
     /**
-     * Build a name → layout-table index for `loadlayout(layout, ids)` once per evaluator.
-     * Bounded by identity visited set + hard node budget; never re-enters via parent chain.
+     * Merged id fields for one [LoadlayoutIdsSink]: every `loadlayout(layout, sink)` call's
+     * layout spec contributes its `id="..."` rows (view-class typed). Built once per sink
+     * from the one-shot usage index; layout sources resolve without re-entering evaluate().
      */
-    private fun loadlayoutRootUsageIndex(): Map<String, List<TableConstructorExpression>> {
-        loadlayoutRootUsageIndex?.let { return it }
-        val collected = linkedMapOf<String, MutableList<TableConstructorExpression>>()
+    private fun loadlayoutSinkIdFields(sink: LoadlayoutIdsSink, context: Context): Map<String, Type> {
+        loadlayoutSinkFieldsCache[sink]?.let { return it }
+        val fields = linkedMapOf<String, Type>()
+        loadlayoutUsages().forEach { usage ->
+            if (usage.sink != sink) {
+                return@forEach
+            }
+            layoutTableFor(usage.source, context)?.let { table ->
+                fields.putAll(layoutIdFields(table))
+            }
+        }
+        val frozen = fields.toMap()
+        loadlayoutSinkFieldsCache[sink] = frozen
+        return frozen
+    }
+
+    private fun layoutTableFor(source: LoadlayoutLayoutSource, context: Context): TableConstructorExpression? = when (source) {
+        is LoadlayoutLayoutSource.Inline -> source.table
+        is LoadlayoutLayoutSource.LocalTable -> localTableInitializerFor(source.name, source.from, context)
+        is LoadlayoutLayoutSource.WorkspaceLayout -> loadlayoutPathLayoutTable(source.path)
+        is LoadlayoutLayoutSource.CalleeReturn -> calleeReturnLayoutTable(source.callee, source.from, context)
+    }
+
+    /**
+     * Layout spec variable (`loadlayout(parentLayout, ids)`): resolve through the binder's
+     * scope-aware declaration lookup at the call site — AST `parent` pointers are not
+     * reliably set on call arguments, so the historical parent-chain block walk silently
+     * returned null (Delegates.notNull parent throws on unset access).
+     */
+    private fun localTableInitializerFor(name: String, from: BaseASTNode, context: Context): TableConstructorExpression? {
+        val declaration = findVisibleValueDeclaration(name, from.range.start, context)
+        return declaration?.let { localDeclarationInitializer(it) } as? TableConstructorExpression
+    }
+
+    /**
+     * `loadlayout("layout/main")` — resolve the workspace `.aly` file alyloader would load
+     * for the path. The chunk is already parsed by the engine; this only reads its wrapped
+     * `return <table>`.
+     */
+    private fun loadlayoutPathLayoutTable(path: String): TableConstructorExpression? {
+        val resolver = workspaceContext.workspaceResolver ?: return null
+        return resolver.workspaceLayoutChunk(path)?.let(::topLevelLayoutTable)
+    }
+
+    /** `.aly` layout chunks parse as `return <table>` (alyloader's bare-table wrap). */
+    private fun topLevelLayoutTable(chunk: io.github.dingyi222666.luaparser.parser.ast.node.ChunkNode): TableConstructorExpression? {
+        val returnStatement = chunk.body.returnStatement
+            ?: chunk.body.statements.filterIsInstance<ReturnStatement>().firstOrNull()
+            ?: return null
+        return returnStatement.arguments.filterIsInstance<TableConstructorExpression>().firstOrNull()
+    }
+
+    /**
+     * `loadlayout(addTab(...), nil, ...)` — the layout spec is the callee's first returned
+     * table constructor (`local function addTab() return { ... } end`). The callee resolves
+     * through the scope-aware declaration lookup at the call site, not AST parent walking.
+     */
+    private fun calleeReturnLayoutTable(callee: String, from: BaseASTNode, context: Context): TableConstructorExpression? {
+        val declaration = findVisibleValueDeclaration(callee, from.range.start, context) ?: return null
+        val function = functionNodeForDeclaration(declaration) ?: return null
+        val body = function.body ?: return null
+        return body.statements.asSequence()
+            .filterIsInstance<ReturnStatement>()
+            .firstNotNullOfOrNull { it.arguments.filterIsInstance<TableConstructorExpression>().firstOrNull() }
+    }
+
+    /**
+     * Structural id names loadlayout registers into `_G` at runtime (`loadlayout(t)` /
+     * `loadlayout(t, nil)` — no ids table passed). Names only: descends into call rows
+     * (`MyTabLayout { id = "parent" }`) whose view-class typing we deliberately skip, so a
+     * runtime-injected id never flags `checker.global.unresolved` even when its typed
+     * surface stays unknown.
+     */
+    fun loadlayoutInjectedGlobalNames(): Set<String> {
+        loadlayoutGlobalIdNames?.let { return it }
+        val names = linkedSetOf<String>()
+        // Name collection is purely structural: a root-scoped Context satisfies the shared
+        // layout-table resolver, which never deep-evaluates through this path.
+        val unusedNamesContext = Context(lexicalScopeId = binder.scopeGraph.rootScope.id)
+        loadlayoutUsages().forEach { usage ->
+            if (usage.sink == LoadlayoutIdsSink.Globals) {
+                layoutTableFor(usage.source, unusedNamesContext)?.let { collectLayoutIdNames(it, names) }
+            }
+        }
+        loadlayoutGlobalIdNames = names
+        return names
+    }
+
+    fun isLoadlayoutInjectedGlobal(name: String): Boolean = name in loadlayoutInjectedGlobalNames()
+
+    /** The typed `_G` surface for a loadlayout-injected id, when its row class resolves. */
+    fun loadlayoutInjectedGlobalType(name: String, context: Context): Type? =
+        loadlayoutInjectedGlobals(context)[name]
+
+    /**
+     * All typed ids loadlayout registers into `_G` for this document (no ids table
+     * passed). Powers identifier typing and completion enumeration; ids whose row class
+     * could not be resolved are absent (they stay unknown rather than mis-typed).
+     */
+    fun loadlayoutInjectedGlobals(context: Context): Map<String, Type> =
+        loadlayoutSinkIdFields(LoadlayoutIdsSink.Globals, context)
+
+    private fun collectLayoutIdNames(table: TableConstructorExpression, output: MutableSet<String>) {
+        val visited = hashSetOf<BaseASTNode>()
+        var budget = LOADLAYOUT_ID_TABLE_NODE_BUDGET
+        fun walk(node: TableConstructorExpression) {
+            if (budget <= 0 || !visited.add(node)) {
+                return
+            }
+            budget--
+            node.fields.forEach { field ->
+                if (budget <= 0) {
+                    return
+                }
+                val keyName = staticTableKeyName(field)
+                val value = field.value
+                when {
+                    keyName == "id" -> stringLiteralOf(value)?.let(output::add)
+                    value is TableConstructorExpression -> walk(value)
+                    // Call rows wrap their spec table (`ModuleClass { id = ... }`).
+                    value is TableCallExpression -> (value.arguments.asSequence()
+                        .filterIsInstance<TableConstructorExpression>().firstOrNull())?.let(::walk)
+                    value is FunctionDeclaration || value is LambdaDeclaration -> Unit
+                    else -> Unit
+                }
+            }
+        }
+        walk(table)
+    }
+
+    /**
+     * Build the one-shot `loadlayout(...)` usage index once per evaluator. Bounded by an
+     * identity visited set + hard node budget; never re-enters via parent chain.
+     */
+    private fun loadlayoutUsages(): List<LoadlayoutUsage> {
+        loadlayoutUsages?.let { return it }
+        val collected = mutableListOf<LoadlayoutUsage>()
         // AST nodes use reference equality (no equals/hashCode overrides), so a plain set is
         // identity-based already.
         val visited = hashSetOf<BaseASTNode>()
         val nodesRemaining = intArrayOf(LOADLAYOUT_COLLECT_NODE_BUDGET)
         binder.scopeGraph.rootScope.ownerNode?.let { root ->
-            collectLoadlayoutRootUsages(root, collected, visited, nodesRemaining)
+            collectLoadlayoutUsages(root, collected, visited, nodesRemaining)
         }
         // Fallback: outermost AST root of any declaration anchor, single entry only.
         if (collected.isEmpty()) {
@@ -2189,16 +2239,15 @@ class ExpressionTypeEvaluator internal constructor(
                 val parent = runCatching { root!!.parent }.getOrNull() ?: break
                 root = parent
             }
-            root?.let { collectLoadlayoutRootUsages(it, collected, visited, nodesRemaining) }
+            root?.let { collectLoadlayoutUsages(it, collected, visited, nodesRemaining) }
         }
-        val frozen = collected.mapValues { (_, tables) -> tables.toList() }
-        loadlayoutRootUsageIndex = frozen
-        return frozen
+        loadlayoutUsages = collected
+        return collected
     }
 
-    private fun collectLoadlayoutRootUsages(
+    private fun collectLoadlayoutUsages(
         node: BaseASTNode,
-        output: MutableMap<String, MutableList<TableConstructorExpression>>,
+        output: MutableList<LoadlayoutUsage>,
         visited: MutableSet<BaseASTNode>,
         nodesRemaining: IntArray
     ) {
@@ -2212,13 +2261,13 @@ class ExpressionTypeEvaluator internal constructor(
 
         when (node) {
             is CallExpression -> {
-                recordLoadlayoutIdsUsage(node, output)
+                recordLoadlayoutUsage(node, output)
                 // Walk call arguments for nested loadlayout(...), but never descend into
                 // table-constructor layout specs here — those trees are huge and ids sinks
                 // are statement-level (CallStatement / local init), not nested table fields.
                 node.arguments.forEach { argument ->
                     if (argument !is TableConstructorExpression) {
-                        collectLoadlayoutRootUsages(argument, output, visited, nodesRemaining)
+                        collectLoadlayoutUsages(argument, output, visited, nodesRemaining)
                     } else {
                         // Still mark the table visited so a later path cannot re-enter it.
                         visited.add(argument)
@@ -2226,86 +2275,77 @@ class ExpressionTypeEvaluator internal constructor(
                     }
                 }
             }
-            is CallStatement -> collectLoadlayoutRootUsages(node.expression, output, visited, nodesRemaining)
+            is CallStatement -> collectLoadlayoutUsages(node.expression, output, visited, nodesRemaining)
             is BlockNode -> {
-                node.statements.forEach { collectLoadlayoutRootUsages(it, output, visited, nodesRemaining) }
+                node.statements.forEach { collectLoadlayoutUsages(it, output, visited, nodesRemaining) }
                 node.returnStatement?.arguments?.forEach { argument ->
                     if (argument !is TableConstructorExpression) {
-                        collectLoadlayoutRootUsages(argument, output, visited, nodesRemaining)
+                        collectLoadlayoutUsages(argument, output, visited, nodesRemaining)
                     }
                 }
             }
             is LocalStatement -> node.variables.forEach { variable ->
                 if (variable !is TableConstructorExpression) {
-                    collectLoadlayoutRootUsages(variable, output, visited, nodesRemaining)
+                    collectLoadlayoutUsages(variable, output, visited, nodesRemaining)
                 }
             }
             is FunctionDeclaration -> {
-                // Do not open nested function bodies for ids discovery. loadlayout(ids)
-                // targets are top-level / enclosing-block statements; descending into every
-                // onClick/onItemClick body re-walks layout tables and OOMs android fixtures.
+                // Named/anonymous function BODIES are entered (a `loadlayout(...)` inside a
+                // local helper is exactly where the demo binds ids sinks), but layout-table
+                // constructors reached from here are skipped at their LocalStatement /
+                // call-argument sites, so the historical layout-tree OOM cannot reappear.
+                // The node budget above is the hard backstop.
+                node.body?.let { collectLoadlayoutUsages(it, output, visited, nodesRemaining) }
             }
             is IfStatement -> node.causes.forEach { cause ->
                 when (cause) {
-                    is IfClause -> collectLoadlayoutRootUsages(cause.body, output, visited, nodesRemaining)
-                    is ElseIfClause -> collectLoadlayoutRootUsages(cause.body, output, visited, nodesRemaining)
-                    is ElseClause -> collectLoadlayoutRootUsages(cause.body, output, visited, nodesRemaining)
+                    is IfClause -> collectLoadlayoutUsages(cause.body, output, visited, nodesRemaining)
+                    is ElseIfClause -> collectLoadlayoutUsages(cause.body, output, visited, nodesRemaining)
+                    is ElseClause -> collectLoadlayoutUsages(cause.body, output, visited, nodesRemaining)
                 }
             }
-            is DoStatement -> collectLoadlayoutRootUsages(node.body, output, visited, nodesRemaining)
-            is WhileStatement -> collectLoadlayoutRootUsages(node.body, output, visited, nodesRemaining)
-            is RepeatStatement -> collectLoadlayoutRootUsages(node.body, output, visited, nodesRemaining)
-            is ForGenericStatement -> collectLoadlayoutRootUsages(node.body, output, visited, nodesRemaining)
-            is ForNumericStatement -> collectLoadlayoutRootUsages(node.body, output, visited, nodesRemaining)
+            is DoStatement -> collectLoadlayoutUsages(node.body, output, visited, nodesRemaining)
+            is WhileStatement -> collectLoadlayoutUsages(node.body, output, visited, nodesRemaining)
+            is RepeatStatement -> collectLoadlayoutUsages(node.body, output, visited, nodesRemaining)
+            is ForGenericStatement -> collectLoadlayoutUsages(node.body, output, visited, nodesRemaining)
+            is ForNumericStatement -> collectLoadlayoutUsages(node.body, output, visited, nodesRemaining)
             // Explicitly ignore TableConstructorExpression roots — layout specs are not walked.
             else -> Unit
         }
     }
 
-    private fun recordLoadlayoutIdsUsage(
-        node: CallExpression,
-        output: MutableMap<String, MutableList<TableConstructorExpression>>
-    ) {
+    private fun recordLoadlayoutUsage(node: CallExpression, output: MutableList<LoadlayoutUsage>) {
         val base = effectiveCallBase(node) as? Identifier ?: return
-        if (base.name !in setOf("loadlayout", "loadlayout2", "loadlayout3")) {
+        if (base.name !in LOADLAYOUT_FAMILY_NAMES) {
             return
         }
         val args = callArguments(node)
-        val idsIdent = args.getOrNull(1) as? Identifier ?: return
-        val layoutTables = output.getOrPut(idsIdent.name) { mutableListOf() }
-        (args.getOrNull(0) as? TableConstructorExpression)?.let(layoutTables::add)
-        val layoutIdent = args.getOrNull(0) as? Identifier
-        if (layoutIdent != null) {
-            findLocalTableInitializer(layoutIdent.name, layoutIdent)?.let(layoutTables::add)
+        // Sink: `loadlayout(layout, ids)` names an ids table; `_pageids[i]` targets the
+        // elements of its base table; a missing/nil second arg registers ids into _G.
+        val sink = when (val second = args.getOrNull(1)) {
+            is Identifier -> LoadlayoutIdsSink.Named(second.name)
+            is IndexExpression -> (second.base as? Identifier)
+                ?.let { LoadlayoutIdsSink.Elements(it.name) }
+                ?: LoadlayoutIdsSink.Globals
+            else -> LoadlayoutIdsSink.Globals
         }
+        val source = when (val first = args.getOrNull(0)) {
+            is TableConstructorExpression -> LoadlayoutLayoutSource.Inline(first)
+            is Identifier -> LoadlayoutLayoutSource.LocalTable(first.name, first)
+            is ConstantNode -> stringLiteralOf(first)
+                ?.let { LoadlayoutLayoutSource.WorkspaceLayout(it) }
+                ?: return
+            is CallExpression -> (first.base as? Identifier)
+                ?.let { LoadlayoutLayoutSource.CalleeReturn(it.name, first) }
+                ?: return
+            else -> return
+        }
+        output.add(LoadlayoutUsage(sink, source))
     }
 
-    private fun findLocalTableInitializer(name: String, from: BaseASTNode): TableConstructorExpression? {
-        var current: BaseASTNode? = from
-        var hops = 0
-        while (current != null && hops < LOADLAYOUT_PARENT_WALK_LIMIT) {
-            hops++
-            if (current is BlockNode) {
-                current.statements.forEach { statement ->
-                    if (statement is LocalStatement) {
-                        statement.init.forEachIndexed { index, ident ->
-                            if (ident.name == name) {
-                                return statement.variables.getOrNull(index) as? TableConstructorExpression
-                            }
-                        }
-                    }
-                }
-            }
-            current = runCatching { current.parent }.getOrNull()
-        }
-        return null
-    }
-
-    private fun layoutIdFields(table: TableConstructorExpression, context: Context): Map<String, Type> {
-        // `context` is unused intentionally: id-field collection must never re-enter
-        // evaluate()/hydrate paths (listener bodies, nested call typing).
-        @Suppress("UNUSED_PARAMETER")
-        val _ctx = context
+    private fun layoutIdFields(table: TableConstructorExpression): Map<String, Type> {
+        // Id-field collection must never re-enter evaluate()/hydrate paths (listener
+        // bodies, nested call typing) — this walk is purely structural.
         val fields = linkedMapOf<String, Type>()
         val tableVisited = hashSetOf<BaseASTNode>()
         var nodesVisited = 0
@@ -2345,7 +2385,7 @@ class ExpressionTypeEvaluator internal constructor(
                         }
                         keyName == "id" -> {
                             val idName = stringLiteralOf(value) ?: return@forEach
-                            fields[idName] = currentClassType ?: androidLuaHydratedSurface("AndroidView")
+                            fields[idName] = layoutIdFieldType(currentClassType, node)
                         }
                         value is TableConstructorExpression -> walk(value, currentClassType)
                         // Never evaluate / descend into listener function bodies while collecting ids.
@@ -2359,6 +2399,70 @@ class ExpressionTypeEvaluator internal constructor(
         }
         walk(table, null)
         return fields
+    }
+
+    /**
+     * The synthesized type for a layout id: the row's Android view class enriched with
+     * data-bearing property values (`adapter = LuaMultiAdapter(activity, {...})`). At
+     * runtime loadlayout assigns the constructed value through the matching setter and
+     * reading the property back (`tab.poplist.adapter`) returns it, so the field type
+     * carries the constructor class's instance surface. Resolution mounts the class by
+     * name through the JVM interop target resolver (bundled AndroLua runtime jar) —
+     * bounded, no listener-body descent, everything else keeps the plain view class.
+     */
+    private fun layoutIdFieldType(viewClassType: Type?, entry: TableConstructorExpression): Type {
+        var fieldType: Type = viewClassType ?: androidLuaHydratedSurface("AndroidView")
+        var enriched = 0
+        entry.fields.forEach { field ->
+            if (enriched >= LAYOUT_ID_ADAPTER_FIELDS_BUDGET) {
+                return@forEach
+            }
+            val keyName = staticTableKeyName(field) ?: return@forEach
+            if (keyName != "adapter" && keyName != "list") {
+                return@forEach
+            }
+            val call = field.value as? CallExpression ?: return@forEach
+            val constructorName = (call.base as? Identifier)?.name ?: return@forEach
+            if (!constructorName.startsWith("Lua") || !constructorName.endsWith("Adapter")) {
+                return@forEach
+            }
+            // The constructor identifier resolves to the overlay global's class surface:
+            // a ModuleType carrying a __class Java surface, or a ClassType whose
+            // @java-class names the runtime class. Mount the reflected instance surface
+            // (add/addAll/clear/...) from either shape.
+            val baseEval = runCatching { evaluate(call.base) }.getOrNull()
+            val instanceSurface = when (baseEval) {
+                is ModuleType -> baseEval.javaInstanceSurface()
+                is ClassType -> baseEval.javaClassName?.let { fqcn ->
+                    runCatching {
+                        workspaceContext.resolveImportTarget?.invoke(fqcn)
+                            ?.moduleType
+                            ?.javaInstanceSurface()
+                    }.getOrNull()
+                }
+                else -> null
+            } ?: return@forEach
+            fieldType = when (val current = fieldType) {
+                is JavaInstanceType -> current.copy(
+                    classType = current.classType.copy(
+                        // Direct instance-member hit: wins over the getAdapter() bean
+                        // alias, so `.adapter` surfaces the assigned Lua adapter.
+                        instanceMembers = current.classType.instanceMembers + (
+                            keyName to JavaInstanceMemberType(
+                                owner = current.classType.javaName,
+                                memberName = keyName,
+                                valueType = instanceSurface,
+                                memberKind = JavaMemberKind.FIELD
+                            )
+                        )
+                    )
+                )
+                is ClassType -> current.copy(fields = current.fields + (keyName to instanceSurface))
+                else -> current
+            }
+            enriched++
+        }
+        return fieldType
     }
 
     /**
@@ -2377,12 +2481,161 @@ class ExpressionTypeEvaluator internal constructor(
         return key is ConstantNode && key.constantType == ConstantNode.TYPE.INTERGER
     }
 
+    /**
+     * Resolve the enclosing Android view class for [target] by walking the layout table tree
+     * from [root], mirroring [layoutIdFields] class tracking: each table's first positional
+     * identifier that looks like a view class becomes the current class for the table and its
+     * nested tables. Returns null when [target] is unreachable from [root].
+     */
+    fun layoutPropertyClassAt(root: TableConstructorExpression, target: TableConstructorExpression): LuaLayoutClassMatch? {
+        val visited = hashSetOf<BaseASTNode>()
+        var budget = LAYOUT_COMPLETION_NODE_BUDGET
+        fun walk(node: TableConstructorExpression, inherited: LuaLayoutClassMatch?): LuaLayoutClassMatch? {
+            if (budget <= 0 || !visited.add(node)) {
+                return null
+            }
+            budget--
+            var currentClass = inherited
+            node.fields.forEach { field ->
+                val keyName = staticTableKeyName(field)
+                if (isLayoutArrayField(field, keyName) && currentClass === inherited) {
+                    val value = field.value
+                    if (value is Identifier && isLayoutClassIdentifier(value.name)) {
+                        currentClass = LuaLayoutClassMatch(
+                            sourceName = value.name,
+                            type = resolveLayoutViewClassType(value.name)
+                        )
+                    }
+                }
+            }
+            if (node === target) {
+                return currentClass
+            }
+            node.fields.forEach { field ->
+                val value = field.value
+                if (value is TableConstructorExpression) {
+                    walk(value, currentClass)?.let { return it }
+                }
+            }
+            return null
+        }
+        return walk(root, null)
+    }
+
+    /** A view-class identifier that resolves for layout completions: known view names or embedder-extended classes. */
+    private fun isLayoutClassIdentifier(name: String): Boolean {
+        return isLikelyAndroidViewClassName(name) || name in workspaceContext.layoutPropertyExtensions
+    }
+
+    /**
+     * Lua property names usable inside an AndroLua layout table for [match]
+     * (loadlayout semantics: property `k` applies `view.setCap(k)(value)`).
+     *
+     * Sources, grounded in the Android-Lua `loadlayout.lua` runtime:
+     * - Bean properties derived from the reflected `set*` instance methods of the class
+     *   (setTextColor -> textColor, setAdapter -> adapter, setRadius -> radius).
+     * - Runtime-special keys loadlayout handles explicitly: id, style, onClick, src
+     *   (image-bearing views), items (adapter views).
+     * - Embedder-provided extensions keyed by the class name written in the layout table
+     *   (workspace metadata `lua.layout.properties`), matched by source or Java simple name.
+     * - LayoutParams keys applied before setters: layout_width/height, margins,
+     *   layout_weight, layout_gravity, layout_x/y.
+     */
+    fun layoutPropertySuggestions(match: LuaLayoutClassMatch): List<LuaLayoutPropertySuggestion> {
+        layoutSuggestionsCache[match.sourceName]?.let { return it }
+        val members = (match.type as? JavaInstanceType)?.allInstanceMembers().orEmpty()
+        val suggestions = linkedMapOf<String, String>()
+        members.values.forEach { member ->
+            if (member.memberKind != JavaMemberKind.METHOD || !member.memberName.startsWith("set")) {
+                return@forEach
+            }
+            val property = member.memberName.decapitalizeLuaProperty()
+            if (property.isEmpty() || property in suggestions) {
+                return@forEach
+            }
+            val signatures = (member.valueType as? CallableType)?.callSignatures.orEmpty()
+            val first = signatures.firstOrNull { it.parameters.isNotEmpty() } ?: return@forEach
+            suggestions[property] = first.parameters.joinToString(", ") { it.type.displayName }
+        }
+        // Never suggest internal plumbing keys loadlayout manages itself.
+        suggestions.remove("layoutParams")
+        suggestions.remove("id")
+
+        val result = mutableListOf(LuaLayoutPropertySuggestion("id", LAYOUT_ID_DETAIL))
+        val memberNames = members.keys
+        if ("setImageBitmap" in memberNames || "setImageResource" in memberNames) {
+            result += LuaLayoutPropertySuggestion("src", LAYOUT_SRC_DETAIL)
+        }
+        if ("setAdapter" in memberNames) {
+            result += LuaLayoutPropertySuggestion("items", LAYOUT_ITEMS_DETAIL)
+        }
+        result += LuaLayoutPropertySuggestion("style", LAYOUT_STYLE_DETAIL)
+        result += LuaLayoutPropertySuggestion("onClick", LAYOUT_ON_CLICK_DETAIL)
+        suggestions.forEach { (label, detail) ->
+            result += LuaLayoutPropertySuggestion(label, detail)
+        }
+        val known = result.mapTo(hashSetOf()) { it.label }
+        layoutPropertyExtensionEntries(match).forEach { extension ->
+            if (extension.label !in known) {
+                result += extension
+            }
+        }
+        LAYOUT_PARAM_SUGGESTIONS.forEach { (label, detail) ->
+            result += LuaLayoutPropertySuggestion(label, detail)
+        }
+        // allInstanceMembers() walks the full reflected hierarchy; cache the derived list
+        // per class so repeated keystrokes do not re-enumerate it.
+        layoutSuggestionsCache[match.sourceName] = result
+        return result
+    }
+
+    private fun layoutPropertyExtensionEntries(match: LuaLayoutClassMatch): List<LuaLayoutPropertySuggestion> {
+        val extensions = workspaceContext.layoutPropertyExtensions
+        return extensions[match.sourceName]
+            ?: (match.type as? JavaInstanceType)?.javaName?.simpleNames?.lastOrNull()
+                ?.let(extensions::get)
+            ?: emptyList()
+    }
+
+    /**
+     * Valid string-literal values for a layout-table property key, grounded in the
+     * Android-Lua `loadlayout.lua` runtime converters (`toint` keyword maps, `checkint`
+     * pipe flags, `checkType` units, `checkPercent` %w/%h, boolean strings). Empty when the
+     * key has no modeled value domain (free-form keys like id/text/src).
+     */
+    fun layoutValueSuggestionsForKey(key: String): List<String> {
+        return LuaLayoutValueDomains.forKey(key)
+    }
+
+    /** Workspace module names usable as require / import string arguments. */
+    fun workspaceModuleCompletionNames(): List<String> {
+        return workspaceContext.workspaceResolver?.completionModuleNames().orEmpty()
+    }
+
+    private fun String.decapitalizeLuaProperty(): String {
+        if (length < 4) {
+            return ""
+        }
+        val body = substring(3)
+        if (body.isEmpty() || !body[0].isUpperCase()) {
+            // setup()/setts() are not bean setters; require SetXxx shape.
+            return ""
+        }
+        if (body.length > 1 && body[0].isUpperCase() && body[1].isUpperCase()) {
+            return body
+        }
+        return body.replaceFirstChar { it.lowercaseChar() }
+    }
+
     private fun resolveLayoutViewClassType(className: String): Type {
         layoutViewClassTypeCache[className]?.let { return it }
+        // The written identifier binds to the document's active imports first (AndroLua
+        // semantics); stock android.widget/android.view packages are the fallback, so a
+        // project class shadowing a platform simple name is not silently replaced.
         val candidates = listOf(
+            className,
             "android.widget.$className",
-            "android.view.$className",
-            className
+            "android.view.$className"
         )
         for (candidate in candidates) {
             val imported = workspaceContext.resolveImportTarget?.invoke(candidate)
@@ -2438,7 +2691,17 @@ class ExpressionTypeEvaluator internal constructor(
 
     private fun deriveFunctionDeclarationValueType(declaration: BinderDeclaration, context: Context): Type {
         // Builtin/overlay function declarations (loadlayout/print/etc.) often have no AST body.
-        // Preserve declaredType instead of collapsing to unknown.
+        // Preserve declaredType instead of collapsing to unknown (handled in the shared tail).
+        return declaredOrInferredFunctionValueType(declaration, context)
+    }
+
+    /**
+     * Shared declared-vs-inferred callable derivation for FUNCTION/GLOBAL function values:
+     * resolve the owning function node, infer the body type, then merge with the declared
+     * signature preferring the declared return. Globals keep their extra non-callable
+     * declaredType short-circuit and assignment-value check before entering here.
+     */
+    private fun declaredOrInferredFunctionValueType(declaration: BinderDeclaration, context: Context): Type {
         val functionNode = functionNodeForDeclaration(declaration)
             ?: return declaration.declaredType ?: UnknownType
         val inferred = inferImplementationFunctionType(functionNode)
@@ -2459,17 +2722,7 @@ class ExpressionTypeEvaluator internal constructor(
             return declaredType
         }
         globalAssignmentValueType(declaration, context)?.let { return it }
-        val functionNode = functionNodeForDeclaration(declaration)
-        if (functionNode == null) {
-            return declaredType ?: UnknownType
-        }
-        val inferred = inferImplementationFunctionType(functionNode)
-        val declared = declaredType as? CallableType
-            ?: return inferred
-                ?: declaredType
-                ?: evaluateFunctionDeclaration(functionNode, context)
-        val inferredCallable = inferred as? CallableType ?: return declared
-        return mergeDeclaredAndInferredCallableType(declaration, declared, inferredCallable, preferDeclaredReturn = true)
+        return declaredOrInferredFunctionValueType(declaration, context)
     }
 
     private fun globalAssignmentValueType(declaration: BinderDeclaration, context: Context): Type? {
@@ -2561,9 +2814,9 @@ class ExpressionTypeEvaluator internal constructor(
             // Dynamic class-name newInstance/bindClass/loadLib must stay unknown rather than
             // falling through to the JavaObject stub declaredType (TASK-682).
             val base = effectiveCallBase(initializer)
-            if (isNewInstanceCallBase(base, initializerContext) ||
-                isBindClassCallBase(base, initializerContext) ||
-                isLoadLibCallBase(base, initializerContext)
+            if (isLuaJavaCallBase(base, initializerContext, "newInstance") ||
+                isLuaJavaCallBase(base, initializerContext, "bindClass") ||
+                isLuaJavaCallBase(base, initializerContext, "loadLib")
             ) {
                 return UnknownType
             }
@@ -2575,21 +2828,50 @@ class ExpressionTypeEvaluator internal constructor(
 
     private fun luaJavaHelperCallType(call: CallExpression, target: String, context: Context): Type? {
         return when {
-            isBindClassCallBase(effectiveCallBase(call), context) ->
-                resolveLuaJavaImportTarget(target)?.moduleType
+            isLuaJavaCallBase(effectiveCallBase(call), context, "bindClass") ->
+                luaJavaHelperCallReturn("bindClass", call, target, context)
 
-            isNewInstanceCallBase(effectiveCallBase(call), context) ->
-                resolveLuaJavaImportTarget(target)?.moduleType?.let { moduleType ->
-                    if (!newInstanceConstructorShapeMatches(moduleType, call, context)) {
-                        UnknownType
-                    } else {
-                        moduleType.javaInstanceSurface()
-                            ?.hydrateLuaJavaProviderType()
-                            ?: UnknownType
-                    }
+            isLuaJavaCallBase(effectiveCallBase(call), context, "newInstance") ->
+                luaJavaHelperCallReturn("newInstance", call, target, context)
+
+            isLuaJavaCallBase(effectiveCallBase(call), context, "createProxy") ->
+                luaJavaHelperCallReturn("createProxy", call, target, context)
+
+            isLuaJavaCallBase(effectiveCallBase(call), context, "loadLib") ->
+                luaJavaHelperCallReturn("loadLib", call, target, context)
+
+            else -> null
+        }
+    }
+
+    /**
+     * Shared LuaJava helper return typing for a recognized helper call
+     * (bindClass / newInstance / createProxy / loadLib). Single source of truth for the
+     * direct-initializer path ([luaJavaHelperCallType]) and the transitive
+     * declaration-chain path ([luaJavaHelperCallTypeFromDeclarationChain]); null means
+     * "helper not applicable here", letting the caller fall through.
+     */
+    private fun luaJavaHelperCallReturn(
+        helperName: String,
+        call: CallExpression,
+        target: String,
+        context: Context
+    ): Type? {
+        return when (helperName) {
+            "bindClass" -> resolveLuaJavaImportTarget(target)?.moduleType
+
+            "newInstance" -> {
+                val moduleType = resolveLuaJavaImportTarget(target)?.moduleType ?: return null
+                if (!newInstanceConstructorShapeMatches(moduleType, call, context)) {
+                    UnknownType
+                } else {
+                    moduleType.javaInstanceSurface()
+                        ?.hydrateLuaJavaProviderType()
+                        ?: UnknownType
                 }
+            }
 
-            isCreateProxyCallBase(effectiveCallBase(call), context) -> {
+            "createProxy" -> {
                 val interfaceTypes = createProxyTargets(call).mapNotNull { interfaceTarget ->
                     resolveLuaJavaImportTarget(interfaceTarget)?.moduleType?.javaInstanceSurface()
                         ?.hydrateLuaJavaProviderType()
@@ -2600,7 +2882,7 @@ class ExpressionTypeEvaluator internal constructor(
                 }
             }
 
-            isLoadLibCallBase(effectiveCallBase(call), context) -> {
+            "loadLib" -> {
                 if (!hasValidLoadLibArguments(call)) {
                     UnknownType
                 } else {
@@ -2608,7 +2890,6 @@ class ExpressionTypeEvaluator internal constructor(
                     resolveLoadLibMemberType(target, memberName, context)
                 }
             }
-
 
             else -> null
         }
@@ -2634,38 +2915,7 @@ class ExpressionTypeEvaluator internal constructor(
                 ?: binder.scopeGraph.rootScope.id,
             excludedDeclarations = excluded
         )
-        return when (helperName) {
-            "bindClass" -> resolveLuaJavaImportTarget(target)?.moduleType
-            "newInstance" -> {
-                val moduleType = resolveLuaJavaImportTarget(target)?.moduleType ?: return null
-                if (!newInstanceConstructorShapeMatches(moduleType, call, chainContext)) {
-                    UnknownType
-                } else {
-                    moduleType.javaInstanceSurface()
-                        ?.hydrateLuaJavaProviderType()
-                }
-            }
-            "createProxy" -> {
-                val interfaceTypes = createProxyTargets(call).mapNotNull { interfaceTarget ->
-                    resolveLuaJavaImportTarget(interfaceTarget)?.moduleType?.javaInstanceSurface()
-                        ?.hydrateLuaJavaProviderType()
-                }
-                when {
-                    interfaceTypes.isEmpty() -> UnknownType
-                    else -> intersectionTypeOf(interfaceTypes)
-                }
-            }
-            "loadLib" -> {
-                if (!hasValidLoadLibArguments(call)) {
-                    UnknownType
-                } else {
-                    val memberName = stringCallTarget(call, argumentIndex = 1) ?: return UnknownType
-                    resolveLoadLibMemberType(target, memberName, chainContext)
-                }
-            }
-
-            else -> null
-        }
+        return luaJavaHelperCallReturn(helperName, call, target, chainContext)
     }
 
     private fun declarationResolvesToLuaJavaHelperByDeclarationChain(
@@ -2836,7 +3086,7 @@ class ExpressionTypeEvaluator internal constructor(
         }
         val memberDeclarations = visibleMemberDeclarationsForValue(declaration, context)
         if (memberDeclarations.isEmpty()) {
-            return baseType
+            return attachNestedMemberAssignments(baseType, declaration, context)
         }
         val fields = linkedMapOf<String, Type>()
         val methods = linkedMapOf<String, Type>()
@@ -2850,7 +3100,7 @@ class ExpressionTypeEvaluator internal constructor(
                 }
             }
         }
-        return when (baseType) {
+        val merged = when (baseType) {
             is TableType -> baseType.copy(
                 fields = baseType.fields + fields,
                 methods = baseType.methods + methods
@@ -2861,6 +3111,157 @@ class ExpressionTypeEvaluator internal constructor(
             )
             else -> baseType
         }
+        // Control-flow-assigned sub-table fields (`data.scrollData.last = b` inside a
+        // later callback) must complete on the sub-table itself (`data.scrollData.`
+        // offering scroll/last/page), mirroring direct-member attachment.
+        return attachNestedMemberAssignments(merged, declaration, context)
+    }
+
+    /**
+     * Merge nested member-assignment paths rooted at [declaration]'s name
+     * (`data.scrollData.scroll = i > 0`) into the base type's sub-table fields, so a
+     * field only ever written through control-flow callbacks still completes and types.
+     */
+    private fun attachNestedMemberAssignments(
+        baseType: Type,
+        declaration: BinderDeclaration,
+        context: Context
+    ): Type {
+        val nested = nestedMemberAssignmentsFor(declaration, context)
+        if (nested.isEmpty()) {
+            return baseType
+        }
+        var merged = baseType
+        nested.forEach { (path, members) ->
+            merged = attachMemberPath(merged, path, members, context)
+        }
+        return merged
+    }
+
+    /**
+     * Collect FIELD/METHOD declarations whose anchor LHS is a nested member path rooted
+     * at [declaration]'s name (`data.scrollData.last`): root resolves to this declaration
+     * and the intermediate segments form the sub-table path. Grouped by path.
+     */
+    private fun nestedMemberAssignmentsFor(
+        declaration: BinderDeclaration,
+        context: Context
+    ): Map<List<String>, List<Pair<String, Type>>> {
+        // No lexical-owner filter here: correctness is guaranteed by the root-identifier
+        // resolution below (the assignment's root must resolve to THIS declaration), and
+        // field declarations may be owned by scope nodes outside the query position's
+        // owner chain (callbacks assigned to member functions, etc.).
+        val grouped = linkedMapOf<List<String>, MutableList<Pair<String, Type>>>()
+        memberAssignmentsByRootName()[declaration.name].orEmpty().forEach { anchor ->
+            val candidate = anchor.declaration
+            val anchorMember = anchor.anchorMember
+            // Segments between the root identifier and the assigned member form the
+            // sub-table path (data.scrollData.last → path [scrollData]).
+            val segments = ArrayDeque<String>()
+            var cursor: ExpressionNode = anchorMember
+            while (cursor is MemberExpression) {
+                segments.addFirst(cursor.identifier.name)
+                cursor = cursor.base
+            }
+            if (segments.isEmpty()) {
+                return@forEach
+            }
+            // The bucket matched the root NAME; the root must also RESOLVE to this
+            // declaration (same-named locals in other scopes must not merge in).
+            var rootCursor: ExpressionNode = anchorMember
+            while (rootCursor is MemberExpression) {
+                rootCursor = rootCursor.base
+            }
+            val root = rootCursor as? Identifier ?: return@forEach
+            val scopeId = binder.positionQueries.getScopeAt(root.range.start)?.id ?: context.lexicalScopeId
+            val resolvedRoot = findVisibleValueDeclaration(
+                root.name,
+                root.range.start,
+                context.copy(lexicalScopeId = scopeId)
+            ) ?: return@forEach
+            val sameDeclaration = if (
+                declaration.symbolId != null && resolvedRoot.symbolId != null
+            ) {
+                declaration.symbolId == resolvedRoot.symbolId
+            } else {
+                declaration.id == resolvedRoot.id
+            }
+            if (!sameDeclaration) {
+                return@forEach
+            }
+            val path = segments.dropLast(1)
+            if (path.isEmpty() || path.size > NESTED_MEMBER_PATH_MAX_DEPTH - 1) {
+                return@forEach
+            }
+            // Unknown-typed nested members STILL belong on the surface: the user asks
+            // for `data.scrollData.` to offer scroll/last/page even when the assigned
+            // RHS is a bare parameter (type unknown). Completion presence is the point.
+            val memberType = typeOfDeclaration(candidate, context)
+            grouped.getOrPut(path) { mutableListOf() }.add(candidate.name to memberType)
+        }
+        return grouped
+    }
+
+    private fun attachMemberPath(
+        base: Type,
+        path: List<String>,
+        members: List<Pair<String, Type>>,
+        context: Context
+    ): Type {
+        if (base !is TableType && base !is ModuleType) {
+            return base
+        }
+        val head = path.first()
+        val existing = when (base) {
+            is TableType -> base.fields[head]
+            is ModuleType -> base.fields[head]
+            else -> null
+        } ?: TableType()
+        val enriched: Type = if (path.size > 1) {
+            attachMemberPath(existing, path.drop(1), members, context)
+        } else when (existing) {
+            is TableType -> existing.copy(fields = existing.fields + members.toMap())
+            is ModuleType -> existing.copy(fields = existing.fields + members.toMap())
+            else -> TableType(fields = members.toMap())
+        }
+        return when (base) {
+            is TableType -> base.copy(fields = base.fields + (head to enriched))
+            is ModuleType -> base.copy(fields = base.fields + (head to enriched))
+            else -> base
+        }
+    }
+
+    /**
+     * One member-assignment declaration grouped by the ROOT identifier name of its LHS
+     * chain (`data.scrollData.last = b` -> root "data"), plus the full LHS member
+     * expression for path/segment inspection.
+     */
+    private data class MemberAssignmentAnchor(
+        val declaration: BinderDeclaration,
+        val rootName: String,
+        val anchorMember: MemberExpression
+    )
+
+    /** Root-name index over member-assignment declarations, built once per evaluator. */
+    private fun memberAssignmentsByRootName(): Map<String, List<MemberAssignmentAnchor>> {
+        memberAssignmentsByRoot?.let { return it }
+        val index = linkedMapOf<String, MutableList<MemberAssignmentAnchor>>()
+        binder.declarationIndex.declarations.forEach { candidate ->
+            if (candidate.kind != DeclarationKind.FIELD && candidate.kind != DeclarationKind.METHOD) {
+                return@forEach
+            }
+            val anchorMember = candidate.anchorNode?.parent as? MemberExpression ?: return@forEach
+            var cursor: ExpressionNode = anchorMember
+            while (cursor is MemberExpression) {
+                cursor = cursor.base
+            }
+            val root = cursor as? Identifier ?: return@forEach
+            index.getOrPut(root.name) { mutableListOf() }.add(
+                MemberAssignmentAnchor(candidate, root.name, anchorMember)
+            )
+        }
+        memberAssignmentsByRoot = index
+        return index
     }
 
     private fun visibleMemberDeclarationsForValue(
@@ -2869,19 +3270,19 @@ class ExpressionTypeEvaluator internal constructor(
     ): List<BinderDeclaration> {
         val valueName = declaration.name
         val lexicalOwner = binder.scopeGraph.getScope(context.lexicalScopeId)?.ownerNode
+        val candidates = memberAssignmentsByRootName()[valueName].orEmpty()
+            .map { it.declaration }
         val scopedMatches = lexicalOwner?.let { owner ->
-            binder.declarationIndex.declarations.filter { candidate ->
-                candidate.kind in setOf(DeclarationKind.FIELD, DeclarationKind.METHOD) &&
-                    isDeclaredInLexicalOwnerChain(candidate, owner) &&
+            candidates.filter { candidate ->
+                isDeclaredInLexicalOwnerChain(candidate, owner) &&
                     isMemberBoundToValueDeclaration(candidate, declaration, valueName, context)
             }
         }.orEmpty()
         if (scopedMatches.isNotEmpty()) {
             return scopedMatches
         }
-        return binder.declarationIndex.declarations.filter { candidate ->
-            candidate.kind in setOf(DeclarationKind.FIELD, DeclarationKind.METHOD) &&
-                isMemberBoundToValueDeclaration(candidate, declaration, valueName, context)
+        return candidates.filter { candidate ->
+            isMemberBoundToValueDeclaration(candidate, declaration, valueName, context)
         }
     }
 
@@ -2920,20 +3321,6 @@ class ExpressionTypeEvaluator internal constructor(
         }
     }
 
-    private fun inferDeclaredFunctionValueType(functionNode: FunctionDeclaration, context: Context): Type {
-        val parameters = functionNode.params.map { parameterNode ->
-            val parameterType = context.localOverrides[parameterNode.name] ?: UnknownType
-            FunctionParameter(
-                name = parameterNode.name,
-                type = parameterType,
-                vararg = parameterNode.name == "..." || parameterType is VarargType
-            )
-        }
-        val varargType = parameters.lastOrNull { it.vararg }?.type ?: context.varargType
-        val childContext = buildFunctionBodyContext(functionNode, parameters, context.lexicalScopeId, varargType)
-        return evaluateFunctionDeclaration(functionNode, childContext)
-    }
-
     private fun mergeDeclaredAndInferredCallableType(
         declaration: BinderDeclaration,
         declared: CallableType,
@@ -2951,27 +3338,17 @@ class ExpressionTypeEvaluator internal constructor(
         } else {
             0
         }
-        val mergedParameters = when {
-            declaration.kind == DeclarationKind.METHOD -> inferredSignature.parameters.mapIndexed { index, parameter ->
-                val declaredParameter = declaredSignature.parameters.getOrNull(index + declaredParameterOffset)
-                val parameterType = when {
-                    declaredParameter == null -> parameter.type
-                    parameter.type == UnknownType -> declaredParameter.type
-                    declaredParameter.type == UnknownType -> parameter.type
-                    else -> declaredParameter.type
-                }
-                parameter.copy(type = parameterType)
+        // METHOD callers shift by 1 when the declared signature leads with an implicit `self`
+        // that body inference omitted; otherwise offset is 0 and this is a plain positional merge.
+        val mergedParameters = inferredSignature.parameters.mapIndexed { index, parameter ->
+            val declaredParameter = declaredSignature.parameters.getOrNull(index + declaredParameterOffset)
+            val parameterType = when {
+                declaredParameter == null -> parameter.type
+                parameter.type == UnknownType -> declaredParameter.type
+                declaredParameter.type == UnknownType -> parameter.type
+                else -> declaredParameter.type
             }
-            else -> inferredSignature.parameters.mapIndexed { index, parameter ->
-                val declaredParameter = declaredSignature.parameters.getOrNull(index)
-                val parameterType = when {
-                    declaredParameter == null -> parameter.type
-                    parameter.type == UnknownType -> declaredParameter.type
-                    declaredParameter.type == UnknownType -> parameter.type
-                    else -> declaredParameter.type
-                }
-                parameter.copy(type = parameterType)
-            }
+            parameter.copy(type = parameterType)
         }
         val returnType = when {
             preferDeclaredReturn && declaredSignature.returnType != UnknownType -> declaredSignature.returnType
@@ -3150,117 +3527,6 @@ class ExpressionTypeEvaluator internal constructor(
         return ValueSequence.fromExpressionResults(arguments.map { evaluate(it, context) })
     }
 
-    private fun resolveTypeSyntax(typeSyntax: TypeSyntax, context: TypeResolutionContext): Type = when (typeSyntax) {
-        is NamedTypeSyntax -> resolveNamedType(typeSyntax.name, context)
-        is LiteralTypeSyntax -> normalizeLiteral(typeSyntax.value)
-        is UnionTypeSyntax -> unionTypeOf(typeSyntax.options.map { resolveTypeSyntax(it, context) })
-        is IntersectionTypeSyntax -> intersectionTypeOf(typeSyntax.types.map { resolveTypeSyntax(it, context) })
-        is ArrayTypeSyntax -> ArrayType(resolveTypeSyntax(typeSyntax.elementType, context))
-        is GenericTypeSyntax -> resolveGenericType(typeSyntax, context)
-        is NullableTypeSyntax -> unionTypeOf(resolveTypeSyntax(typeSyntax.innerType, context), PrimitiveType.NIL)
-        is TupleTypeSyntax -> TupleType(typeSyntax.elements.map { resolveTypeSyntax(it, context) })
-        is MultiReturnTypeSyntax -> MultiReturnType(typeSyntax.types.map { resolveTypeSyntax(it, context) })
-        is VarargTypeSyntax -> VarargType(resolveTypeSyntax(typeSyntax.elementType, context))
-        is FunctionTypeSyntax -> resolveFunctionTypeSyntax(typeSyntax, context)
-        is ObjectTypeSyntax -> resolveObjectTypeSyntax(typeSyntax, context)
-        is IndexTableTypeSyntax -> TableType(
-            indexSignature = TableType.IndexSignature(
-                keyType = resolveTypeSyntax(typeSyntax.keyType, context),
-                valueType = resolveTypeSyntax(typeSyntax.valueType, context)
-            )
-        )
-    }
-
-    private fun resolveNamedType(name: String, context: TypeResolutionContext): Type {
-        primitiveTypeFor(name)?.let { return it }
-        val declaration = context.resolveTypeReference(name) ?: return io.github.dingyi222666.luaparser.semantic.types.model.CustomType(name)
-        return if (declaration.kind == DeclarationKind.TYPE_PARAMETER) {
-            TypeParameterType(
-                name = declaration.name,
-                constraint = declaration.declaredTypeSyntax?.let { resolveTypeSyntax(it, context) },
-                defaultType = declaration.declaredType
-            )
-        } else {
-            binder.declarationIndex.getDeclaration(declaration.id)?.declaredType
-                ?: declaration.declaredType
-                ?: io.github.dingyi222666.luaparser.semantic.types.model.CustomType(name)
-        }
-    }
-
-    private fun resolveGenericType(typeSyntax: GenericTypeSyntax, context: TypeResolutionContext): Type {
-        val baseName = (typeSyntax.baseType as? NamedTypeSyntax)?.name
-            ?: resolveTypeSyntax(typeSyntax.baseType, context).displayName
-        val arguments = typeSyntax.arguments.map { resolveTypeSyntax(it, context) }
-        return if (baseName == "table" && arguments.size == 2) {
-            TableType(indexSignature = TableType.IndexSignature(arguments[0], arguments[1]))
-        } else {
-            AppliedType(baseName = baseName, typeArguments = arguments)
-        }
-    }
-
-    private fun resolveFunctionTypeSyntax(typeSyntax: FunctionTypeSyntax, context: TypeResolutionContext): FunctionType {
-        val parameters = typeSyntax.parameters.map { parameter ->
-            val baseType = resolveTypeSyntax(parameter.type, context)
-            FunctionParameter(
-                name = parameter.name ?: if (parameter.vararg) "..." else "_",
-                type = if (parameter.vararg) VarargType(baseType) else baseType,
-                optional = parameter.optional,
-                vararg = parameter.vararg
-            )
-        }
-        val returnType = resolveTypeSyntax(typeSyntax.returnType, context)
-        return FunctionType(parameters = parameters, returnType = returnType)
-    }
-
-    private fun resolveObjectTypeSyntax(typeSyntax: ObjectTypeSyntax, context: TypeResolutionContext): Type {
-        val fields = linkedMapOf<String, Type>()
-        typeSyntax.fields.forEach { field ->
-            val name = when (val fieldName = field.name) {
-                is IdentifierObjectFieldNameSyntax -> fieldName.value
-                is QuotedObjectFieldNameSyntax -> fieldName.literal.removeSurrounding("\"").removeSurrounding("'")
-            }
-            val valueType = resolveTypeSyntax(field.type, context)
-            fields[name] = if (field.optional) unionTypeOf(valueType, PrimitiveType.NIL) else valueType
-        }
-
-        val indexSignature = typeSyntax.indexers.firstOrNull()?.let { indexer ->
-            TableType.IndexSignature(
-                keyType = resolveTypeSyntax(indexer.keyType, context),
-                valueType = resolveTypeSyntax(indexer.valueType, context)
-            )
-        }
-        return TableType(fields = fields, indexSignature = indexSignature)
-    }
-
-    private fun normalizeLiteral(value: String): Type {
-        val normalized = value.trim()
-        return when {
-            normalized == "true" -> LiteralType(true, PrimitiveType.BOOLEAN)
-            normalized == "false" -> LiteralType(false, PrimitiveType.BOOLEAN)
-            normalized == "nil" -> PrimitiveType.NIL
-            normalized.startsWith("\"") || normalized.startsWith("'") -> {
-                LiteralType(normalized.removeSurrounding("\"").removeSurrounding("'"), PrimitiveType.STRING)
-            }
-
-            normalized.contains('.') -> LiteralType(normalized.toDoubleOrNull() ?: normalized, PrimitiveType.NUMBER)
-            else -> LiteralType(normalized.toLongOrNull() ?: normalized, PrimitiveType.NUMBER)
-        }
-    }
-
-    private fun primitiveTypeFor(name: String): Type? = when (name) {
-        "string" -> PrimitiveType.STRING
-        "number", "integer" -> PrimitiveType.NUMBER
-        "boolean", "bool" -> PrimitiveType.BOOLEAN
-        "nil", "void" -> PrimitiveType.NIL
-        "function" -> PrimitiveType.FUNCTION
-        "table" -> PrimitiveType.TABLE
-        "thread" -> PrimitiveType.THREAD
-        "userdata" -> PrimitiveType.USERDATA
-        "any" -> PrimitiveType.ANY
-        "unknown" -> UnknownType
-        else -> null
-    }
-
     private fun primitiveArrayElementTypeFor(name: String): Type? = when (name) {
         "boolean", "java.lang.Boolean" -> PrimitiveType.BOOLEAN
         "byte", "short", "int", "integer", "long", "float", "double",
@@ -3276,7 +3542,11 @@ class ExpressionTypeEvaluator internal constructor(
         private const val LOADLAYOUT_COLLECT_NODE_BUDGET = 4_096
         private const val LOADLAYOUT_ID_TABLE_NODE_BUDGET = 512
         private const val LOADLAYOUT_ID_TABLE_MAX_DEPTH = 32
+        private const val LAYOUT_ID_ADAPTER_FIELDS_BUDGET = 4
+        private const val NESTED_MEMBER_PATH_MAX_DEPTH = 4
         private const val LOADLAYOUT_PARENT_WALK_LIMIT = 64
+        private const val LAYOUT_COMPLETION_NODE_BUDGET = 1_024
+        private val LOADLAYOUT_FAMILY_NAMES = setOf("loadlayout", "loadlayout2", "loadlayout3")
 
         private val LAYOUT_SPEC_KEYS = setOf(
             "id",
@@ -3293,6 +3563,29 @@ class ExpressionTypeEvaluator internal constructor(
             "text",
             "src",
             "background"
+        )
+
+        private const val LAYOUT_ID_DETAIL = "view id, also registered into the loadlayout root/ids table"
+        private const val LAYOUT_SRC_DETAIL = "image path or resource for image-bearing views"
+        private const val LAYOUT_ITEMS_DETAIL = "adapter items: table, function, or resource name"
+        private const val LAYOUT_STYLE_DETAIL = "style resource or ?attr reference"
+        private const val LAYOUT_ON_CLICK_DETAIL = "function(view) click callback"
+        private const val LAYOUT_PARAM_DETAIL = "ViewGroup.LayoutParams key"
+
+        private val LAYOUT_PARAM_SUGGESTIONS = listOf(
+            "layout_width" to "-1(fill/match) / -2(wrap) / \"24dp\"",
+            "layout_height" to "-1(fill/match) / -2(wrap) / \"24dp\"",
+            "layout_margin" to "all-side margin, number or \"8dp\"",
+            "layout_marginLeft" to LAYOUT_PARAM_DETAIL,
+            "layout_marginTop" to LAYOUT_PARAM_DETAIL,
+            "layout_marginRight" to LAYOUT_PARAM_DETAIL,
+            "layout_marginBottom" to LAYOUT_PARAM_DETAIL,
+            "layout_marginStart" to LAYOUT_PARAM_DETAIL,
+            "layout_marginEnd" to LAYOUT_PARAM_DETAIL,
+            "layout_weight" to "LinearLayout weight",
+            "layout_gravity" to "gravity in parent (left|top|center...)",
+            "layout_x" to "absolute x offset",
+            "layout_y" to "absolute y offset"
         )
 
         private val KNOWN_ANDROID_VIEW_SIMPLE_NAMES = setOf(
@@ -3327,4 +3620,57 @@ class ExpressionTypeEvaluator internal constructor(
         )
     }
 
+}
+
+/**
+ * One Lua property key suggested inside an AndroLua layout table (loadlayout context).
+ * [detail] is a short human-readable value hint shown next to the completion label.
+ */
+data class LuaLayoutPropertySuggestion(
+    val label: String,
+    val detail: String?
+)
+
+/**
+ * Where a `loadlayout(...)` call's layout spec table comes from, kept symbolic at
+ * collection time so the one-shot usage walk never resolves types or workspace files.
+ */
+private sealed class LoadlayoutLayoutSource {
+    /** Inline layout table literal as the first argument. */
+    class Inline(val table: TableConstructorExpression) : LoadlayoutLayoutSource()
+
+    /** First argument names a local table variable (`loadlayout(parentLayout, ids)`). */
+    class LocalTable(val name: String, val from: BaseASTNode) : LoadlayoutLayoutSource()
+
+    /** First argument is a layout path string (`loadlayout("layout/main")`). */
+    class WorkspaceLayout(val path: String) : LoadlayoutLayoutSource()
+
+    /** First argument is a call whose body returns the spec table (`addTab(...)`). */
+    class CalleeReturn(val callee: String, val from: BaseASTNode) : LoadlayoutLayoutSource()
+}
+
+/**
+ * Where the AndroLua runtime registers a loadlayout call's `id="..."` views: a named ids
+ * table, the elements of a base table (`_pageids[i]`), or `_G` when no ids table passed.
+ */
+private sealed class LoadlayoutIdsSink {
+    data class Named(val name: String) : LoadlayoutIdsSink()
+    data class Elements(val baseName: String) : LoadlayoutIdsSink()
+    object Globals : LoadlayoutIdsSink()
+}
+
+private class LoadlayoutUsage(val sink: LoadlayoutIdsSink, val source: LoadlayoutLayoutSource)
+
+/**
+ * The view class in force at a layout-table position: [sourceName] is the identifier as
+ * written in the layout table (extension lookup key), [type] is the resolved class surface.
+ */
+data class LuaLayoutClassMatch(
+    val sourceName: String,
+    val type: Type
+)
+
+/** Configuration changes (androidJar, import prefixes, metadata) invalidate shared caches. */
+internal fun invalidateSharedSurfaceCaches() {
+    ExpressionTypeEvaluator.SharedSurfaceCaches.clear()
 }

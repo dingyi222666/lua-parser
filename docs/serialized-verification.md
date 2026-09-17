@@ -6,9 +6,9 @@ Parallel code, task metadata, and documentation waves are allowed when workers h
 
 During a parallel wave, each task's `required_tests` entries are deferred acceptance references. They describe what the later verification phase must run; they are not permission for that worker to execute Gradle, tests, compile tasks, or build-output cleanup.
 
-The current serialized verification task is TASK-043. A later review-created verification task may replace it, but the same one-at-a-time policy and lock requirements apply.
+The serialized verification task **TASK-043 is done** (2026-07-13): Windows tip-coherent full `jvmTest` run 29228040252 GREEN (5386 tests, 0 failures, 0 errors, 177 skipped; see `tasks/TASK-043.md` and `docs/acceptance-traceability.md`). The one-at-a-time policy and lock requirements below remain in force for any future verification run.
 
-**Honesty bound (post-TASK-184 / pre-043):** TASK-184 Android-Lua library stub restoration is **done** (REVIEW38 accept). That unblocks product surface work and pre-final inventory/trace tasks; it does **not** unlock TASK-043, clear the compile gate, or authorize any global-green claim. Do not treat this page as pass/fail evidence.
+**Honesty bound (post-TASK-184; superseded 2026-07-13):** TASK-184 Android-Lua library stub restoration is **done** (REVIEW38 accept). The earlier "does not unlock TASK-043 / no global-green claim" bound is historical: TASK-043 was subsequently unlocked and completed with full `jvmTest` run 29228040252 green. This page remains process documentation, not pass/fail evidence.
 
 ## Locks
 
@@ -123,7 +123,7 @@ These filters are the current **local** accepts recorded by REVIEW19-WAVE-202607
 
 | Source task | Focused filter command | Evidence role |
 | --- | --- | --- |
-| TASK-144 | `JAVA_HOME=/Users/dingyi/Library/Java/JavaVirtualMachines/corretto-17.0.19/Contents/Home ./gradlew jvmTest --tests parser.ast.CompactCallAstShapeTddTest` | Compact short-call AST shape |
+| TASK-144 | Suite `parser.ast.CompactCallAstShapeTddTest` **deleted** (coverage culled 2026-07, e786c77; pending reimplementation) | Compact short-call AST shape (historical accept only) |
 | TASK-144 | `JAVA_HOME=/Users/dingyi/Library/Java/JavaVirtualMachines/corretto-17.0.19/Contents/Home ./gradlew jvmTest --tests source.AST2LuaRoundTripTest` | AST-to-Lua roundtrip for compact calls and related printer fixes |
 | TASK-152 | `JAVA_HOME=/Users/dingyi/Library/Java/JavaVirtualMachines/corretto-17.0.19/Contents/Home ./gradlew jvmTest --tests semantic.interop.JavaChainedCallTddTest` | Listener/callback setter assignability modeling |
 | TASK-156 | `JAVA_HOME=/Users/dingyi/Library/Java/JavaVirtualMachines/corretto-17.0.19/Contents/Home ./gradlew jvmTest --tests lsp.LspWorkspaceFoldersTddTest` | Workspace-folder indexing and unopened-file diagnostics |
@@ -132,7 +132,7 @@ These filters are the current **local** accepts recorded by REVIEW19-WAVE-202607
 Recommended serial order when review re-checks these accepts after a compile gate:
 
 1. `compileTestKotlinJvm`
-2. `parser.ast.CompactCallAstShapeTddTest`
+2. `parser.ast.CompactCallAstShapeTddTest` — deleted (coverage culled 2026-07, e786c77; pending reimplementation; skip in re-checks)
 3. `source.AST2LuaRoundTripTest`
 4. `semantic.interop.JavaChainedCallTddTest`
 5. `lsp.LspWorkspaceFoldersTddTest`
@@ -140,7 +140,7 @@ Recommended serial order when review re-checks these accepts after a compile gat
 
 ### TASK-043 baseline and additional filters
 
-TASK-043 remains the sole owner of serialized execution. Its baseline `required_tests` currently list (macOS primary form for this host; task file may still show historical Windows form until a review rewrites it):
+TASK-043 was the sole owner of serialized execution and is **done** (2026-07-13, run 29228040252). Its baseline `required_tests` listed (macOS primary form for this host; the task file may still show the historical Windows form):
 
 | Command | Notes |
 | --- | --- |
@@ -149,11 +149,11 @@ TASK-043 remains the sole owner of serialized execution. Its baseline `required_
 
 Additional focused filters are selected by the review agent at release time from open or recently accepted tasks' `required_tests` entries (including the TASK-144/152/156 matrix above, Android-Lua suites such as `semantic.androidlua.AndroidLuaLibraryStubsTddTest` after TASK-184, and any later corpus/fixture tasks). Run each selected filter as its own one-at-a-time command.
 
-### Full suite remains deferred to TASK-043
+### Full suite (executed by TASK-043)
 
 - Do **not** treat this matrix as permission to run `./gradlew check`, full `jvmTest`, or any broad suite from a parallel worker.
-- Full-suite verification stays deferred to TASK-043 (and post-verification ledger tasks such as TASK-105/TASK-106 once verification is released).
-- Parallel workers record their focused commands in task metadata only; execution and pass/fail/infrastructure classification remain review-owned under TASK-043.
+- Full-suite verification was executed by TASK-043 on 2026-07-13: Windows run 29228040252 green (5386 tests / 0 failures / 0 errors / 177 skipped, SHA `cd188239b7a52744c9519e8d15169808a9f7e2c2`). Post-verification ledger/traceability tasks (TASK-105 / TASK-106) were completed afterward; any future green re-claim after new changes requires a fresh full-suite run.
+- Parallel workers record their focused commands in task metadata only; execution and pass/fail/infrastructure classification remain review-owned under the active serialized verification task.
 
 ## Source Accounting
 

@@ -474,31 +474,25 @@ class LuaLexer @JvmOverloads constructor(
         }
 
         var cursor = longBracketStart + equalsCount + 2
-        var nestedDepth = 0
         // Scan until the exact same-level close is found. Must not early-exit on a
         // wrong-level close while scanning: a well-formed body may embed lower/higher
         // closes before the true same-level terminator (e.g. [=[keep ]==] still]=]).
-        // When no matching close exists (true unclosed or pure level-mismatch), the
-        // BAD_CHARACTER span consumes through EOF so lower-level close noise and
-        // trailing source are not re-lexed as RBRACK/EQ/NAME/print(...) (TASK-633
-        // remainder-consume contract for parser.lexer long-bracket suites).
+        // BLOCK_COMMENT follows the exact same rule: real Lua block comments do NOT
+        // nest, so a comment ends at the FIRST same-level close. An inner same-level
+        // `[=*[` open inside a comment body is inert text, and
+        // `--[[ x [[\n--]] code_here() ]]` must end the comment at `--]]` and leave
+        // code_here() executable. The former BLOCK_COMMENT "nesting" heuristic
+        // (same-level open + later outer close => treat the whole span as one
+        // comment) silently changed program meaning and was also quadratic on
+        // unclosed comments (every same-level open without an outer close re-scanned
+        // the rest of the buffer). When no matching close exists (true unclosed or
+        // pure level-mismatch), the BAD_CHARACTER span consumes through EOF so
+        // lower-level close noise and trailing source are not re-lexed as
+        // RBRACK/EQ/NAME/print(...) (TASK-633 remainder-consume contract for
+        // parser.lexer long-bracket suites).
         while (cursor < bufferLen) {
-            if (tokenType == LuaTokenTypes.BLOCK_COMMENT &&
-                longBracketEqualsCount(cursor) == equalsCount &&
-                (nestedDepth > 0 || hasOuterCloseAfterNestedLongBracket(cursor, equalsCount))
-            ) {
-                nestedDepth++
-                cursor += equalsCount + 2
-                continue
-            }
-
             val closeLength = longBracketCloseLength(cursor, equalsCount)
             if (closeLength > 0) {
-                if (nestedDepth > 0) {
-                    nestedDepth--
-                    cursor += closeLength
-                    continue
-                }
                 tokenLength = cursor + closeLength - offset
                 return tokenType
             }
@@ -508,43 +502,6 @@ class LuaLexer @JvmOverloads constructor(
 
         tokenLength = bufferLen - offset
         return LuaTokenTypes.BAD_CHARACTER
-    }
-
-    private fun hasOuterCloseAfterNestedLongBracket(nestedStart: Int, equalsCount: Int): Boolean {
-        var cursor = nestedStart + equalsCount + 2
-        var depth = 1
-        while (cursor < bufferLen) {
-            if (longBracketEqualsCount(cursor) == equalsCount) {
-                depth++
-                cursor += equalsCount + 2
-                continue
-            }
-
-            val closeLength = longBracketCloseLength(cursor, equalsCount)
-            if (closeLength > 0) {
-                depth--
-                cursor += closeLength
-                if (depth == 0) {
-                    return hasLongBracketCloseAtOrAfter(cursor, equalsCount)
-                }
-                continue
-            }
-
-            cursor++
-        }
-
-        return false
-    }
-
-    private fun hasLongBracketCloseAtOrAfter(start: Int, equalsCount: Int): Boolean {
-        var cursor = start
-        while (cursor < bufferLen) {
-            if (longBracketCloseLength(cursor, equalsCount) > 0) {
-                return true
-            }
-            cursor++
-        }
-        return false
     }
 
     private fun longBracketEqualsCount(start: Int): Int {
@@ -712,13 +669,19 @@ class LuaLexer @JvmOverloads constructor(
         return count
     }
 
-    private fun scanDecimalExponentIfPresent(): Boolean {
+    /**
+     * Shared exponent scan for decimal (`e`/`E`) and hex (`p`/`P`) number lexemes.
+     * An absent exponent marker still yields a valid number; a present marker must
+     * be followed by at least one digit (after an optional sign) or the lexeme is
+     * malformed.
+     */
+    private fun scanExponentIfPresent(firstMarker: Char, secondMarker: Char): Boolean {
         if (offset + tokenLength >= bufferLen) {
             return true
         }
 
         val ch = charAt()
-        if (ch != 'e' && ch != 'E') {
+        if (ch != firstMarker && ch != secondMarker) {
             return true
         }
 
@@ -727,20 +690,9 @@ class LuaLexer @JvmOverloads constructor(
         return scanDecimalDigits() > 0
     }
 
-    private fun scanHexExponentIfPresent(): Boolean {
-        if (offset + tokenLength >= bufferLen) {
-            return true
-        }
+    private fun scanDecimalExponentIfPresent(): Boolean = scanExponentIfPresent('e', 'E')
 
-        val ch = charAt()
-        if (ch != 'p' && ch != 'P') {
-            return true
-        }
-
-        tokenLength++
-        scanExponentSign()
-        return scanDecimalDigits() > 0
-    }
+    private fun scanHexExponentIfPresent(): Boolean = scanExponentIfPresent('p', 'P')
 
     private fun scanExponentSign() {
         if (offset + tokenLength < bufferLen && (charAt() == '+' || charAt() == '-')) {
@@ -751,6 +703,34 @@ class LuaLexer @JvmOverloads constructor(
     fun pushBack(length: Int) {
         require(length <= tokenLength) { "pushBack length too large" }
         tokenLength -= length
+    }
+
+    /**
+     * Restore the lexer to a captured token-start state: the exact cursor tuple
+     * visible right after [nextToken] returned the token starting at [index].
+     *
+     * Field mapping (one assignment each, no logic):
+     * - [index] -> [index] and -> [offset]. The `offset == index` invariant holds
+     *   because both start at 0 and are only ever advanced together by
+     *   `+= tokenLength` in [nextTokenInternal]; every field a restore needs is
+     *   therefore captured by the [index]/[tokenLength]/[line]/[column] tuple
+     *   (the same tuple a `LexerState` snapshot stores).
+     * - [tokenLength] -> [tokenLength], [line] -> [tokenLine], [column] -> [tokenColumn].
+     *
+     * [tokenType] is intentionally not restored: it is write-only inside this class
+     * and the next [nextToken] call overwrites it.
+     *
+     * The next [nextToken] call re-counts newlines across the restored token span,
+     * moves `index`/`offset` past it, and scans the following token — identical to
+     * replaying from the original call. This is the primitive a deep-probe
+     * snapshot/restore uses instead of history-based back-stepping.
+     */
+    fun restoreTo(index: Int, tokenLength: Int, line: Int, column: Int) {
+        this.index = index
+        offset = index
+        this.tokenLength = tokenLength
+        tokenLine = line
+        tokenColumn = column
     }
 
     private fun scanNewline() {
@@ -900,12 +880,8 @@ class LuaLexer @JvmOverloads constructor(
 
         }
 
-        private fun isDigit(c: Char): Boolean {
-            return ((c in '0'..'9') || (c in 'A'..'F') || (c in 'a'..'f'))
-        }
-
         private fun isHexDigit(c: Char): Boolean {
-            return isDigit(c)
+            return ((c in '0'..'9') || (c in 'A'..'F') || (c in 'a'..'f'))
         }
 
         private fun isPrimeDigit(c: Char): Boolean {

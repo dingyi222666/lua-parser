@@ -76,14 +76,16 @@ class FunctionSignatureChecker(
         diagnostics: MutableList<Diagnostic>
     ) {
         val varargIndices = params.mapIndexedNotNull { index, parameter -> index.takeIf { parameter.name == "..." } }
-        if (varargIndices.size > 1) {
-            varargIndices.drop(1).forEach { index ->
-                diagnostics += Diagnostic(
-                    message = "Function declaration may only declare one vararg parameter.",
-                    range = params.getOrNull(index)?.range ?: functionRange,
-                    code = "checker.function.signature.multipleVararg"
-                )
-            }
+        // Mirror the resolved-signature policy: at most one vararg, always trailing. The AST
+        // path only reports the SECOND+ duplicate and non-trailing positions (the first
+        // vararg at a trailing spot is valid and stays silent), so the message filters below
+        // keep exactly the historical emission sets.
+        varargIndices.drop(1).forEach { index ->
+            diagnostics += Diagnostic(
+                message = "Function declaration may only declare one vararg parameter.",
+                range = params.getOrNull(index)?.range ?: functionRange,
+                code = "checker.function.signature.multipleVararg"
+            )
         }
 
         varargIndices.filter { it != params.lastIndex }.forEach { index ->

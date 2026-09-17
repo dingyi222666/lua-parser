@@ -33,6 +33,7 @@ import io.github.dingyi222666.luaparser.semantic.types.model.TypeParameterType
 import io.github.dingyi222666.luaparser.semantic.types.model.UnionType
 import io.github.dingyi222666.luaparser.semantic.types.model.UnknownType
 import io.github.dingyi222666.luaparser.semantic.types.model.VarargType
+import io.github.dingyi222666.luaparser.semantic.types.model.unwrapAliases
 
 object TypeRelations {
     fun isAssignable(target: Type, source: Type): Boolean {
@@ -96,7 +97,11 @@ object TypeRelations {
                 isAssignable(normalizedTarget.valueType, normalizedSource.valueType)
             is JavaOverloadType -> isCallableAssignable(normalizedTarget, normalizedSource)
             is JavaArrayType -> isJavaArrayAssignable(normalizedTarget, normalizedSource)
-            is CustomType -> normalizedSource is CustomType && normalizedTarget.name == normalizedSource.name
+            is CustomType -> when (normalizedSource) {
+                is CustomType -> normalizedTarget.name == normalizedSource.name
+                is ClassType -> normalizedTarget.name == normalizedSource.name
+                else -> false
+            }
             is AliasType, is UnionType, is IntersectionType -> false
             is TypeParameterType -> false
             UnknownType, ErrorType, NeverType -> false
@@ -190,6 +195,11 @@ object TypeRelations {
     }
 
     private fun isClassAssignable(target: ClassType, source: Type): Boolean {
+        // CustomType is a nominal placeholder (e.g. from doc comments) that denotes a class
+        // by name; accept it for a raw (non-generic) class target with the same name.
+        if (source is CustomType) {
+            return target.name == source.name && target.typeParameters.isEmpty()
+        }
         val sourceClass = source as? ClassType ?: return false
         val matched = isSameOrSubclass(target, sourceClass) ?: return false
         if (target.typeParameters.size != matched.typeParameters.size) {
@@ -523,37 +533,86 @@ object TypeRelations {
         return true
     }
 
-    private fun parameterListsCompatible(target: List<FunctionParameter>, source: List<FunctionParameter>): Boolean {
+    /**
+     * Strict contravariance for OVERLOAD DELETION: earlier overload `earlier` can be
+     * deleted in favor of `later` only when every later parameter accepts every value
+     * the earlier one would receive (strict contravariance, no vararg-drop or bivariant
+     * relaxation — those are assignment-policy relaxations, not deletion safety).
+     */
+    internal fun isAssignableForOverloadSubsumption(earlierParameterType: Type, laterParameterType: Type): Boolean {
+        return isAssignable(earlierParameterType, laterParameterType)
+    }
+
+    internal fun parameterListsCompatible(target: List<FunctionParameter>, source: List<FunctionParameter>): Boolean {
+        // Signature-vs-signature: the source must SERVE AS the target — it has to accept
+        // every call the target can make (arity containment) and each target argument must
+        // flow INTO the source parameter (contravariance). Extra source params/optionals
+        // are safe in Lua (callers simply pass fewer arguments).
         val requiredTarget = target.count { !it.optional && !it.vararg }
         val requiredSource = source.count { !it.optional && !it.vararg }
-        if (requiredTarget != requiredSource && target.none { it.vararg } && source.none { it.vararg }) {
+        if (requiredSource > requiredTarget) {
+            return false
+        }
+        val targetHasVararg = target.any { it.vararg }
+        val sourceHasVararg = source.any { it.vararg }
+        // A non-vararg source CAN serve a vararg target: Lua drops extra call arguments,
+        // so the index loop below merely requires every target slot past the source's
+        // length to be optional or vararg. Never pre-reject on the missing source vararg.
+        if (!targetHasVararg && !sourceHasVararg && source.size < target.size) {
             return false
         }
 
-        val maxParameters = maxOf(target.size, source.size)
-        for (index in 0 until maxParameters) {
-            val targetParameter = target.getOrNull(index) ?: target.lastOrNull { it.vararg } ?: return false
+        for (index in target.indices) {
+            val targetParameter = target[index]
             val sourceParameter = source.getOrNull(index)
                 ?: source.lastOrNull { it.vararg }
+                // The source has no slot for this target parameter (e.g. a trailing target
+                // vararg); Lua callers simply pass fewer arguments, so only optional or
+                // vararg target slots remain servable.
                 ?: return targetParameter.optional || targetParameter.vararg
-
-            if (!isAssignable(targetParameter.type, sourceParameter.type)) {
-                return false
+            // Contravariant: a handler whose parameter is NARROWER than the target's
+            // cannot serve it (fun(value: "x") cannot serve fun(value: string)).
+            if (!isAssignable(sourceParameter.type, targetParameter.type)) {
+                // Java object parameters are BIVARIANT: Android listeners receive a
+                // superview at runtime while Lua handlers annotate the concrete widget
+                // (a handler param `Button` serves an interface param `View`). Primitives
+                // and literals above keep strict contravariance.
+                if (!isJavaObjectParameterType(sourceParameter.type) ||
+                    !isJavaObjectParameterType(targetParameter.type) ||
+                    !isAssignable(targetParameter.type, sourceParameter.type)
+                ) {
+                    return false
+                }
             }
         }
 
         return true
     }
 
-    private fun isSameOrSubclass(target: ClassType, source: ClassType): ClassType? {
-        var current: ClassType? = source
-        while (current != null) {
-            if (current.name == target.name) {
-                return current
-            }
-            current = current.superClass
+    private fun isJavaObjectParameterType(type: Type): Boolean {
+        return when (TypeNormalizer.normalize(type)) {
+            is ClassType, is JavaInstanceType -> true
+            else -> false
         }
-        return null
+    }
+
+    private fun isSameOrSubclass(target: ClassType, source: ClassType): ClassType? {
+        // Name matching is authoritative. Binder declaration ids are PER-DOCUMENT
+        // counters, not workspace identities: gating on them rejects the same logical
+        // class across require boundaries and can falsely unify distinct classes whose
+        // binders happened to allocate equal ids. The field stays for future
+        // workspace-unique allocation; the audit-verified win here is the superType
+        // fallback below (parent materialization failures no longer break inheritance).
+        fun visit(current: ClassType?, visited: MutableSet<String>): ClassType? {
+            current ?: return null
+            if (!visited.add(current.name)) return null
+            if (current.name == target.name) return current
+            visit(current.superClass, visited)?.let { return it }
+            // Parent materialization failed (TypeResolver): continue via raw superType.
+            return visit(current.superType?.unwrapAliases() as? ClassType, visited)
+        }
+
+        return visit(source, mutableSetOf())
     }
 
     private fun isSameOrJavaSubclass(target: JavaClassType, source: JavaClassType): Boolean {
@@ -574,8 +633,17 @@ object TypeRelations {
     }
 
     private fun isNumericJavaWidening(target: JavaPrimitiveType.Kind, source: JavaPrimitiveType.Kind): Boolean {
+        // JLS 5.1.2: byte/short -> char requires an explicit cast; char widens to
+        // int/long/float/double like the rest of the linear chain.
+        if (target == JavaPrimitiveType.Kind.CHAR && source != JavaPrimitiveType.Kind.CHAR) {
+            return false
+        }
         val sourceRank = javaNumericRank(source) ?: return false
         val targetRank = javaNumericRank(target) ?: return false
+        if (source == JavaPrimitiveType.Kind.CHAR && targetRank < 3) {
+            // char -> byte/short requires a cast; char widens only to int and above.
+            return false
+        }
         return sourceRank <= targetRank
     }
 

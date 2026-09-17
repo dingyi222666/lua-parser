@@ -5,6 +5,7 @@ import io.github.dingyi222666.luaparser.parser.ast.node.Position
 import io.github.dingyi222666.luaparser.semantic.SemanticPipeline
 import io.github.dingyi222666.luaparser.semantic.api.Symbol
 import io.github.dingyi222666.luaparser.semantic.api.SymbolKind
+import io.github.dingyi222666.luaparser.semantic.api.DiagnosticSeverity
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -53,11 +54,18 @@ class SemanticModelDiagnosticsTest {
 
         val diagnostics = harness.model.getDiagnostics()
 
-        assertEquals(2, diagnostics.size)
-        assertEquals(listOf(
-            "checker.function.signature.requiredAfterOptional",
-            "checker.function.return.typeMismatch"
-        ), diagnostics.mapNotNull { it.code })
+        // render is a chunk-level local function with zero callers: the wave-Z
+        // dead-code pass adds an unused-local INFO alongside the two errors.
+        assertEquals(3, diagnostics.size)
+        assertEquals(
+            // Unused-local INFO sorts between the two errors (deterministic order).
+            listOf(
+                "checker.function.signature.requiredAfterOptional",
+                "checker.local.unused",
+                "checker.function.return.typeMismatch"
+            ),
+            diagnostics.mapNotNull { it.code }
+        )
     }
 
     @Test
@@ -73,7 +81,9 @@ class SemanticModelDiagnosticsTest {
             )
         )
 
-        assertEquals(result.model.getDiagnostics().size, result.summary.diagnosticCount)
-        assertEquals(result.model.getDiagnostics().size, result.summary.errorCount)
+        val diagnostics = result.model.getDiagnostics()
+        assertEquals(diagnostics.size, result.summary.diagnosticCount)
+        // The unused-local INFO (`render` has zero callers) is not an error.
+        assertEquals(diagnostics.count { it.severity == DiagnosticSeverity.ERROR }, result.summary.errorCount)
     }
 }

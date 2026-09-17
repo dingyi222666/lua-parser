@@ -37,6 +37,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
@@ -86,7 +87,11 @@ class LspRealProjectEditorLifecycleTddTest {
         assertNotNull(caps.foldingRangeProvider)
         assertNotNull(caps.selectionRangeProvider)
         assertNotNull(caps.renameProvider)
-        assertNotNull(caps.codeActionProvider)
+        // Adversarial audit: onTypeFormatting reformatted the whole buffer on every d/n
+        // keystroke and the codeAction collector was permanently empty — both capabilities
+        // are intentionally NOT advertised (fail-closed policy).
+        assertNull(caps.documentOnTypeFormattingProvider)
+        assertNull(caps.codeActionProvider)
         assertNotNull(caps.documentFormattingProvider)
     }
 
@@ -837,8 +842,10 @@ class LspRealProjectEditorLifecycleTddTest {
         val ranges = service.selectionRanges(
             SelectionRangeParams(TextDocumentIdentifier(uri), listOf(pos))
         )
-        assertEquals(1, ranges.size)
-        val first = ranges[0]
+        // One position yields at most one chain; unresolvable positions are dropped
+        // instead of being returned as null slots.
+        assertTrue(ranges.size <= 1, "expected at most one chain for one position; got ${ranges.size}")
+        val first = ranges.firstOrNull()
         if (first != null) {
             assertTrue(first.range.start.line >= 0)
         }

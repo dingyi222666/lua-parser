@@ -34,11 +34,10 @@ function table.concat(list, sep, i, j) end
 --- elements to `list[pos]`, `list[pos+1]`, `···`, `list[#list]`. The default
 --- value for `pos` is ``#list+1`, so that a call `table.insert(t,x)`` inserts
 --- `x` at the end of list `t`.
----@overload fun(list:table, value:any):number
+---@overload fun(list:table, value:any)
 ---@param list table
 ---@param pos number
 ---@param value any
----@return number
 function table.insert(list, pos, value) end
 
 ---
@@ -95,22 +94,21 @@ function table.remove(list, pos) end
 ---
 --- The sort algorithm is not stable: elements considered equal by the given
 --- order may have their relative positions changed by the sort.
----@overload fun(list:table):number
+---@overload fun(list:table)
 ---@generic V
 ---@param list table<number, V> | V[]
 ---@param comp fun(a:V, b:V):boolean
----@return number
 function table.sort(list, comp) end
 
 ---
 --- Returns the elements from the given list. This function is equivalent to
 --- return `list[i]`, `list[i+1]`, `···`, `list[j]`
 --- By default, i is 1 and j is #list.
----@overload fun(list:table):any
+---@overload fun(list:table):any...
 ---@param list table
 ---@param i number
 ---@param j number
----@return any
+---@return any...
 function table.unpack(list, i, j) end
 
 return table

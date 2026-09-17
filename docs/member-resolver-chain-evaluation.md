@@ -10,15 +10,15 @@ Primary implementation:
 - `src/commonMain/kotlin/io/github/dingyi222666/luaparser/semantic/checker/MemberResolver.kt`
 - `src/commonMain/kotlin/io/github/dingyi222666/luaparser/semantic/checker/ExpressionTypeEvaluator.kt`
 
-Corpus that locks the multi-level behavior (TASK-259, accepted):
+Corpus that locks the multi-level behavior:
 
-- `src/jvmTest/kotlin/semantic/checker/MemberResolverMultiLevelChainTddTest.kt`
+- `src/jvmTest/kotlin/semantic/checker/MemberResolverTest.kt` (re-pointed 2026-07: the original TASK-259 corpus `MemberResolverMultiLevelChainTddTest.kt` was deleted in the 2026-07 test cull, e786c77 — coverage culled, pending reimplementation)
 
 Related Android-Lua corpus after TASK-184 (accepted, review-owned serial
 verification still TASK-043):
 
 - `src/jvmTest/kotlin/semantic/androidlua/AndroidLuaLibraryStubsTddTest.kt`
-- ClassType inheritance hop companion: `src/jvmTest/kotlin/semantic/checker/MemberResolverClassTypeDotMethodTddTest.kt`
+- ClassType inheritance hop companion: `src/jvmTest/kotlin/semantic/checker/MemberResolverTest.kt` (previous companion `MemberResolverClassTypeDotMethodTddTest.kt` was deleted 2026-07, e786c77 — coverage culled, pending reimplementation)
 
 Related notes:
 
@@ -28,8 +28,7 @@ Related notes:
 - [android-lua-context-method-matrix.md](android-lua-context-method-matrix.md) — `activity` / `service` / `this` / `context` member catalog
 - [android-lua-library-models.md](android-lua-library-models.md) — loadlayout / loadbitmap / loadmenu and layout id surfaces
 
-Command-level confirmation of the multi-level and Android-Lua corpora remains
-deferred to the serialized verification task (TASK-043 or its successor). This
+Command-level confirmation of the serialized verification task (TASK-043) completed on 2026-07-13 with full `jvmTest` run 29228040252 green (see `tasks/TASK-043.md` / `docs/acceptance-traceability.md`). This
 page documents intended evaluation rules only; workers must not re-run Gradle
 here.
 

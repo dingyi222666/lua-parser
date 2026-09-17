@@ -13,14 +13,19 @@ on:
       - 'scripts/windows-run-gradle-capped.ps1'
       - 'scripts/windows-ensure-android-jar.ps1'
 
+# Machine-specific toolchain locations for the self-hosted Windows runner.
+# Kept at workflow level so the machine owner edits ONE place here instead of
+# hunting through job/step blocks. Same values the job-level env used before.
+env:
+  JAVA_HOME: C:\Users\dingyi\.jdks\temurin-17.0.11
+  ANDROID_HOME: C:\Users\dingyi\AppData\Local\Android\Sdk
+
 jobs:
   full-jvmtest:
     runs-on: [self-hosted, Windows, X64]
     # Full suite can exceed slice timeouts; keep headroom under CPU cap.
     timeout-minutes: 360
     env:
-      JAVA_HOME: C:\Users\dingyi\.jdks\temurin-17.0.11
-      ANDROID_HOME: C:\Users\dingyi\AppData\Local\Android\Sdk
       GRADLE_OPTS: -Dorg.gradle.workers.max=5
     steps:
       - name: Checkout
@@ -50,14 +55,18 @@ jobs:
           $env:Path = "$env:JAVA_HOME\bin;$env:Path"
           ./scripts/windows-run-full-jvmtest.ps1
 
-      - name: Stop Gradle and kill leftover Java
+      - name: Stop Gradle daemons
         if: always()
         shell: cmd
+        # Cleanup is deliberately scoped: `gradlew --stop` stops only the Gradle
+        # daemons registered under this Gradle user home/version. Do NOT add a
+        # blanket `taskkill /F /IM java.exe` here — on a shared self-hosted runner
+        # that kills every Java process machine-wide (IDEs, other runs' daemons,
+        # Kotlin compile daemons of concurrent jobs). Orphaned Kotlin compile
+        # daemons exit with the Gradle daemon or time out on their own.
         run: |
           set "PATH=%JAVA_HOME%\bin;%PATH%"
           call gradlew.bat --stop
-          taskkill /F /IM java.exe 2>nul
-          taskkill /F /IM javaw.exe 2>nul
           exit /b 0
 
       - name: Upload JUnit XML

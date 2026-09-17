@@ -62,8 +62,11 @@ class SemanticPipelineTest {
             """.trimIndent()
         ))
 
-        assertEquals(result.model.getDiagnostics().size, result.summary.diagnosticCount)
-        assertEquals(result.model.getDiagnostics().size, result.summary.errorCount)
+        val diagnostics = result.model.getDiagnostics()
+        assertEquals(diagnostics.size, result.summary.diagnosticCount)
+        // render is an uncalled chunk-level local function: 1 error + 1 unused INFO.
+        assertEquals(1, result.summary.errorCount)
+        assertEquals(1, result.summary.infoCount)
     }
 
     @Test

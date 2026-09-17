@@ -74,13 +74,6 @@ internal class SymbolTableBuilder {
         scopeStack.removeAt(scopeStack.lastIndex)
     }
 
-    fun addDeclaration(declaration: BinderDeclaration, scopeId: ScopeId? = currentScopeId) {
-        declarations += declaration
-        if (scopeId != null) {
-            scopes.getValue(scopeId).declarationIds += declaration.id
-        }
-    }
-
     fun addDeclarationWithSymbol(declaration: BinderDeclaration, scopeId: ScopeId? = currentScopeId): BinderDeclaration {
         val symbol = createSymbolFor(declaration)
         val declarationWithSymbol = declaration.copy(symbolId = symbol.id)

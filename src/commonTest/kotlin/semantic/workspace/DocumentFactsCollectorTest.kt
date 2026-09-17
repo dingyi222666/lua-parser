@@ -454,4 +454,94 @@ class DocumentFactsCollectorTest {
         val chunk = LuaParser().parse(source)
         return DocumentFactsCollector.collect(VirtualPath.of(path), chunk)
     }
+
+    @Test
+    fun require_alias_bound_to_bare_require_collects_require_fact() {
+        val facts = collectFacts(
+            path = "main.lua",
+            source = "local r = require\nlocal m = r(\"mods.util\")\nreturn m"
+        )
+        assertEquals(listOf("mods.util"), facts.requires.map { it.moduleName })
+    }
+
+    @Test
+    fun luajava_self_require_keeps_helper_facts() {
+        val facts = collectFacts(
+            path = "main.lua",
+            source = "local luajava = require \'luajava\'\n" +
+                "local String = luajava.bindClass(\"java.lang.String\")\nreturn String"
+        )
+        assertEquals(
+            listOf(DocumentFacts.JvmClassLoadKind.BIND_CLASS_CALL),
+            facts.jvmClassLoads.map { it.kind }
+        )
+    }
+
+    @Test
+    fun require_alias_shadowing_rebind_retires_the_alias() {
+        val facts = collectFacts(
+            path = "main.lua",
+            source = "local r = require\nlocal r = fake\nr(\"mods.util\")"
+        )
+        assertEquals(emptyList(), facts.requires.map { it.moduleName })
+    }
+
+
+    @Test
+    fun require_alias_retired_through_nested_block_rebind() {
+        val facts = collectFacts(
+            path = "main.lua",
+            source = "local r = require\ndo r = fake end\nr(\"mods.util\")"
+        )
+        assertEquals(emptyList(), facts.requires.map { it.moduleName })
+    }
+
+    @Test
+    fun local_require_rebind_stops_fabricating_bare_require_facts() {
+        // `local require = print` writes a false tombstone over the "require" name; bare
+        // require calls after it go through isRequireAliasCall (no hard-coded name check)
+        // and must not fabricate require facts.
+        val facts = collectFacts(
+            path = "main.lua",
+            source = "local require = print\nrequire(\"mods.util\")"
+        )
+        assertEquals(emptyList(), facts.requires.map { it.moduleName })
+        assertEquals(emptyList(), facts.dynamicRequires.map { it.kind })
+    }
+
+    @Test
+    fun bare_require_before_local_rebind_keeps_its_fact() {
+        // The file-scope seed survives bare require calls (calls never write tombstones);
+        // only the local re-bind retires it, and only for calls after the re-bind.
+        val facts = collectFacts(
+            path = "main.lua",
+            source = "require(\"mods.alpha\")\nlocal require = print\nrequire(\"mods.beta\")"
+        )
+        assertEquals(listOf("mods.alpha"), facts.requires.map { it.moduleName })
+    }
+
+    @Test
+    fun require_alias_reassigned_to_module_result_retires_the_alias() {
+        // `local r = require` then `r = require "r"`: the self-require identity exemption
+        // keeps the alias-kind skip, but the tombstone must still be retired — the name
+        // now holds a module value, so later calls through it are not require facts.
+        // The assignment itself stays a real require of module "r".
+        val facts = collectFacts(
+            path = "main.lua",
+            source = "local r = require\nr = require \"r\"\nr(\"mods.util\")"
+        )
+        assertEquals(listOf("r"), facts.requires.map { it.moduleName })
+    }
+
+    @Test
+    fun require_alias_module_rebind_inside_nested_block_retires_the_outer_alias() {
+        // Same retirement, boundary-targeted: the do-block re-bind of a name whose alias
+        // entry lives in the enclosing scope must retire THAT scope's tombstone.
+        val facts = collectFacts(
+            path = "main.lua",
+            source = "local r = require\ndo r = require \"r\" end\nr(\"mods.util\")"
+        )
+        assertEquals(listOf("r"), facts.requires.map { it.moduleName })
+    }
+
 }

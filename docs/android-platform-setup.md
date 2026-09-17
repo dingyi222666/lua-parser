@@ -1,6 +1,6 @@
 # Android Platform Classpath Setup
 
-Docs refresh: **TASK-508** (WORKER-WAVE36F-20260712), 2026-07-11/12 — post-**TASK-184** / pre-**TASK-043** documentation accuracy on this macOS host. Docs-only; no product code; **no Gradle/tests/compile**.
+Docs refresh: **TASK-508** (WORKER-WAVE36F-20260712), 2026-07-11/12 — post-**TASK-184** / pre-**TASK-043** documentation accuracy on this macOS host. Docs-only; no product code; **no Gradle/tests/compile**. *(Status update 2026-07-13: TASK-043 serialized verification is done — full `jvmTest` run 29228040252 green; see `tasks/TASK-043.md` and `docs/acceptance-traceability.md`. The pre-043 "still blocked" framing below is a dated snapshot.)*
 
 **Honesty bound (post-TASK-184, pre-TASK-043):** this page records expected local Android SDK platform jar paths, dual-path host policy (SDK + optional Downloads), JVM interop/LSP metadata keys, Corretto 17 toolchain notes, and skip behavior when `android.jar` is absent. TASK-184 library-stub / overlay surfaces are accepted in task metadata. This document does **not** claim final green acceptance, does **not** unlock **TASK-043** (serialized verification, still `blocked`), and does **not** unlock **TASK-037** (final acceptance, still `blocked`). Host path status and operator notes here are analysis-setup inventory only — **inventory is not final until TASK-043**.
 

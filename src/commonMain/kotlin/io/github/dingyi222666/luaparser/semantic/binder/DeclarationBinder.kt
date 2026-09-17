@@ -1,5 +1,6 @@
 package io.github.dingyi222666.luaparser.semantic.binder
 
+import io.github.dingyi222666.luaparser.parser.ast.node.Position
 import io.github.dingyi222666.luaparser.parser.ast.node.AssignmentStatement
 import io.github.dingyi222666.luaparser.parser.ast.node.AttributeIdentifier
 import io.github.dingyi222666.luaparser.parser.ast.node.BaseASTNode
@@ -41,6 +42,7 @@ import io.github.dingyi222666.luaparser.semantic.comments.OverloadTagSyntax
 import io.github.dingyi222666.luaparser.semantic.types.model.PrimitiveType
 import io.github.dingyi222666.luaparser.semantic.types.syntax.TypeSyntax
 import io.github.dingyi222666.luaparser.semantic.types.syntax.TypeSyntaxParser
+import io.github.dingyi222666.luaparser.semantic.types.syntax.splitTopLevelTypeText
 
 internal class DeclarationBinder(
     private val builder: SymbolTableBuilder,
@@ -57,16 +59,22 @@ internal class DeclarationBinder(
         super<ASTVisitor>.visitStatementNode(node, value)
     }
 
+    /**
+     * Local names become visible only after the whole LocalStatement ends
+     * (`visibleFrom` = statement end). In Lua a local's scope begins at the first
+     * statement after its declaration, so the initializer still sees the outer
+     * binding: `do local x = x + 1 end` must resolve the RHS `x` to the outer `x`,
+     * and `local x = 1` must not offer `x` for a completion on its own initializer.
+     */
     override fun visitLocalStatement(node: LocalStatement, value: Unit) {
         val attachment = comments.getAttachment(node)
         val documentation = attachment?.toDeclarationDocumentation()
-        val declaredTypeSyntax = if (node.init.size == 1) {
-            parseTypeSyntax(attachment?.inlineTypeText)
-        } else {
-            null
-        }
+        val declaredTypeSyntaxes = positionalDeclaredTypeSyntaxes(
+            declaredNameCount = node.init.size,
+            inlineTypeText = attachment?.inlineTypeText
+        )
 
-        node.init.forEach { identifier ->
+        node.init.forEachIndexed { index, identifier ->
             builder.addDeclarationWithSymbol(
                 localDeclaration(
                     id = builder.nextDeclarationId(),
@@ -74,7 +82,54 @@ internal class DeclarationBinder(
                     owner = DeclarationOwner.Lexical(currentLexicalOwnerNode()),
                     anchorNode = identifier,
                     documentation = documentation,
-                    declaredTypeSyntax = declaredTypeSyntax
+                    declaredTypeSyntax = declaredTypeSyntaxes.getOrNull(index)
+                ).copy(
+                    // Anchor at the end of the initializer expression: the new local is
+                    // offered from there onward, while the initializer itself (`local x = 1`
+                    // caret on `1`, or the RHS `outer` in `local inner = outer`) still
+                    // resolves to the outer binding per Lua scoping.
+                    //
+                    // `end.column` is EXCLUSIVE (one past the last initializer character —
+                    // the parser commits `firstCharColumn + tokenLength`), so the legacy
+                    // end-of-statement caret sits at `end.column - 1` and must still see
+                    // the new local (LegacySemanticAnalyzerCompatibilityTest probes exactly
+                    // that position for `local inner = outer`).
+                    //
+                    // Sole exception — a single-character identifier initializer that reads
+                    // a name this same statement declares (`local i = i`, `local a, b = a, b`):
+                    // its read position (range.start) coincides with that caret, so
+                    // anchoring there would self-bind the read to the not-yet-initialized
+                    // local (the outer is never marked used and falsely reports
+                    // "Unused local"). Anchor strictly after it instead.
+                    visibleFrom = node.variables.lastOrNull()?.range?.end
+                        ?.let { end ->
+                            val declaredNames = node.init.map { it.name }
+                            // A same-name read ending at the initializer's last
+                            // character self-binds at the legacy anchor — cover both the
+                            // bare identifier and prefix-unary forms (local i = -i).
+                            val sameNameReadEndsAtEnd = sequence {
+                                var current: io.github.dingyi222666.luaparser.parser.ast.node.ExpressionNode? =
+                                    node.variables.lastOrNull()
+                                while (current is io.github.dingyi222666.luaparser.parser.ast.node.UnaryExpression) {
+                                    current = current.arg
+                                }
+                                if (current is Identifier && current.name in declaredNames) {
+                                    yield(current)
+                                }
+                            }.any { read ->
+                                // The read's exclusive end IS the initializer's exclusive
+                                // end: the whole initializer is the same-name read itself
+                                // (`local x = x`), so the caret on its last character sits
+                                // on the read.
+                                read.range.end.column == end.column && read.range.end.line == end.line
+                            }
+                            val selfReadAtCaret = sameNameReadEndsAtEnd
+                            Position(
+                                end.line,
+                                if (selfReadAtCaret) end.column else (end.column - 1).coerceAtLeast(1)
+                            )
+                        }
+                        ?: node.range.end
                 )
             )
         }
@@ -159,6 +214,28 @@ internal class DeclarationBinder(
         }
     }
 
+    /**
+     * Lambda expressions introduce their own FUNCTION scope so parameters resolve inside
+     * the body expression, mirroring how function declarations bind parameters.
+     */
+    override fun visitLambdaDeclaration(node: LambdaDeclaration, value: Unit) {
+        val lambdaScopeId = builder.createScope(
+            kind = ScopeKind.FUNCTION,
+            range = node.expression.range,
+            ownerNode = node
+        )
+
+        builder.pushScope(lambdaScopeId)
+        try {
+            node.params.forEach { parameter ->
+                bindParameter(parameter, DeclarationOwner.Lexical(node))
+            }
+            visitExpressionNode(node.expression, value)
+        } finally {
+            builder.popScope()
+        }
+    }
+
     override fun visitDoStatement(node: DoStatement, value: Unit) {
         bindBodyScope(node.body, ScopeKind.BLOCK, value)
     }
@@ -207,7 +284,11 @@ internal class DeclarationBinder(
         visitExpressionNode(node.end, value)
         node.step?.let { visitExpressionNode(it, value) }
 
-        val scopeId = builder.createScope(ScopeKind.LOOP, node.range, node.body)
+        // Lua: the control variable is scoped to the body only, so the header expressions
+        // (`for i = 1, #i do`) still evaluate in the ENCLOSING scope. Scope the LOOP scope
+        // to the body; the control-var declaration keeps its header anchor (its own range
+        // covers the declared name for hover/rename via the declaration-site queries).
+        val scopeId = builder.createScope(ScopeKind.LOOP, node.body.range, node.body)
         builder.pushScope(scopeId)
         try {
             // Numeric for control var is always number in Lua (for i = start, limit [, step]).
@@ -230,7 +311,10 @@ internal class DeclarationBinder(
     override fun visitForGenericStatement(node: ForGenericStatement, value: Unit) {
         node.iterators.forEach { visitExpressionNode(it, value) }
 
-        val scopeId = builder.createScope(ScopeKind.LOOP, node.range, node.body)
+        // Lua: iterator expressions (`for k, v in pairs(k) do`) evaluate in the ENCLOSING
+        // scope and the loop variables are scoped to the body only. Scope the LOOP scope
+        // to the body; the loop-variable declarations keep their header anchors.
+        val scopeId = builder.createScope(ScopeKind.LOOP, node.body.range, node.body)
         builder.pushScope(scopeId)
         try {
             node.variables.forEach { identifier ->
@@ -257,7 +341,16 @@ internal class DeclarationBinder(
 
     override fun visitSwitchStatement(node: SwitchStatement, value: Unit) {
         visitExpressionNode(node.condition, value)
-        node.causes.forEach { cause -> visitStatementNode(cause, value) }
+        // Dispatch causes DIRECTLY: the base visitStatementNode when-table has no
+        // CaseCause/DefaultCause branches, so routing causes through it silently bound
+        // nothing inside case bodies (no scopes, no callback params, no for-in control
+        // variables — every `v` inside a switch body resolved as an unresolved global).
+        node.causes.forEach { cause ->
+            when (cause) {
+                is DefaultCause -> visitDefaultCause(cause, value)
+                is CaseCause -> visitCaseCause(cause, value)
+            }
+        }
     }
 
     override fun visitCommentStatement(commentStatement: CommentStatement, value: Unit) {
@@ -329,15 +422,39 @@ internal class DeclarationBinder(
     }
 
     /**
-     * Non-local `function name()` is itself a GLOBAL introducer. When a prior bare free-name
-     * write already invented the GLOBAL symbol, attach this function-site decl to that
-     * symbol so identity stays unified (later bare writes remain non-declarative).
+     * Non-local `function name()` is itself a GLOBAL introducer rooted at the chunk scope
+     * (even when written inside a nested do/if block). When a prior bare free-name write
+     * already invented the GLOBAL symbol, attach this function-site decl to that symbol so
+     * identity stays unified (later bare writes remain non-declarative).
+     *
+     * A visible LOCAL/PARAMETER owns the name instead: `function x() end` re-binds that
+     * local (Lua name resolution) by recording a FUNCTION-site declaration on the existing
+     * symbol — it must not mint a phantom GLOBAL peer.
      */
     private fun bindNonLocalFunctionName(
         identifier: Identifier,
         owner: DeclarationOwner,
         documentation: DeclarationDocumentation?
     ): BinderDeclaration {
+        val existing = builder.findVisibleValueDeclaration(identifier.name)
+        val existingSymbolId = existing?.symbolId
+
+        if (existingSymbolId != null &&
+            (existing.kind == DeclarationKind.LOCAL || existing.kind == DeclarationKind.PARAMETER)
+        ) {
+            return builder.addDeclarationToExistingSymbol(
+                functionDeclaration(
+                    id = builder.nextDeclarationId(),
+                    name = identifier.name,
+                    owner = owner,
+                    anchorNode = identifier,
+                    documentation = documentation
+                ),
+                existingSymbolId,
+                scopeId = builder.rootScopeId
+            )
+        }
+
         val declaration = globalDeclaration(
             id = builder.nextDeclarationId(),
             name = identifier.name,
@@ -345,17 +462,17 @@ internal class DeclarationBinder(
             anchorNode = identifier,
             documentation = documentation
         )
-        val existing = builder.findVisibleValueDeclaration(identifier.name)
-        val existingSymbolId = existing?.symbolId
         return if (
             existingSymbolId != null &&
-            existing.kind.namespace == DeclarationNamespace.VALUE &&
-            existing.kind != DeclarationKind.LOCAL &&
-            existing.kind != DeclarationKind.PARAMETER
+            existing.kind.namespace == DeclarationNamespace.VALUE
         ) {
-            builder.addDeclarationToExistingSymbol(declaration, existingSymbolId)
+            builder.addDeclarationToExistingSymbol(
+                declaration,
+                existingSymbolId,
+                scopeId = builder.rootScopeId
+            )
         } else {
-            builder.addDeclarationWithSymbol(declaration)
+            builder.addDeclarationWithSymbol(declaration, scopeId = builder.rootScopeId)
         }
     }
 
@@ -368,16 +485,25 @@ internal class DeclarationBinder(
             ?: DeclarationOwner.Lexical(node.body ?: node)
 
         node.params.forEach { parameter ->
-            builder.addDeclarationWithSymbol(
-                parameterDeclaration(
-                    id = builder.nextDeclarationId(),
-                    name = parameter.name,
-                    owner = owner,
-                    anchorNode = parameter,
-                    documentation = documentation
-                )
-            )
+            bindParameter(parameter, owner, documentation)
         }
+    }
+
+    /** Shared parameter binding for function declarations and lambda expressions. */
+    private fun bindParameter(
+        parameter: Identifier,
+        owner: DeclarationOwner,
+        documentation: DeclarationDocumentation? = null
+    ) {
+        builder.addDeclarationWithSymbol(
+            parameterDeclaration(
+                id = builder.nextDeclarationId(),
+                name = parameter.name,
+                owner = owner,
+                anchorNode = parameter,
+                documentation = documentation
+            )
+        )
     }
 
     private fun bindFunctionTypeParameters(
@@ -646,6 +772,34 @@ internal class DeclarationBinder(
             return null
         }
         return TypeSyntaxParser.parseOrNull(normalized)
+    }
+
+    /**
+     * `---@type` on a multi-name local is positional: `---@type boolean, string` above
+     * `local ok, err = pcall(f)` types `ok` boolean and `err` string. Commas nested inside
+     * generics, tables, parens, or strings do not split (depth-aware scan). A single-name
+     * local keeps the whole text as before; a multi-name local whose text has no top-level
+     * comma stays unresolved (single type, ambiguous owner).
+     */
+    private fun positionalDeclaredTypeSyntaxes(
+        declaredNameCount: Int,
+        inlineTypeText: String?
+    ): List<TypeSyntax?> {
+        val normalized = inlineTypeText?.trim().orEmpty()
+        if (normalized.isEmpty()) {
+            return emptyList()
+        }
+
+        if (declaredNameCount == 1) {
+            return listOf(parseTypeSyntax(normalized))
+        }
+
+        val positionalTexts = splitTopLevelTypeText(normalized, ',')
+        if (positionalTexts.size <= 1) {
+            return List(declaredNameCount) { null }
+        }
+
+        return List(declaredNameCount) { index -> parseTypeSyntax(positionalTexts.getOrNull(index)) }
     }
 
     private fun documentationForTags(

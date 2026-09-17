@@ -82,6 +82,12 @@ object DocumentFactsCollector {
         private val moduleNameCandidates = linkedMapOf<ModuleNameCandidateKey, DocumentFacts.ModuleNameCandidate>()
         private val topLevelSegmentTriggers = mutableListOf<DocumentFacts.LegacyModuleCallFact>()
         private val aliasScopes = mutableListOf(mutableMapOf<String, DocumentFacts.JvmClassLoadKind?>())
+        // Names bound to the BARE global `require` (local r = require): calls through them
+        // are require facts, not unknown callees (adversarial facts audit). Per-scope
+        // name -> Boolean tombstones (false = the name was re-bound to something else),
+        // index-aligned with [aliasScopes]; lookup walks innermost->outermost and the
+        // FIRST scope mentioning the name decides (shadowing retires outward visibility).
+        private val requireAliasScopes = mutableListOf(mutableMapOf<String, Boolean>().apply { this["require"] = true })
         private val functionAliasBoundaries = mutableListOf<Int>()
         private val luaJavaHelperKinds = mapOf(
             "bindClass" to DocumentFacts.JvmClassLoadKind.BIND_CLASS_CALL,
@@ -332,13 +338,18 @@ object DocumentFactsCollector {
         }
 
         private fun collectCallFacts(call: CallExpression, isTopLevel: Boolean) {
-            if (isLuaJavaHelperColonCall(call)) {
+            if (isLuaJavaHelperColonMember(effectiveCallBase(call))) {
                 return
             }
             val calleeName = calleeName(effectiveCallBase(call)) ?: return
-            when (calleeName) {
-                "require" -> collectRequireFact(call)
-                "module" -> extractLegacyModuleCall(call, isTopLevel)?.let { fact ->
+            when {
+                // Bare `require` resolves through the alias tombstones too: the file-scope
+                // seed makes it true unless a local re-bind wrote a false tombstone over
+                // the name (`local require = print; require("x")` must NOT fabricate a
+                // require fact). A hard-coded name check would short-circuit that lookup.
+                isRequireAliasCall(calleeName) ->
+                    collectRequireFact(call)
+                calleeName == "module" -> extractLegacyModuleCall(call, isTopLevel)?.let { fact ->
                     legacyModuleCalls += fact
                     addModuleNameCandidate(
                         moduleName = fact.moduleName,
@@ -353,13 +364,6 @@ object DocumentFactsCollector {
                     collectJvmClassLoadFact(call, calleeName, kind)
                 }
             }
-        }
-
-        private fun isLuaJavaHelperColonCall(call: CallExpression): Boolean {
-            val member = effectiveCallBase(call) as? MemberExpression ?: return false
-            return member.indexer == ":" &&
-                member.identifier.name in luaJavaHelperKinds &&
-                identifierName(member.base) == "luajava"
         }
 
         private fun collectRequireFact(call: CallExpression) {
@@ -395,6 +399,23 @@ object DocumentFactsCollector {
                 if (isIdentityAliasRebind(identifier.name, value)) {
                     return@forEachIndexed
                 }
+                // `local luajava = require "luajava"` re-binds the module global from its
+                // own loader — identity-equivalent to `local luajava = luajava`: a null-kind
+                // shadow here would blank every luajava.* helper fact (adversarial audit).
+                if (value != null && extractRequireString(value) == identifier.name) {
+                    // The name now holds a module value, not the bare loader: retire the
+                    // require-alias tombstone BEFORE the alias-kind skip so a prior true
+                    // (`local r = require` then `local r = require "r"`) does not leak
+                    // through the re-bind. The null-kind shadow skip itself stays.
+                    requireAliasScopes.last()[identifier.name] = false
+                    return@forEachIndexed
+                }
+                // `local r = require` binds the bare global loader: calls through r are
+                // require facts, not unknown callees. A rebind whose RHS still READS
+                // bare require (local require = require or print — polyfill idiom)
+                // keeps the seed alive; anything else retires it.
+                requireAliasScopes.last()[identifier.name] =
+                    value is Identifier && value.name == "require" || readsBareRequire(value)
                 declareLocalAlias(identifier.name, value?.let(::jvmClassLoadKindForAliasExpression))
             }
         }
@@ -407,8 +428,39 @@ object DocumentFactsCollector {
                 if (isIdentityAliasRebind(identifier.name, value)) {
                     return@forEachIndexed
                 }
+                // Same self-require identity exemption as collectLocalAliases.
+                if (value != null && extractRequireString(value) == identifier.name) {
+                    // Retire the tombstone where the alias entry lives (boundary targeting,
+                    // mirroring the writer below) BEFORE the alias-kind skip: `r = require "r"`
+                    // replaces the bare loader with a module value, so later calls through
+                    // the name are no longer require facts.
+                    requireAliasScopeForWrite(identifier.name)[identifier.name] = false
+                    return@forEachIndexed
+                }
+                // Mirror assignAlias's boundary targeting: a bare rebind inside a nested
+                // block rewrites the OUTER scope's registration, so the tombstone must be
+                // written where the alias entry lives (adversarial audit wave X).
+                requireAliasScopeForWrite(identifier.name)[identifier.name] =
+                    value is Identifier && value.name == "require" || readsBareRequire(value)
                 assignAlias(identifier.name, value?.let(::jvmClassLoadKindForAliasExpression))
             }
+        }
+
+        /**
+         * True when [value] still READS the bare global `require` somewhere (binary
+         * expressions like `require or print`, parenthesized forms) — the rebind keeps
+         * the real loader alive, so the require-alias seed must not retire.
+         */
+        private fun readsBareRequire(value: ExpressionNode?): Boolean {
+            val current = value ?: return false
+            when (current) {
+                is Identifier -> return current.name == "require"
+                is io.github.dingyi222666.luaparser.parser.ast.node.UnaryExpression ->
+                    return readsBareRequire(current.arg)
+                is io.github.dingyi222666.luaparser.parser.ast.node.BinaryExpression ->
+                    return readsBareRequire(current.left) || readsBareRequire(current.right)
+            }
+            return false
         }
 
         /**
@@ -422,6 +474,14 @@ object DocumentFactsCollector {
 
         private fun collectFunctionAliasShadow(function: FunctionDeclaration) {
             val identifier = function.identifier as? Identifier ?: return
+            // Non-local `function r() end` re-binds through assignAlias's boundary
+            // targeting — the tombstone must land on the same scope, not last() (the
+            // do-block tombstone would pop while the null-kind shadow persists).
+            if (function.isLocal) {
+                requireAliasScopes.last()[identifier.name] = false
+            } else {
+                requireAliasScopeForWrite(identifier.name)[identifier.name] = false
+            }
             if (function.isLocal) {
                 declareLocalAlias(identifier.name, null)
             } else {
@@ -431,6 +491,12 @@ object DocumentFactsCollector {
 
         private fun declareLocalAlias(aliasName: String, kind: DocumentFacts.JvmClassLoadKind?) {
             aliasScopes.last()[aliasName] = kind
+            // Params, loop vars, and every other local binding tombstone the require
+            // alias unless THIS scope already bound it to the bare global loader
+            // (the bare-require true writers run immediately before this call).
+            if (requireAliasScopes.last()[aliasName] != true) {
+                requireAliasScopes.last()[aliasName] = false
+            }
         }
 
         private fun assignAlias(aliasName: String, kind: DocumentFacts.JvmClassLoadKind?) {
@@ -447,6 +513,7 @@ object DocumentFactsCollector {
             block: () -> T
         ): T {
             aliasScopes += mutableMapOf()
+            requireAliasScopes.add(mutableMapOf())
             if (isFunctionBoundary) {
                 functionAliasBoundaries += aliasScopes.lastIndex
             }
@@ -457,6 +524,7 @@ object DocumentFactsCollector {
                     functionAliasBoundaries.removeAt(functionAliasBoundaries.lastIndex)
                 }
                 aliasScopes.removeAt(aliasScopes.lastIndex)
+                requireAliasScopes.removeAt(requireAliasScopes.lastIndex)
             }
         }
 
@@ -499,6 +567,28 @@ object DocumentFactsCollector {
 
         private fun isAliasDeclared(aliasName: String): Boolean {
             return aliasScopes.asReversed().any { aliasName in it }
+        }
+
+        /**
+         * True when [calleeName] is bound to the bare global `require` in the nearest
+         * scope that mentions it. Tombstoned rebinds (false) retire outward visibility,
+         * mirroring [jvmClassLoadKindForCallee]'s asReversed walk.
+         */
+        private fun requireAliasScopeForWrite(aliasName: String): MutableMap<String, Boolean> {
+            val boundaryIndex = functionAliasBoundaries.lastOrNull() ?: 0
+            return (requireAliasScopes.lastIndex downTo boundaryIndex)
+                .firstOrNull { aliasName in requireAliasScopes[it] }
+                ?.let { requireAliasScopes[it] }
+                ?: requireAliasScopes[boundaryIndex]
+        }
+
+        private fun isRequireAliasCall(calleeName: String): Boolean {
+            for (scope in requireAliasScopes.asReversed()) {
+                if (calleeName in scope) {
+                    return scope.getValue(calleeName)
+                }
+            }
+            return false
         }
 
         private fun collectJvmClassLoadFact(
@@ -725,12 +815,17 @@ object DocumentFactsCollector {
     }
 
     private fun extractImportTargets(call: CallExpression): List<String> {
-        return when (val firstArgument = callArguments(call).firstOrNull()) {
-            is ArrayConstructorExpression -> firstArgument.values.flatMap(::extractStringTargets)
-            is TableConstructorExpression -> firstArgument.fields
-                .filter(::isImplicitTableSequenceField)
-                .flatMap { extractStringTargets(it.value) }
-            else -> extractStringTargets(firstArgument)
+        // AndroLua import accepts multiple targets per call (`import("a.*", "b.*")`, chained
+        // compact-call forms, tables, arrays). Every argument — not just the first — feeds the
+        // same per-argument parse path so all string-literal targets activate.
+        return callArguments(call).flatMap { argument ->
+            when (argument) {
+                is ArrayConstructorExpression -> argument.values.flatMap(::extractStringTargets)
+                is TableConstructorExpression -> argument.fields
+                    .filter(::isImplicitTableSequenceField)
+                    .flatMap { extractStringTargets(it.value) }
+                else -> extractStringTargets(argument)
+            }
         }
     }
 

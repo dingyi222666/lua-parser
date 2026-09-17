@@ -39,6 +39,9 @@ class SemanticModelBuilder {
             completionProvider = lazy {
                 CompletionProvider(nodePositionIndex.value, referenceQueries, adapters)
             },
+            luaLayoutCompletionProvider = lazy {
+                LuaLayoutCompletionProvider(nodePositionIndex.value, evaluator)
+            },
             signatureHelpProvider = lazy {
                 SignatureHelpProvider(binder, nodePositionIndex.value, evaluator)
             },

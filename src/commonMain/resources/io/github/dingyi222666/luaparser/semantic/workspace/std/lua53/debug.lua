@@ -29,9 +29,9 @@ function debug.debug() end
 --- Returns the current hook settings of the thread, as three values: the
 --- current hook function, the current hook mask, and the current hook count
 --- (as set by the `debug.sethook` function).
----@overload fun():thread
+---@overload fun():function, string, number
 ---@param thread thread
----@return thread
+---@return function, string, number
 function debug.gethook(thread) end
 
 ---@class DebugInfo
@@ -40,6 +40,7 @@ function debug.gethook(thread) end
 ---@field currentline number
 ---@field func function
 ---@field isvararg boolean
+---@field name string
 ---@field namewhat string
 ---@field source string
 ---@field nups number
@@ -94,11 +95,11 @@ function debug.getinfo(thread, f, what) end
 ---
 --- The parameter `f` may also be a function. In that case, `getlocal` returns
 --- only the name of function parameters.
----@overload fun(f:table, var:string):table
+---@overload fun(f:number|function, var:number):string|nil, any
 ---@param thread thread
----@param f table
----@param var string
----@return table
+---@param f number|function
+---@param var number
+---@return string|nil, any
 function debug.getlocal(thread, f, var) end
 
 ---
@@ -120,9 +121,9 @@ function debug.getregistry() end
 ---
 --- Variable names starting with '(' (open parenthesis) represent variables with
 --- no known names (variables from chunks saved without debug information).
----@param f number
+---@param f function
 ---@param up number
----@return table
+---@return string|nil, any
 function debug.getupvalue(f, up) end
 
 ---
@@ -130,7 +131,7 @@ function debug.getupvalue(f, up) end
 --- **false** if the userdata does not have that value.
 ---@param u userdata
 ---@param n number
----@return boolean
+---@return any
 function debug.getuservalue(u, n) end
 
 ---

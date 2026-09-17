@@ -125,7 +125,7 @@ math.mininteger = nil
 --- Returns the integral part of `x` and the fractional part of `x`. Its second
 --- result is always a float.
 ---@param x number
----@return number
+---@return number, number
 function math.modf(x) end
 
 ---
@@ -179,14 +179,14 @@ function math.tan(x) return 0 end
 --- If the value `x` is convertible to an integer, returns that integer.
 --- Otherwise, returns `nil`.
 ---@param x number
----@return number
+---@return number|nil
 function math.tointeger(x) end
 
 ---
 --- Returns "`integer`" if `x` is an integer, "`float`" if it is a float, or
 --- **nil** if `x` is not a number.
 ---@param x number
----@return number
+---@return '"integer"'|'"float"'|nil
 function math.type(x) end
 
 ---

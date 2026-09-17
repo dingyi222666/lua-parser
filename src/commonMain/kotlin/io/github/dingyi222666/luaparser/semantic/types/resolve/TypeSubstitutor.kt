@@ -85,7 +85,7 @@ class TypeSubstitutor {
 
             is OverloadedFunctionType -> OverloadedFunctionType(
                 callSignatures = type.callSignatures.map {
-                    substituteRecursive(it, mapping, maskOwnTypeParameters = true) as FunctionType
+                    substituteRecursive(it, mapping, maskOwnTypeParameters = maskOwnTypeParameters) as FunctionType
                 }
             )
 
@@ -132,7 +132,8 @@ class TypeSubstitutor {
                         )
                     },
                     alias = type.alias?.let { substituteRecursive(it, scopedMapping, maskOwnTypeParameters = true) as AliasType },
-                    javaClassName = type.javaClassName
+                    javaClassName = type.javaClassName,
+                    declarationId = type.declarationId
                 )
             }
 
@@ -266,8 +267,50 @@ class TypeSubstitutor {
             parameter.name to argument
         }
         return when (declaredType) {
-            is AliasType -> substitute(declaredType.target, mapping)
-            else -> substitute(declaredType, mapping)
+            is AliasType -> dropAppliedTypeParameters(substitute(declaredType.target, mapping), mapping)
+            else -> dropAppliedTypeParameters(substitute(declaredType, mapping), mapping)
+        }
+    }
+
+    /**
+     * Applying concrete arguments replaces the applied target's own type parameters, so any
+     * type-parameter declarations still riding the substituted surface under those names are
+     * stale phantoms: `Box<number>` materialized `class Box<T>` with `value: number` but kept
+     * the `class Box<T>` marker (hover rendered the phantom `<T>`; an applied
+     * `Mapper<number>` alias rendered `fun<T>(value: number): number`). Drop the mapped
+     * parameters — the concrete arguments already carry the type information. Parameters
+     * whose names were NOT mapped are kept: they are genuinely unbound.
+     */
+    private fun dropAppliedTypeParameters(type: Type, mapping: Map<String, Type>): Type {
+        if (mapping.isEmpty()) {
+            return type
+        }
+        return when (type) {
+            is ClassType -> {
+                val typeParameters = type.typeParameters.filterNot { parameter -> parameter.name in mapping }
+                if (typeParameters.size == type.typeParameters.size) {
+                    type
+                } else {
+                    type.copy(typeParameters = typeParameters)
+                }
+            }
+            is FunctionType -> {
+                val typeParameters = type.typeParameters.filterNot { parameter -> parameter.name in mapping }
+                if (typeParameters.size == type.typeParameters.size) {
+                    type
+                } else {
+                    // FunctionType.copy keeps the stale fun<T>(...) name, so rebuild to refresh it.
+                    FunctionType(
+                        parameters = type.parameters,
+                        returnType = type.returnType,
+                        typeParameters = typeParameters
+                    )
+                }
+            }
+            is OverloadedFunctionType -> OverloadedFunctionType(
+                callSignatures = type.callSignatures.map { dropAppliedTypeParameters(it, mapping) as FunctionType }
+            )
+            else -> type
         }
     }
 

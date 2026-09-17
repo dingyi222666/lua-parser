@@ -143,7 +143,9 @@ object BuiltinOverlayLoader {
 
     private fun documentedModuleSource(moduleName: String, resourceText: String): String {
         val source = resourceText.trim()
-        if (Regex("""(?m)^\s*return\s+${Regex.escape(moduleName)}\s*$""").containsMatchIn(source)) {
+        // MULTILINE as a RegexOption (not an inline (?m) group): inline flags are
+        // java.util.regex syntax and throw on the JS target.
+        if (Regex("""^\s*return\s+${Regex.escape(moduleName)}\s*$""", RegexOption.MULTILINE).containsMatchIn(source)) {
             return source
         }
         return "$source\n\nreturn $moduleName"
@@ -194,7 +196,8 @@ object BuiltinOverlayLoader {
 
     private fun globalNameDeclared(source: String, name: String): Boolean {
         val escapedName = Regex.escape(name)
-        return Regex("""(?m)^\s*(?:function\s+$escapedName\s*\(|$escapedName\s*=)""").containsMatchIn(source)
+        return Regex("""^\s*(?:function\s+$escapedName\s*\(|$escapedName\s*=)""", RegexOption.MULTILINE)
+            .containsMatchIn(source)
     }
 
     private fun documentedGlobalsSurface(
@@ -238,6 +241,24 @@ object BuiltinOverlayLoader {
         members: List<ModuleExportSurface.MemberExport>,
         analyzedSurface: ModuleExportSurface?
     ): ModuleExportSurface {
+        val (fields, methods) = topLevelFieldsAndMethods(members)
+        return ModuleExportSurface(
+            moduleType = ModuleType(moduleName = moduleName, fields = fields, methods = methods),
+            sourceForm = ModuleExportSurface.SourceForm.RETURN_IDENTIFIER,
+            hasSeeAllFallback = analyzedSurface?.hasSeeAllFallback ?: false,
+            moduleEnvironmentMode = analyzedSurface?.moduleEnvironmentMode,
+            members = members
+        )
+    }
+
+    /**
+     * Split a member list into the ModuleType fields/methods maps. Shared by
+     * [surfaceFromMembers] and [mergeSyntheticSurface] (previously two identical loops);
+     * only depth-1 members map onto the module surface, nested paths stay members-only.
+     */
+    private fun topLevelFieldsAndMethods(
+        members: Iterable<ModuleExportSurface.MemberExport>
+    ): Pair<LinkedHashMap<String, Type>, LinkedHashMap<String, Type>> {
         val fields = linkedMapOf<String, Type>()
         val methods = linkedMapOf<String, Type>()
         members.forEach { member ->
@@ -249,13 +270,7 @@ object BuiltinOverlayLoader {
                 }
             }
         }
-        return ModuleExportSurface(
-            moduleType = ModuleType(moduleName = moduleName, fields = fields, methods = methods),
-            sourceForm = ModuleExportSurface.SourceForm.RETURN_IDENTIFIER,
-            hasSeeAllFallback = analyzedSurface?.hasSeeAllFallback ?: false,
-            moduleEnvironmentMode = analyzedSurface?.moduleEnvironmentMode,
-            members = members
-        )
+        return fields to methods
     }
 
     private fun mergeSyntheticSurface(
@@ -275,17 +290,7 @@ object BuiltinOverlayLoader {
             }
         }
 
-        val fields = linkedMapOf<String, Type>()
-        val methods = linkedMapOf<String, Type>()
-        membersByPath.values.forEach { member ->
-            if (member.exportPath.size == 1) {
-                if (member.kind == SymbolKind.METHOD) {
-                    methods[member.name] = member.type
-                } else {
-                    fields[member.name] = member.type
-                }
-            }
-        }
+        val (fields, methods) = topLevelFieldsAndMethods(membersByPath.values)
 
         return documentedSurface.copy(
             moduleType = documentedSurface.moduleType.copy(
@@ -1075,9 +1080,31 @@ object BuiltinOverlayLoader {
     }
 
     private fun parseDocumentedField(fieldText: String): DocumentedField? {
+        if (fieldText.startsWith("[")) {
+            // Index-style field (e.g. ---@field [string] AndroidView|integer). The
+            // documented class models (ClassType) have no index-signature slot, so the
+            // field is kept with a normalized "[key]" name and its key type recorded in
+            // DocumentedField.indexKeyType instead of being silently dropped. Call sites
+            // currently surface it as a regular named field; full index-signature
+            // plumbing is a known limitation.
+            val keyText = fieldText.substringAfter('[', "").substringBefore(']').trim()
+            if (keyText.isEmpty()) {
+                return null
+            }
+            val typeAndDescription = fieldText.substringAfter(']', "").trim()
+            if (typeAndDescription.isEmpty()) {
+                return null
+            }
+            val type = parseDocumentedType(typeAndDescription) ?: return null
+            return DocumentedField(
+                name = "[$keyText]",
+                type = type,
+                indexKeyType = parseDocumentedType(keyText)
+            )
+        }
         val nameToken = fieldText.substringBefore(' ').trim()
         val typeAndDescription = fieldText.substringAfter(' ', "").trim()
-        if (nameToken.isEmpty() || typeAndDescription.isEmpty() || nameToken.startsWith("[")) {
+        if (nameToken.isEmpty() || typeAndDescription.isEmpty()) {
             return null
         }
         val fieldName = nameToken.removeSuffix("?")
@@ -1440,7 +1467,12 @@ object BuiltinOverlayLoader {
 
     private data class DocumentedField(
         val name: String,
-        val type: Type
+        val type: Type,
+        // Key type of an index-style ---@field [key] value declaration, or null for
+        // plain named fields. Kept for future index-signature plumbing; ClassType
+        // currently has no index-signature slot, so such fields surface under their
+        // normalized "[key]" name.
+        val indexKeyType: Type? = null
     )
 
     private data class ParameterDoc(
@@ -1509,6 +1541,12 @@ object BuiltinOverlayLoader {
             normalizedVersion = LuaVersion.ANDROLUA_5_3,
             versionSegment = "androlua5.3",
             globalsResourcePath = ANDROLUA_RESOURCE_ROOT + "_G.lua",
+            // LuaJ (AndroLua's host) keeps the 5.2-era bit32 API available under 5.3; real
+            // projects call it (bit32.band(app.applicationInfo.flags, ...)), so the AndroLua
+            // flavor mounts a full bit32 provider while stock Lua 5.3 keeps the compat global.
+            providerModuleResourcePaths = lua53.providerModuleResourcePaths + (
+                "bit32" to "/io/github/dingyi222666/luaparser/semantic/workspace/std/lua53/bit32.lua"
+                ),
             rawProviderModuleResources = linkedMapOf(
                 "luajava" to RawProviderModuleResource(
                     resourcePath = ANDROLUA_LUAJAVA_RESOURCE,
@@ -1540,10 +1578,17 @@ object BuiltinOverlayLoader {
                 "timer",
                 "loadbitmap",
                 "loadlayout",
-                "loadmenu"
+                "loadmenu",
+                // loadlayout injects the parent view of the loaded layout as a global;
+                // demo main.lua reads parent.getPageIds / parent.getIdsTable (FIXER-UNDEF).
+                "parent"
             ),
             moduleFieldNames = linkedMapOf(
                 *lua53.moduleFieldNames.entries.map { it.key to it.value }.toTypedArray(),
+                "bit32" to linkedSetOf(
+                    "arshift", "band", "bnot", "bor", "bswap", "btest", "bxor",
+                    "extract", "lshift", "replace", "rshift", "tobit", "tohex"
+                ),
                 "activity" to emptySet<String>(),
                 "service" to emptySet<String>(),
                 "this" to emptySet<String>(),
@@ -1616,7 +1661,7 @@ object BuiltinOverlayLoader {
             androidLuaModule("modules/check.lua", "check", methods = listOf("check", "uncheck")),
             androidLuaModule("modules/console.lua", "console", methods = listOf("build", "build_aly")),
             androidLuaModule("modules/ftp.lua", "ftp", methods = listOf("put", "get", "command")),
-            androidLuaModule("modules/hex.lua", "hex", methods = listOf("encode", "decode", "dump", "smart_dump", "pack", "smart_pack")),
+            androidLuaModule("modules/hex.lua", "hex", methods = listOf("dump", "smart_dump", "pack", "smart_pack")),
             androidLuaModule(
                 "modules/http.lua",
                 "http",
@@ -2305,8 +2350,6 @@ object BuiltinOverlayLoader {
 
     private const val ANDROLUA_LUAJAVA_RESOURCE =
         "/io/github/dingyi222666/luaparser/semantic/workspace/std/androlua53-luajava/luajava.lua"
-    private const val ANDROLUA_GLOBALS_RESOURCE =
-        "/io/github/dingyi222666/luaparser/semantic/workspace/std/androlua53-luajava/_G.lua"
     private const val ANDROID_FRAMEWORK_RESOURCE_ROOT =
         "/io/github/dingyi222666/luaparser/semantic/workspace/android-framework/"
     private const val ANDROID_FRAMEWORK_MANIFEST_RESOURCE =
@@ -2353,7 +2396,20 @@ object BuiltinOverlayLoader {
         "test",
         "toast",
         "xml",
-        "xml2table"
+        "xml2table",
+        // Lua standard library module names: android resource classes reflect as lowercase
+        // simple names (android.R$string → "string", R$layout → "layout") and must never
+        // claim the std module a global identifier resolves to.
+        "bit32",
+        "coroutine",
+        "debug",
+        "io",
+        "math",
+        "os",
+        "package",
+        "string",
+        "table",
+        "utf8"
     )
     private val DOCUMENTED_CALLABLE_GLOBAL_VALUE_NAMES = setOf("ipairs", "pairs")
     private val LUJAVA_SURFACE_FIELD_NAMES = setOf("loaded", "imported", "ids", "luadir")

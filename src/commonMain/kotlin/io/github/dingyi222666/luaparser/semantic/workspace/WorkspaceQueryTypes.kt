@@ -20,5 +20,6 @@ data class WorkspaceHoverResult(
     val path: VirtualPath,
     val position: Position,
     val symbol: Symbol?,
-    val typeInfo: TypeInfo?
+    val typeInfo: TypeInfo?,
+    val callableDisplayName: String? = null
 )

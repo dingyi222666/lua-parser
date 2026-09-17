@@ -191,7 +191,7 @@ class TypeResolver(
 
     private fun resolveClassDeclaration(declaration: BinderDeclaration): BinderDeclaration {
         if (!classStack.add(declaration.id)) {
-            return declaration.copy(declaredType = ClassType(declaration.name))
+            return declaration.copy(declaredType = ClassType(declaration.name, declarationId = declaration.id.value))
         }
 
         try {
@@ -223,7 +223,8 @@ class TypeResolver(
                 superClass = superClass,
                 superType = parentType,
                 typeParameters = typeParameters,
-                javaClassName = javaClassName
+                javaClassName = javaClassName,
+                declarationId = declaration.id.value
             )
             return declaration.copy(
                 declaredType = classType,
@@ -306,10 +307,31 @@ class TypeResolver(
             else -> MultiReturnType(returnTypes)
         }
 
-        val inferredPrimaryType = if (primaryType == null && (parameters.isNotEmpty() || returnTypes.isNotEmpty())) {
-            FunctionType(parameters = parameters, returnType = returnType)
-        } else {
-            primaryType
+        // Method-owned @generic tags are bound as TYPE_PARAMETER children of the METHOD
+        // declaration (same as functions); carry them onto the synthesized signature so
+        // CallChecker.instantiateGenericSignature can infer method-level generics
+        // (`Repo:of(value)` with `---@generic U`), mirroring resolveFunctionDeclaration.
+        val typeParameters = ownedDeclarations
+            .filter { it.kind == DeclarationKind.TYPE_PARAMETER }
+            .mapNotNull { resolveDeclaration(it.id).declaredType as? TypeParameterType }
+
+        val inferredPrimaryType = when {
+            primaryType == null && (parameters.isNotEmpty() || returnTypes.isNotEmpty()) ->
+                FunctionType(parameters = parameters, returnType = returnType, typeParameters = typeParameters)
+            // A @method-tag primaryType is parsed from the signature text alone, which never
+            // carries an inline <T> list (DocFunctionTypeSyntaxParser parses none), so the
+            // collected method-owned typeParameters would be silently dropped. Rebuild the
+            // FunctionType with them — mirroring resolveFunctionDeclaration's unconditional
+            // rebuild — so `---@generic U ---@method of(value: U): Repo<U>` ships a [U]
+            // signature whose Repo<U> return substitutes at call sites. Rebuild (not copy)
+            // so the display name recomputes with the <U> marker. Other shapes pass through.
+            primaryType != null && typeParameters.isNotEmpty() ->
+                FunctionType(
+                    parameters = primaryType.parameters,
+                    returnType = primaryType.returnType,
+                    typeParameters = mergeTypeParameters(typeParameters, primaryType.typeParameters)
+                )
+            else -> primaryType
         }
         val type = combineMethodCallableType(inferredPrimaryType, overloadTypes)
         val resolvedParameterTypes = linkedMapOf<String, Type>()
@@ -525,8 +547,95 @@ class TypeResolver(
         val declaration = context.resolveTypeReference(name) ?: return CustomType(name)
         return when {
             declaration.kind == DeclarationKind.TYPE_PARAMETER -> resolveTypeParameterReference(declaration, context)
-            binder.declarationIndex.getDeclaration(declaration.id) != null -> resolveDeclaration(declaration.id).declaredType ?: CustomType(name)
+            binder.declarationIndex.getDeclaration(declaration.id) != null -> {
+                val resolved = resolveDeclaration(declaration.id).declaredType ?: return CustomType(name)
+                if (declaration.kind == DeclarationKind.TYPE_ALIAS) {
+                    renameBareAliasTypeParameters(resolved, declaration)
+                } else {
+                    resolved
+                }
+            }
             else -> CustomType(name)
+        }
+    }
+
+    /**
+     * A parametrized alias used BARE (`---@param b Box` for `---@alias Box<T> { value: T }`)
+     * keeps its own type parameters unbound — but they keep their bare source name (`T`), so
+     * a later UNRELATED name-based substitution (`{T: number}` binding an enclosing generic,
+     * e.g. CallChecker.instantiateGenericSignature) rewrote the alias internals: Box's
+     * `value: T` silently became `value: number`. Rename each owned parameter to
+     * `<Alias>.<Param>` (e.g. `Box.T`): still unbound (hover shows the alias's own parameter
+     * instead of a lossy `unknown`) while the name can never collide with an enclosing
+     * substitution.
+     *
+     * Callable targets merge the alias's parameters onto the function surface
+     * (attachAliasOwnedTypeParameters), so the substitution runs on the TARGET with the
+     * public substitute's top-level own-parameter masking off: the rename reaches the
+     * signature (`fun(value: Mapper.T): Mapper.T`) instead of being shielded by the merged
+     * slots. Those merged `fun<T>` slots are dead inference slots on a bare use (no type
+     * arguments can ever bind them), so they are dropped once their occurrences were renamed
+     * — same phantom rule as TypeSubstitutor.dropAppliedTypeParameters. Tradeoff: the
+     * signature no longer carries an explicit "is generic" marker, but a bare alias
+     * reference binds nothing, and the qualified `Alias.Param` names keep the provenance;
+     * inline slots whose names do NOT collide with the alias's own parameters (e.g.
+     * `fun<U>`) are kept.
+     */
+    private fun renameBareAliasTypeParameters(resolved: Type, aliasDeclaration: BinderDeclaration): Type {
+        val alias = resolved as? AliasType ?: return resolved
+        val ownedTypeParameters = binder.declarationIndex
+            .getOwnedDeclarations(DeclarationOwner.Declaration(aliasDeclaration.id))
+            .filter { it.kind == DeclarationKind.TYPE_PARAMETER }
+            .mapNotNull { resolveDeclaration(it.id).declaredType as? TypeParameterType }
+        if (ownedTypeParameters.isEmpty()) {
+            return resolved
+        }
+        val mapping = ownedTypeParameters.associate { parameter ->
+            parameter.name to TypeParameterType(
+                name = "${aliasDeclaration.name}.${parameter.name}",
+                constraint = parameter.constraint,
+                defaultType = parameter.defaultType
+            )
+        }
+        // Substitute the TARGET (not the whole AliasType): the substitutor's AliasType branch
+        // re-enters the target with own-parameter masking ON, which lets a callable target's
+        // merged fun<T> slots shield the mapping and left the stale marker in place.
+        val renamedTarget = typeSubstitutor.substitute(alias.target, mapping)
+        return AliasType(alias.name, dropRenamedTargetTypeParameters(renamedTarget, mapping.keys))
+    }
+
+    /**
+     * Drops declared type-parameter slots whose names were just renamed to `<Alias>.<Param>`:
+     * after the rename no occurrence under the old bare name remains, so the slot is a
+     * phantom. Constructors (not copy()) rebuild the display name, otherwise the stale
+     * `fun<T>(...)` marker survives. Slots whose names were NOT renamed are kept: they are
+     * genuinely unbound.
+     */
+    private fun dropRenamedTargetTypeParameters(type: Type, renamedNames: Set<String>): Type {
+        if (renamedNames.isEmpty()) {
+            return type
+        }
+        return when (type) {
+            is FunctionType -> {
+                val typeParameters = type.typeParameters.filterNot { parameter -> parameter.name in renamedNames }
+                if (typeParameters.size == type.typeParameters.size) {
+                    type
+                } else {
+                    FunctionType(
+                        parameters = type.parameters,
+                        returnType = type.returnType,
+                        typeParameters = typeParameters
+                    )
+                }
+            }
+
+            is OverloadedFunctionType -> OverloadedFunctionType(
+                callSignatures = type.callSignatures.map {
+                    dropRenamedTargetTypeParameters(it, renamedNames) as FunctionType
+                }
+            )
+
+            else -> type
         }
     }
 

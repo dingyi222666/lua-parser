@@ -11,6 +11,8 @@ import io.github.dingyi222666.luaparser.semantic.checker.MemberResolver
 import io.github.dingyi222666.luaparser.semantic.checker.ValueSequence
 import io.github.dingyi222666.luaparser.semantic.types.model.AliasType
 import io.github.dingyi222666.luaparser.semantic.types.model.AppliedType
+import io.github.dingyi222666.luaparser.semantic.types.model.ArrayType
+import io.github.dingyi222666.luaparser.semantic.types.model.CustomType
 import io.github.dingyi222666.luaparser.semantic.types.model.FunctionParameter
 import io.github.dingyi222666.luaparser.semantic.types.model.FunctionType
 import io.github.dingyi222666.luaparser.semantic.types.model.JavaClassType
@@ -22,6 +24,7 @@ import io.github.dingyi222666.luaparser.semantic.types.model.PrimitiveType
 import io.github.dingyi222666.luaparser.semantic.types.model.TableType
 import io.github.dingyi222666.luaparser.semantic.types.model.TypeParameterType
 import io.github.dingyi222666.luaparser.semantic.types.model.UnknownType
+import io.github.dingyi222666.luaparser.semantic.types.model.VarargType
 import io.github.dingyi222666.luaparser.semantic.types.resolve.TypeResolver
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -263,6 +266,120 @@ class CallCheckerTest {
 
         val table = assertIs<TableType>(result.returnType)
         assertSame(PrimitiveType.STRING, table.indexSignature?.valueType)
+    }
+
+    @Test
+    fun methodGenericSignatureInstantiatesAtCallSite() {
+        val harness = harness(
+            """
+            ---@class Repo<T>
+
+            ---@generic U
+            ---@param value U
+            ---@return Repo<U>
+            function Repo:of(value)
+                return self
+            end
+            """.trimIndent()
+        )
+        val method = harness.declarations.declarationIndex.declarations.single {
+            it.kind == DeclarationKind.METHOD && it.name == "of"
+        }
+        val methodType = assertIs<FunctionType>(method.declaredType)
+        assertEquals(listOf("U"), methodType.typeParameters.map { it.name })
+
+        val repoOfNumber = AppliedType("Repo", listOf(PrimitiveType.NUMBER))
+        val result = harness.checker.checkCall(
+            methodType,
+            listOf(repoOfNumber, PrimitiveType.NUMBER),
+            harness.scopeId,
+            method
+        )
+
+        assertTrue(result.isSuccess)
+        val returnType = assertIs<AppliedType>(result.returnType)
+        assertEquals("Repo", returnType.baseName)
+        assertSame(PrimitiveType.NUMBER, returnType.typeArguments.single())
+    }
+
+    @Test
+    fun unresolvedConstraintNameStillInfersTypeArgument() {
+        val harness = harness(
+            """
+            ---@generic T: comparable
+            ---@param x T
+            ---@return T
+            local function first(x)
+                return x
+            end
+            """.trimIndent()
+        )
+        val declaration = function(harness, "first")
+        val signature = assertIs<FunctionType>(declaration.declaredType)
+        // `comparable` matches no declared class/alias, so the constraint ships as an
+        // unresolvable CustomType that is assignable-from nothing.
+        assertIs<CustomType>(assertIs<TypeParameterType>(signature.typeParameters.single()).constraint)
+
+        val result = harness.checker.checkCall(signature, listOf(PrimitiveType.NUMBER), harness.scopeId, declaration)
+
+        assertTrue(result.isSuccess)
+        assertSame(PrimitiveType.NUMBER, result.returnType)
+    }
+
+    @Test
+    fun resolvedClassConstraintStaysStrictAtCallSites() {
+        val harness = harness(
+            """
+            ---@class Base
+
+            ---@generic T: Base
+            ---@param x T
+            ---@return T
+            local function first(x)
+                return x
+            end
+            """.trimIndent()
+        )
+        val declaration = function(harness, "first")
+        val signature = assertIs<FunctionType>(declaration.declaredType)
+        val base = harness.declarations.declarationIndex.declarations.single {
+            it.kind == DeclarationKind.CLASS && it.name == "Base"
+        }.declaredType!!
+
+        val mismatched = harness.checker.checkCall(signature, listOf(PrimitiveType.NUMBER), harness.scopeId, declaration)
+        assertEquals(CallFailureReason.NO_MATCHING_SIGNATURE, mismatched.failureReason)
+
+        val matched = harness.checker.checkCall(signature, listOf(base), harness.scopeId, declaration)
+        assertSame(base, matched.returnType)
+    }
+
+    @Test
+    fun varargParameterInfersElementIntoArrayReturn() {
+        val harness = harness(
+            """
+            ---@generic T
+            ---@param ... T
+            ---@return T[]
+            local function pack(...)
+                return { ... }
+            end
+            """.trimIndent()
+        )
+        val pack = harness.declarations.declarationIndex.declarations.single {
+            it.kind == DeclarationKind.FUNCTION && it.name == "pack"
+        }
+        val signature = assertIs<FunctionType>(pack.declaredType)
+        // The resolver wraps the documented `... T` slot as VarargType(T) with T as the element.
+        assertIs<TypeParameterType>(assertIs<VarargType>(signature.parameters.single().type).elementType)
+
+        // A table absorbed by the vararg slot stays viable through the product's vararg-slot
+        // rescue; the element inference must now bind T so the T[] return loses its parameter.
+        val tableArg = TableType(indexSignature = TableType.IndexSignature(PrimitiveType.NUMBER, PrimitiveType.NUMBER))
+        val result = harness.checker.checkCall(signature, listOf(tableArg), harness.scopeId, pack)
+
+        assertTrue(result.isSuccess)
+        val arrayReturn = assertIs<ArrayType>(result.returnType)
+        assertSame(tableArg, arrayReturn.elementType)
     }
 
     private fun harness(source: String): Harness {

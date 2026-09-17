@@ -272,11 +272,17 @@ class LspSelectionRangeNestedBlockTddTest {
             }
             is SelectionOutcome.Succeeded -> {
                 // LSP: result is an array of selection ranges corresponding to the
-                // positions (same order / same length when fully implemented).
+                // positions. The product drops positions that resolve to no AST node
+                // instead of emitting JSON-null slots, so the list is at most as long
+                // as the request and never contains nulls.
                 assertTrue(
-                    outcome.ranges.size == positions.size || outcome.ranges.isEmpty(),
-                    "result length should match positions (${positions.size}) or be empty; " +
+                    outcome.ranges.size <= positions.size,
+                    "result length must not exceed positions (${positions.size}); " +
                         "got ${outcome.ranges.size}"
+                )
+                assertTrue(
+                    outcome.ranges.none { it == null },
+                    "selectionRange result must not contain null slots; got ${outcome.ranges}"
                 )
                 outcome.ranges.forEachIndexed { index, range ->
                     if (range != null) {

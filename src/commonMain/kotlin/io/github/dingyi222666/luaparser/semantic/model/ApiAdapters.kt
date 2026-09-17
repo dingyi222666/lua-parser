@@ -163,7 +163,16 @@ internal class ApiAdapters(
             SymbolKind.CLASS -> CompletionItemKind.CLASS
             SymbolKind.TYPE_ALIAS -> CompletionItemKind.TYPE_ALIAS
             SymbolKind.MODULE -> CompletionItemKind.MODULE
-            else -> CompletionItemKind.TEXT
+            // Unknown-kind symbols with a callable type display complete as functions so
+            // callables never degrade to the plain text icon.
+            else -> {
+                val display = symbol.declaredType?.displayName ?: symbol.type?.displayName
+                if (display != null && (display.trim().startsWith("fun(") || display.contains(" -> "))) {
+                    CompletionItemKind.FUNCTION
+                } else {
+                    CompletionItemKind.TEXT
+                }
+            }
         }
     }
 

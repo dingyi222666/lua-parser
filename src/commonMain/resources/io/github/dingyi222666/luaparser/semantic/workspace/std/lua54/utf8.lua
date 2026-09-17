@@ -35,7 +35,7 @@ utf8.charpattern = ""
 --- (in bytes) and `c` the code point of each character. It raises an error if
 --- it meets any invalid byte sequence.
 ---@param s string
----@return string
+---@return fun():number, number
 function utf8.codes(s) end
 
 ---
@@ -43,11 +43,11 @@ function utf8.codes(s) end
 --- between byte position `i` and `j` (both included). The default for `i` is
 --- 1  and for `j` is `i`. It raises an error if it meets any invalid byte
 --- sequence.
----@overload fun(s:string):number
+---@overload fun(s:string):number...
 ---@param s string
 ---@param i number
 ---@param j number
----@return number
+---@return number...
 function utf8.codepoint (s, i, j) end
 
 ---
@@ -55,11 +55,11 @@ function utf8.codepoint (s, i, j) end
 --- positions `i` and `j` (both inclusive). The default for `i` is 1 and for
 --- `j` is -1. If it finds any invalid byte sequence, returns a false value
 --- plus the position of the first invalid byte.
----@overload fun(s:string):number
+---@overload fun(s:string):number|nil, number
 ---@param s string
 ---@param i number
 ---@param j number
----@return number
+---@return number|nil, number
 function utf8.len(s, i, j) end
 
 ---

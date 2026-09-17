@@ -7,6 +7,7 @@ import io.github.dingyi222666.luaparser.semantic.binder.ScopeId
 import io.github.dingyi222666.luaparser.semantic.types.model.CallableType
 import io.github.dingyi222666.luaparser.semantic.types.model.AppliedType
 import io.github.dingyi222666.luaparser.semantic.types.model.ArrayType
+import io.github.dingyi222666.luaparser.semantic.types.model.CustomType
 import io.github.dingyi222666.luaparser.semantic.types.model.FunctionParameter
 import io.github.dingyi222666.luaparser.semantic.types.model.FunctionType
 import io.github.dingyi222666.luaparser.semantic.types.model.IntersectionType
@@ -21,6 +22,7 @@ import io.github.dingyi222666.luaparser.semantic.types.model.Type
 import io.github.dingyi222666.luaparser.semantic.types.model.TypeParameterType
 import io.github.dingyi222666.luaparser.semantic.types.model.UnionType
 import io.github.dingyi222666.luaparser.semantic.types.model.UnknownType
+import io.github.dingyi222666.luaparser.semantic.types.model.VarargType
 import io.github.dingyi222666.luaparser.semantic.types.resolve.TypeExpansion
 import io.github.dingyi222666.luaparser.semantic.types.resolve.TypeSubstitutor
 import io.github.dingyi222666.luaparser.semantic.types.resolve.isAssignableFrom
@@ -111,7 +113,7 @@ class CallChecker(
     }
 
     private fun asCallableType(type: Type, lexicalScopeId: ScopeId): CallableType? {
-        return when (val normalized = TypeExpansion.expandForCallableSurface(type, lexicalScopeId, binder)) {
+        return when (val normalized = TypeExpansion.expandForSurface(type, lexicalScopeId, binder)) {
             is CallableType -> normalized
             is ModuleType -> moduleCallableType(normalized)
                 ?: (normalized.fields["__class"] as? JavaClassType)
@@ -192,7 +194,17 @@ class CallChecker(
                 ?: parameters.lastOrNull { it.vararg }
                 ?: return null
             if (!isArgumentAssignable(parameter.type, argumentType)) {
-                return null
+                if (!isLuaTableForVarargSlot(parameter, argumentType)) {
+                    return null
+                }
+                // LuaJava converts a simple Lua table into the Java array/vararg slot at
+                // runtime; keep the signature viable behind precise element matches.
+                assignabilityPenalty += 1
+                exactMismatchCount++
+                if (parameter.vararg) {
+                    fallbackPenalty += 2
+                }
+                return@forEachIndexed
             }
             assignabilityPenalty += when (parameter.type) {
                 PrimitiveType.ANY, PrimitiveType.UNKNOWN, UnknownType -> 10
@@ -276,7 +288,14 @@ class CallChecker(
                 if (parameterType.name !in typeParameterNames) {
                     return
                 }
-                if (parameterType.constraint?.isAssignableFrom(argumentType) == false) {
+                val constraint = parameterType.constraint
+                // An unresolvable constraint name (`@generic T: comparable` with no matching
+                // class/alias) resolves to a CustomType that is assignable-from nothing, so the
+                // strict gate below rejected every argument and the whole call collapsed to
+                // NO_MATCHING_SIGNATURE. Treat unresolved constraint names as UNVERIFIED: skip
+                // the gate but still infer the parameter from the argument. Real constraint
+                // types (declared classes/aliases, primitives) keep the strict check.
+                if (constraint !is CustomType && constraint?.isAssignableFrom(argumentType) == false) {
                     return
                 }
                 val current = inferred[parameterType.name]
@@ -324,6 +343,16 @@ class CallChecker(
                 is JavaArrayType -> inferGenericArguments(parameterType.elementType, argumentType.elementType, typeParameterNames, inferred)
                 else -> Unit
             }
+
+            // Documented vararg slots (`---@param ... T`) are wrapped as VarargType(T) by the
+            // resolver; infer the element parameter from each argument the slot absorbs
+            // (e.g. `pack(1, 2)` binds T=number for a `T[]` return) instead of falling to `else`.
+            is VarargType -> inferGenericArguments(
+                parameterType.elementType,
+                argumentType,
+                typeParameterNames,
+                inferred
+            )
 
             is TableType -> if (argumentType is TableType) {
                 val parameterIndex = parameterType.indexSignature
@@ -408,6 +437,19 @@ class CallChecker(
         return parameterType.isAssignableFrom(argumentType) ||
             parameterType.isJavaListenerAssignableFrom(argumentType) ||
             parameterType.isJavaContainerAssignableFrom(argumentType)
+    }
+
+    /**
+     * LuaJava converts a simple Lua table argument into the Java vararg component array
+     * (`float...` / `T...`), so a [TableType] argument stays viable on a vararg slot even
+     * when element types cannot be statically verified. Fixed `T[]` parameters keep the
+     * conservative TASK-658 container gate; precise element matches keep lower scores.
+     */
+    private fun isLuaTableForVarargSlot(parameter: FunctionParameter, argumentType: Type): Boolean {
+        if (argumentType !is TableType) {
+            return false
+        }
+        return parameter.vararg || parameter.type is VarargType
     }
 
     private data class Candidate(

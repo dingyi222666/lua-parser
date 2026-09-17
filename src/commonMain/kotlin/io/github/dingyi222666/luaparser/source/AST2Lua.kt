@@ -257,12 +257,31 @@ class AST2Lua : ASTVisitor<StringBuilder> {
         value.appendLine()
     }
 
+    /**
+     * `if <cond> then <block> { elseif <cond> then <block> } [ else <block> ] end`
+     *
+     * The clause visitors ([visitIfClause] / [visitElseIfClause] / [visitElseClause]) print
+     * their keyword line and body only; the statement owns the single terminating `end`.
+     * Emitting it here (and never per clause) yields exactly one `end` per if-statement,
+     * which keeps the printed surface parseable — a missing terminator lets a re-parse
+     * absorb every following statement into the last clause body.
+     */
+    override fun visitIfStatement(node: IfStatement, value: StringBuilder) {
+        if (node.causes.isEmpty()) {
+            // Degenerate hand-built node: printing a bare `end` would close the enclosing block.
+            return
+        }
+        super.visitIfStatement(node, value)
+        // Each clause body ends with a newline + outer indent (visitBlockNode), so `end`
+        // already sits at the statement's own indentation level.
+        value.append("end")
+    }
+
     override fun visitIfClause(node: IfClause, value: StringBuilder) {
         appendLineAndIndent(value)
         value.append("if ")
         visitExpressionNode(node.condition, value)
         value.append(" then")
-        indent(value)
 
         visitBlockNode(node.body, value)
 

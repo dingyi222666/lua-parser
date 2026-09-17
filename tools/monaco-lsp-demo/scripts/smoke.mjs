@@ -149,7 +149,7 @@ function runProtocol(info, files) {
         notify('textDocument/didOpen', {
           textDocument: {
             uri: entry.uri,
-            languageId: entry.name.endsWith('.lua') ? 'lua' : 'plaintext',
+            languageId: /\.(lua|aly)$/i.test(entry.name) ? 'lua' : 'plaintext',
             version: 1,
             text: entry.text,
           },
@@ -188,6 +188,435 @@ function runProtocol(info, files) {
           );
         }
 
+        // Wire coverage beyond completion, on the already-opened entry file.
+        const documentSymbols = await request('textDocument/documentSymbol', {
+          textDocument: { uri: entry.uri },
+        }, 60000);
+        if (!Array.isArray(documentSymbols)) {
+          throw new Error(
+            `documentSymbol must return an array; got ${documentSymbols === null ? 'null' : typeof documentSymbols}`
+          );
+        }
+        const malformedDocumentSymbol = documentSymbols.find(
+          (symbol) => typeof symbol?.name !== 'string' || typeof symbol?.kind !== 'number'
+        );
+        if (malformedDocumentSymbol) {
+          throw new Error(
+            `documentSymbol entries need name+kind; got ${JSON.stringify(malformedDocumentSymbol)}`
+          );
+        }
+        // main.lua is not symbol-dead: it declares chunk-level locals (adapters,
+        // roundDrawable) and top-level function declarations (refresh, search), which
+        // the wave M documentSymbol policy keeps (body-locals excluded, chunk-level
+        // kept). An empty result means symbol production is broken, not merely quiet.
+        if (documentSymbols.length === 0) {
+          throw new Error(
+            'documentSymbol must not be empty for main.lua: it declares chunk-level locals ' +
+            '(adapters, roundDrawable) and top-level functions (refresh, search)'
+          );
+        }
+
+        const foldingRanges = await request('textDocument/foldingRange', {
+          textDocument: { uri: entry.uri },
+        }, 60000);
+        if (!Array.isArray(foldingRanges)) {
+          throw new Error(
+            `foldingRange must return an array; got ${foldingRanges === null ? 'null' : typeof foldingRanges}`
+          );
+        }
+
+        const semanticLegend = initialized.capabilities?.semanticTokensProvider?.legend;
+        if (!Array.isArray(semanticLegend?.tokenTypes) || semanticLegend.tokenTypes.length === 0) {
+          throw new Error('Initialize capabilities omitted semanticTokensProvider.legend.tokenTypes');
+        }
+        const keywordTokenType = semanticLegend.tokenTypes.indexOf('keyword');
+        if (keywordTokenType < 0) {
+          throw new Error(
+            'semanticTokensProvider.legend.tokenTypes must include "keyword" so Lua keywords ' +
+            `can be classified; got [${semanticLegend.tokenTypes.join(', ')}]`
+          );
+        }
+        const semanticTokens = await request('textDocument/semanticTokens/full', {
+          textDocument: { uri: entry.uri },
+        }, 60000);
+        if (!Array.isArray(semanticTokens?.data)) {
+          throw new Error(
+            `semanticTokens/full must return numeric data; got ${semanticTokens === null ? 'null' : typeof semanticTokens?.data}`
+          );
+        }
+        if (semanticTokens.data.length % 5 !== 0) {
+          throw new Error(
+            `semanticTokens data length must be a multiple of 5; got ${semanticTokens.data.length}`
+          );
+        }
+        for (let index = 3; index < semanticTokens.data.length; index += 5) {
+          const tokenType = semanticTokens.data[index];
+          if (tokenType < 0 || tokenType >= semanticLegend.tokenTypes.length) {
+            throw new Error(
+              `semanticTokens tokenType index ${tokenType} outside legend ` +
+              `(0..${semanticLegend.tokenTypes.length - 1}) at data slot ${index}`
+            );
+          }
+        }
+        // main.lua is keyword-bearing (local/function/for/if/then/end throughout), so a
+        // working tokenizer must emit at least one token; data:[] means token production
+        // is dead, which the shape checks above alone would let pass.
+        if (semanticTokens.data.length === 0) {
+          throw new Error('semanticTokens must not be empty for a keyword-bearing document');
+        }
+        // Classification, not just encoding: at least one emitted token must be typed
+        // "keyword" in the legend. Catches servers that encode deltas but type every
+        // token as a non-keyword class (the range check above cannot see that).
+        let hasKeywordToken = false;
+        for (let index = 3; index < semanticTokens.data.length; index += 5) {
+          if (semanticTokens.data[index] === keywordTokenType) {
+            hasKeywordToken = true;
+            break;
+          }
+        }
+        if (!hasKeywordToken) {
+          throw new Error(
+            `semanticTokens must classify at least one token as "keyword" ` +
+            `(legend index ${keywordTokenType}); main.lua contains local/function/for/if keywords`
+          );
+        }
+
+        // Capability wire-coverage: every advertised capability must answer with a
+        // well-shaped result (regression class: a single Kotlin delegation gap, e.g.
+        // foldingRange, silently killing one feature while everything else stays
+        // green). Unadvertised capabilities (codeAction, onTypeFormatting) are not
+        // probed: a compliant server rejects requests it never advertised, so those
+        // requests would produce noise instead of signal.
+        const identifierPosition = positionAt(entry.text, firstIdentifierOffset(entry.text));
+        const entryLines = entry.text.split('\n');
+        // Rename probe needs a RENAMABLE identifier: builtins like `print` make
+        // prepareRename return null, which let the probe pass vacuously. A chunk-level
+        // local declaration (`local adapters = ...`) is always renamable.
+        const localDeclLine = entryLines
+          .map(function (line, index) { return { line: line, index: index }; })
+          .find(function (candidate) { return /^local\s+[A-Za-z_][A-Za-z0-9_]*\b/.test(candidate.line); });
+        let renamePosition = null;
+        let renameTarget = null;
+        if (localDeclLine) {
+          const nameMatch = /^local\s+([A-Za-z_][A-Za-z0-9_]*)/.exec(localDeclLine.line);
+          const lineStart = entry.text
+            .split('\n')
+            .slice(0, localDeclLine.index)
+            .reduce(function (sum, line) { return sum + line.length + 1; }, 0);
+          renameTarget = nameMatch[1];
+          renamePosition = positionAt(entry.text, lineStart + localDeclLine.line.indexOf(nameMatch[1]));
+        }
+        // Rename probe: a chunk-level LOCAL declaration is always renamable — builtins
+        // like `print` make prepareRename return null and the probe passed vacuously.
+        const localDecl = entryLines
+          .map(function (line, index) { return { line: line, index: index }; })
+          .find(function (entry) { return /^local\s+[A-Za-z_][A-Za-z0-9_]*/.test(entry.line); });
+        const localIdentifierOffset = localDecl
+          ? entry.text.indexOf(localDecl.line) + localDecl.line.indexOf(/^local\s+/.exec(localDecl.line)[0].length) + 1
+          : firstIdentifierOffset(entry.text);
+
+        // 1. textDocument/references — must return an array of Locations.
+        const references = await request('textDocument/references', {
+          textDocument: { uri: entry.uri },
+          position: identifierPosition,
+          context: { includeDeclaration: true },
+        }, 60000);
+        if (!Array.isArray(references)) {
+          throw new Error(
+            `references must return an array; got ${references === null ? 'null' : typeof references}`
+          );
+        }
+        references.forEach((reference, index) => {
+          if (typeof reference?.uri !== 'string') {
+            throw new Error(`references[${index}] needs a string uri; got ${JSON.stringify(reference)}`);
+          }
+          assertRangeShape(reference.range, `references[${index}]`);
+        });
+
+        // 2. textDocument/documentHighlight — must return an array.
+        const highlights = await request('textDocument/documentHighlight', {
+          textDocument: { uri: entry.uri },
+          position: identifierPosition,
+        }, 60000);
+        if (!Array.isArray(highlights)) {
+          throw new Error(
+            `documentHighlight must return an array; got ${highlights === null ? 'null' : typeof highlights}`
+          );
+        }
+        highlights.forEach((highlight, index) => {
+          assertRangeShape(highlight?.range, `documentHighlight[${index}]`);
+        });
+
+        // 3. textDocument/selectionRange — one position inside the first statement
+        // must yield SelectionRange entries with a well-formed range/parent chain.
+        const firstStatementLineIndex = entryLines.findIndex(
+          (line) => line.trim() && !line.trim().startsWith('--')
+        );
+        if (firstStatementLineIndex < 0) {
+          throw new Error('Entry file has no statement line to probe textDocument/selectionRange');
+        }
+        const firstStatementLine = entryLines[firstStatementLineIndex];
+        const statementIdentifier = firstStatementLine.match(/[A-Za-z_][A-Za-z0-9_]*/);
+        const selectionPosition = {
+          line: firstStatementLineIndex,
+          character: statementIdentifier
+            ? statementIdentifier.index + 1
+            : Math.max(0, Math.floor(firstStatementLine.length / 2)),
+        };
+        const selectionRanges = await request('textDocument/selectionRange', {
+          textDocument: { uri: entry.uri },
+          positions: [selectionPosition],
+        }, 60000);
+        if (!Array.isArray(selectionRanges)) {
+          throw new Error(
+            `selectionRange must return an array; got ${selectionRanges === null ? 'null' : typeof selectionRanges}`
+          );
+        }
+        selectionRanges.forEach((selection, index) => {
+          let current = selection;
+          let depth = 0;
+          while (current) {
+            if (typeof current !== 'object') {
+              throw new Error(
+                `selectionRange[${index}] chain node must be an object; got ${typeof current}`
+              );
+            }
+            assertRangeShape(current.range, `selectionRange[${index}] depth ${depth}`);
+            if (
+              current.parent !== undefined
+              && current.parent !== null
+              && typeof current.parent !== 'object'
+            ) {
+              throw new Error(
+                `selectionRange[${index}] parent must be a SelectionRange object; got ${typeof current.parent}`
+              );
+            }
+            current = current.parent;
+            depth += 1;
+            if (depth > 100) {
+              throw new Error(`selectionRange[${index}] parent chain exceeds 100 nodes; likely cyclic`);
+            }
+          }
+        });
+
+        // 4. textDocument/foldingRange — already asserted above.
+
+        // 5. textDocument/rangeFormatting — array of edits over a small line span
+        // (empty is legitimate for code that is already formatted).
+        const formatEndLine = Math.min(1, entryLines.length - 1);
+        const formattingEdits = await request('textDocument/rangeFormatting', {
+          textDocument: { uri: entry.uri },
+          range: {
+            start: { line: 0, character: 0 },
+            end: { line: formatEndLine, character: entryLines[formatEndLine].length },
+          },
+        }, 60000);
+        if (!Array.isArray(formattingEdits)) {
+          throw new Error(
+            `rangeFormatting must return an array of edits; got ` +
+            `${formattingEdits === null ? 'null' : typeof formattingEdits}`
+          );
+        }
+        formattingEdits.forEach((edit, index) => {
+          assertRangeShape(edit?.range, `rangeFormatting edit ${index}`);
+          if (typeof edit.newText !== 'string') {
+            throw new Error(
+              `rangeFormatting edit ${index} needs a string newText; got ${JSON.stringify(edit)}`
+            );
+          }
+        });
+
+        // 6. textDocument/prepareRename + textDocument/rename — prepare returns
+        // null or a {range, placeholder} shape; rename returns a WorkspaceEdit.
+        if (!renamePosition) {
+          throw new Error('smoke could not find a chunk-level local for the rename probe');
+        }
+        const preparedRename = await request('textDocument/prepareRename', {
+          textDocument: { uri: entry.uri },
+          position: renamePosition,
+        }, 60000);
+        if (preparedRename === null || preparedRename === undefined) {
+          throw new Error(
+            `prepareRename must return a range for the renamable local '${renameTarget}'; got null`
+          );
+        }
+        // Modern {range, placeholder} shape, or the legacy bare Range form.
+        const prepareRange = preparedRename.range || preparedRename;
+        assertRangeShape(prepareRange, 'prepareRename');
+        if (
+          preparedRename.placeholder !== undefined
+          && preparedRename.placeholder !== null
+          && typeof preparedRename.placeholder !== 'string'
+        ) {
+          throw new Error(
+            `prepareRename placeholder must be a string; got ${typeof preparedRename.placeholder}`
+          );
+        }
+        const renameResult = await request('textDocument/rename', {
+          textDocument: { uri: entry.uri },
+          position: renamePosition,
+          newName: 'smokeRenamedIdentifier42',
+        }, 60000);
+        if (!renameResult || typeof renameResult !== 'object') {
+          throw new Error(
+            `rename must return a WorkspaceEdit; got ${renameResult === null ? 'null' : typeof renameResult}`
+          );
+        }
+        const hasChangesMap = Boolean(renameResult.changes) && typeof renameResult.changes === 'object';
+        const hasDocumentChanges = Array.isArray(renameResult.documentChanges);
+        if (!hasChangesMap && !hasDocumentChanges) {
+          throw new Error(
+            'rename WorkspaceEdit needs a changes map or a documentChanges array; got keys ' +
+            `${JSON.stringify(Object.keys(renameResult))}`
+          );
+        }
+        if (hasChangesMap && !Object.keys(renameResult.changes).includes(entry.uri)) {
+          throw new Error(
+            `rename edits must be keyed under the request URI ${entry.uri}; got ` +
+            `${JSON.stringify(Object.keys(renameResult.changes))}`
+          );
+        }
+
+        // 7. textDocument/inlayHint — must return an array over the full range.
+        const documentEndPosition = {
+          line: entryLines.length - 1,
+          character: entryLines[entryLines.length - 1].length,
+        };
+        const inlayHints = await request('textDocument/inlayHint', {
+          textDocument: { uri: entry.uri },
+          range: { start: { line: 0, character: 0 }, end: documentEndPosition },
+        }, 60000);
+        if (!Array.isArray(inlayHints)) {
+          throw new Error(
+            `inlayHint must return an array; got ${inlayHints === null ? 'null' : typeof inlayHints}`
+          );
+        }
+        inlayHints.forEach((hint, index) => {
+          const hintPosition = hint?.position;
+          if (
+            !hintPosition
+            || !Number.isInteger(hintPosition.line)
+            || !Number.isInteger(hintPosition.character)
+          ) {
+            throw new Error(`inlayHint[${index}] needs a position; got ${JSON.stringify(hint)}`);
+          }
+          if (typeof hint.label !== 'string' && !Array.isArray(hint.label)) {
+            throw new Error(
+              `inlayHint[${index}] label must be a string or InlayHintLabelPart[]; got ${typeof hint.label}`
+            );
+          }
+        });
+
+        // 8. textDocument/codeAction — NOT advertised by this server, so only probe
+        // if the capability ever shows up (then an array is mandatory).
+        if (initialized.capabilities.codeActionProvider) {
+          const codeActions = await request('textDocument/codeAction', {
+            textDocument: { uri: entry.uri },
+            range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } },
+            context: { diagnostics: [] },
+          }, 60000);
+          if (!Array.isArray(codeActions)) {
+            throw new Error(
+              `codeAction must return an array; got ${codeActions === null ? 'null' : typeof codeActions}`
+            );
+          }
+        } else {
+          console.log('[smoke] skipping textDocument/codeAction probe: not advertised (server must reject it)');
+        }
+
+        // 9. textDocument/semanticTokens/full/delta — reuses resultId from the full
+        // request above; SemanticTokens (data) or SemanticTokensDelta (edits) both fine.
+        if (semanticTokens.resultId === null || semanticTokens.resultId === undefined) {
+          console.log(
+            '[smoke] ASSERTION SKIPPED: semanticTokens/full returned no resultId, ' +
+            'textDocument/semanticTokens/full/delta cannot be probed'
+          );
+        } else {
+          const deltaTokens = await request('textDocument/semanticTokens/full/delta', {
+            textDocument: { uri: entry.uri },
+            previousResultId: semanticTokens.resultId,
+          }, 60000);
+          const isFullTokens = Array.isArray(deltaTokens?.data);
+          const isDeltaTokens = Array.isArray(deltaTokens?.edits);
+          if (!isFullTokens && !isDeltaTokens) {
+            throw new Error(
+              'semanticTokens/full/delta must return SemanticTokens (data) or SemanticTokensDelta ' +
+              `(edits); got ${JSON.stringify(deltaTokens)?.slice(0, 200)}`
+            );
+          }
+          if (isDeltaTokens) {
+            deltaTokens.edits.forEach((edit, index) => {
+              if (!Number.isInteger(edit?.start) || !Number.isInteger(edit?.deleteCount)) {
+                throw new Error(
+                  `semanticTokens delta edit ${index} needs integer start+deleteCount; ` +
+                  `got ${JSON.stringify(edit)}`
+                );
+              }
+            });
+          } else if (deltaTokens.data.length % 5 !== 0) {
+            throw new Error(
+              `semanticTokens/full/delta data length must be a multiple of 5; got ${deltaTokens.data.length}`
+            );
+          }
+        }
+
+        // 10. workspace/symbol — must return an array of symbol shapes.
+        const workspaceSymbols = await request('workspace/symbol', { query: 'main' }, 60000);
+        if (!Array.isArray(workspaceSymbols)) {
+          throw new Error(
+            `workspace/symbol must return an array; got ` +
+            `${workspaceSymbols === null ? 'null' : typeof workspaceSymbols}`
+          );
+        }
+        workspaceSymbols.forEach((symbol, index) => {
+          if (typeof symbol?.name !== 'string' || typeof symbol?.kind !== 'number') {
+            throw new Error(
+              `workspace/symbol[${index}] needs name+kind (SymbolInformation/WorkspaceSymbol); ` +
+              `got ${JSON.stringify(symbol)}`
+            );
+          }
+        });
+
+        console.log(
+          `[smoke] capability probes passed on ${entry.name}: references, documentHighlight, ` +
+          'selectionRange, rangeFormatting, prepareRename+rename, inlayHint, ' +
+          'semanticTokens/full/delta, workspace/symbol'
+        );
+
+        // AndroLua layout (.aly) file: must open as a parsed Lua document, and an empty
+        // property string must offer the loadlayout value domain (regression for the
+        // quickSuggestions/empty-string completion path).
+        const alyEntry = files.find((file) => file.name.endsWith('.aly'));
+        if (alyEntry && typeof alyEntry.text === 'string') {
+          notify('textDocument/didOpen', {
+            textDocument: {
+              uri: alyEntry.uri,
+              languageId: 'lua',
+              version: 1,
+              text: alyEntry.text,
+            },
+          });
+          const probeText = `${alyEntry.text}\nlocal probe = loadlayout({ LinearLayout, orientation = "" }, {})\n`;
+          const quoteIndex = probeText.lastIndexOf('orientation = ""') + 'orientation = "'.length;
+          notify('textDocument/didOpen', {
+            textDocument: {
+              uri: alyEntry.uri.replace(/\.aly$/, '.probe.aly'),
+              languageId: 'lua',
+              version: 1,
+              text: probeText,
+            },
+          });
+          const valueCompletion = await request('textDocument/completion', {
+            textDocument: { uri: alyEntry.uri.replace(/\.aly$/, '.probe.aly') },
+            position: positionAt(probeText, quoteIndex),
+          }, 60000);
+          const valueItems = (Array.isArray(valueCompletion) ? valueCompletion : valueCompletion?.items || [])
+            .map((item) => item.label);
+          if (!valueItems.includes('vertical') || !valueItems.includes('horizontal')) {
+            throw new Error(`Layout string-value completion missing orientation tokens: ${valueItems.join(', ')}`);
+          }
+        }
+
         await request('shutdown', null, 30000);
         notify('exit');
         settled = true;
@@ -213,6 +642,31 @@ function positionAt(source, offset) {
     line: lines.length - 1,
     character: lines[lines.length - 1].length,
   };
+}
+
+// Offset of a position strictly inside the first identifier of the source.
+function firstIdentifierOffset(source) {
+  const match = source.match(/[A-Za-z_][A-Za-z0-9_]*/);
+  if (!match) throw new Error('Entry file contains no identifier to probe');
+  return match.index + 1;
+}
+
+// Shared Range shape guard for capability probe results.
+function assertRangeShape(range, label) {
+  if (!range || typeof range !== 'object') {
+    throw new Error(`${label}: expected a Range object; got ${JSON.stringify(range)}`);
+  }
+  for (const edge of [range.start, range.end]) {
+    if (
+      !edge
+      || !Number.isInteger(edge.line) || edge.line < 0
+      || !Number.isInteger(edge.character) || edge.character < 0
+    ) {
+      throw new Error(
+        `${label}: range edges need non-negative integer line/character; got ${JSON.stringify(range)}`
+      );
+    }
+  }
 }
 
 try {

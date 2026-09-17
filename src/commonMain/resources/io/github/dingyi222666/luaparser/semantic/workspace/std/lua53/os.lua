@@ -80,9 +80,9 @@ function os.difftime(t2, t1) end
 ---
 --- When called without a command, `os.execute` returns a boolean that is true
 --- if a shell is available.
----@overload fun():string|number
+---@overload fun():boolean
 ---@param command string
----@return string|number
+---@return boolean|nil, string, number
 function os.execute(command) end
 
 ---
@@ -103,7 +103,7 @@ function os.exit(code, close) end
 --- Returns the value of the process environment variable `varname`, or
 --- **nil** if the variable is not defined.
 ---@param varname string
----@return string
+---@return string|nil
 function os.getenv(varname) end
 
 ---
@@ -111,7 +111,7 @@ function os.getenv(varname) end
 --- If this function fails, it returns **nil**, plus a string describing the
 --- error and the error code. Otherwise, it returns true.
 ---@param filename string
----@return nil|string
+---@return boolean|nil, string, number
 function os.remove(filename) end
 
 ---
@@ -120,7 +120,7 @@ function os.remove(filename) end
 --- code. Otherwise, it returns true.
 ---@param oldname string
 ---@param newname string
----@return nil|string
+---@return boolean|nil, string, number
 function os.rename(oldname, newname) end
 
 ---

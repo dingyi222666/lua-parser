@@ -57,6 +57,26 @@ abstract class ASTNode : BaseASTNode {
     override var bad = false
 }
 
+/**
+ * Shared clone plumbing (previously duplicated file-privately in blockNode.kt,
+ * statementNode.kt and expressionNode.kt): copy range/bad metadata from the source
+ * node, relink a cloned node under its new parent, and clone body blocks.
+ */
+internal fun <T : BaseASTNode> T.copyCloneMetadataFrom(source: BaseASTNode): T = also {
+    range = source.range.copy()
+    bad = source.bad
+}
+
+internal fun <T : BaseASTNode> T.withCloneParent(parentNode: BaseASTNode): T = also {
+    parent = parentNode
+}
+
+internal fun BlockNode.cloneBlockFor(parentNode: BaseASTNode): BlockNode =
+    clone().copyCloneMetadataFrom(this).withCloneParent(parentNode).also { block ->
+        block.statements.forEach { it.parent = block }
+        block.returnStatement?.parent = block
+    }
+
 data class Range(
     var start: Position,
     var end: Position

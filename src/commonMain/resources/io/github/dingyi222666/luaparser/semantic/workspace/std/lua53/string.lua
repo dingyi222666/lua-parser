@@ -140,7 +140,7 @@ function string.format(formatstring, ...) end
 --- an anchor, as this would prevent the iteration.
 ---@param s string
 ---@param pattern string
----@return fun():string, table
+---@return fun():string...
 function string.gmatch(s, pattern) end
 
 ---
@@ -226,8 +226,8 @@ function string.match(s, pattern, init) end
 --- Returns a binary string containing the values `v1`, `v2`, etc. packed (that
 --- is, serialized in binary form) according to the format string `fmt`.
 ---@param fmt string
----@param v1 string
----@param v2 string
+---@param v1 number
+---@param v2 number
 ---@return string
 function string.pack(fmt, v1, v2, ...) end
 
@@ -284,11 +284,11 @@ function string.sub(s, i, j) end
 --- `fmt`. An optional `pos` marks where to start reading in `s` (default is 1).
 --- After the read values, this function also returns the index of the first
 --- unread byte in `s`.
----@overload fun(fmt:string, s:string):string
+---@overload fun(fmt:string, s:string):any..., number
 ---@param fmt string
 ---@param s string
 ---@param pos number
----@return string
+---@return any..., number
 function string.unpack(fmt, s, pos) end
 
 ---

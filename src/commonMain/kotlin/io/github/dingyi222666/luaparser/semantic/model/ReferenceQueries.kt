@@ -418,7 +418,7 @@ internal class ReferenceQueries(
 
     fun visibleValueDeclarations(position: Position): List<VisibleDeclaration> {
         val importedVisible = importedVisibleDeclarations(position)
-        val scope = binder.positionQueries.getScopeAt(position)
+        val scope = scopeForFreePositionQuery(position)
             ?: return mergeVisibleDeclarations(
                 rootVisibleValueDeclarations(position),
                 importedVisible
@@ -467,6 +467,16 @@ internal class ReferenceQueries(
 
         results += seenByName.values
         return results
+    }
+
+    /**
+     * Scope-chain entry for free-position queries (completion enumeration, bare-name
+     * resolution, import shadowing) — the loop-tail promotion lives on
+     * [io.github.dingyi222666.luaparser.semantic.binder.BinderPositionQueries.scopeForFreePositionQuery]
+     * so the workspace facade and legacy adapters resolve identical scopes at tail carets.
+     */
+    private fun scopeForFreePositionQuery(position: Position): Scope? {
+        return binder.positionQueries.scopeForFreePositionQuery(position)
     }
 
     private fun mergeVisibleDeclarations(
@@ -592,7 +602,7 @@ internal class ReferenceQueries(
         }
         val resolvedType = resolution.type?.hydrateJavaProviderType(workspaceContext.resolveImportTarget)
 
-        val normalizedBase = TypeExpansion.expandForMemberSurface(baseType, lexicalScopeId, binder)
+        val normalizedBase = TypeExpansion.expandForSurface(baseType, lexicalScopeId, binder)
         val workspaceMember = workspaceModuleMember(expression.base, normalizedBase, expression.identifier.name)
         val memberType = workspaceMember?.type
             ?.hydrateJavaProviderType(workspaceContext.resolveImportTarget)
@@ -670,7 +680,7 @@ internal class ReferenceQueries(
         baseType: Type,
         lexicalScopeId: ScopeId
     ): Symbol? {
-        val normalizedBase = TypeExpansion.expandForMemberSurface(baseType, lexicalScopeId, binder)
+        val normalizedBase = TypeExpansion.expandForSurface(baseType, lexicalScopeId, binder)
         if (!isJavaMemberProviderBase(normalizedBase)) {
             return null
         }
@@ -731,34 +741,12 @@ internal class ReferenceQueries(
             return null
         }
         // Direct import(...) locals and Identifier rebinding of package/class import aliases.
+        // The single-target union / multi-target Array<> shape matches importCallModuleType.
         val resolvedType = importPackageAliasType(declaration, linkedSetOf())
-            ?: run {
-                val initializer = localDeclarationInitializer(declaration)
-                    as? io.github.dingyi222666.luaparser.parser.ast.node.CallExpression
-                    ?: return null
-                if (!isImportCallBase(effectiveCallBase(initializer))) {
-                    return null
-                }
-                val targets = importCallTargets(initializer)
-                if (targets.isEmpty()) {
-                    return null
-                }
-                val importedTypes = targets.mapNotNull { target ->
-                    resolveLuaJavaImportTarget(target)?.moduleType
-                }
-                if (importedTypes.isEmpty()) {
-                    return null
-                }
-                if (targets.size == 1 && importedTypes.size == 1) {
-                    importedTypes.single()
-                } else {
-                    val element = unionTypeOf(importedTypes)
-                    io.github.dingyi222666.luaparser.semantic.types.model.ArrayType(
-                        elementType = element,
-                        name = "Array<${element.displayName}>"
-                    )
-                }
-            }
+            ?: (localDeclarationInitializer(declaration)
+                as? io.github.dingyi222666.luaparser.parser.ast.node.CallExpression)
+                ?.let { importCallModuleType(it) }
+            ?: return null
         return adapters.toDeclarationSymbol(declaration, resolvedType, resolvedType)
     }
 
@@ -936,20 +924,24 @@ internal class ReferenceQueries(
         }
     }
 
-    private fun luaJavaHelperCallType(
+    /**
+     * Shared helper-name → value-type mapping for luajava class-load calls. Used both by the
+     * direct callee check ([luaJavaHelperCallType]) and by the local-alias declaration chain
+     * ([luaJavaHelperCallTypeFromDeclarationChain]) — previously two copy-pasted when blocks.
+     */
+    private fun luaJavaHelperResultType(
+        helperName: String,
         call: io.github.dingyi222666.luaparser.parser.ast.node.CallExpression,
         target: String
     ): Type? {
-        return when {
-            isLuaJavaHelperCall(call, "bindClass") ->
-                resolveLuaJavaImportTarget(target)?.moduleType
+        return when (helperName) {
+            "bindClass" -> resolveLuaJavaImportTarget(target)?.moduleType
 
-            isLuaJavaHelperCall(call, "newInstance") ->
-                resolveLuaJavaImportTarget(target)?.moduleType
-                    ?.javaInstanceSurface()
-                    ?.hydrateLuaJavaProviderType()
+            "newInstance" -> resolveLuaJavaImportTarget(target)?.moduleType
+                ?.javaInstanceSurface()
+                ?.hydrateLuaJavaProviderType()
 
-            isLuaJavaHelperCall(call, "createProxy") -> {
+            "createProxy" -> {
                 val interfaceTypes = createProxyInterfaceTargets(call).mapNotNull { interfaceTarget ->
                     resolveLuaJavaImportTarget(interfaceTarget)?.moduleType
                         ?.javaInstanceSurface()
@@ -962,11 +954,24 @@ internal class ReferenceQueries(
                 }
             }
 
-            isLuaJavaHelperCall(call, "loadLib") -> {
+            "loadLib" -> {
                 val memberName = stringCallTarget(call, argumentIndex = 1) ?: return null
                 resolveLoadLibMemberType(target, memberName)
             }
 
+            else -> null
+        }
+    }
+
+    private fun luaJavaHelperCallType(
+        call: io.github.dingyi222666.luaparser.parser.ast.node.CallExpression,
+        target: String
+    ): Type? {
+        return when {
+            isLuaJavaHelperCall(call, "bindClass") -> luaJavaHelperResultType("bindClass", call, target)
+            isLuaJavaHelperCall(call, "newInstance") -> luaJavaHelperResultType("newInstance", call, target)
+            isLuaJavaHelperCall(call, "createProxy") -> luaJavaHelperResultType("createProxy", call, target)
+            isLuaJavaHelperCall(call, "loadLib") -> luaJavaHelperResultType("loadLib", call, target)
             else -> null
         }
     }
@@ -983,36 +988,10 @@ internal class ReferenceQueries(
             excludedDeclarations = localStatementDeclarationIds(assignedDeclaration)
         ) ?: return null
         val excluded = localStatementDeclarationIds(assignedDeclaration)
-        val helperName = when {
-            declarationResolvesToLuaJavaHelperByDeclarationChain(baseDeclaration, "bindClass", excluded, linkedSetOf()) -> "bindClass"
-            declarationResolvesToLuaJavaHelperByDeclarationChain(baseDeclaration, "newInstance", excluded, linkedSetOf()) -> "newInstance"
-            declarationResolvesToLuaJavaHelperByDeclarationChain(baseDeclaration, "createProxy", excluded, linkedSetOf()) -> "createProxy"
-            declarationResolvesToLuaJavaHelperByDeclarationChain(baseDeclaration, "loadLib", excluded, linkedSetOf()) -> "loadLib"
-            else -> return null
-        }
-        return when (helperName) {
-            "bindClass" -> resolveLuaJavaImportTarget(target)?.moduleType
-            "newInstance" -> resolveLuaJavaImportTarget(target)?.moduleType
-                ?.javaInstanceSurface()
-                ?.hydrateLuaJavaProviderType()
-            "createProxy" -> {
-                val interfaceTypes = createProxyInterfaceTargets(call).mapNotNull { interfaceTarget ->
-                    resolveLuaJavaImportTarget(interfaceTarget)?.moduleType
-                        ?.javaInstanceSurface()
-                        ?.hydrateLuaJavaProviderType()
-                }
-                when {
-                    interfaceTypes.isEmpty() -> null
-                    interfaceTypes.size == 1 -> interfaceTypes.single()
-                    else -> intersectionTypeOf(interfaceTypes)
-                }
-            }
-            "loadLib" -> {
-                val memberName = stringCallTarget(call, argumentIndex = 1) ?: return null
-                resolveLoadLibMemberType(target, memberName)
-            }
-            else -> null
-        }
+        val helperName = listOf("bindClass", "newInstance", "createProxy", "loadLib").firstOrNull { helper ->
+            declarationResolvesToLuaJavaHelperByDeclarationChain(baseDeclaration, helper, excluded, linkedSetOf())
+        } ?: return null
+        return luaJavaHelperResultType(helperName, call, target)
     }
 
     private fun declarationResolvesToLuaJavaHelperByDeclarationChain(
@@ -1032,11 +1011,7 @@ internal class ReferenceQueries(
         // transitive chains like `bindClass -> bind -> again` must still see earlier alias decls.
         val hopExclusions = localStatementDeclarationIds(declaration)
         return when (val initializer = localDeclarationInitializer(declaration)) {
-            is MemberExpression -> isLuaJavaHelperMemberByDeclarationChain(
-                initializer,
-                helperName,
-                hopExclusions
-            )
+            is MemberExpression -> isLuaJavaHelperMember(initializer, helperName, hopExclusions)
             is Identifier -> {
                 val next = findVisibleValueDeclarationWithoutImports(
                     name = initializer.name,
@@ -1052,40 +1027,6 @@ internal class ReferenceQueries(
             }
             else -> false
         }
-    }
-
-    private fun isLuaJavaHelperMemberByDeclarationChain(
-        member: MemberExpression,
-        helperName: String,
-        excludedDeclarations: Set<io.github.dingyi222666.luaparser.semantic.binder.DeclarationId>
-    ): Boolean {
-        val owner = member.base as? Identifier ?: return false
-        if (member.indexer != "." || member.identifier.name != helperName || owner.name != "luajava") {
-            return false
-        }
-        val ownerDeclaration = findVisibleValueDeclarationWithoutImports(
-            name = owner.name,
-            position = owner.range.start,
-            excludedDeclarations = excludedDeclarations
-        )
-        if (ownerDeclaration == null) {
-            return true
-        }
-        if (ownerDeclaration.origin != io.github.dingyi222666.luaparser.semantic.binder.DeclarationOrigin.BUILTIN) {
-            return false
-        }
-        return ownerDeclaration.kind != DeclarationKind.LOCAL &&
-            ownerDeclaration.kind != DeclarationKind.FUNCTION &&
-            ownerDeclaration.kind != DeclarationKind.PARAMETER
-    }
-
-    private fun localDeclarationInitializer(declaration: BinderDeclaration): ExpressionNode? {
-        val localStatement = declaration.anchorNode?.parent as? LocalStatement ?: return null
-        val initializerIndex = localStatement.init.indexOf(declaration.anchorNode)
-        if (initializerIndex < 0) {
-            return null
-        }
-        return localStatement.variables.getOrNull(initializerIndex)
     }
 
     private fun isJavaMemberProviderBase(type: Type): Boolean {
@@ -1132,11 +1073,7 @@ internal class ReferenceQueries(
     }
 
     private fun effectiveCallBase(node: io.github.dingyi222666.luaparser.parser.ast.node.CallExpression): ExpressionNode {
-        val base = if (node.base is StringCallExpression && node.arguments.isEmpty()) {
-            node.base
-        } else {
-            node.base
-        }
+        val base = node.base
         return if (base is StringCallExpression) base.base else base
     }
 
@@ -1283,7 +1220,7 @@ internal class ReferenceQueries(
         position: Position,
         excludedDeclarations: Set<io.github.dingyi222666.luaparser.semantic.binder.DeclarationId>
     ): BinderDeclaration? {
-        var scope = binder.positionQueries.getScopeAt(position)
+        var scope = scopeForFreePositionQuery(position)
         while (scope != null) {
             scope.declarationIds
                 .asReversed()
@@ -1315,14 +1252,48 @@ internal class ReferenceQueries(
                 .hydrateJavaProviderType(workspaceContext.resolveImportTarget)
         val members = getMembers(baseType, lexicalScopeId)
         return if (expression.indexer == ":") {
-            members.sortedWith(compareBy<Symbol>({ if (it.kind == io.github.dingyi222666.luaparser.semantic.api.SymbolKind.METHOD) 0 else 1 }, { it.name }))
+            // `obj:` is a method call site: a FIELD whose value is KNOWN to be non-callable
+            // (JavaBean property aliases such as File.path / File.name, plain data fields)
+            // cannot be invoked, so it is dropped here. Callable field surfaces (Lua
+            // functions stored in table/module fields, `fun(...)` typed @field) stay, as
+            // does every METHOD — and so does every field whose type is unknown/absent,
+            // because unknown does not imply non-callable. The `.` surface below keeps the
+            // full member list including the aliases.
+            members
+                .filterNot { symbol -> symbol.kind == SymbolKind.FIELD && !hasCallableMemberDisplay(symbol) }
+                .sortedWith(compareBy<Symbol>({ if (it.kind == io.github.dingyi222666.luaparser.semantic.api.SymbolKind.METHOD) 0 else 1 }, { it.name }))
         } else {
             members.sortedWith(compareBy<Symbol>({ if (it.kind == io.github.dingyi222666.luaparser.semantic.api.SymbolKind.FIELD) 0 else 1 }, { it.name }))
         }
     }
 
+    /**
+     * Same `fun(` display heuristic the hover / completion-kind paths use to decide that a
+     * member's value is callable, applied to the member-completion surface. A
+     * [TypeInfoKind.FUNCTION] type info counts as callable even when the display differs.
+     *
+     * Unknown / absent / `any` typed members count as POTENTIALLY callable (unknown is not
+     * a callability signal), so they stay in the `:` surface; only a KNOWN non-callable
+     * display is filtered.
+     */
+    private fun hasCallableMemberDisplay(symbol: Symbol): Boolean {
+        if (symbol.declaredType?.kind == TypeInfoKind.FUNCTION || symbol.type?.kind == TypeInfoKind.FUNCTION) {
+            return true
+        }
+        val display = symbol.declaredType?.displayName
+            ?: symbol.type?.displayName
+            ?: symbol.detail
+            // Absent type information carries no callability signal: keep the member.
+            ?: return true
+        if (display.isBlank() || display == "unknown" || display == "any") {
+            // Coarse unknown / any surfaces are not "known non-callable" either.
+            return true
+        }
+        return display.contains("fun(") || display.contains("fun<")
+    }
+
     private fun collectMemberSurface(type: Type, lexicalScopeId: ScopeId): Map<String, MemberSurface> {
-        val normalized = TypeExpansion.expandForMemberSurface(
+        val normalized = TypeExpansion.expandForSurface(
             type.hydrateJavaProviderType(workspaceContext.resolveImportTarget),
             lexicalScopeId,
             binder
@@ -1643,14 +1614,10 @@ internal class ReferenceQueries(
         return binder.declarationIndex
             .getOwnedDeclarations(io.github.dingyi222666.luaparser.semantic.binder.DeclarationOwner.Declaration(classDeclaration.id))
             .firstOrNull { it.kind == expectedKind && it.name == memberName }
-            ?: if (expectedKind == DeclarationKind.FIELD) {
-                classType.superClass?.let { superClass ->
-                    findBackingMemberDeclaration(superClass, memberName, accessKind)
-                }
-            } else {
-                classType.superClass?.let { superClass ->
-                    findBackingMemberDeclaration(superClass, memberName, accessKind)
-                }
+            ?: classType.superClass?.let { superClass ->
+                // FIELD and METHOD lookups walk the superclass chain identically; the
+                // FIELD/METHOD if/else this replaces held two byte-identical branches.
+                findBackingMemberDeclaration(superClass, memberName, accessKind)
             }
     }
 
@@ -1795,9 +1762,49 @@ internal class ReferenceQueries(
         }
     }
 
+    private var sharedGlobalsCache: List<WorkspaceImportedSymbol>? = null
+
+    /**
+     * AndroLua project scripts share one Lua global environment: chunk-level globals
+     * assigned in any project file are runtime-visible in every other file. Enumerate
+     * them (excluding locally-visible and imported names) once per model so completion
+     * offers cross-file globals without an import edge.
+     */
+    private fun sharedWorkspaceGlobals(position: Position): List<WorkspaceImportedSymbol> {
+        sharedGlobalsCache?.let { return it }
+        val resolver = workspaceContext.workspaceResolver ?: return emptyList()
+        val path = workspaceContext.currentPath ?: return emptyList()
+        val all = resolver.allSharedGlobalSymbols(path) + loadlayoutInjectedGlobalSymbols()
+        sharedGlobalsCache = all
+        val localNames = visibleValueDeclarationsWithoutImports(position).mapTo(HashSet()) { it.name }
+        val importedNames = workspaceContext.importedSymbols.keys
+        return all.filter { symbol -> symbol.alias !in localNames && symbol.alias !in importedNames }
+    }
+
+    /**
+     * Ids this document's `loadlayout(t)` / `loadlayout(t, nil)` calls register into _G
+     * (typed as their layout-row view class). Same shared-environment enumeration surface
+     * as cross-file globals, scoped to the current document's layout calls.
+     */
+    private fun loadlayoutInjectedGlobalSymbols(): List<WorkspaceImportedSymbol> {
+        val path = workspaceContext.currentPath ?: return emptyList()
+        val globals = evaluator.loadlayoutInjectedGlobals(
+            ExpressionTypeEvaluator.Context(lexicalScopeId = binder.scopeGraph.rootScope.id)
+        )
+        return globals.map { (name, type) ->
+            WorkspaceImportedSymbol(
+                alias = name,
+                moduleName = "loadlayout",
+                providerPath = path,
+                moduleType = ModuleType(moduleName = "LuaLayoutIds"),
+                valueType = type,
+                kind = SymbolKind.VARIABLE
+            )
+        }
+    }
+
     private fun importedVisibleDeclarations(position: Position): List<VisibleDeclaration> {
-        return importedSymbolsAt(position)
-            .values
+        return (importedSymbolsAt(position).values + sharedWorkspaceGlobals(position))
             .sortedBy { it.alias }
             .map { imported ->
                 VisibleDeclaration(
@@ -1846,7 +1853,7 @@ internal class ReferenceQueries(
     }
 
     private fun visibleValueDeclarationsWithoutImports(position: Position): List<BinderDeclaration> {
-        val scope = binder.positionQueries.getScopeAt(position)
+        val scope = scopeForFreePositionQuery(position)
         val seenByName = linkedMapOf<String, BinderDeclaration>()
 
         var current: Scope? = scope
@@ -1954,8 +1961,27 @@ internal class ReferenceQueries(
         if (binder.isChunkGlobalFunctionDeclaration(declaration)) {
             return true
         }
+        // AST-invented chunk globals (`cfg = { title = "x" }` written after a function that
+        // reads `cfg`) are position-independent: Lua globals live in the environment table,
+        // so a bare-name write anywhere in the chunk is visible to every free read of that
+        // name in the file. DOC_COMMENT / SYNTHETIC declarations keep positional gating.
+        if (
+            declaration.kind == DeclarationKind.GLOBAL &&
+            declaration.origin == io.github.dingyi222666.luaparser.semantic.binder.DeclarationOrigin.AST
+        ) {
+            return true
+        }
         val range = declaration.range ?: return true
-        return compare(range.start, position) <= 0
+        // The declared name itself is always in scope at its own site (hover/rename on
+        // `local x` must resolve to the new local even though USES begin after the
+        // statement ends).
+        if (compare(range.start, position) <= 0 && compare(position, range.end) < 0) {
+            return true
+        }
+        // Locals carry `visibleFrom` at the end of their LocalStatement, so `local x = x + 1`
+        // resolves the RHS `x` to the outer x (the new local only exists after the statement).
+        val visibleFrom = declaration.visibleFrom ?: range.start
+        return compare(visibleFrom, position) <= 0
     }
 
     private fun compareSpecificity(a: io.github.dingyi222666.luaparser.parser.ast.node.Range?, b: io.github.dingyi222666.luaparser.parser.ast.node.Range?): Int {

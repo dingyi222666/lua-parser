@@ -40,6 +40,7 @@ import io.github.dingyi222666.luaparser.semantic.api.SymbolKind
 import io.github.dingyi222666.luaparser.semantic.binder.BinderDeclaration
 import io.github.dingyi222666.luaparser.semantic.binder.DeclarationKind
 import io.github.dingyi222666.luaparser.semantic.binder.DeclarationOwner
+import io.github.dingyi222666.luaparser.semantic.api.DiagnosticSeverity
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -235,18 +236,22 @@ class SemanticPipelineIntegrationTest {
         val modelDiagnostics = harness.snapshot.model.getDiagnostics()
         val modelCodes = harness.diagnosticCodes()
 
+        // render is an uncalled chunk-level local function: the dead-code pass adds
+        // one checker.local.unused INFO alongside the three signature/return errors.
         assertEquals(
             setOf(
                 "checker.function.signature.unknownParam",
                 "checker.function.return.typeMismatch",
-                "checker.function.return.extraValues"
+                "checker.function.return.extraValues",
+                "checker.local.unused"
             ),
             checkerCodes.toSet()
         )
         assertEquals(checkerCodes.toSet(), modelCodes.toSet())
         assertEquals(checkerCodes.size, modelCodes.size)
         assertEquals(harness.snapshot.result.summary.diagnosticCount, modelDiagnostics.size)
-        assertEquals(harness.snapshot.result.summary.errorCount, modelDiagnostics.size)
+        val errorCount = modelDiagnostics.count { it.severity == DiagnosticSeverity.ERROR }
+        assertEquals(errorCount, harness.snapshot.result.summary.errorCount)
         assertTrue(modelDiagnostics.any { it.message.contains("extra values") })
     }
 

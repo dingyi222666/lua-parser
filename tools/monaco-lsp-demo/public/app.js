@@ -106,9 +106,28 @@
 
   let logLineCount = 0;
   let lspReady = false;
+  /**
+   * Set when the bridge refuses the connection (single-active-client policy:
+   * another editor already holds the language server, or the child is shutting
+   * down). Shown in the status bar because the refused socket closes right after.
+   * @type {string | null}
+   */
+  let bridgeRejection = null;
 
   /** @type {Array<{ dispose: Function }>} */
   let providerDisposables = [];
+
+  /**
+   * Semantic tokens legend captured from the initialize result
+   * (capabilities.semanticTokensProvider.legend). Monaco decodes the server's
+   * tokenType/tokenModifier ints against this same legend, so the provider can
+   * only be registered once it is known.
+   * @type {{ tokenTypes: string[], tokenModifiers: string[] } | null}
+   */
+  let semanticLegend = null;
+  /** @type {{ dispose: Function } | null} */
+  let semanticTokensDisposable = null;
+  const pendingTokenRequests = new WeakMap();
 
   // ---------------------------------------------------------------------------
   // UI helpers
@@ -178,6 +197,11 @@
 
   function appendLog(dir, body) {
     if (!el.panelLog) return;
+    // Autoscroll only when the pane is already pinned near the bottom; never
+    // yank the viewport while the user is reading earlier lines.
+    const nearBottom =
+      el.panelLog.scrollTop + el.panelLog.clientHeight >=
+      el.panelLog.scrollHeight - 20;
     const line = document.createElement("div");
     line.className = "log-line";
 
@@ -212,7 +236,9 @@
     while (el.panelLog.children.length > 500) {
       el.panelLog.removeChild(el.panelLog.firstChild);
     }
-    el.panelLog.scrollTop = el.panelLog.scrollHeight;
+    if (nearBottom) {
+      el.panelLog.scrollTop = el.panelLog.scrollHeight;
+    }
   }
 
   function logSys(msg) {
@@ -345,7 +371,11 @@
         onPublishDiagnostics(params);
         break;
       case "$/bridge":
-        if (params.type === "error" || params.type === "stderr") {
+        if (params.type === "busy") {
+          bridgeRejection = params.message || "Another editor holds the language server";
+          setStatus("error", bridgeRejection);
+          logSys("[bridge] " + bridgeRejection);
+        } else if (params.type === "error" || params.type === "stderr") {
           logErr("[bridge] " + (params.message || ""));
         } else {
           logSys("[bridge] " + (params.type || "") + ": " + (params.message || ""));
@@ -441,11 +471,40 @@
           endColumn: Math.max(range.end.character + 1, range.start.character + 2),
           source: d.source || "lua-parser",
           code: d.code != null ? String(d.code) : undefined,
+          // LSP DiagnosticTag 1 = Unnecessary (gray out unused code), 2 = Deprecated
+          // (strike-through). Monaco uses the same numeric MarkerTag values.
+          tags: Array.isArray(d.tags)
+            ? d.tags.filter(function (t) { return t === 1 || t === 2; })
+            : undefined,
         };
       });
       monacoApi.editor.setModelMarkers(model, "lua-lsp", markers);
     }
 
+    renderDiagnosticsPanel();
+    renderFileList();
+  }
+
+  /**
+   * Drop every published diagnostic: clear markers from all models and forget
+   * the panel/file-badge state. Called when the socket closes so a dead
+   * session never leaves stale squiggles behind.
+   */
+  function clearAllDiagnostics() {
+    if (monacoApi) {
+      diagnosticsByUri.forEach(function (_diags, uri) {
+        let model = null;
+        try {
+          model = monacoApi.editor.getModel(monacoApi.Uri.parse(uri));
+        } catch (_) {
+          return;
+        }
+        if (model) {
+          monacoApi.editor.setModelMarkers(model, "lua-lsp", []);
+        }
+      });
+    }
+    diagnosticsByUri.clear();
     renderDiagnosticsPanel();
     renderFileList();
   }
@@ -589,12 +648,16 @@
     }
   }
 
-  async function loadFileList() {
+  let lastFileListWasLive = false;
+
+async function loadFileList() {
     let files = [];
+    let live = false;
     try {
       const data = await fetchJson(HTTP_BASE + "/api/files");
       if (Array.isArray(data)) files = data;
       else if (data && Array.isArray(data.files)) files = data.files;
+      live = true;
     } catch (e) {
       logSys("GET /api/files unavailable, using /api/info sampleFiles");
       files = serverInfo.sampleFiles || [];
@@ -603,6 +666,9 @@
     if (!files.length && Array.isArray(serverInfo.sampleFiles)) {
       files = serverInfo.sampleFiles;
     }
+    // Fallback/sample lists are not ground truth: ghost-tab pruning must never
+    // close real documents because a fetch failed or the server returned nothing.
+    lastFileListWasLive = live;
 
     workspaceFiles = files.map(function (f) {
       if (typeof f === "string") {
@@ -770,7 +836,8 @@
   // ---------------------------------------------------------------------------
 
   function languageIdFor(name) {
-    if (/\.lua$/i.test(name)) return "lua";
+    // AndroLua layout modules (.aly) are Lua table files — highlight them as Lua.
+    if (/\.(lua|aly)$/i.test(name)) return "lua";
     return "plaintext";
   }
 
@@ -806,6 +873,7 @@
       languageId: languageId,
       version: 1,
       model: model,
+      text: text,
       openedOnServer: false,
     };
     openDocs.set(uri, doc);
@@ -853,7 +921,14 @@
 
   function closeDocument(uri) {
     const doc = openDocs.get(uri);
-    if (!doc) return;
+    if (!doc) return false;
+
+    if (doc.model.getValue() !== (doc.text || "")) {
+      const proceed = window.confirm(
+        '"' + doc.name + '" has unsaved changes. Close anyway?'
+      );
+      if (!proceed) return false;
+    }
 
     if (lspReady && doc.openedOnServer) {
       try {
@@ -885,6 +960,33 @@
     renderFileList();
     renderDiagnosticsPanel();
     updateEditorVisibility();
+    return true;
+  }
+
+  /**
+   * Close every open document whose uri no longer appears in the refreshed
+   * workspace file list (deleted or renamed on disk). Tabs used to survive a
+   * Refresh as ghosts, keeping dead models and stale didOpen state on the
+   * server. Skipped when the fetched list is empty — a failed or partial
+   * listing must not close every tab.
+   */
+  function pruneGoneDocuments() {
+    if (!lastFileListWasLive) {
+      return 0;
+    }
+    if (!workspaceFiles.length) return 0;
+    const present = Object.create(null);
+    workspaceFiles.forEach(function (f) {
+      if (f && f.uri) present[f.uri] = true;
+    });
+    let closed = 0;
+    Array.from(openDocs.keys()).forEach(function (uri) {
+      if (!present[uri]) {
+        logSys("Refresh: " + basename(uri) + " left the workspace, closing tab");
+        if (closeDocument(uri)) closed += 1;
+      }
+    });
+    return closed;
   }
 
   function reopenAllOnServer() {
@@ -960,6 +1062,23 @@
           documentHighlight: {
             dynamicRegistration: false,
           },
+          documentSymbol: {
+            dynamicRegistration: false,
+            // The server picks hierarchical DocumentSymbol vs flat
+            // SymbolInformation from this flag; the demo maps both shapes.
+            hierarchicalDocumentSymbolSupport: true,
+          },
+          foldingRange: {
+            dynamicRegistration: false,
+            lineFoldingOnly: true,
+          },
+          semanticTokens: {
+            dynamicRegistration: false,
+            formats: ["relative"],
+            requests: { range: false, full: { delta: false } },
+            overlappingTokenSupport: false,
+            multilineTokenSupport: false,
+          },
           references: { dynamicRegistration: false },
         },
         window: {
@@ -988,6 +1107,35 @@
     });
   }
 
+  /**
+   * Pick up capability payloads the demo consumes beyond capability names:
+   * the semantic tokens legend (token type/modifier name lists) that defines
+   * the protocol meaning of each int in the tokens data arrays. Called with
+   * the InitializeResult before any semantic tokens request goes out.
+   */
+  function captureServerCapabilities(result) {
+    const provider =
+      result && result.capabilities && result.capabilities.semanticTokensProvider;
+    const legend = provider && provider.legend;
+    if (legend && Array.isArray(legend.tokenTypes) && legend.tokenTypes.length) {
+      semanticLegend = {
+        tokenTypes: legend.tokenTypes.slice(),
+        tokenModifiers: Array.isArray(legend.tokenModifiers)
+          ? legend.tokenModifiers.slice()
+          : [],
+      };
+      logSys(
+        "semantic tokens legend: " +
+          semanticLegend.tokenTypes.length +
+          " types [" +
+          semanticLegend.tokenTypes.join(", ") +
+          "]"
+      );
+    } else {
+      semanticLegend = null;
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // Monaco providers
   // ---------------------------------------------------------------------------
@@ -1001,6 +1149,14 @@
       }
     });
     providerDisposables = [];
+    if (semanticTokensDisposable) {
+      try {
+        semanticTokensDisposable.dispose();
+      } catch (_) {
+        /* ignore */
+      }
+      semanticTokensDisposable = null;
+    }
   }
 
   function markupToString(contents) {
@@ -1053,7 +1209,111 @@
       24: K.Operator,
       25: K.TypeParameter,
     };
-    return table[kind] || K.Text;
+    // Monaco's Method = 0: `|| K.Text` would treat the valid 0 as missing and render
+    // every method completion with the "abc" text glyph.
+    return table[kind] != null ? table[kind] : K.Text;
+  }
+
+  function symbolKindFromLsp(kind) {
+    if (!monacoApi) return 0;
+    const K = monacoApi.languages.SymbolKind;
+    // LSP SymbolKind ints are 1-based; Monaco's enum is 0-based.
+    const table = {
+      1: K.File,
+      2: K.Module,
+      3: K.Namespace,
+      4: K.Package,
+      5: K.Class,
+      6: K.Method,
+      7: K.Property,
+      8: K.Field,
+      9: K.Constructor,
+      10: K.Enum,
+      11: K.Interface,
+      12: K.Function,
+      13: K.Variable,
+      14: K.Constant,
+      15: K.String,
+      16: K.Number,
+      17: K.Boolean,
+      18: K.Array,
+      19: K.Object,
+      20: K.Key,
+      21: K.Null,
+      22: K.EnumMember,
+      23: K.Struct,
+      24: K.Event,
+      25: K.Operator,
+      26: K.TypeParameter,
+    };
+    const mapped = table[kind];
+    return mapped != null ? mapped : K.Object;
+  }
+
+  /**
+   * Map one LSP symbol into a Monaco DocumentSymbol. Accepts BOTH protocol
+   * shapes defensively — hierarchical DocumentSymbol (range/selectionRange/
+   * children/detail) and flat SymbolInformation (location/containerName) —
+   * because the server chooses per negotiated capability and an intervening
+   * proxy could return either regardless.
+   */
+  function documentSymbolFromLsp(sym, containerName) {
+    if (!sym || !monacoApi) return null;
+    const isSymbolInformation = !sym.range && !!sym.location;
+    const fallbackRange = {
+      startLineNumber: 1,
+      startColumn: 1,
+      endLineNumber: 1,
+      endColumn: 1,
+    };
+    const range = rangeFromLsp(
+      isSymbolInformation ? sym.location.range : sym.range
+    ) || fallbackRange;
+    const selectionRange = rangeFromLsp(sym.selectionRange) || range;
+    const symbol = {
+      name: String(sym.name || ""),
+      detail: sym.detail != null ? String(sym.detail) : undefined,
+      kind: symbolKindFromLsp(sym.kind),
+      tags: Array.isArray(sym.tags) ? sym.tags.slice() : [],
+      range: range,
+      selectionRange: selectionRange,
+      containerName:
+        sym.containerName != null ? String(sym.containerName) : containerName,
+    };
+    if (Array.isArray(sym.children) && sym.children.length) {
+      symbol.children = sym.children
+        .map(function (child) {
+          return documentSymbolFromLsp(child, symbol.name);
+        })
+        .filter(Boolean);
+    }
+    return symbol;
+  }
+
+  function foldingRangeFromLsp(range, maxLine) {
+    if (!range || !monacoApi) return null;
+    const start = Math.floor(Number(range.startLine));
+    let end = Math.floor(Number(range.endLine));
+    if (!isFinite(start) || !isFinite(end) || start < 0) {
+      return null;
+    }
+    // LSP lines are 0-based; Monaco folding ranges are ONE-based inclusive.
+    // A 0-based start of 0 (file's first line) maps to Monaco line 1 — filtering
+    // start<0 silently dropped every fold touching the top of a file.
+    const startOneBased = start + 1;
+    let endOneBased = end + 1;
+    if (startOneBased > maxLine) {
+      return null;
+    }
+    if (endOneBased < startOneBased) endOneBased = startOneBased;
+    if (endOneBased > maxLine) endOneBased = maxLine;
+    if (endOneBased <= startOneBased) return null; // single-line spans are not foldable
+    const out = { start: startOneBased, end: endOneBased };
+    // LSP kinds are strings; Monaco's FoldingRangeKind wraps the same names.
+    if (range.kind === "comment") out.kind = monacoApi.languages.FoldingRangeKind.Comment;
+    else if (range.kind === "imports") out.kind = monacoApi.languages.FoldingRangeKind.Imports;
+    else if (range.kind === "region") out.kind = monacoApi.languages.FoldingRangeKind.Region;
+    return out;
   }
 
   function registerProviders() {
@@ -1062,15 +1322,24 @@
 
     const selector = { language: "lua" };
 
+    // Monotonic sequence guards against the stale-response race: a slow earlier
+    // response must never overwrite a newer one. Each provider owns a closure
+    // counter; the provider snapshots it at request time and discards the
+    // response when a newer request has bumped the counter in the meantime.
+    let hoverSeq = 0;
+    let completionSeq = 0;
+
     providerDisposables.push(
       monacoApi.languages.registerHoverProvider(selector, {
         provideHover: async function (model, position) {
           if (!lspReady) return null;
+          const seq = ++hoverSeq;
           try {
             const result = await request("textDocument/hover", {
               textDocument: { uri: model.uri.toString() },
               position: positionFromMonaco(position),
             });
+            if (seq !== hoverSeq) return null; // superseded by a newer hover
             if (!result || result.contents == null) return null;
             const value = markupToString(result.contents);
             if (!value) return null;
@@ -1088,9 +1357,13 @@
 
     providerDisposables.push(
       monacoApi.languages.registerCompletionItemProvider(selector, {
+        // No `"` trigger: quickSuggestions.strings already covers in-string
+        // completion, and a quote trigger also fires on every closing quote
+        // outside strings, spamming completion requests.
         triggerCharacters: [".", ":"],
         provideCompletionItems: async function (model, position, context) {
           if (!lspReady) return { suggestions: [] };
+          const seq = ++completionSeq;
           try {
             let triggerKind = 1;
             if (
@@ -1112,6 +1385,7 @@
                 triggerCharacter: context.triggerCharacter,
               },
             });
+            if (seq !== completionSeq) return { suggestions: [] }; // superseded
             const items = Array.isArray(result)
               ? result
               : result && Array.isArray(result.items)
@@ -1124,6 +1398,32 @@
               startColumn: word.startColumn,
               endColumn: word.endColumn,
             };
+            // Word ranges stop at "." / "%", so inserting dotted module names
+            // ("views.MyTabLayout") or percent sizes ("50%w") into a partially typed
+            // fragment would duplicate the prefix. Extend the replacement range across
+            // those continuation characters on both sides of the caret.
+            const lineContent = model.getLineContent(position.lineNumber);
+            let startColumn = word.startColumn;
+            while (startColumn > 1 && /[.%]/.test(lineContent.charAt(startColumn - 2))) {
+              startColumn -= 1;
+              while (startColumn > 1 && /[\w]/.test(lineContent.charAt(startColumn - 2))) {
+                startColumn -= 1;
+              }
+            }
+            let endColumn = word.endColumn;
+            while (endColumn < lineContent.length && /[.%]/.test(lineContent.charAt(endColumn - 1))) {
+              endColumn += 1;
+              while (endColumn < lineContent.length && /[\w]/.test(lineContent.charAt(endColumn - 1))) {
+                endColumn += 1;
+              }
+            }
+            const defaultRangeWithContinuation = {
+              startLineNumber: position.lineNumber,
+              endLineNumber: position.lineNumber,
+              startColumn: startColumn,
+              endColumn: endColumn,
+            };
+            const swallowed = lineContent.substring(startColumn - 1, word.endColumn - 1);
             const suggestions = items.map(function (item, index) {
               const labelObj = item.label;
               const label =
@@ -1134,10 +1434,18 @@
                 item.insertText != null
                   ? item.insertText
                   : label;
+              const insert = item.textEdit && item.textEdit.newText != null
+                ? item.textEdit.newText
+                : (item.insertText != null ? item.insertText : label);
+              const rangeApplies =
+                typeof insert === "string" &&
+                insert.toLowerCase().startsWith(String(swallowed || "").toLowerCase());
               const itemRange =
                 item.textEdit && item.textEdit.range
                   ? rangeFromLsp(item.textEdit.range)
-                  : defaultRange;
+                  : rangeApplies
+                    ? defaultRangeWithContinuation
+                    : defaultRange;
               const text =
                 item.textEdit && item.textEdit.newText != null
                   ? item.textEdit.newText
@@ -1279,6 +1587,119 @@
         },
       })
     );
+
+    // Monaco's quick outline (Ctrl/Cmd+Shift+O) and symbol search consume this
+    // provider against the active model — no dedicated UI surface needed.
+    providerDisposables.push(
+      monacoApi.languages.registerDocumentSymbolProvider(selector, {
+        provideDocumentSymbols: async function (model) {
+          if (!lspReady) return null;
+          try {
+            const result = await request("textDocument/documentSymbol", {
+              textDocument: { uri: model.uri.toString() },
+            });
+            if (!Array.isArray(result)) return null;
+            return result
+              .map(function (sym) {
+                return documentSymbolFromLsp(sym, undefined);
+              })
+              .filter(Boolean);
+          } catch (e) {
+            logErr("documentSymbol: " + (e.message || e));
+            return null;
+          }
+        },
+      })
+    );
+
+    providerDisposables.push(
+      monacoApi.languages.registerFoldingRangeProvider(selector, {
+        provideFoldingRanges: async function (model) {
+          if (!lspReady) return null;
+          try {
+            const result = await request("textDocument/foldingRange", {
+              textDocument: { uri: model.uri.toString() },
+            });
+            if (!Array.isArray(result)) return null;
+            const maxLine = model.getLineCount();
+            return result
+              .map(function (r) {
+                return foldingRangeFromLsp(r, maxLine);
+              })
+              .filter(Boolean);
+          } catch (e) {
+            logErr("foldingRange: " + (e.message || e));
+            return null;
+          }
+        },
+      })
+    );
+  }
+
+  /**
+   * (Re)register the semantic tokens provider. It needs the legend captured
+   * from the initialize result, so it runs only after a successful connect;
+   * a reconnect replaces the previous registration.
+   */
+  function registerSemanticTokensProvider() {
+    if (!monacoApi) return;
+    if (semanticTokensDisposable) {
+      try {
+        semanticTokensDisposable.dispose();
+      } catch (_) {
+        /* ignore */
+      }
+      semanticTokensDisposable = null;
+    }
+    // A legend-less reinitialize (Stop -> Start against a server without the
+    // capability) must leave NO stale provider behind firing unadvertised requests.
+    if (!semanticLegend) return;
+    semanticTokensDisposable = monacoApi.languages.registerDocumentSemanticTokensProvider(
+      { language: "lua" },
+      semanticLegend,
+      {
+        provideDocumentSemanticTokens: function (model, _context, token) {
+          if (!lspReady) return null;
+          // Coalescing debounce: N keystrokes schedule N calls but only the LAST one
+          // per model proceeds — earlier calls are answered with null (superseded).
+          // The server recomputes tokens under its global lock, so uncoalesced bursts
+          // would serialize full-buffer recomputes on a 3000-line file.
+          return new Promise(function (resolve) {
+            const previous = pendingTokenRequests.get(model);
+            if (previous) {
+              clearTimeout(previous.timer);
+              previous.resolve(null);
+            }
+            const timer = setTimeout(async function () {
+              pendingTokenRequests.delete(model);
+              if (!lspReady || (token && token.isCancellationRequested)) return resolve(null);
+              try {
+                const result = await request("textDocument/semanticTokens/full", {
+                  textDocument: { uri: model.uri.toString() },
+                });
+                if (token && token.isCancellationRequested) return resolve(null);
+                if (!result || !Array.isArray(result.data) || result.data.length % 5 !== 0) {
+                  return resolve(null);
+                }
+                // LSP and Monaco share the relative deltaLine/deltaStart encoding;
+                // positions were negotiated as UTF-16 code units.
+                resolve({
+                  data: new Uint32Array(result.data),
+                  resultId: result.resultId,
+                });
+              } catch (e) {
+                logErr("semanticTokens: " + (e.message || e));
+                resolve(null);
+              }
+            }, 250);
+            pendingTokenRequests.set(model, { timer: timer, resolve: resolve });
+          });
+        },
+        releaseDocumentSemanticTokens: function () {
+          /* no resultId cache to invalidate */
+        },
+      }
+    );
   }
 
   // ---------------------------------------------------------------------------
@@ -1301,6 +1722,7 @@
 
     await new Promise(function (resolve, reject) {
       let settled = false;
+      bridgeRejection = null;
       try {
         socket = new WebSocket(WS_URL);
       } catch (e) {
@@ -1322,19 +1744,22 @@
                 ? Object.keys(result.capabilities).join(", ")
                 : "(none)")
           );
+          captureServerCapabilities(result);
           notify("initialized", {});
           sendDidChangeConfiguration();
           lspReady = true;
           setConnectingUi(false, true);
           setStatus("connected", "Connected");
           reopenAllOnServer();
+          registerSemanticTokensProvider();
           if (!settled) {
             settled = true;
             resolve();
           }
         } catch (e) {
           logErr("initialize failed: " + (e.message || e));
-          setStatus("error", "Initialize failed");
+          // A bridge busy rejection already wrote the real reason; keep it visible.
+          setStatus("error", bridgeRejection || "Initialize failed");
           setConnectingUi(false, false);
           lspReady = false;
           try {
@@ -1359,8 +1784,14 @@
       socket.addEventListener("close", function (ev) {
         logSys("WebSocket closed code=" + ev.code + " reason=" + (ev.reason || ""));
         lspReady = false;
+        clearAllDiagnostics();
         setConnectingUi(false, false);
-        setStatus(ev.code === 1000 ? "" : "error", "Disconnected");
+        // A refused connection closes right after the `$/bridge` busy status; keep
+        // that reason visible instead of flashing generic "Disconnected".
+        setStatus(
+          ev.code === 1000 && !bridgeRejection ? "" : "error",
+          bridgeRejection || "Disconnected"
+        );
         pending.forEach(function (p) {
           if (p.timer) clearTimeout(p.timer);
           p.reject(new Error("WebSocket closed"));
@@ -1585,6 +2016,10 @@
         { token: "keyword", foreground: "c792ea" },
         { token: "string", foreground: "c3e88d" },
         { token: "number", foreground: "f78c6c" },
+        // "function"/"parameter" are never emitted by the Monarch grammar —
+        // these rules style semantic tokens from the language server only.
+        { token: "function", foreground: "82aaff" },
+        { token: "parameter", foreground: "f0a45d" },
       ],
       colors: {
         "editor.background": "#0f1115",
@@ -1624,6 +2059,14 @@
       padding: { top: 8 },
       fixedOverflowWidgets: true,
       wordBasedSuggestions: "off",
+      // AndroLua layout values live inside string literals ("orientation = \"vert
+      // Monaco defaults to quickSuggestions.strings = "off", which would silently
+      // disable every string-literal completion the language server offers.
+      quickSuggestions: { other: true, comments: false, strings: true },
+      suggestSelection: "first",
+      // Monaco defaults to 'configuredByTheme'; force it on so the registered
+      // document semantic tokens provider actually colors the text.
+      semanticHighlighting: true,
     });
 
     registerProviders();
@@ -1674,7 +2117,13 @@
       el.btnRefreshFiles.addEventListener("click", async function () {
         await loadServerInfo();
         await loadFileList();
-        logSys("File list refreshed (" + workspaceFiles.length + ")");
+        const closed = pruneGoneDocuments();
+        logSys(
+          "File list refreshed (" +
+            workspaceFiles.length +
+            ")" +
+            (closed ? ", closed " + closed + " gone document(s)" : "")
+        );
       });
     }
 

@@ -29,11 +29,13 @@ internal class DefaultSemanticModel(
     nodePositionIndex: Lazy<NodePositionIndex>,
     private val nodeTypeIndex: NodeTypeIndex,
     completionProvider: Lazy<CompletionProvider>,
+    luaLayoutCompletionProvider: Lazy<LuaLayoutCompletionProvider>,
     signatureHelpProvider: Lazy<SignatureHelpProvider>,
     private val diagnostics: List<Diagnostic>
 ) : SemanticModel, NodePositionIndexProvider {
     override val nodePositionIndex by nodePositionIndex
     private val completionProvider by completionProvider
+    private val luaLayoutCompletionProvider by luaLayoutCompletionProvider
     private val signatureHelpProvider by signatureHelpProvider
 
     override fun getSymbolAt(position: Position): Symbol? {
@@ -64,11 +66,18 @@ internal class DefaultSemanticModel(
     }
 
     override fun getCompletionsAt(position: Position): List<CompletionItem> {
+        // Layout-table key contexts replace lexical completions with the enclosing view
+        // class's Lua property keys (loadlayout `k -> setCap(k)` semantics).
+        luaLayoutCompletionProvider.getCompletionsAt(position)?.let { return it }
         return completionProvider.getCompletionsAt(position)
     }
 
     override fun getSignatureHelpAt(position: Position): SignatureHelp? {
         return signatureHelpProvider.getSignatureHelpAt(position)
+    }
+
+    override fun getCallableHoverAt(position: Position): CallableHoverInfo? {
+        return signatureHelpProvider.getCallableHoverAt(position)
     }
 
     override fun getDiagnostics(): List<Diagnostic> = diagnostics

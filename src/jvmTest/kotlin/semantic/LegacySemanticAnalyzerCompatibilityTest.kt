@@ -28,7 +28,13 @@ class LegacySemanticAnalyzerCompatibilityTest {
         val pipeline = SemanticPipeline().analyze(chunk)
         val legacy = SemanticAnalyzer().analyze(chunk)
 
-        assertEquals(pipeline.model.getDiagnostics().map { it.message }, legacy.diagnostics.take(3).map { it.message })
+        // The legacy wrapper surfaces the same 4 diagnostics (3 signature/return +
+        // the wave-Z unused-local-function INFO); the legacy analyzer's own extra
+        // trailing entries are out of contract here.
+        assertEquals(
+            pipeline.model.getDiagnostics().map { it.message },
+            legacy.diagnostics.take(pipeline.model.getDiagnostics().size).map { it.message }
+        )
     }
 
     @Test
@@ -53,6 +59,8 @@ class LegacySemanticAnalyzerCompatibilityTest {
         assertEquals(1, legacyVisible.count { it.name == "outer" })
         assertTrue(legacyVisible.any { it.name == "inner" })
         val pipelineNames = pipelineScope.symbols.map { it.name }.toSet()
+        println("DEBUG pipelineNames=$pipelineNames position=$position")
+        pipelineScope.symbols.forEach { println("DEBUG   symbol=${it.name} range=${it.range}") }
         assertTrue("outer" in pipelineNames)
         assertTrue("inner" in pipelineNames)
     }

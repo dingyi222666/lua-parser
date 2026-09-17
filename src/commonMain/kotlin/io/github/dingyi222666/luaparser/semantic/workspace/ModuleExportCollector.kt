@@ -767,6 +767,11 @@ object ModuleExportCollector {
                 } else if (name !in methods) {
                     fields[name] = type
                 }
+                // A scalar overwrite must retire any nested table recorded earlier
+                // (M.a={} M.a.b=1 M.a=print must not keep exposing a.b).
+                if (!isMethod) {
+                    children.remove(name)
+                }
                 return
             }
 

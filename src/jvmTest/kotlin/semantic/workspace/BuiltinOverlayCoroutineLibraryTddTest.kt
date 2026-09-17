@@ -88,7 +88,9 @@ class BuiltinOverlayCoroutineLibraryTddTest {
                 "Expected completion for coroutine.$name; labels=${completions.map { it.label }}"
             )
             assertTrue(
-                item.kind == CompletionItemKind.FIELD || item.kind == CompletionItemKind.METHOD,
+                item.kind == CompletionItemKind.FIELD ||
+                    item.kind == CompletionItemKind.METHOD ||
+                    item.kind == CompletionItemKind.FUNCTION,
                 "coroutine.$name kind=${item.kind}"
             )
             val hover = assertNotNull(harness.queries.hover(main, pos))

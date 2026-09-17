@@ -352,7 +352,7 @@ private fun visibleValueDeclaration(
     name: String,
     position: Position
 ): BinderDeclaration? {
-    var scope = snapshot.binder.positionQueries.getScopeAt(position)
+    var scope = snapshot.binder.positionQueries.scopeForFreePositionQuery(position)
     while (scope != null) {
         val declaration = scope.declarationIds
             .asReversed()

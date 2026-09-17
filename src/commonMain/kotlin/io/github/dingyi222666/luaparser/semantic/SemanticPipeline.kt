@@ -16,6 +16,7 @@ import io.github.dingyi222666.luaparser.semantic.workspace.VirtualPath
 import io.github.dingyi222666.luaparser.semantic.workspace.WorkspaceModuleResolver
 import io.github.dingyi222666.luaparser.semantic.workspace.std.BuiltinOverlayLoader
 import io.github.dingyi222666.luaparser.semantic.workspace.std.BuiltinOverlaySnapshot
+import io.github.dingyi222666.luaparser.semantic.checker.LuaLayoutPropertySuggestion
 import io.github.dingyi222666.luaparser.semantic.types.resolve.TypeResolver
 
 /**
@@ -42,6 +43,22 @@ class SemanticPipeline(
     }
 
     /**
+     * Light pipeline for fingerprint-only consumers (the workspace engine's pre-plan
+     * upsert pass): parse-attach + bind + type-resolve WITHOUT the checker or model
+     * build — the two dominant analysis costs. Callers read global symbols off the
+     * resolved binder and re-run the full pipeline for the authoritative snapshot.
+     */
+    internal fun bindForGlobalFingerprint(
+        chunk: ChunkNode,
+        context: SemanticWorkspaceContext
+    ): Pair<BinderPassResult, SemanticWorkspaceContext> {
+        val effectiveContext = context.withWorkspaceImportEffects()
+        val comments = commentAttachPass.attach(chunk)
+        val bound = binderPass.bind(chunk, comments, effectiveContext.overlayGlobals)
+        return typeResolver.resolve(bound) to effectiveContext
+    }
+
+    /**
      * Internal pipeline snapshot used by compatibility adapters and focused tests.
      *
      * Well-formed binding-only locals with no type/call/unused surface report
@@ -52,13 +69,28 @@ class SemanticPipeline(
         context: SemanticWorkspaceContext = SemanticWorkspaceContext()
     ): SemanticPipelineSnapshot {
         val effectiveContext = context.withWorkspaceImportEffects()
+        val perfT0 = System.nanoTime()
         val comments = commentAttachPass.attach(chunk)
+        val perfT1 = System.nanoTime()
         val bound = binderPass.bind(chunk, comments, effectiveContext.overlayGlobals)
+        val perfT2 = System.nanoTime()
         val resolvedBinder = typeResolver.resolve(bound)
+        val perfT3 = System.nanoTime()
         // CheckerPass is re-entered per call with a fresh expression checker; no pipeline-owned
         // diagnostic buffer is retained between analyzes.
         val checker = checkerPass.check(chunk, resolvedBinder, effectiveContext)
+        val perfT4 = System.nanoTime()
         val model = semanticModelBuilder.build(chunk, checker.binder, checker.diagnostics, effectiveContext)
+        val perfT5 = System.nanoTime()
+        if (System.getenv("LUA_PARSER_PERF") != null) {
+            fun ms(from: Long, to: Long) = (to - from) / 1_000_000
+            println(
+                "PIPE lines=${chunk.range.end.line - chunk.range.start.line + 1} " +
+                    "comments=${ms(perfT0, perfT1)} bind=${ms(perfT1, perfT2)} " +
+                    "resolve=${ms(perfT2, perfT3)} check=${ms(perfT3, perfT4)} " +
+                    "model=${ms(perfT4, perfT5)}"
+            )
+        }
         val publicDiagnostics = model.getDiagnostics()
         val result = SemanticAnalysisResult(
             model = model,
@@ -85,7 +117,19 @@ internal data class SemanticWorkspaceContext(
     val importedSymbols: Map<String, WorkspaceImportedSymbol> = emptyMap(),
     val resolveImportedSymbol: ((String) -> WorkspaceImportedSymbol?)? = null,
     val resolveImportTarget: ((String) -> WorkspaceImportedSymbol?)? = null,
-    val unresolvedLuaJavaTargets: List<UnresolvedLuaJavaTarget> = emptyList()
+    val unresolvedLuaJavaTargets: List<UnresolvedLuaJavaTarget> = emptyList(),
+    // Embedder-extended layout properties for loadlayout completions, keyed by the class
+    // name written in the layout table (or its Java simple name). Sourced from workspace
+    // metadata `lua.layout.properties` via LuaLayoutPropertiesMetadata.parse.
+    val layoutPropertyExtensions: Map<String, List<LuaLayoutPropertySuggestion>> = emptyMap(),
+    // Engine-provided fallback lambdas captured when withWorkspaceImportEffects composed the
+    // active resolve* lambdas. Unlike the composed lambdas — which capture the per-update
+    // WorkspaceModuleResolver — these never reference a resolver (e.g. JvmWorkspaceEngine's
+    // resolveImportTarget captures classModuleProvider/configuration only), so the fallback
+    // chain stays re-derivable when a workspace engine re-points a stored context at a fresh
+    // resolver: null the composed resolve* and re-run withWorkspaceImportEffects.
+    val baseResolveImportedSymbol: ((String) -> WorkspaceImportedSymbol?)? = null,
+    val baseResolveImportTarget: ((String) -> WorkspaceImportedSymbol?)? = null
 ) {
     fun withWorkspaceImportEffects(): SemanticWorkspaceContext {
         val path = currentPath ?: return this
@@ -95,8 +139,10 @@ internal data class SemanticWorkspaceContext(
             putAll(importedSymbols)
             putAll(documentImports)
         }
-        val fallbackResolveImportedSymbol = resolveImportedSymbol
-        val fallbackResolveImportTarget = resolveImportTarget
+        // The context's own lambdas win; baseResolve* only backs the re-pointed case where the
+        // composed lambdas were stripped because they captured the stale per-update resolver.
+        val fallbackResolveImportedSymbol = resolveImportedSymbol ?: baseResolveImportedSymbol
+        val fallbackResolveImportTarget = resolveImportTarget ?: baseResolveImportTarget
         return copy(
             // Expose the current-file active import set so lexical completions and symbol queries
             // see MODULE-kind imported Java classes/packages for this file only.
@@ -112,7 +158,10 @@ internal data class SemanticWorkspaceContext(
                 resolver.importTargetSymbolFor(path, target)
                     ?: fallbackResolveImportTarget?.invoke(target)
                     ?: resolver.importTargetSymbol(target)
-            }
+            },
+            // Re-publish the surviving fallbacks so repeated re-pointing keeps the chain derivable.
+            baseResolveImportedSymbol = fallbackResolveImportedSymbol,
+            baseResolveImportTarget = fallbackResolveImportTarget
         )
     }
 }
@@ -120,7 +169,11 @@ internal data class SemanticWorkspaceContext(
 internal data class UnresolvedLuaJavaTarget(
     val target: String,
     val helperName: String,
-    val range: Range?
+    val range: Range?,
+    // Wildcard imports are declarative scoping whose members may be supplied at runtime
+    // by workspace dex the analyzer cannot mount (e.g. libs/classes.dex) — a different
+    // epistemic state from an explicit bindClass string, so they diagnose at INFO.
+    val fromWildcardImport: Boolean = false
 )
 
 internal data class WorkspaceImportedSymbol(

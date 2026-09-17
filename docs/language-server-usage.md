@@ -248,6 +248,7 @@ Configuration keys:
 | `jvm.classpath` | Additional jar files or class-directory roots for reflection. |
 | `jvm.androidJar` | Android platform jar used to resolve Android framework classes. |
 | `jvm.importPrefixes` | Prefixes used to resolve simple import names such as `TextView`. |
+| `lua.layout.properties` | Multi-line layout-completion extension: one `ClassName: prop\|detail, prop2\|detail2` line per project-defined view class; FQCN keys also match the bare identifier. |
 
 Default import prefixes are:
 

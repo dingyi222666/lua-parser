@@ -123,9 +123,10 @@ private fun findFunctionByMatchingIdentifierAnchor(
 }
 
 private fun findRootNode(node: BaseASTNode): BaseASTNode? {
+    val visited = HashSet<BaseASTNode>()
     var current: BaseASTNode? = node
     var root: BaseASTNode? = node
-    while (current != null) {
+    while (current != null && visited.add(current)) {
         root = current
         current = runCatching { current.parent }.getOrNull()
     }
@@ -143,9 +144,12 @@ private fun findFunctionByOwner(
     return findFunctionOwnedByNode(ownerScopeNode) ?: findAncestorFunction(ownerScopeNode)
 }
 
-private fun findAncestorFunction(node: BaseASTNode?): FunctionDeclaration? {
+internal fun findAncestorFunction(node: BaseASTNode?): FunctionDeclaration? {
+    // Desugared statements (switch/case expansion) can leave cyclic parent links in the
+    // AST, so the chain walk must guard with a visited set or it spins forever.
+    val visited = HashSet<BaseASTNode>()
     var current = node
-    while (current != null) {
+    while (current != null && visited.add(current)) {
         if (current is FunctionDeclaration) {
             return current
         }

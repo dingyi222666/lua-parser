@@ -15,6 +15,17 @@
 coroutine = {}
 
 ---
+--- Closes a coroutine, closing all its pending to-be-closed variables and
+--- putting the coroutine in a dead state. You can close a coroutine only if
+--- its status is suspended or dead. In case of error (either that the
+--- coroutine has a status other than suspended or dead, or that it fails to
+--- close some of its to-be-closed variables), returns **false** plus the
+--- error object; otherwise returns **true**.
+---@param co thread
+---@return boolean, any
+function coroutine.close(co) end
+
+---
 --- Creates a new coroutine, with body `f`. `f` must be a Lua function. Returns
 --- this new coroutine, an object with type `"thread"`.
 ---@param f fun():thread
@@ -40,16 +51,16 @@ function coroutine.isyieldable() end
 --- values passed to `yield` (when the coroutine yields) or any values returned
 --- by the body function (when the coroutine terminates). If there is any error,
 --- `resume` returns **false** plus the error message.
----@overload fun(co:thread):boolean|any
+---@overload fun(co:thread):boolean, any...
 ---@param co thread
----@param val1 string
----@return thread|any
+---@param val1 any
+---@return boolean, any...
 function coroutine.resume(co, val1, ...) end
 
 ---
 --- Returns the running coroutine plus a boolean, true when the running
 --- coroutine is the main one.
----@return thread|boolean
+---@return thread, boolean
 function coroutine.running() end
 
 ---

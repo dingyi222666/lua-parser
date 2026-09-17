@@ -65,7 +65,23 @@ class LuaLexerLiteralCommentTddTest {
             LexerCase("nested equals delimiter long string", "[==[outer [=[inner]=] outer]==]", token(LuaTokenTypes.LONG_STRING, "[==[outer [=[inner]=] outer]==]")),
             LexerCase("short line comment", "-- line\nname", token(LuaTokenTypes.SHORT_COMMENT, "-- line"), token(LuaTokenTypes.NAME, "name")),
             LexerCase("plain block comment", "--[[block]] name", token(LuaTokenTypes.BLOCK_COMMENT, "--[[block]]"), token(LuaTokenTypes.NAME, "name")),
-            LexerCase("equals delimited block comment", "--[=[block [=[ nested ]=] text]=] name", token(LuaTokenTypes.BLOCK_COMMENT, "--[=[block [=[ nested ]=] text]=]"), token(LuaTokenTypes.NAME, "name")),
+            // PIN UPDATE (block-comment non-nesting lock): real Lua block comments do
+            // not nest, so `--[=[` ends at the FIRST same-level `]=]`. The inner `[=`
+            // open is inert comment text; the trailing ` text]=]` re-lexes as
+            // NAME/RBRACK/ASSIGN/RBRACK instead of being swallowed into one
+            // pseudo-nested comment. This case previously pinned the removed
+            // nesting heuristic in LuaLexer.scanLongBracket (defended the bug, not
+            // any AndroLua corpus fixture — no corpus file nests block comments).
+            LexerCase(
+                "equals delimited block comment ends at first same-level close",
+                "--[=[block [=[ nested ]=] text]=] name",
+                token(LuaTokenTypes.BLOCK_COMMENT, "--[=[block [=[ nested ]=]"),
+                token(LuaTokenTypes.NAME, "text"),
+                token(LuaTokenTypes.RBRACK, "]"),
+                token(LuaTokenTypes.ASSIGN, "="),
+                token(LuaTokenTypes.RBRACK, "]"),
+                token(LuaTokenTypes.NAME, "name")
+            ),
             LexerCase("single doc comment", "--- doc\nlocal", token(LuaTokenTypes.DOC_COMMENT, "--- doc"), token(LuaTokenTypes.LOCAL, "local")),
             LexerCase("continued doc comment", "--- first\n--- second\nlocal", token(LuaTokenTypes.DOC_COMMENT, "--- first\n--- second"), token(LuaTokenTypes.LOCAL, "local")),
             LexerCase("shebang only at file start", "#!/usr/bin/env lua\nreturn", token(LuaTokenTypes.SHEBANG_CONTENT, "#!/usr/bin/env lua"), token(LuaTokenTypes.RETURN, "return")),

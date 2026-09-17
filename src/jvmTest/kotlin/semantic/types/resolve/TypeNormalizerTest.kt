@@ -9,6 +9,11 @@ import io.github.dingyi222666.luaparser.semantic.types.model.ErrorType
 import io.github.dingyi222666.luaparser.semantic.types.model.FunctionParameter
 import io.github.dingyi222666.luaparser.semantic.types.model.FunctionType
 import io.github.dingyi222666.luaparser.semantic.types.model.IntersectionType
+import io.github.dingyi222666.luaparser.semantic.types.model.JavaInstanceMemberType
+import io.github.dingyi222666.luaparser.semantic.types.model.JavaMemberKind
+import io.github.dingyi222666.luaparser.semantic.types.model.JavaSignatureMetadata
+import io.github.dingyi222666.luaparser.semantic.types.model.JavaStaticMemberType
+import io.github.dingyi222666.luaparser.semantic.types.model.JavaTypeName
 import io.github.dingyi222666.luaparser.semantic.types.model.LiteralType
 import io.github.dingyi222666.luaparser.semantic.types.model.MultiReturnType
 import io.github.dingyi222666.luaparser.semantic.types.model.NeverType
@@ -175,5 +180,75 @@ class TypeNormalizerTest {
         val normalized = assertIs<OverloadedFunctionType>(TypeNormalizer.normalize(type))
         assertEquals(PrimitiveType.STRING, normalized.callSignatures[0].returnType)
         assertEquals(PrimitiveType.NUMBER, normalized.callSignatures[1].returnType)
+    }
+
+    @Test
+    fun unionCollapsesDocDeclaredJavaMemberWithReflectedTwinKeepingMetadata() {
+        val owner = JavaTypeName(packageName = "java.util", simpleNames = listOf("Locale"))
+        val docMember = JavaInstanceMemberType(
+            owner = owner,
+            memberName = "getCountry",
+            valueType = PrimitiveType.STRING
+        )
+        val reflectedTwin = docMember.copy(
+            signatureMetadata = listOf(JavaSignatureMetadata(genericReturnTypeName = "java.lang.String"))
+        )
+
+        val normalized = TypeNormalizer.normalize(UnionType(linkedSetOf(docMember, reflectedTwin)))
+
+        assertEquals(reflectedTwin, normalized)
+    }
+
+    @Test
+    fun unionMetadataDedupIsOrderIndependent() {
+        val owner = JavaTypeName(packageName = "java.util", simpleNames = listOf("Locale"))
+        val docMember = JavaInstanceMemberType(
+            owner = owner,
+            memberName = "getCountry",
+            valueType = PrimitiveType.STRING
+        )
+        val reflectedTwin = docMember.copy(
+            signatureMetadata = listOf(JavaSignatureMetadata(genericReturnTypeName = "java.lang.String"))
+        )
+
+        assertEquals(reflectedTwin, TypeNormalizer.normalize(UnionType(linkedSetOf(reflectedTwin, docMember))))
+    }
+
+    @Test
+    fun unionCollapsesStaticMemberTwinsAndKeepsUnrelatedMembers() {
+        val owner = JavaTypeName(packageName = "java.lang", simpleNames = listOf("System"))
+        val docMember = JavaStaticMemberType(
+            owner = owner,
+            memberName = "err",
+            valueType = PrimitiveType.STRING,
+            memberKind = JavaMemberKind.FIELD
+        )
+        val reflectedTwin = docMember.copy(
+            signatureMetadata = listOf(JavaSignatureMetadata(isVarArgs = true))
+        )
+        val unrelated = PrimitiveType.NUMBER
+
+        val normalized = assertIs<UnionType>(
+            TypeNormalizer.normalize(UnionType(linkedSetOf(docMember, reflectedTwin, unrelated)))
+        )
+
+        assertEquals(listOf<Type>(reflectedTwin, unrelated), normalized.types.toList())
+    }
+
+    @Test
+    fun unionKeepsJavaMembersThatDifferStructurally() {
+        val owner = JavaTypeName(packageName = "java.util", simpleNames = listOf("Locale"))
+        val stringMember = JavaInstanceMemberType(
+            owner = owner,
+            memberName = "getCountry",
+            valueType = PrimitiveType.STRING
+        )
+        val numberMember = stringMember.copy(valueType = PrimitiveType.NUMBER)
+
+        val normalized = assertIs<UnionType>(
+            TypeNormalizer.normalize(UnionType(linkedSetOf(stringMember, numberMember)))
+        )
+
+        assertEquals(listOf<Type>(stringMember, numberMember), normalized.types.toList())
     }
 }

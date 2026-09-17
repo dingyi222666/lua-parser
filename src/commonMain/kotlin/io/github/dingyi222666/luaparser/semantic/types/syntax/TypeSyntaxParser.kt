@@ -398,28 +398,6 @@ object TypeSyntaxParser {
             }
         }
 
-        private fun <T> parseDelimited(terminator: Char, parser: () -> T): List<T> {
-            val values = mutableListOf<T>()
-            skipWhitespace()
-
-            if (peek() == terminator) {
-                return values
-            }
-
-            while (!isAtEnd() && peek() != terminator) {
-                values.add(parser())
-                skipWhitespace()
-                if (peek() == terminator) {
-                    break
-                }
-                if (!match(',')) {
-                    fail("Expected ',' or '$terminator' in type list")
-                }
-            }
-
-            return values
-        }
-
         private fun parseQualifiedIdentifier(): String {
             val builder = StringBuilder(parseIdentifier())
             while (true) {

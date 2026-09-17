@@ -1,4 +1,33 @@
 package io.github.dingyi222666.luaparser.lsp
+import org.eclipse.lsp4j.CallHierarchyIncomingCall
+import org.eclipse.lsp4j.CallHierarchyIncomingCallsParams
+import org.eclipse.lsp4j.CallHierarchyItem
+import org.eclipse.lsp4j.CallHierarchyOutgoingCall
+import org.eclipse.lsp4j.CallHierarchyOutgoingCallsParams
+import org.eclipse.lsp4j.CallHierarchyPrepareParams
+import org.eclipse.lsp4j.CodeAction
+import org.eclipse.lsp4j.CodeActionParams
+import org.eclipse.lsp4j.Command
+import org.eclipse.lsp4j.DocumentFormattingParams
+import org.eclipse.lsp4j.DocumentOnTypeFormattingParams
+import org.eclipse.lsp4j.DocumentRangeFormattingParams
+import org.eclipse.lsp4j.FoldingRange
+import org.eclipse.lsp4j.FoldingRangeRequestParams
+import org.eclipse.lsp4j.InlayHint
+import org.eclipse.lsp4j.InlayHintParams
+import org.eclipse.lsp4j.PrepareRenameDefaultBehavior
+import org.eclipse.lsp4j.PrepareRenameParams
+import org.eclipse.lsp4j.PrepareRenameResult
+import org.eclipse.lsp4j.RenameParams
+import org.eclipse.lsp4j.SelectionRange
+import org.eclipse.lsp4j.SelectionRangeParams
+import org.eclipse.lsp4j.SemanticTokens
+import org.eclipse.lsp4j.SemanticTokensDelta
+import org.eclipse.lsp4j.SemanticTokensDeltaParams
+import org.eclipse.lsp4j.SemanticTokensParams
+import org.eclipse.lsp4j.TextEdit
+import org.eclipse.lsp4j.WorkspaceEdit
+import org.eclipse.lsp4j.jsonrpc.messages.Either3
 
 import io.github.dingyi222666.luaparser.interop.jvm.JvmWorkspaceEngine
 import org.eclipse.lsp4j.CompletionItem
@@ -9,6 +38,7 @@ import org.eclipse.lsp4j.DefinitionParams
 import org.eclipse.lsp4j.DidChangeConfigurationParams
 import org.eclipse.lsp4j.DidChangeTextDocumentParams
 import org.eclipse.lsp4j.DidChangeWatchedFilesParams
+import org.eclipse.lsp4j.DidChangeWorkspaceFoldersParams
 import org.eclipse.lsp4j.DidCloseTextDocumentParams
 import org.eclipse.lsp4j.DidOpenTextDocumentParams
 import org.eclipse.lsp4j.DidSaveTextDocumentParams
@@ -157,6 +187,67 @@ class LuaLanguageServer(
                 textDocuments.documentSymbol(params)
             }
         }
+        // Kotlin `by` delegation forwards only ABSTRACT interface members; lsp4j 0.23.1
+        // ships default bodies for the newer methods that throw
+        // UnsupportedOperationException. The delegate implements every one of them and
+        // the capabilities advertise them — forward explicitly or the capability lies
+        // (smoke audit: textDocument/foldingRange returned "Internal error: null").
+        override fun resolveCompletionItem(unresolved: CompletionItem): CompletableFuture<CompletionItem> =
+            textDocuments.resolveCompletionItem(unresolved)
+
+        override fun prepareRename(
+            params: PrepareRenameParams
+        ): CompletableFuture<Either3<org.eclipse.lsp4j.Range, PrepareRenameResult, PrepareRenameDefaultBehavior>> =
+            textDocuments.prepareRename(params)
+
+        override fun rename(params: RenameParams): CompletableFuture<WorkspaceEdit> =
+            textDocuments.rename(params)
+
+        override fun prepareCallHierarchy(
+            params: CallHierarchyPrepareParams
+        ): CompletableFuture<List<CallHierarchyItem>> =
+            textDocuments.prepareCallHierarchy(params)
+
+        override fun callHierarchyIncomingCalls(
+            params: CallHierarchyIncomingCallsParams
+        ): CompletableFuture<List<CallHierarchyIncomingCall>> =
+            textDocuments.callHierarchyIncomingCalls(params)
+
+        override fun callHierarchyOutgoingCalls(
+            params: CallHierarchyOutgoingCallsParams
+        ): CompletableFuture<List<CallHierarchyOutgoingCall>> =
+            textDocuments.callHierarchyOutgoingCalls(params)
+
+        override fun foldingRange(params: FoldingRangeRequestParams): CompletableFuture<List<FoldingRange>> =
+            textDocuments.foldingRange(params)
+
+        override fun selectionRange(params: SelectionRangeParams): CompletableFuture<List<SelectionRange>> =
+            textDocuments.selectionRange(params)
+
+        override fun semanticTokensFull(params: SemanticTokensParams): CompletableFuture<SemanticTokens> =
+            textDocuments.semanticTokensFull(params)
+
+        override fun semanticTokensFullDelta(
+            params: SemanticTokensDeltaParams
+        ): CompletableFuture<Either<SemanticTokens, SemanticTokensDelta>> =
+            textDocuments.semanticTokensFullDelta(params)
+
+        override fun codeAction(params: CodeActionParams): CompletableFuture<List<Either<Command, CodeAction>>> =
+            textDocuments.codeAction(params)
+
+        override fun inlayHint(params: InlayHintParams): CompletableFuture<List<InlayHint>> =
+            textDocuments.inlayHint(params)
+
+        override fun formatting(params: DocumentFormattingParams): CompletableFuture<MutableList<out TextEdit>> =
+            textDocuments.formatting(params)
+
+        override fun rangeFormatting(params: DocumentRangeFormattingParams): CompletableFuture<MutableList<out TextEdit>> =
+            textDocuments.rangeFormatting(params)
+
+        override fun onTypeFormatting(
+            params: DocumentOnTypeFormattingParams
+        ): CompletableFuture<List<out TextEdit>> =
+            textDocuments.onTypeFormatting(params)
     }
     private val workspaceDelegate = LuaWorkspaceService(
         languageService = languageService,
@@ -176,11 +267,33 @@ class LuaLanguageServer(
             }
         }
 
-        override fun symbol(params: WorkspaceSymbolParams): CompletableFuture<Either<MutableList<out SymbolInformation>, MutableList<out WorkspaceSymbol>>> {
-            if (!acceptsMessages()) {
-                return failedFuture(IllegalStateException("Lua language server is not accepting workspace requests"))
+        override fun didChangeWorkspaceFolders(params: DidChangeWorkspaceFoldersParams) {
+            if (acceptsMessages()) {
+                workspaceDelegate.didChangeWorkspaceFolders(params)
             }
-            return workspaceDelegate.symbol(params)
+        }
+
+        override fun symbol(params: WorkspaceSymbolParams): CompletableFuture<Either<MutableList<out SymbolInformation>, MutableList<out WorkspaceSymbol>>> {
+            // Lifecycle policy (workspace-symbol audit, wave M): CREATED mirrors the text
+            // request QuietEmpty policy — a client probing workspace/symbol before
+            // initialize settles gets an empty legacy symbol list instead of a hard
+            // rejection. SHUTDOWN/EXIT stay rejected (hard lifecycle boundary).
+            return when (lifecycleState) {
+                LifecycleState.CREATED -> completedLegacyWorkspaceSymbols()
+                LifecycleState.INITIALIZED -> workspaceDelegate.symbol(params)
+                LifecycleState.SHUTDOWN, LifecycleState.EXITED ->
+                    failedFuture(IllegalStateException("Lua language server is not accepting workspace requests"))
+            }
+        }
+
+        /**
+         * `workspaceSymbol/resolve` is NOT advertised (`WorkspaceSymbolOptions.resolveProvider`
+         * stays unset — symbol locations are already inline). lsp4j's interface default would
+         * throw UnsupportedOperationException if a client invoked it anyway; pre-empt that by
+         * quietly returning the input symbol unchanged.
+         */
+        override fun resolveWorkspaceSymbol(symbol: WorkspaceSymbol?): CompletableFuture<WorkspaceSymbol?> {
+            return CompletableFuture.completedFuture(symbol)
         }
     }
 
@@ -251,6 +364,15 @@ class LuaLanguageServer(
         return lifecycleState == LifecycleState.INITIALIZED
     }
 
+    /** Quiet-empty legacy workspace/symbol payload used by the CREATED-state policy. */
+    private fun completedLegacyWorkspaceSymbols(): CompletableFuture<Either<MutableList<out SymbolInformation>, MutableList<out WorkspaceSymbol>>> {
+        return CompletableFuture.completedFuture(
+            Either.forLeft<MutableList<out SymbolInformation>, MutableList<out WorkspaceSymbol>>(
+                mutableListOf<SymbolInformation>()
+            )
+        )
+    }
+
     private fun <T> textDocumentRequest(
         quietResponse: () -> CompletableFuture<T>,
         block: () -> CompletableFuture<T>
@@ -263,11 +385,16 @@ class LuaLanguageServer(
     }
 
     private fun textDocumentRequestPolicy(): LspTextDocumentRequestPolicy {
+        // CREATED stays quiet-empty (client probes before initialize settle); SHUTDOWN and
+        // EXIT are hard lifecycle boundaries and reject identically. EXITED is reachable for
+        // embedded usage (the default `processExit` is a no-op; only LuaLanguageServerLauncher
+        // wires exitProcess), so post-exit requests must surface the same IllegalStateException
+        // as post-shutdown ones instead of silently returning empty results.
         return when (lifecycleState) {
             LifecycleState.CREATED -> LspTextDocumentRequestPolicy.QuietEmpty
             LifecycleState.INITIALIZED -> LspTextDocumentRequestPolicy.Accept
             LifecycleState.SHUTDOWN -> LspTextDocumentRequestPolicy.Reject("Lua language server has already shut down")
-            LifecycleState.EXITED -> LspTextDocumentRequestPolicy.QuietEmpty
+            LifecycleState.EXITED -> LspTextDocumentRequestPolicy.Reject("Lua language server has already exited")
         }
     }
 

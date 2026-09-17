@@ -69,7 +69,16 @@ object WorkspaceDirtySetPlanner {
         val currentSnapshots = current.files + current.extraProviders
         val allPaths = previousSnapshots.keys + currentSnapshots.keys
         return allPaths.filterTo(linkedSetOf()) { path ->
-            previousSnapshots[path]?.publicFingerprint?.value != currentSnapshots[path]?.publicFingerprint?.value
+            val previousFingerprint = previousSnapshots[path]?.publicFingerprint
+            val currentFingerprint = currentSnapshots[path]?.publicFingerprint
+            // Both comparisons below run over the same four previous/current (files,
+            // extraProviders) combinations the merged maps encode. The global-symbols
+            // fingerprint changes when a provider's non-exported globals change — invisible to
+            // the export-surface `value` — and must flag the provider so its consumers are
+            // re-analyzed and re-bind those globals through the module resolver. Empty on both
+            // sides means "never analyzed" (extra providers) and compares equal.
+            previousFingerprint?.value != currentFingerprint?.value ||
+                previousFingerprint?.globalSymbolsFingerprint != currentFingerprint?.globalSymbolsFingerprint
         }
     }
 

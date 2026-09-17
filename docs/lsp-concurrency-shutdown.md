@@ -130,7 +130,7 @@ covered by the TASK-222 corpus. Clients should still prefer the protocol order
 
 ## Concurrent Open / Change / Close Stress (TASK-221)
 
-`LspConcurrentOpenCloseStressTddTest` stresses `LuaTextDocumentService` and
+`LspConcurrentOpenCloseStressTddTest` (**deleted** 2026-07-13 in the test cull, e786c77 — coverage culled, pending reimplementation; this section is retained as the historical contract) stressed `LuaTextDocumentService` and
 `LuaLanguageService` after a successful initialize. It does **not** exercise the
 full `LuaLanguageServer` lifecycle gates; it focuses on service state under
 rapid document churn.
@@ -230,7 +230,7 @@ prove:
 
 | Corpus | File | Policy focus |
 | --- | --- | --- |
-| TASK-221 | `src/jvmTest/kotlin/lsp/LspConcurrentOpenCloseStressTddTest.kt` | Concurrent open/change/close; final diagnostics match last publish |
+| TASK-221 | `src/jvmTest/kotlin/lsp/LspConcurrentOpenCloseStressTddTest.kt` — **deleted** (coverage culled 2026-07, e786c77; pending reimplementation) | Concurrent open/change/close; final diagnostics match last publish |
 | TASK-222 | `src/jvmTest/kotlin/lsp/LspShutdownExitIdempotencyTddTest.kt` | Repeated shutdown/exit; post-lifecycle refuse/quiet policy; concurrent lifecycle |
 | Related | `src/jvmTest/kotlin/lsp/LspServiceStateConcurrencyTddTest.kt` | Overlapping document/workspace service operations |
 | Related | `src/jvmTest/kotlin/lsp/LspShutdownBehaviorTddTest.kt` | Additional shutdown behavior fixtures (see that suite for details) |

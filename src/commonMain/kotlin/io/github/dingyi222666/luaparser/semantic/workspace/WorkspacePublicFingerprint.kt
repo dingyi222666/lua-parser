@@ -1,5 +1,20 @@
 package io.github.dingyi222666.luaparser.semantic.workspace
 
+import io.github.dingyi222666.luaparser.parser.ast.node.ExpressionNode
+import io.github.dingyi222666.luaparser.semantic.binder.BinderDeclaration
+import io.github.dingyi222666.luaparser.parser.ast.node.AssignmentStatement
+import io.github.dingyi222666.luaparser.parser.ast.node.BinaryExpression
+import io.github.dingyi222666.luaparser.parser.ast.node.CallExpression
+import io.github.dingyi222666.luaparser.parser.ast.node.ConstantNode
+import io.github.dingyi222666.luaparser.parser.ast.node.FunctionDeclaration
+import io.github.dingyi222666.luaparser.parser.ast.node.Identifier
+import io.github.dingyi222666.luaparser.parser.ast.node.LambdaDeclaration
+import io.github.dingyi222666.luaparser.parser.ast.node.MemberExpression
+import io.github.dingyi222666.luaparser.parser.ast.node.StringCallExpression
+import io.github.dingyi222666.luaparser.parser.ast.node.TableConstructorExpression
+import io.github.dingyi222666.luaparser.parser.ast.node.UnaryExpression
+import io.github.dingyi222666.luaparser.semantic.binder.DeclarationKind
+import io.github.dingyi222666.luaparser.semantic.binder.DeclarationOrigin
 import io.github.dingyi222666.luaparser.semantic.types.model.AliasType
 import io.github.dingyi222666.luaparser.semantic.types.model.AppliedType
 import io.github.dingyi222666.luaparser.semantic.types.model.ArrayType
@@ -34,7 +49,14 @@ import io.github.dingyi222666.luaparser.semantic.types.model.VarargType
 
 data class WorkspacePublicFingerprint(
     val providedModuleNames: Set<String>,
-    val value: String
+    val value: String,
+    /**
+     * Fingerprint of this document's provider-global symbol surface (see
+     * [globalSymbolsFingerprint]). Empty until semantic analysis attached it; consumers read
+     * provider globals through the module resolver, so a change here is a public-surface
+     * change even when the module export surface ([value]) is untouched.
+     */
+    val globalSymbolsFingerprint: String = ""
 ) {
     companion object {
         fun from(
@@ -94,8 +116,6 @@ data class WorkspacePublicFingerprint(
             typeParameters: List<TypeParameterType>,
             javaClassStack: MutableSet<String>
         ): String = typeParameters.joinToString("|") { serializeType(it, javaClassStack) }
-
-        private fun serializeType(type: Type): String = serializeType(type, linkedSetOf())
 
         private fun serializeType(type: Type, javaClassStack: MutableSet<String>): String = when (type) {
             is ModuleType -> "module(${serializeModuleType(type, javaClassStack)})"
@@ -302,4 +322,121 @@ internal fun workspaceFingerprintHash(text: String): String {
         hash *= prime
     }
     return hash.toULong().toString(16).padStart(16, '0')
+}
+
+/** Upper bound on declarations hashed into [globalSymbolsFingerprint] (pathological-file guard). */
+private const val GLOBAL_FINGERPRINT_DECLARATION_LIMIT = 512
+
+/** Per-field truncation for [globalSymbolsFingerprint] lines (pathological-name guard). */
+private const val GLOBAL_FINGERPRINT_FIELD_LIMIT = 256
+
+/**
+ * Fingerprint of a provider's global symbol surface as consumers see it through the workspace
+ * module resolver: every distinct AST-originated global, rendered as `name:kind:<value type
+ * display name>` in binder order, hashed with [workspaceFingerprintHash].
+ *
+ * [WorkspacePublicFingerprint.value] only covers the module export surface (returned members,
+ * legacy environments, `---@` annotations), so editing a NON-exported global
+ * (`shared = 42` -> `shared = 43`) used to change nothing a consumer's dirty check could see —
+ * even though every consumer binding that global through the resolver now derives a different
+ * type. This fingerprint is derived from the binder's declaration index, so it can only be
+ * attached after semantic analysis (the workspace engine attaches it to the stored
+ * [WorkspacePublicFingerprint] copy); the empty default marks "not yet analyzed".
+ *
+ * [typeEvaluator] resolves each global's value type off its anchor expression — the same
+ * derivation the module resolver and the cycle re-analysis pass use. It is required in
+ * practice: `declaredType` only carries annotation-derived type syntax, so un-annotated
+ * assignments (`shared = 42`) have a null declaredType and would hash identically regardless
+ * of their initializer. When omitted, the fingerprint degrades to annotation-declared types
+ * only. Declaration count and field length are capped so adversarial documents cannot produce
+ * unbounded fingerprint payloads; the caps only ever merge the tail of huge global surfaces,
+ * never the head, so ordinary files hash deterministically.
+ */
+internal fun globalSymbolsFingerprint(
+    declarations: List<BinderDeclaration>
+): String {
+    val payload = declarations.asSequence()
+        .filter { it.kind == DeclarationKind.GLOBAL && it.origin == DeclarationOrigin.AST }
+        .distinctBy { it.name }
+        .take(GLOBAL_FINGERPRINT_DECLARATION_LIMIT)
+        .joinToString(separator = "\n") { declaration ->
+            buildString {
+                append(declaration.name.take(GLOBAL_FINGERPRINT_FIELD_LIMIT))
+                append(':')
+                append(declaration.kind.name.take(GLOBAL_FINGERPRINT_FIELD_LIMIT))
+                append(':')
+                append(globalValueShape(declaration).take(GLOBAL_FINGERPRINT_FIELD_LIMIT))
+            }
+        }
+    return workspaceFingerprintHash(payload)
+}
+
+/**
+ * Value-type display name of one global as consumers see it: the evaluated anchor-expression
+ * type when an evaluator is available and the anchor is an expression, otherwise the
+ * annotation-declared type (empty for un-annotated non-expression globals).
+ */
+/**
+ * Structural shape of the global's assigned VALUE expression (node kinds, identifiers,
+ * literals; depth/length capped), read straight off the assignment AST - NO type
+ * evaluation, which dominated per-update fingerprint cost. Distinguishes literal and
+ * expression changes (`42` vs `'forty-two'`, `f(1)` vs `f(2)` by argument kinds).
+ */
+private fun globalValueShape(declaration: BinderDeclaration): String {
+    val anchor = declaration.anchorNode ?: return declaration.declaredType?.displayName.orEmpty()
+    val assignment = runCatching { anchor.parent }.getOrNull() as? AssignmentStatement
+    if (assignment != null) {
+        val index = assignment.init.indexOf(anchor)
+        val rhs = assignment.variables.getOrNull(index)
+        if (rhs != null) {
+            return buildString { expressionShape(rhs, this, 0) }
+        }
+    }
+    val functionBody = (anchor.parent as? FunctionDeclaration ?: run {
+        val member = anchor.parent as? MemberExpression
+        member?.parent as? FunctionDeclaration
+    })
+    if (functionBody != null) {
+        return "function"
+    }
+    return declaration.declaredType?.displayName.orEmpty()
+}
+
+private fun expressionShape(node: ExpressionNode, sb: StringBuilder, depth: Int) {
+    if (depth > 4 || sb.length > GLOBAL_FINGERPRINT_FIELD_LIMIT) {
+        return
+    }
+    sb.append(node::class.simpleName).append('(')
+    when (node) {
+        is Identifier -> sb.append(node.name)
+        is ConstantNode -> {
+            sb.append(node.constantType.name).append(':')
+            sb.append(node.stringOf()?.toString() ?: node.rawValue?.toString() ?: "?")
+        }
+        is MemberExpression -> {
+            expressionShape(node.base, sb, depth + 1)
+            sb.append('.').append(node.identifier.name)
+        }
+        is CallExpression -> {
+            expressionShape(node.base, sb, depth + 1)
+            node.arguments.forEach { arg ->
+                sb.append(',')
+                expressionShape(arg, sb, depth + 1)
+            }
+        }
+        is StringCallExpression -> sb.append("str")
+        is BinaryExpression -> {
+            node.left?.let { expressionShape(it, sb, depth + 1) }
+            sb.append(node.operator.name)
+            node.right?.let { expressionShape(it, sb, depth + 1) }
+        }
+        is UnaryExpression -> {
+            sb.append(node.operator.name)
+            node.arg?.let { expressionShape(it, sb, depth + 1) }
+        }
+        is TableConstructorExpression -> sb.append("table")
+        is FunctionDeclaration, is LambdaDeclaration -> sb.append("function")
+        else -> Unit
+    }
+    sb.append(')')
 }
