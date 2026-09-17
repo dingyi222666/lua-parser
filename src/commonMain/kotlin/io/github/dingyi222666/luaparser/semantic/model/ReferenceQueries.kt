@@ -741,34 +741,12 @@ internal class ReferenceQueries(
             return null
         }
         // Direct import(...) locals and Identifier rebinding of package/class import aliases.
+        // The single-target union / multi-target Array<> shape matches importCallModuleType.
         val resolvedType = importPackageAliasType(declaration, linkedSetOf())
-            ?: run {
-                val initializer = localDeclarationInitializer(declaration)
-                    as? io.github.dingyi222666.luaparser.parser.ast.node.CallExpression
-                    ?: return null
-                if (!isImportCallBase(effectiveCallBase(initializer))) {
-                    return null
-                }
-                val targets = importCallTargets(initializer)
-                if (targets.isEmpty()) {
-                    return null
-                }
-                val importedTypes = targets.mapNotNull { target ->
-                    resolveLuaJavaImportTarget(target)?.moduleType
-                }
-                if (importedTypes.isEmpty()) {
-                    return null
-                }
-                if (targets.size == 1 && importedTypes.size == 1) {
-                    importedTypes.single()
-                } else {
-                    val element = unionTypeOf(importedTypes)
-                    io.github.dingyi222666.luaparser.semantic.types.model.ArrayType(
-                        elementType = element,
-                        name = "Array<${element.displayName}>"
-                    )
-                }
-            }
+            ?: (localDeclarationInitializer(declaration)
+                as? io.github.dingyi222666.luaparser.parser.ast.node.CallExpression)
+                ?.let { importCallModuleType(it) }
+            ?: return null
         return adapters.toDeclarationSymbol(declaration, resolvedType, resolvedType)
     }
 
@@ -946,20 +924,24 @@ internal class ReferenceQueries(
         }
     }
 
-    private fun luaJavaHelperCallType(
+    /**
+     * Shared helper-name → value-type mapping for luajava class-load calls. Used both by the
+     * direct callee check ([luaJavaHelperCallType]) and by the local-alias declaration chain
+     * ([luaJavaHelperCallTypeFromDeclarationChain]) — previously two copy-pasted when blocks.
+     */
+    private fun luaJavaHelperResultType(
+        helperName: String,
         call: io.github.dingyi222666.luaparser.parser.ast.node.CallExpression,
         target: String
     ): Type? {
-        return when {
-            isLuaJavaHelperCall(call, "bindClass") ->
-                resolveLuaJavaImportTarget(target)?.moduleType
+        return when (helperName) {
+            "bindClass" -> resolveLuaJavaImportTarget(target)?.moduleType
 
-            isLuaJavaHelperCall(call, "newInstance") ->
-                resolveLuaJavaImportTarget(target)?.moduleType
-                    ?.javaInstanceSurface()
-                    ?.hydrateLuaJavaProviderType()
+            "newInstance" -> resolveLuaJavaImportTarget(target)?.moduleType
+                ?.javaInstanceSurface()
+                ?.hydrateLuaJavaProviderType()
 
-            isLuaJavaHelperCall(call, "createProxy") -> {
+            "createProxy" -> {
                 val interfaceTypes = createProxyInterfaceTargets(call).mapNotNull { interfaceTarget ->
                     resolveLuaJavaImportTarget(interfaceTarget)?.moduleType
                         ?.javaInstanceSurface()
@@ -972,11 +954,24 @@ internal class ReferenceQueries(
                 }
             }
 
-            isLuaJavaHelperCall(call, "loadLib") -> {
+            "loadLib" -> {
                 val memberName = stringCallTarget(call, argumentIndex = 1) ?: return null
                 resolveLoadLibMemberType(target, memberName)
             }
 
+            else -> null
+        }
+    }
+
+    private fun luaJavaHelperCallType(
+        call: io.github.dingyi222666.luaparser.parser.ast.node.CallExpression,
+        target: String
+    ): Type? {
+        return when {
+            isLuaJavaHelperCall(call, "bindClass") -> luaJavaHelperResultType("bindClass", call, target)
+            isLuaJavaHelperCall(call, "newInstance") -> luaJavaHelperResultType("newInstance", call, target)
+            isLuaJavaHelperCall(call, "createProxy") -> luaJavaHelperResultType("createProxy", call, target)
+            isLuaJavaHelperCall(call, "loadLib") -> luaJavaHelperResultType("loadLib", call, target)
             else -> null
         }
     }
@@ -993,36 +988,10 @@ internal class ReferenceQueries(
             excludedDeclarations = localStatementDeclarationIds(assignedDeclaration)
         ) ?: return null
         val excluded = localStatementDeclarationIds(assignedDeclaration)
-        val helperName = when {
-            declarationResolvesToLuaJavaHelperByDeclarationChain(baseDeclaration, "bindClass", excluded, linkedSetOf()) -> "bindClass"
-            declarationResolvesToLuaJavaHelperByDeclarationChain(baseDeclaration, "newInstance", excluded, linkedSetOf()) -> "newInstance"
-            declarationResolvesToLuaJavaHelperByDeclarationChain(baseDeclaration, "createProxy", excluded, linkedSetOf()) -> "createProxy"
-            declarationResolvesToLuaJavaHelperByDeclarationChain(baseDeclaration, "loadLib", excluded, linkedSetOf()) -> "loadLib"
-            else -> return null
-        }
-        return when (helperName) {
-            "bindClass" -> resolveLuaJavaImportTarget(target)?.moduleType
-            "newInstance" -> resolveLuaJavaImportTarget(target)?.moduleType
-                ?.javaInstanceSurface()
-                ?.hydrateLuaJavaProviderType()
-            "createProxy" -> {
-                val interfaceTypes = createProxyInterfaceTargets(call).mapNotNull { interfaceTarget ->
-                    resolveLuaJavaImportTarget(interfaceTarget)?.moduleType
-                        ?.javaInstanceSurface()
-                        ?.hydrateLuaJavaProviderType()
-                }
-                when {
-                    interfaceTypes.isEmpty() -> null
-                    interfaceTypes.size == 1 -> interfaceTypes.single()
-                    else -> intersectionTypeOf(interfaceTypes)
-                }
-            }
-            "loadLib" -> {
-                val memberName = stringCallTarget(call, argumentIndex = 1) ?: return null
-                resolveLoadLibMemberType(target, memberName)
-            }
-            else -> null
-        }
+        val helperName = listOf("bindClass", "newInstance", "createProxy", "loadLib").firstOrNull { helper ->
+            declarationResolvesToLuaJavaHelperByDeclarationChain(baseDeclaration, helper, excluded, linkedSetOf())
+        } ?: return null
+        return luaJavaHelperResultType(helperName, call, target)
     }
 
     private fun declarationResolvesToLuaJavaHelperByDeclarationChain(
@@ -1042,11 +1011,7 @@ internal class ReferenceQueries(
         // transitive chains like `bindClass -> bind -> again` must still see earlier alias decls.
         val hopExclusions = localStatementDeclarationIds(declaration)
         return when (val initializer = localDeclarationInitializer(declaration)) {
-            is MemberExpression -> isLuaJavaHelperMemberByDeclarationChain(
-                initializer,
-                helperName,
-                hopExclusions
-            )
+            is MemberExpression -> isLuaJavaHelperMember(initializer, helperName, hopExclusions)
             is Identifier -> {
                 val next = findVisibleValueDeclarationWithoutImports(
                     name = initializer.name,
@@ -1062,31 +1027,6 @@ internal class ReferenceQueries(
             }
             else -> false
         }
-    }
-
-    private fun isLuaJavaHelperMemberByDeclarationChain(
-        member: MemberExpression,
-        helperName: String,
-        excludedDeclarations: Set<io.github.dingyi222666.luaparser.semantic.binder.DeclarationId>
-    ): Boolean {
-        val owner = member.base as? Identifier ?: return false
-        if (member.indexer != "." || member.identifier.name != helperName || owner.name != "luajava") {
-            return false
-        }
-        val ownerDeclaration = findVisibleValueDeclarationWithoutImports(
-            name = owner.name,
-            position = owner.range.start,
-            excludedDeclarations = excludedDeclarations
-        )
-        if (ownerDeclaration == null) {
-            return true
-        }
-        if (ownerDeclaration.origin != io.github.dingyi222666.luaparser.semantic.binder.DeclarationOrigin.BUILTIN) {
-            return false
-        }
-        return ownerDeclaration.kind != DeclarationKind.LOCAL &&
-            ownerDeclaration.kind != DeclarationKind.FUNCTION &&
-            ownerDeclaration.kind != DeclarationKind.PARAMETER
     }
 
     private fun isJavaMemberProviderBase(type: Type): Boolean {

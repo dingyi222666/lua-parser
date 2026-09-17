@@ -230,27 +230,17 @@ internal class NodeTypeIndex(
         } else {
             0
         }
-        val mergedParameters = when {
-            declaration.kind == DeclarationKind.METHOD -> inferredSignature.parameters.mapIndexed { index, parameter ->
-                val declaredParameter = declaredSignature.parameters.getOrNull(index + declaredParameterOffset)
-                val parameterType = when {
-                    declaredParameter == null -> parameter.type
-                    parameter.type == UnknownType -> declaredParameter.type
-                    declaredParameter.type == UnknownType -> parameter.type
-                    else -> declaredParameter.type
-                }
-                parameter.copy(type = parameterType)
+        // The non-METHOD path is this same merge with a zero declared-parameter offset
+        // (previously a duplicated mapIndexed branch).
+        val mergedParameters = inferredSignature.parameters.mapIndexed { index, parameter ->
+            val declaredParameter = declaredSignature.parameters.getOrNull(index + declaredParameterOffset)
+            val parameterType = when {
+                declaredParameter == null -> parameter.type
+                parameter.type == UnknownType -> declaredParameter.type
+                declaredParameter.type == UnknownType -> parameter.type
+                else -> declaredParameter.type
             }
-            else -> inferredSignature.parameters.mapIndexed { index, parameter ->
-                val declaredParameter = declaredSignature.parameters.getOrNull(index)
-                val parameterType = when {
-                    declaredParameter == null -> parameter.type
-                    parameter.type == UnknownType -> declaredParameter.type
-                    declaredParameter.type == UnknownType -> parameter.type
-                    else -> declaredParameter.type
-                }
-                parameter.copy(type = parameterType)
-            }
+            parameter.copy(type = parameterType)
         }
         val mergedSignature = inferredSignature.copy(
             parameters = mergedParameters,

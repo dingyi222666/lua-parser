@@ -29,6 +29,7 @@ import io.github.dingyi222666.luaparser.semantic.types.model.ClassType
 import io.github.dingyi222666.luaparser.semantic.types.model.ModuleType
 import io.github.dingyi222666.luaparser.semantic.types.model.TableType
 import io.github.dingyi222666.luaparser.semantic.types.model.Type
+import io.github.dingyi222666.luaparser.semantic.model.localDeclarationInitializer
 import io.github.dingyi222666.luaparser.semantic.model.toSymbolHandle
 
 class LuaWorkspaceQueryFacade(
@@ -1099,17 +1100,8 @@ class LuaWorkspaceQueryFacade(
         )
     }
 
-    private fun memberInitializerForLocal(declaration: BinderDeclaration): MemberExpression? {
-        if (declaration.kind != DeclarationKind.LOCAL || declaration.anchorNode !is Identifier) {
-            return null
-        }
-        val localStatement = declaration.anchorNode.parent as? LocalStatement ?: return null
-        val localIndex = localStatement.init.indexOf(declaration.anchorNode)
-        if (localIndex < 0) {
-            return null
-        }
-        return localStatement.variables.getOrNull(localIndex) as? MemberExpression
-    }
+    private fun memberInitializerForLocal(declaration: BinderDeclaration): MemberExpression? =
+        localInitializerExpression(declaration) as? MemberExpression
 
     private fun requireBackedModuleNames(
         semanticFile: WorkspaceSemanticFile,
@@ -1271,12 +1263,7 @@ class LuaWorkspaceQueryFacade(
         if (!visited.add(declaration.id)) {
             return null
         }
-        val localStatement = declaration.anchorNode.parent as? LocalStatement ?: return null
-        val localIndex = localStatement.init.indexOf(declaration.anchorNode)
-        if (localIndex < 0) {
-            return null
-        }
-        return when (val initializer = localStatement.variables.getOrNull(localIndex)) {
+        return when (val initializer = localInitializerExpression(declaration)) {
             is CallExpression -> builtinRequireModuleName(semanticFile, initializer)
             // local first = dep where dep = require("dep")
             is Identifier -> {
@@ -1510,11 +1497,8 @@ class LuaWorkspaceQueryFacade(
     }
 
     private fun effectiveCallBase(call: CallExpression): io.github.dingyi222666.luaparser.parser.ast.node.ExpressionNode {
-        val base = if (call.base is io.github.dingyi222666.luaparser.parser.ast.node.StringCallExpression && call.arguments.isEmpty()) {
-            call.base
-        } else {
-            call.base
-        }
+        // Flatten StringCall bases so require "mod" / import "mod" surface their callee.
+        val base = call.base
         return if (base is io.github.dingyi222666.luaparser.parser.ast.node.StringCallExpression) base.base else base
     }
 
@@ -1870,50 +1854,21 @@ class LuaWorkspaceQueryFacade(
         }
     }
 
+    // resolvedRequireForExportPathRoot was byte-identical to the walker below and is folded
+    // into it: both walked Member/Index bases to a require-backed root with the same
+    // Identifier declaration ladder and CallExpression termination.
     private fun resolvedRequireForExportPathRoot(
         semanticFile: WorkspaceSemanticFile,
         path: VirtualPath,
         memberExpression: MemberExpression
-    ): WorkspaceModuleResolver.ResolvedRequire? {
-        // Walk the nested access / alias chain until a require-backed module root is found.
-        var current: ExpressionNode = memberExpression
-        val seen = linkedSetOf<String>()
-        while (true) {
-            when (current) {
-                is MemberExpression -> current = current.base
-                is IndexExpression -> current = current.base
-                is Identifier -> {
-                    val key = "${current.range.start.line}:${current.range.start.column}:${current.name}"
-                    if (!seen.add(key)) {
-                        return null
-                    }
-                    resolvedRequireForWorkspaceMemberReceiver(semanticFile, path, current)?.let { return it }
-                    val symbol = semanticFile.model.getSymbolAt(current.range.start)
-                    val declaration = localDeclarationForSymbol(semanticFile, symbol?.symbolId)
-                        ?: exactLocalDeclarationForIdentifier(semanticFile, current)
-                        ?: visibleLocalValueDeclaration(semanticFile, current.name, current.range.start)
-                        ?: return null
-                    val initializer = localInitializerExpression(declaration) ?: return null
-                    current = initializer
-                }
-                is CallExpression -> {
-                    return resolvedRequireForReceiver(semanticFile, path, current)
-                }
-                else -> return null
-            }
-        }
-    }
+    ): WorkspaceModuleResolver.ResolvedRequire? =
+        resolveRequireByWalkingExpressionBases(semanticFile, path, memberExpression)
 
     private fun localInitializerExpression(declaration: BinderDeclaration): ExpressionNode? {
         if (declaration.kind != DeclarationKind.LOCAL || declaration.anchorNode !is Identifier) {
             return null
         }
-        val localStatement = declaration.anchorNode.parent as? LocalStatement ?: return null
-        val localIndex = localStatement.init.indexOf(declaration.anchorNode)
-        if (localIndex < 0) {
-            return null
-        }
-        return localStatement.variables.getOrNull(localIndex)
+        return localDeclarationInitializer(declaration)
     }
 
     private fun resolvedRequireForWorkspaceMemberReceiver(
@@ -1952,17 +1907,8 @@ class LuaWorkspaceQueryFacade(
         return resolvedRequireForReceiver(semanticFile, path, receiver)
     }
 
-    private fun requireInitializerForLocal(declaration: BinderDeclaration): CallExpression? {
-        if (declaration.kind != DeclarationKind.LOCAL || declaration.anchorNode !is Identifier) {
-            return null
-        }
-        val localStatement = declaration.anchorNode.parent as? LocalStatement ?: return null
-        val localIndex = localStatement.init.indexOf(declaration.anchorNode)
-        if (localIndex < 0) {
-            return null
-        }
-        return localStatement.variables.getOrNull(localIndex) as? CallExpression
-    }
+    private fun requireInitializerForLocal(declaration: BinderDeclaration): CallExpression? =
+        localInitializerExpression(declaration) as? CallExpression
 
     private fun resolvedRequireForReceiver(
         semanticFile: WorkspaceSemanticFile,
