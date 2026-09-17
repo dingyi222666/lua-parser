@@ -1382,7 +1382,7 @@ class ExpressionTypeEvaluator internal constructor(
             is MemberExpression -> base.identifier.name
             else -> return null
         }
-        if (helperName !in setOf("loadlayout", "loadlayout2", "loadlayout3", "loadbitmap", "loadmenu")) {
+        if (helperName !in LOAD_FAMILY_HELPER_NAMES) {
             return null
         }
         // Name-based fast path for AndroLua load* helpers. Surfaces are shell
@@ -3505,6 +3505,9 @@ class ExpressionTypeEvaluator internal constructor(
         private const val LOADLAYOUT_PARENT_WALK_LIMIT = 64
         private const val LAYOUT_COMPLETION_NODE_BUDGET = 1_024
         private val LOADLAYOUT_FAMILY_NAMES = setOf("loadlayout", "loadlayout2", "loadlayout3")
+        // Full load* helper surface accepted by resolveLoadlayoutFamilyCall (layout family
+        // plus the bitmap/menu loaders); LOADLAYOUT_FAMILY_NAMES above stays usage-index-only.
+        private val LOAD_FAMILY_HELPER_NAMES = LOADLAYOUT_FAMILY_NAMES + setOf("loadbitmap", "loadmenu")
 
         private val LAYOUT_SPEC_KEYS = setOf(
             "id",
