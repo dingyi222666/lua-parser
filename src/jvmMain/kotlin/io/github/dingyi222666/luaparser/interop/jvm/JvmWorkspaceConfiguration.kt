@@ -17,17 +17,6 @@ data class JvmWorkspaceConfiguration(
     val androluaImports: List<String> = emptyList(),
     val importPrefixes: List<String> = emptyList()
 ) {
-    fun effectiveClasspathEntries(): List<String> = buildList {
-        classpathEntries
-            .map(String::trim)
-            .filter(String::isNotEmpty)
-            .forEach(::add)
-        androidJar
-            ?.trim()
-            ?.takeIf(String::isNotEmpty)
-            ?.let(::add)
-    }
-
     fun androidJarConfigurationNote(
         environment: Map<String, String> = System.getenv(),
         userHome: File = defaultUserHome(),
@@ -83,7 +72,14 @@ data class JvmWorkspaceConfiguration(
         userHome: File = defaultUserHome(),
         localAppData: String? = environmentValue(environment, LOCAL_APPDATA_ENV)
     ): List<String> = buildList {
-        addAll(effectiveClasspathEntries())
+        classpathEntries
+            .map(String::trim)
+            .filter(String::isNotEmpty)
+            .forEach(::add)
+        androidJar
+            ?.trim()
+            ?.takeIf(String::isNotEmpty)
+            ?.let(::add)
         if (androidJar.isNullOrBlank()) {
             discoverReflectiveAndroidJarPath(environment, userHome, localAppData)?.let(::add)
         }
@@ -117,19 +113,19 @@ data class JvmWorkspaceConfiguration(
         )
     }
 
-    private fun normalizedOverride(): JvmWorkspaceConfiguration {
-        return copy(
-            classpathEntries = classpathEntries.map(String::trim).filter(String::isNotEmpty),
-            androidJar = androidJar?.trim()?.takeIf(String::isNotEmpty),
-            classes = classes.map(String::trim).filter(String::isNotEmpty).toCollection(linkedSetOf()),
-            androluaImports = androluaImports.map(String::trim).filter(String::isNotEmpty),
-            importPrefixes = importPrefixes.map(String::trim).filter(String::isNotEmpty)
-        )
-    }
-
     fun overlay(overrides: JvmWorkspaceConfiguration): JvmWorkspaceConfiguration {
         val base = normalized()
-        val extra = overrides.normalizedOverride()
+        val extra = with(overrides) {
+            // Same trim/blank normalization as [normalized], but importPrefixes stay raw:
+            // overlay decides defaults-vs-override via hasExplicitImportPrefixes() below.
+            copy(
+                classpathEntries = classpathEntries.map(String::trim).filter(String::isNotEmpty),
+                androidJar = androidJar?.trim()?.takeIf(String::isNotEmpty),
+                classes = classes.map(String::trim).filter(String::isNotEmpty).toCollection(linkedSetOf()),
+                androluaImports = androluaImports.map(String::trim).filter(String::isNotEmpty),
+                importPrefixes = importPrefixes.map(String::trim).filter(String::isNotEmpty)
+            )
+        }
         return JvmWorkspaceConfiguration(
             classLoader = extra.classLoader ?: base.classLoader,
             classpathEntries = if (extra.classpathEntries.isNotEmpty()) extra.classpathEntries else base.classpathEntries,
@@ -377,8 +373,8 @@ data class JvmWorkspaceConfiguration(
         ): AndroidJarDiscovery {
             val discovered = wellKnownSdkRoots(userHome, localAppData)
                 .asSequence()
+                // wellKnownSdkRoots already excludes forbidden auto-discovery roots.
                 .filter { it.isDirectory }
-                .filterNot { isForbiddenAutoSdkRoot(it) }
                 .mapNotNull { sdkRoot ->
                     preferredAndroidPlatformJar(sdkRoot)?.let { jar -> sdkRoot to jar }
                 }
@@ -414,8 +410,8 @@ data class JvmWorkspaceConfiguration(
             // %LOCALAPPDATA%/Android/Sdk / user-home AppData layouts when those roots exist.
             // If LOCALAPPDATA is set but empty, fall through to other present roots instead
             // of hard-locking the missing AppData android-35 path alone.
+            // wellKnownSdkRoots already excludes forbidden auto-discovery roots.
             val roots = wellKnownSdkRoots(userHome, localAppData)
-                .filterNot { isForbiddenAutoSdkRoot(it) }
             val preferredRoot = roots.firstOrNull { root ->
                 root.isDirectory && preferredAndroidPlatformJar(root) != null
             }

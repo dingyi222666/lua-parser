@@ -38,7 +38,6 @@ import java.net.JarURLConnection
 import java.net.URI
 import java.net.URLClassLoader
 import java.nio.file.Files
-import java.nio.file.Path
 import java.nio.file.Paths
 import java.util.jar.JarFile
 import java.lang.reflect.Type as ReflectType
@@ -178,7 +177,8 @@ class JvmClassModuleProvider(
 
     internal fun requestedClasses(configuration: JvmWorkspaceConfiguration): Set<String> {
         val normalized = configuration.normalized(defaultImportPrefixes)
-        return requestedClasses(normalized, normalized.classLoader ?: classLoaderFor(normalized))
+        return requestedClassLoads(normalized, normalized.classLoader ?: classLoaderFor(normalized))
+            .mapTo(linkedSetOf()) { it.className }
     }
 
     internal fun importedClassName(importText: String, configuration: JvmWorkspaceConfiguration): String? {
@@ -229,7 +229,7 @@ class JvmClassModuleProvider(
         val classLoader = classLoaderForPackageEnumeration(normalized)
         // 1) wildcard package  2) loadable class  3) package-name alias when package enumerates.
         return when {
-            isWildcardImport(importText) -> importedPackageSymbol(importText, normalized, classLoader)
+            wildcardPackageName(importText) != null -> importedPackageSymbol(importText, normalized, classLoader)
             else -> importedClassSymbol(importText, normalized, classLoader)
                 ?: importedPackageSymbol(importText, normalized, classLoader)
         }
@@ -316,11 +316,6 @@ class JvmClassModuleProvider(
         val provider = providerForPackage(packageName, packageModuleTypeFor(packageName, classes))
         packageProviderCache[cacheKey] = provider
         return provider
-    }
-
-    private fun requestedClasses(configuration: JvmWorkspaceConfiguration, classLoader: ClassLoader): Set<String> {
-        return requestedClassLoads(configuration, classLoader)
-            .mapTo(linkedSetOf()) { it.className }
     }
 
     private fun requestedClassLoads(
@@ -589,10 +584,6 @@ class JvmClassModuleProvider(
         return loader
     }
 
-    private fun isWildcardImport(importText: String): Boolean {
-        return wildcardPackageName(importText) != null
-    }
-
     private fun wildcardPackageName(importText: String): String? {
         val target = parseImportTarget(importText)?.className ?: return null
         if (!target.endsWith(".*")) {
@@ -849,19 +840,14 @@ class JvmClassModuleProvider(
         output: MutableSet<String>
     ) {
         when {
-            entry.isDirectory -> collectClassesFromDirectoryRoot(entry.toPath(), packagePath, packageName, output)
+            entry.isDirectory -> collectClassesFromDirectory(
+                entry.toPath().resolve(packagePath).toString(),
+                packageName,
+                output
+            )
             entry.isFile && entry.extension.equals("jar", ignoreCase = true) ->
                 collectClassesFromJarFile(entry, packagePath, output)
         }
-    }
-
-    private fun collectClassesFromDirectoryRoot(
-        root: Path,
-        packagePath: String,
-        packageName: String,
-        output: MutableSet<String>
-    ) {
-        collectClassesFromDirectory(root.resolve(packagePath).toString(), packageName, output)
     }
 
     private fun collectClassesFromJar(url: java.net.URL, packagePath: String, output: MutableSet<String>) {
@@ -998,16 +984,15 @@ class JvmClassModuleProvider(
      * Null when the resource is absent (never invents classes).
      */
     /**
-     * Per-instance view of the process-wide bundled runtime jar ([Companion.companionRuntimeJarRef]).
-     * Kept as an instance lazy because provider instances are created per workspace update —
-     * the shared lazy below is what guarantees exactly one temp extraction per JVM.
+     * Instance view of the process-wide bundled runtime jar ([Companion.companionRuntimeJarRef]).
+     * Provider instances are created per workspace update — the shared companion lazy
+     * guarantees exactly one temp extraction per JVM, and reading it directly keeps that
+     * single-extraction contract (the old instance-level `by lazy` wrapper was a pure
+     * pass-through with no additional memoization).
+     *
+     * Test surface: two provider instances must observe the SAME extracted jar file.
      */
-    private val bundledAndroLuaRuntimeJar: File? by lazy {
-        companionRuntimeJarRef
-    }
-
-    /** Test surface: two provider instances must observe the SAME extracted jar file. */
-    internal fun bundledRuntimeJarForDiagnostics(): File? = bundledAndroLuaRuntimeJar
+    internal fun bundledRuntimeJarForDiagnostics(): File? = companionRuntimeJarRef
 
     /**
      * Existing reflective classpath files for ClassLoader + package enumeration.
@@ -1027,7 +1012,7 @@ class JvmClassModuleProvider(
         val entries = mutableListOf<File>()
         // The bundled runtime always leads the classpath: it carries the AndroLua-facing
         // helpers (LuaActivity.get/set/call, LuaService, luajava) that android.jar lacks.
-        bundledAndroLuaRuntimeJar?.let(entries::add)
+        companionRuntimeJarRef?.let(entries::add)
         entries += configuration.reflectionClasspathEntries()
             .map(::File)
             .filter { entry ->

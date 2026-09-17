@@ -2,6 +2,7 @@ package io.github.dingyi222666.luaparser.semantic.types.resolve
 
 import io.github.dingyi222666.luaparser.semantic.types.syntax.FunctionParameterSyntax
 import io.github.dingyi222666.luaparser.semantic.types.syntax.FunctionTypeSyntax
+import io.github.dingyi222666.luaparser.semantic.types.syntax.TypeSyntax
 import io.github.dingyi222666.luaparser.semantic.types.syntax.TypeSyntaxParser
 import io.github.dingyi222666.luaparser.semantic.types.syntax.indexOfTopLevelChar
 import io.github.dingyi222666.luaparser.semantic.types.syntax.splitTopLevelTypeText
@@ -90,7 +91,7 @@ class DocFunctionTypeSyntaxParser {
         )
     }
 
-    private fun parseParameterType(text: String): Pair<io.github.dingyi222666.luaparser.semantic.types.syntax.TypeSyntax, Boolean>? {
+    private fun parseParameterType(text: String): Pair<TypeSyntax, Boolean>? {
         val normalized = text.trim()
         val vararg = normalized.endsWith("...")
         val typeText = if (vararg) normalized.removeSuffix("...").trimEnd() else normalized
@@ -100,7 +101,7 @@ class DocFunctionTypeSyntaxParser {
         return parseCompleteType(typeText)?.let { it to vararg }
     }
 
-    private fun parseCompleteType(text: String): io.github.dingyi222666.luaparser.semantic.types.syntax.TypeSyntax? {
+    private fun parseCompleteType(text: String): TypeSyntax? {
         val parsed = runCatching { TypeSyntaxParser.parsePrefix(text) }.getOrNull() ?: return null
         return if (parsed.remainder.trim().isEmpty()) parsed.syntax else null
     }

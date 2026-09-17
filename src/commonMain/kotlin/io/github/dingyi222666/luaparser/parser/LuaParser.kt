@@ -73,7 +73,6 @@ class LuaParser(
     private var recoverIncompleteWorkspaceSnippet = false
     private val mutableRecoveryDiagnostics = mutableListOf<LuaParserRecoveryDiagnostic>()
 
-    var ignoreWarningMessage = true
     val recoveryDiagnostics: List<LuaParserRecoveryDiagnostic>
         get() = mutableRecoveryDiagnostics.toList()
 
@@ -100,11 +99,7 @@ class LuaParser(
     }
 
     fun parseWithDiagnostics(source: String): LuaParseResult {
-        return parseWithDiagnostics(LuaLexer(source, supportAndroLuaKeywords = isAndroLua()))
-    }
-
-    fun parseWithDiagnostics(lexer: LuaLexer): LuaParseResult {
-        val chunk = parse(lexer)
+        val chunk = parse(LuaLexer(source, supportAndroLuaKeywords = isAndroLua()))
         return LuaParseResult(
             chunk = chunk,
             recoveryDiagnostics = recoveryDiagnostics
@@ -125,7 +120,6 @@ class LuaParser(
      */
     fun parseWorkspaceSnippetWithDiagnostics(source: String): LuaParseResult {
         val snippetParser = snippetParser ?: LuaParser(luaVersion, errorRecovery = true).also {
-            it.ignoreWarningMessage = true
             it.recoverIncompleteWorkspaceSnippet = true
             snippetParser = it
         }
@@ -146,7 +140,7 @@ class LuaParser(
         return chunk
     }
 
-    fun reset() {
+    private fun reset() {
         currentToken = LuaTokenTypes.WHITE_SPACE
         tokenText = null
         locations.clear()
@@ -300,7 +294,7 @@ class LuaParser(
     }
 
     private fun warning(message: String, range: Range) {
-        if (errorRecovery && ignoreWarningMessage) {
+        if (errorRecovery) {
             mutableRecoveryDiagnostics += LuaParserRecoveryDiagnostic(
                 message = message,
                 range = range
@@ -1882,11 +1876,6 @@ class LuaParser(
         return result
     }
 
-    // attnamelist ::=  Name attrib {‘,’ Name attrib}
-    private fun parseAttrNameList(parent: BaseASTNode): List<AttributeIdentifier> {
-        return parseCommaSeparatedList { parseAttribute(parent) }
-    }
-
     // namelist ::= Name {‘,’ Name}
     private fun parseNameList(parent: BaseASTNode, supportDollarSymbol: Boolean = false): List<Identifier> {
         return parseCommaSeparatedList { parseNameOrMissing(parent, supportDollarSymbol = supportDollarSymbol) }
@@ -2870,7 +2859,8 @@ class LuaParser(
 
         localStatement.init.addAll(
             if (luaVersion === LuaVersion.LUA_5_4)
-                parseAttrNameList(localStatement)
+                // attnamelist ::=  Name attrib {‘,’ Name attrib}
+                parseCommaSeparatedList { parseAttribute(localStatement) }
             else parseNameList(localStatement, luaVersion === LuaVersion.ANDROLUA_5_3)
         )
         if (errorRecovery && localStatement.init.any { it.bad }) {

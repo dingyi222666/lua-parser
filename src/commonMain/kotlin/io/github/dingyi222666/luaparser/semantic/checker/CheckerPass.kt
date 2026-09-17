@@ -75,20 +75,15 @@ class CheckerPass {
         chunk: ChunkNode,
         diagnostics: List<Diagnostic>
     ): List<Diagnostic> {
-        if (shouldReportUnusedLocals(chunk)) {
+        val body = chunk.body
+        val hasExecutableSurface = body.returnStatement != null ||
+            body.statements.any { statement -> statement !is LocalStatement }
+        if (hasExecutableSurface) {
             return diagnostics
         }
         return diagnostics.filterNot { diagnostic ->
             diagnostic.code == UNUSED_LOCAL_CODE
         }
-    }
-
-    private fun shouldReportUnusedLocals(chunk: ChunkNode): Boolean {
-        val body = chunk.body
-        if (body.returnStatement != null) {
-            return true
-        }
-        return body.statements.any { statement -> statement !is LocalStatement }
     }
 
     private companion object {

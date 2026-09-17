@@ -2,8 +2,18 @@ package io.github.dingyi222666.luaparser.semantic.checker
 
 import io.github.dingyi222666.luaparser.parser.ast.node.BaseASTNode
 import io.github.dingyi222666.luaparser.parser.ast.node.BlockNode
+import io.github.dingyi222666.luaparser.parser.ast.node.CaseCause
 import io.github.dingyi222666.luaparser.parser.ast.node.ChunkNode
+import io.github.dingyi222666.luaparser.parser.ast.node.DefaultCause
+import io.github.dingyi222666.luaparser.parser.ast.node.DoStatement
+import io.github.dingyi222666.luaparser.parser.ast.node.ForGenericStatement
+import io.github.dingyi222666.luaparser.parser.ast.node.ForNumericStatement
 import io.github.dingyi222666.luaparser.parser.ast.node.FunctionDeclaration
+import io.github.dingyi222666.luaparser.parser.ast.node.IfStatement
+import io.github.dingyi222666.luaparser.parser.ast.node.MemberExpression
+import io.github.dingyi222666.luaparser.parser.ast.node.RepeatStatement
+import io.github.dingyi222666.luaparser.parser.ast.node.SwitchStatement
+import io.github.dingyi222666.luaparser.parser.ast.node.WhileStatement
 import io.github.dingyi222666.luaparser.semantic.binder.BinderDeclaration
 import io.github.dingyi222666.luaparser.semantic.binder.BinderPassResult
 import io.github.dingyi222666.luaparser.semantic.binder.DeclarationKind
@@ -96,13 +106,13 @@ internal fun isColonMethodDeclaration(
         return false
     }
 
-    val anchorMember = runCatching { declaration.anchorNode?.parent }.getOrNull() as? io.github.dingyi222666.luaparser.parser.ast.node.MemberExpression
+    val anchorMember = runCatching { declaration.anchorNode?.parent }.getOrNull() as? MemberExpression
     if (anchorMember?.indexer == ":") {
         return true
     }
 
     val functionNode = resolveOwningFunctionDeclaration(binder, declaration) ?: return false
-    val methodIdentifier = functionNode.identifier as? io.github.dingyi222666.luaparser.parser.ast.node.MemberExpression ?: return false
+    val methodIdentifier = functionNode.identifier as? MemberExpression ?: return false
     return methodIdentifier.indexer == ":"
 }
 
@@ -116,7 +126,7 @@ private fun findFunctionByMatchingIdentifierAnchor(
         .firstOrNull { function ->
             when (val identifier = function.identifier) {
                 anchor -> true
-                is io.github.dingyi222666.luaparser.parser.ast.node.MemberExpression -> identifier.identifier === anchor
+                is MemberExpression -> identifier.identifier === anchor
                 else -> false
             }
         }
@@ -163,7 +173,7 @@ private fun findFunctionByAnchorInContainer(anchorNode: BaseASTNode?): FunctionD
     return functionDeclarationsIn(container).firstOrNull { declaration ->
         when (val identifier = declaration.identifier) {
             anchorNode -> true
-            is io.github.dingyi222666.luaparser.parser.ast.node.MemberExpression -> identifier.identifier === anchorNode
+            is MemberExpression -> identifier.identifier === anchorNode
             else -> false
         }
     }
@@ -192,16 +202,16 @@ private fun collectFunctionDeclarations(node: BlockNode, output: MutableList<Fun
                 output += statement
                 statement.body?.let { collectFunctionDeclarations(it, output) }
             }
-            is io.github.dingyi222666.luaparser.parser.ast.node.DoStatement -> collectFunctionDeclarations(statement.body, output)
-            is io.github.dingyi222666.luaparser.parser.ast.node.IfStatement -> statement.causes.forEach { collectFunctionDeclarations(it.body, output) }
-            is io.github.dingyi222666.luaparser.parser.ast.node.WhileStatement -> collectFunctionDeclarations(statement.body, output)
-            is io.github.dingyi222666.luaparser.parser.ast.node.RepeatStatement -> collectFunctionDeclarations(statement.body, output)
-            is io.github.dingyi222666.luaparser.parser.ast.node.ForGenericStatement -> collectFunctionDeclarations(statement.body, output)
-            is io.github.dingyi222666.luaparser.parser.ast.node.ForNumericStatement -> collectFunctionDeclarations(statement.body, output)
-            is io.github.dingyi222666.luaparser.parser.ast.node.SwitchStatement -> statement.causes.forEach { cause ->
+            is DoStatement -> collectFunctionDeclarations(statement.body, output)
+            is IfStatement -> statement.causes.forEach { collectFunctionDeclarations(it.body, output) }
+            is WhileStatement -> collectFunctionDeclarations(statement.body, output)
+            is RepeatStatement -> collectFunctionDeclarations(statement.body, output)
+            is ForGenericStatement -> collectFunctionDeclarations(statement.body, output)
+            is ForNumericStatement -> collectFunctionDeclarations(statement.body, output)
+            is SwitchStatement -> statement.causes.forEach { cause ->
                 when (cause) {
-                    is io.github.dingyi222666.luaparser.parser.ast.node.CaseCause -> collectFunctionDeclarations(cause.body, output)
-                    is io.github.dingyi222666.luaparser.parser.ast.node.DefaultCause -> collectFunctionDeclarations(cause.body, output)
+                    is CaseCause -> collectFunctionDeclarations(cause.body, output)
+                    is DefaultCause -> collectFunctionDeclarations(cause.body, output)
                 }
             }
         }

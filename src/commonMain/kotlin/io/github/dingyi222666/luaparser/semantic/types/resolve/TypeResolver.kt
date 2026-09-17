@@ -215,7 +215,7 @@ class TypeResolver(
                 ?.let(::parseTypeSyntax)
                 ?.let { resolveSyntax(it, context) }
             val javaClassName = declaration.documentation.findDocTag<JavaClassTagSyntax>()?.className
-            val superClass = parentType?.let { materializeParentClassSurface(it, context) }
+            val superClass = parentType?.let { materializeParentClassSurface(it, context, mutableListOf()) }
             val classType = ClassType(
                 name = declaration.name,
                 fields = fields,
@@ -266,7 +266,7 @@ class TypeResolver(
                     .filterIsInstance<ParamTagSyntax>()
                     .lastOrNull { it.name == "self" }
                     ?.typeText
-                    ?.let(::parseNamedTypeText)
+                    ?.let(::parseTypeSyntax)
                     ?.let { resolveSyntax(it, context) }
                     ?: UnknownType
                 add(FunctionParameter(name = "self", type = selfType))
@@ -298,7 +298,7 @@ class TypeResolver(
             .filterIsInstance<ReturnTagSyntax>()
             .lastOrNull()
             ?.typeTexts
-            ?.map(::parseNamedTypeText)
+            ?.map(::parseTypeSyntax)
             ?.map { syntaxNode -> resolveSyntax(syntaxNode, context) }
             .orEmpty()
         val returnType = when (returnTypes.size) {
@@ -356,7 +356,7 @@ class TypeResolver(
         val context = TypeResolutionContext.forDeclaration(declaration.id, binder)
         val paramTag = declaration.findOwningFunctionParamTag()
         val syntax = declaration.declaredTypeSyntax
-            ?: paramTag?.typeText?.let(::parseNamedTypeText)
+            ?: paramTag?.typeText?.let(::parseTypeSyntax)
         val resolved = syntax?.let { resolveSyntax(it, context) }
         val type = when {
             resolved == null -> null
@@ -402,7 +402,7 @@ class TypeResolver(
             .filterIsInstance<ReturnTagSyntax>()
             .lastOrNull()
             ?.typeTexts
-            ?.map(::parseNamedTypeText)
+            ?.map(::parseTypeSyntax)
             ?.map { syntax -> resolveSyntax(syntax, context) }
             .orEmpty()
         val returnType = when (returnTypes.size) {
@@ -758,15 +758,8 @@ class TypeResolver(
         )
     }
 
-    private fun parseNamedTypeText(text: String): TypeSyntax =
-        TypeSyntaxParser.parseOrNull(text.trim()) ?: NamedTypeSyntax(text.trim())
-
     private fun parseTypeSyntax(text: String): TypeSyntax =
         TypeSyntaxParser.parseOrNull(text.trim()) ?: NamedTypeSyntax(text.trim())
-
-    private fun materializeParentClassSurface(type: Type, context: TypeResolutionContext): ClassType? {
-        return materializeParentClassSurface(type, context, mutableListOf())
-    }
 
     private fun materializeParentClassSurface(
         type: Type,
@@ -817,10 +810,8 @@ class TypeResolver(
         val mapping = ownedTypeParameters.zip(type.typeArguments).associate { (parameter, argument) ->
             parameter.name to argument
         }
-        val substituted = when (resolvedType) {
-            is AliasType -> typeSubstitutor.substitute(resolvedType.target, mapping, preserveOwnTypeParameters = false)
-            else -> typeSubstitutor.substitute(resolvedType, mapping, preserveOwnTypeParameters = false)
-        }
+        val substitutionTarget = (resolvedType as? AliasType)?.target ?: resolvedType
+        val substituted = typeSubstitutor.substitute(substitutionTarget, mapping, preserveOwnTypeParameters = false)
 
         return materializeParentClassSurface(substituted, context, aliasStack)
     }

@@ -47,7 +47,6 @@ import org.eclipse.lsp4j.CallHierarchyOutgoingCallsParams
 import org.eclipse.lsp4j.CallHierarchyPrepareParams
 import org.eclipse.lsp4j.SymbolKind
 import org.eclipse.lsp4j.CodeAction
-import org.eclipse.lsp4j.CodeActionKind
 import org.eclipse.lsp4j.CodeActionOptions
 import org.eclipse.lsp4j.CodeActionParams
 import org.eclipse.lsp4j.Command
@@ -118,9 +117,7 @@ import org.eclipse.lsp4j.SignatureHelpParams
 import org.eclipse.lsp4j.SignatureInformation
 import org.eclipse.lsp4j.SymbolInformation
 import org.eclipse.lsp4j.WorkspaceSymbol
-import org.eclipse.lsp4j.TextDocumentContentChangeEvent
 import org.eclipse.lsp4j.TextDocumentIdentifier
-import org.eclipse.lsp4j.TextDocumentItem
 import org.eclipse.lsp4j.TextDocumentSyncKind
 import org.eclipse.lsp4j.WorkspaceEdit
 import org.eclipse.lsp4j.WorkspaceFolder
@@ -353,7 +350,7 @@ class LuaLanguageService(
 
     fun didOpen(params: DidOpenTextDocumentParams): PublishDiagnosticsParams = synchronized(stateLock) {
         val document = params.textDocument
-        val path = pathOf(document)
+        val path = pathOf(document.uri)
         openDocuments[path] = document.text
         documentUris[path] = document.uri
         refreshIncremental()
@@ -648,8 +645,7 @@ class LuaLanguageService(
     fun foldingRanges(params: FoldingRangeRequestParams): List<FoldingRange> = synchronized(stateLock) {
         val context = documentContextFor(params.textDocument, requireSource = false)
             ?: return@synchronized emptyList()
-        val lineCount = context.source?.let { documentLineCount(it) }
-        collectFoldingRanges(context.chunk, lineCount)
+        collectFoldingRanges(context.chunk, documentLineCount(context.source))
     }
     /**
      * TASK-540 — Selection ranges for nested block expand/shrink selection.
@@ -1145,12 +1141,10 @@ class LuaLanguageService(
             is ForGenericStatement -> if (parent.variables.any { it === identifier }) return true
             is FunctionDeclaration -> {
                 if (parent.params.any { it === identifier }) return true
-                if (parent.isLocal && functionDeclarationNameIs(parent.identifier, identifier)) {
-                    return true
-                }
-                // Global function name is not a same-file lexical local rename target.
-                if (!parent.isLocal && functionDeclarationNameIs(parent.identifier, identifier)) {
-                    return false
+                // Local function names are lexical locals; global function names are not
+                // same-file lexical local rename targets.
+                if (functionDeclarationNameIs(parent.identifier, identifier)) {
+                    return parent.isLocal
                 }
             }
         }
@@ -1512,18 +1506,14 @@ class LuaLanguageService(
         val source = openDocuments[path] ?: indexedWorkspaceFiles[path] ?: return emptyList()
         val semanticFile = snapshot.files[path]?.semanticFile
         if (semanticFile != null && semanticFile.source == source) {
-            return semanticFile.recoveryDiagnostics.map(::parseDiagnostic)
+            return semanticFile.recoveryDiagnostics.map { parseDiagnostic(it.message, it.range) }
         }
         val result = try {
             LuaParser().parseWithDiagnostics(source)
         } catch (error: IllegalStateException) {
             return listOf(parseDiagnostic(error.message, Range(Position(1, 1), Position(1, 2))))
         }
-        return result.recoveryDiagnostics.map(::parseDiagnostic)
-    }
-
-    private fun parseDiagnostic(diagnostic: LuaParserRecoveryDiagnostic): Diagnostic {
-        return parseDiagnostic(diagnostic.message, diagnostic.range)
+        return result.recoveryDiagnostics.map { parseDiagnostic(it.message, it.range) }
     }
 
     private fun parseDiagnostic(message: String?, range: Range): Diagnostic {
@@ -1643,7 +1633,8 @@ class LuaLanguageService(
             normalizeLspFileUriPath(uri)
                 ?.normalizeWorkspacePathPrefix()
                 ?.takeIf { it.isNotBlank() }
-                ?.let { workspaceFolderUriPrefixes[it.normalizeWorkspacePathPrefix()] = "" }
+                // Already normalized in the chain above (normalizeWorkspacePathPrefix is idempotent).
+                ?.let { workspaceFolderUriPrefixes[it] = "" }
         }
     }
 
@@ -1875,8 +1866,6 @@ class LuaLanguageService(
         )
     }
 
-    private fun pathOf(document: TextDocumentItem): VirtualPath = pathOf(document.uri)
-
     private fun pathOf(document: TextDocumentIdentifier): VirtualPath = pathOf(document.uri)
 
     private fun pathOf(uri: String): VirtualPath = lspVirtualPathFromUri(
@@ -1886,28 +1875,23 @@ class LuaLanguageService(
     )
 
     private fun pathFromClientPath(pathOrUri: String): VirtualPath {
-        val normalizedPath = pathOrUri.normalizeWorkspacePathPrefix()
-        val workspacePath = normalizedPath.workspaceRelativePath(workspaceFolderUriPrefixes)
-        if (workspacePath != normalizedPath) {
-            return workspacePath.toVirtualPathOrNull() ?: lspVirtualPathFromUri(
-                pathOrUri,
-                workspaceFolderUriPrefixes,
-                collapseSyntheticWorkspaceRoot = shouldCollapseSyntheticWorkspaceRoot()
-            )
-        }
-        if (pathOrUri.looksLikeUri()) {
-            return lspVirtualPathFromUri(
-                pathOrUri,
-                workspaceFolderUriPrefixes,
-                collapseSyntheticWorkspaceRoot = shouldCollapseSyntheticWorkspaceRoot()
-            )
-        }
-        val clientPath = normalizedPath.syntheticWorkspaceRelativePath(shouldCollapseSyntheticWorkspaceRoot())
-        return clientPath.toVirtualPathOrNull() ?: lspVirtualPathFromUri(
+        // Shared fallback for every branch below: the raw client text re-interpreted as a
+        // document URI (same prefix/collapse policy as [pathOf]).
+        fun fromUri(): VirtualPath = lspVirtualPathFromUri(
             pathOrUri,
             workspaceFolderUriPrefixes,
             collapseSyntheticWorkspaceRoot = shouldCollapseSyntheticWorkspaceRoot()
         )
+        val normalizedPath = pathOrUri.normalizeWorkspacePathPrefix()
+        val workspacePath = normalizedPath.workspaceRelativePath(workspaceFolderUriPrefixes)
+        if (workspacePath != normalizedPath) {
+            return workspacePath.toVirtualPathOrNull() ?: fromUri()
+        }
+        if (pathOrUri.looksLikeUri()) {
+            return fromUri()
+        }
+        val clientPath = normalizedPath.syntheticWorkspaceRelativePath(shouldCollapseSyntheticWorkspaceRoot())
+        return clientPath.toVirtualPathOrNull() ?: fromUri()
     }
 
     private fun uriFor(path: VirtualPath): String = documentUris[path] ?: indexedWorkspaceUris[path] ?: lspFileUri(path)
@@ -2535,7 +2519,8 @@ class LuaLanguageService(
 
     private class DocumentContext(
         val path: VirtualPath,
-        val source: String?,
+        /** Non-null by construction: documentContextFor rejects unresolvable sources. */
+        val source: String,
         val semanticFile: WorkspaceSemanticFile?,
         /** Non-null by construction: documentContextFor rejects unresolvable chunks. */
         val chunk: ChunkNode
@@ -2747,11 +2732,6 @@ class LuaLanguageService(
             val trimmed = rawLine.trim()
             if (trimmed.isEmpty()) {
                 // Preserve empty lines as empty (no trailing spaces).
-                if (index < lines.lastIndex || source.endsWith("\n") || source.endsWith("\r\n")) {
-                    if (index > 0 || lines.size > 1) {
-                        // only append newline separators between lines / trailing
-                    }
-                }
                 if (index < lines.lastIndex) {
                     out.append(if (usesCrlf) "\r\n" else "\n")
                 } else if (source.endsWith("\n") || source.endsWith("\r\n")) {
@@ -3029,10 +3009,6 @@ class LuaLanguageService(
         return candidates.firstOrNull()
     }
 
-    /**
-     * Soft code-action collection. Empty / malformed / non-quickfix filters yield [].
-     * Only emits actions when a deterministic edit can be built; otherwise empty.
-     */
     // -------------------------------------------------------------------------
     // TASK-520 — Call hierarchy (same-file local functions)
     // -------------------------------------------------------------------------
@@ -3527,32 +3503,17 @@ class LuaLanguageService(
             left.end.character == right.end.character
     }
 
-    private fun collectCodeActions(params: CodeActionParams): List<Either<Command, CodeAction>> {
-        val only = params.context?.only
-        if (!only.isNullOrEmpty() && !only.any { kind -> acceptsCodeActionKind(kind) }) {
-            // Client asked only for kinds we do not provide; soft empty.
-            return emptyList()
-        }
-
-        // Selection range is accepted even when inverted / OOB — empty-fix path does
-        // not index into source with client positions.
-        val diagnostics = params.context?.diagnostics.orEmpty()
-        if (diagnostics.isEmpty()) {
-            return emptyList()
-        }
-
-        // No deterministic auto-fix yet for parse/type diagnostics; empty list is the
-        // safe product contract (well-formed zero actions, no UnsupportedOperationException).
+    /**
+     * Soft code-action collection. The provider has no deterministic auto-fix yet for
+     * parse/type diagnostics, so every path — with or without client `only` filters,
+     * with or without context diagnostics — yields the same well-formed zero actions
+     * (no UnsupportedOperationException). The former kind/diagnostics gates were pure
+     * no-ops (both branches returned empty) and are collapsed into the single contract.
+     */
+    private fun collectCodeActions(
+        @Suppress("UNUSED_PARAMETER") params: CodeActionParams
+    ): List<Either<Command, CodeAction>> {
         return emptyList()
-    }
-
-    private fun acceptsCodeActionKind(kind: String?): Boolean {
-        if (kind.isNullOrBlank()) {
-            return true
-        }
-        return kind == CodeActionKind.Empty ||
-            kind == CodeActionKind.QuickFix ||
-            kind.startsWith("${CodeActionKind.QuickFix}.")
     }
 
     /**
