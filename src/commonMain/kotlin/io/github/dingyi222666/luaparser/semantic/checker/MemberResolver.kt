@@ -35,7 +35,7 @@ class MemberResolver(
 
     fun resolveMember(baseType: Type, memberName: String, preferMethod: Boolean, lexicalScopeId: ScopeId): MemberResolution {
         val receiverType = baseType
-        val normalized = TypeExpansion.expandForSurface(baseType, lexicalScopeId, binder)
+        val normalized = TypeExpansion.expandForMemberSurface(baseType, lexicalScopeId, binder)
 
         return when (normalized) {
             is TableType -> resolveTableMember(normalized, receiverType, memberName, preferMethod)
@@ -60,28 +60,8 @@ class MemberResolver(
         }
     }
 
-    /**
-     * Shared member-pick for map-shaped surfaces (TableType/ModuleType/ClassType fields vs
-     * methods). preferMethod=true tries methods first (a colon site is a call site);
-     * false tries fields first (dot access prefers data members). Previously four
-     * copy-pasted when-ladders, one per resolver.
-     */
-    private fun <T> pickMember(
-        methods: Map<String, T>,
-        fields: Map<String, T>,
-        memberName: String,
-        preferMethod: Boolean
-    ): Pair<MemberAccessKind, T>? =
-        (if (preferMethod) {
-            methods[memberName]?.let { MemberAccessKind.METHOD to it }
-                ?: fields[memberName]?.let { MemberAccessKind.FIELD to it }
-        } else {
-            fields[memberName]?.let { MemberAccessKind.FIELD to it }
-                ?: methods[memberName]?.let { MemberAccessKind.METHOD to it }
-        })
-
     fun resolveIndex(baseType: Type, indexNode: ExpressionNode, indexType: Type, lexicalScopeId: ScopeId): MemberResolution {
-        val normalized = TypeExpansion.expandForSurface(baseType, lexicalScopeId, binder)
+        val normalized = TypeExpansion.expandForMemberSurface(baseType, lexicalScopeId, binder)
 
         return when (normalized) {
             is ArrayType -> {
@@ -151,7 +131,14 @@ class MemberResolver(
         memberName: String,
         preferMethod: Boolean
     ): MemberResolution {
-        return pickMember(tableType.methods, tableType.fields, memberName, preferMethod)?.let { (kind, type) ->
+        val member = if (preferMethod) {
+            tableType.methods[memberName]?.let { MemberAccessKind.METHOD to it }
+                ?: tableType.fields[memberName]?.let { MemberAccessKind.FIELD to it }
+        } else {
+            tableType.fields[memberName]?.let { MemberAccessKind.FIELD to it }
+                ?: tableType.methods[memberName]?.let { MemberAccessKind.METHOD to it }
+        }
+        return member?.let { (kind, type) ->
             MemberResolution(
                 type = bindMethodReceiver(type, receiverType, kind, preferMethod),
                 accessKind = kind,
@@ -166,7 +153,15 @@ class MemberResolver(
         memberName: String,
         preferMethod: Boolean
     ): MemberResolution {
-        val member = pickMember(classType.getAllMethods(), classType.getAllFields(), memberName, preferMethod)
+        val fields = classType.getAllFields()
+        val methods = classType.getAllMethods()
+        val member = if (preferMethod) {
+            methods[memberName]?.let { MemberAccessKind.METHOD to it }
+                ?: fields[memberName]?.let { MemberAccessKind.FIELD to it }
+        } else {
+            fields[memberName]?.let { MemberAccessKind.FIELD to it }
+                ?: methods[memberName]?.let { MemberAccessKind.METHOD to it }
+        }
         return member?.let { (kind, type) ->
             val resolvedType = if (classType.isJavaProviderClassReference() && kind == MemberAccessKind.METHOD) {
                 type.withJavaCallableSurface(receiverType = receiverType, includeReceiver = preferMethod)
@@ -267,7 +262,13 @@ class MemberResolver(
             ?.takeIf { it.isSuccess }
             ?.copy(baseType = moduleType)
 
-        val member = pickMember(moduleType.methods, moduleType.fields, memberName, preferMethod)
+        val member = if (preferMethod) {
+            moduleType.methods[memberName]?.let { MemberAccessKind.METHOD to it }
+                ?: moduleType.fields[memberName]?.let { MemberAccessKind.FIELD to it }
+        } else {
+            moduleType.fields[memberName]?.let { MemberAccessKind.FIELD to it }
+                ?: moduleType.methods[memberName]?.let { MemberAccessKind.METHOD to it }
+        }
 
         val moduleResolution = member?.let { (kind, type) ->
             val resolvedType = if (moduleType.isJavaBackedModule() && kind == MemberAccessKind.METHOD) {

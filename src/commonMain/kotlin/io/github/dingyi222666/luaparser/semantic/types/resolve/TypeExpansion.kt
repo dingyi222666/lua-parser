@@ -7,15 +7,11 @@ import io.github.dingyi222666.luaparser.semantic.types.model.AppliedType
 import io.github.dingyi222666.luaparser.semantic.types.model.Type
 
 internal object TypeExpansion {
-    /**
-     * Expand alias/applied types down to their member/callable surface for resolution.
-     *
-     * The two entry points were byte-identical twins (both delegated to the same
-     * [expandSurface] with a fresh stack); kept as one function with a name that covers
-     * both call shapes. Callers: member surfaces (MemberResolver, ReferenceQueries,
-     * SignatureHelpProvider, ExpressionUsageChecker) and callable surfaces (CallChecker).
-     */
-    fun expandForSurface(type: Type, lexicalScopeId: ScopeId, binder: BinderPassResult): Type {
+    fun expandForCallableSurface(type: Type, lexicalScopeId: ScopeId, binder: BinderPassResult): Type {
+        return expandSurface(type, lexicalScopeId, binder, mutableListOf())
+    }
+
+    fun expandForMemberSurface(type: Type, lexicalScopeId: ScopeId, binder: BinderPassResult): Type {
         return expandSurface(type, lexicalScopeId, binder, mutableListOf())
     }
 
