@@ -3,7 +3,6 @@ package io.github.dingyi222666.luaparser.semantic.model
 import io.github.dingyi222666.luaparser.parser.ast.node.BaseASTNode
 import io.github.dingyi222666.luaparser.parser.ast.node.CallExpression
 import io.github.dingyi222666.luaparser.parser.ast.node.ExpressionNode
-import io.github.dingyi222666.luaparser.parser.ast.node.FunctionDeclaration
 import io.github.dingyi222666.luaparser.parser.ast.node.Identifier
 import io.github.dingyi222666.luaparser.parser.ast.node.LocalStatement
 import io.github.dingyi222666.luaparser.parser.ast.node.MemberExpression
@@ -14,20 +13,14 @@ import io.github.dingyi222666.luaparser.semantic.binder.DeclarationKind
 import io.github.dingyi222666.luaparser.semantic.binder.DeclarationNamespace
 import io.github.dingyi222666.luaparser.semantic.binder.DeclarationOwner
 import io.github.dingyi222666.luaparser.semantic.checker.ExpressionTypeEvaluator
-import io.github.dingyi222666.luaparser.semantic.checker.ValueSequence
 import io.github.dingyi222666.luaparser.semantic.checker.isColonMethodDeclaration
 import io.github.dingyi222666.luaparser.semantic.checker.resolveOwningFunctionDeclaration
-import io.github.dingyi222666.luaparser.semantic.comments.ParamTagSyntax
 import io.github.dingyi222666.luaparser.semantic.types.model.CallableType
 import io.github.dingyi222666.luaparser.semantic.types.model.FunctionParameter
 import io.github.dingyi222666.luaparser.semantic.types.model.FunctionType
-import io.github.dingyi222666.luaparser.semantic.types.model.MultiReturnType
 import io.github.dingyi222666.luaparser.semantic.types.model.OverloadedFunctionType
-import io.github.dingyi222666.luaparser.semantic.types.model.PrimitiveType
 import io.github.dingyi222666.luaparser.semantic.types.model.Type
 import io.github.dingyi222666.luaparser.semantic.types.model.UnknownType
-import io.github.dingyi222666.luaparser.semantic.types.model.VarargType
-import io.github.dingyi222666.luaparser.semantic.types.resolve.unionTypeOf
 
 internal class NodeTypeIndex(
     private val binder: BinderPassResult,
@@ -161,7 +154,7 @@ internal class NodeTypeIndex(
                 candidate.kind == DeclarationKind.METHOD &&
                     lexicalOwner != null &&
                     isDeclaredInLexicalOwnerChain(candidate, lexicalOwner) &&
-                    isMethodBoundToBaseIdentifier(candidate, baseIdentifier.name) &&
+                    isMethodBoundToBaseIdentifier(binder, candidate, baseIdentifier.name) &&
                     (candidate.range == null || compare(candidate.range.start, position) <= 0)
             }
             if (declaration != null) {
@@ -170,30 +163,6 @@ internal class NodeTypeIndex(
             scope = scope.parentId?.let(binder.scopeGraph::getScope)
         }
         return null
-    }
-
-    private fun isDeclaredInLexicalOwnerChain(declaration: BinderDeclaration, lexicalOwner: BaseASTNode): Boolean {
-        var current: BaseASTNode? = lexicalOwner
-        while (current != null) {
-            if (declaration.owner == DeclarationOwner.Lexical(current)) {
-                return true
-            }
-            current = runCatching { current.parent }.getOrNull()
-        }
-        return false
-    }
-
-    private fun isMethodBoundToBaseIdentifier(declaration: BinderDeclaration, baseName: String): Boolean {
-        val anchorMember = declaration.anchorNode?.parent as? MemberExpression
-        val anchorBase = anchorMember?.base as? Identifier
-        if (anchorBase?.name == baseName) {
-            return true
-        }
-
-        val function = resolveOwningFunctionDeclaration(binder, declaration) ?: return false
-        val identifier = function.identifier as? MemberExpression ?: return false
-        val base = identifier.base as? Identifier ?: return false
-        return base.name == baseName
     }
 
     private fun visibleValueDeclaration(
@@ -228,14 +197,14 @@ internal class NodeTypeIndex(
         return when {
             declared == null -> {
                 if (declaration.kind == DeclarationKind.METHOD && inferred != null) {
-                    enrichMethodCallableType(declaration, inferred)
+                    enrichMethodCallableType(binder, declaration, inferred)
                 } else {
                     inferred
                 }
             }
             inferred == null -> {
                 if (declaration.kind == DeclarationKind.METHOD) {
-                    enrichMethodCallableType(declaration, declared)
+                    enrichMethodCallableType(binder, declaration, declared)
                 } else {
                     declared
                 }
@@ -250,8 +219,8 @@ internal class NodeTypeIndex(
         declared: CallableType,
         inferred: CallableType
     ): CallableType {
-        val declaredSignature = declared.callSignatures.firstOrNull() ?: return enrichMethodCallableType(declaration, inferred)
-        val inferredSignature = inferred.callSignatures.firstOrNull() ?: return enrichMethodCallableType(declaration, declared)
+        val declaredSignature = declared.callSignatures.firstOrNull() ?: return enrichMethodCallableType(binder, declaration, inferred)
+        val inferredSignature = inferred.callSignatures.firstOrNull() ?: return enrichMethodCallableType(binder, declaration, declared)
         val declaredParameterOffset = if (
             declaration.kind == DeclarationKind.METHOD &&
                 declaredSignature.parameters.firstOrNull()?.name == "self" &&
@@ -293,75 +262,9 @@ internal class NodeTypeIndex(
             ).name
         )
         return if (declaration.kind == DeclarationKind.METHOD) {
-            enrichMethodCallableType(declaration, mergedSignature)
+            enrichMethodCallableType(binder, declaration, mergedSignature)
         } else {
             mergedSignature
-        }
-    }
-
-    private fun enrichMethodCallableType(declaration: BinderDeclaration, declared: CallableType): CallableType {
-        if (declaration.kind != DeclarationKind.METHOD) {
-            return declared
-        }
-
-        if (!isColonMethodDeclaration(binder, declaration)) {
-            return declared
-        }
-
-        val selfType = declaration.documentation?.resolvedParameterTypes?.get("self") ?: UnknownType
-        val enrichedSignatures = declared.callSignatures.map { signature ->
-            val parameters = if (signature.parameters.firstOrNull()?.name == "self") {
-                signature.parameters.mapIndexed { index, parameter ->
-                    if (index == 0 && parameter.type == UnknownType && selfType != UnknownType) {
-                        parameter.copy(type = selfType)
-                    } else {
-                        parameter
-                    }
-                }
-            } else {
-                listOf(FunctionParameter(name = "self", type = selfType)) + signature.parameters
-            }
-            signature.copy(
-                parameters = parameters,
-                name = FunctionType(
-                    parameters = parameters,
-                    returnType = signature.returnType,
-                    typeParameters = signature.typeParameters
-                ).name
-            )
-        }
-        return when (enrichedSignatures.size) {
-            0 -> declared
-            1 -> enrichedSignatures.single()
-            else -> OverloadedFunctionType(enrichedSignatures)
-        }
-    }
-
-
-    private fun inferReturnType(returnSequences: List<ValueSequence>): Type {
-        if (returnSequences.isEmpty()) {
-            return PrimitiveType.NIL
-        }
-
-        val openTailTypes = returnSequences.mapNotNull(ValueSequence::variadicTail)
-        val maxFixedArity = returnSequences.maxOf { it.fixed.size }
-        val totalArity = if (openTailTypes.isEmpty()) maxFixedArity else maxOf(maxFixedArity, 1)
-
-        if (totalArity <= 1 && openTailTypes.isEmpty()) {
-            return unionTypeOf(returnSequences.map { it.typeAt(0) })
-        }
-
-        val slots = (0 until maxFixedArity)
-            .map { index -> unionTypeOf(returnSequences.map { it.typeAt(index) }) }
-            .toMutableList()
-        if (openTailTypes.isNotEmpty()) {
-            slots += VarargType(unionTypeOf(openTailTypes))
-        }
-
-        return if (slots.size == 1 && slots.single() is VarargType) {
-            slots.single()
-        } else {
-            MultiReturnType(slots)
         }
     }
 
@@ -372,4 +275,96 @@ internal class NodeTypeIndex(
         }
         return a.column.compareTo(b.column)
     }
+}
+
+/**
+ * Fills in the implicit `self` parameter of colon-method signatures, shared by
+ * [NodeTypeIndex] and [SignatureHelpProvider] (previously two identical private copies).
+ */
+internal fun enrichMethodCallableType(
+    binder: BinderPassResult,
+    declaration: BinderDeclaration,
+    declared: CallableType
+): CallableType {
+    if (declaration.kind != DeclarationKind.METHOD) {
+        return declared
+    }
+
+    if (!isColonMethodDeclaration(binder, declaration)) {
+        return declared
+    }
+
+    val selfType = declaration.documentation?.resolvedParameterTypes?.get("self") ?: UnknownType
+    val enrichedSignatures = declared.callSignatures.map { signature ->
+        val parameters = if (signature.parameters.firstOrNull()?.name == "self") {
+            signature.parameters.mapIndexed { index, parameter ->
+                if (index == 0 && parameter.type == UnknownType && selfType != UnknownType) {
+                    parameter.copy(type = selfType)
+                } else {
+                    parameter
+                }
+            }
+        } else {
+            listOf(FunctionParameter(name = "self", type = selfType)) + signature.parameters
+        }
+        signature.copy(
+            parameters = parameters,
+            name = FunctionType(
+                parameters = parameters,
+                returnType = signature.returnType,
+                typeParameters = signature.typeParameters
+            ).name
+        )
+    }
+    return when (enrichedSignatures.size) {
+        0 -> declared
+        1 -> enrichedSignatures.single()
+        else -> OverloadedFunctionType(enrichedSignatures)
+    }
+}
+
+/**
+ * Shared position-independent visibility walk used by [NodeTypeIndex] and
+ * [SignatureHelpProvider] (previously identical private copies in each class).
+ */
+internal fun isDeclaredInLexicalOwnerChain(declaration: BinderDeclaration, lexicalOwner: BaseASTNode): Boolean {
+    var current: BaseASTNode? = lexicalOwner
+    while (current != null) {
+        if (declaration.owner == DeclarationOwner.Lexical(current)) {
+            return true
+        }
+        current = runCatching { current.parent }.getOrNull()
+    }
+    return false
+}
+
+internal fun isMethodBoundToBaseIdentifier(
+    binder: BinderPassResult,
+    declaration: BinderDeclaration,
+    baseName: String
+): Boolean {
+    val anchorMember = declaration.anchorNode?.parent as? MemberExpression
+    val anchorBase = anchorMember?.base as? Identifier
+    if (anchorBase?.name == baseName) {
+        return true
+    }
+
+    val function = resolveOwningFunctionDeclaration(binder, declaration) ?: return false
+    val identifier = function.identifier as? MemberExpression ?: return false
+    val base = identifier.base as? Identifier ?: return false
+    return base.name == baseName
+}
+
+/**
+ * Returns the RHS expression matching [declaration] within its enclosing LocalStatement,
+ * shared by NodeTypeIndex, SignatureHelpProvider and ReferenceQueries.
+ */
+internal fun localDeclarationInitializer(declaration: BinderDeclaration): ExpressionNode? {
+    val localStatement = declaration.anchorNode?.parent as? LocalStatement ?: return null
+    val initializerIndex = localStatement.init.indexOf(declaration.anchorNode)
+    if (initializerIndex < 0) {
+        return null
+    }
+    // LocalStatement: init = names, variables = RHS expressions.
+    return localStatement.variables.getOrNull(initializerIndex)
 }

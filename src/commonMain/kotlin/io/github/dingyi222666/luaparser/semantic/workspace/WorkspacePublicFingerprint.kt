@@ -15,7 +15,6 @@ import io.github.dingyi222666.luaparser.parser.ast.node.TableConstructorExpressi
 import io.github.dingyi222666.luaparser.parser.ast.node.UnaryExpression
 import io.github.dingyi222666.luaparser.semantic.binder.DeclarationKind
 import io.github.dingyi222666.luaparser.semantic.binder.DeclarationOrigin
-import io.github.dingyi222666.luaparser.semantic.checker.ExpressionTypeEvaluator
 import io.github.dingyi222666.luaparser.semantic.types.model.AliasType
 import io.github.dingyi222666.luaparser.semantic.types.model.AppliedType
 import io.github.dingyi222666.luaparser.semantic.types.model.ArrayType

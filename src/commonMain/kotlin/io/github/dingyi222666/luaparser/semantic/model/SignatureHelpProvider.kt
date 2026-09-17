@@ -822,16 +822,6 @@ internal class SignatureHelpProvider(
         }
     }
 
-    private fun localDeclarationInitializer(declaration: BinderDeclaration): ExpressionNode? {
-        val localStatement = declaration.anchorNode?.parent as? LocalStatement ?: return null
-        val initializerIndex = localStatement.init.indexOf(declaration.anchorNode)
-        if (initializerIndex < 0) {
-            return null
-        }
-        // LocalStatement: init = names, variables = RHS expressions.
-        return localStatement.variables.getOrNull(initializerIndex)
-    }
-
     private fun callableTypeForDeclaration(declaration: BinderDeclaration): CallableType? {
         val declared = declaration.declaredType as? CallableType
         if (declared != null && declared.callSignatures.any { it.returnType != UnknownType }) {
@@ -848,7 +838,7 @@ internal class SignatureHelpProvider(
         declaration.declaredType?.let { declared ->
             if (declared is CallableType && declared.callSignatures.any { it.returnType != UnknownType }) {
                 val withGenerics = preserveGenericTypeParameterLabels(declared, declared, declaration)
-                return enrichMethodCallableType(declaration, withGenerics as? CallableType ?: declared)
+                return enrichMethodCallableType(binder, declaration, withGenerics as? CallableType ?: declared)
             }
         }
 
@@ -950,44 +940,6 @@ internal class SignatureHelpProvider(
             ?: declaration.anchorNode?.parent as? FunctionDeclaration
     }
 
-    private fun enrichMethodCallableType(declaration: BinderDeclaration, declared: CallableType): CallableType {
-        if (declaration.kind.name != "METHOD") {
-            return declared
-        }
-
-        if (!isColonMethodDeclaration(binder, declaration)) {
-            return declared
-        }
-
-        val selfType = declaration.documentation?.resolvedParameterTypes?.get("self") ?: UnknownType
-        val enrichedSignatures = declared.callSignatures.map { signature ->
-            val parameters = if (signature.parameters.firstOrNull()?.name == "self") {
-                signature.parameters.mapIndexed { index, parameter ->
-                    if (index == 0 && parameter.type == UnknownType && selfType != UnknownType) {
-                        parameter.copy(type = selfType)
-                    } else {
-                        parameter
-                    }
-                }
-            } else {
-                listOf(FunctionParameter(name = "self", type = selfType)) + signature.parameters
-            }
-            signature.copy(
-                parameters = parameters,
-                name = FunctionType(
-                    parameters = parameters,
-                    returnType = signature.returnType,
-                    typeParameters = signature.typeParameters
-                ).name
-            )
-        }
-        return when (enrichedSignatures.size) {
-            0 -> declared
-            1 -> enrichedSignatures.single()
-            else -> OverloadedFunctionType(enrichedSignatures)
-        }
-    }
-
 
     private fun inferReturnType(returnSequences: List<ValueSequence>): Type {
         if (returnSequences.isEmpty()) {
@@ -1061,7 +1013,7 @@ internal class SignatureHelpProvider(
                 candidate.kind.name == "METHOD" &&
                     lexicalOwner != null &&
                     isDeclaredInLexicalOwnerChain(candidate, lexicalOwner) &&
-                    isMethodBoundToBaseIdentifier(candidate, baseIdentifier.name) &&
+                    isMethodBoundToBaseIdentifier(binder, candidate, baseIdentifier.name) &&
                     isVisibleAt(candidate, node.identifier.range.start)
             }
             if (declaration != null) {
@@ -1071,33 +1023,9 @@ internal class SignatureHelpProvider(
         }
         return binder.declarationIndex.declarations.firstOrNull { candidate ->
             candidate.kind.name == "METHOD" &&
-                isMethodBoundToBaseIdentifier(candidate, baseIdentifier.name) &&
+                isMethodBoundToBaseIdentifier(binder, candidate, baseIdentifier.name) &&
                 isVisibleAt(candidate, node.identifier.range.start)
         }
-    }
-
-    private fun isDeclaredInLexicalOwnerChain(declaration: BinderDeclaration, lexicalOwner: BaseASTNode): Boolean {
-        var current: BaseASTNode? = lexicalOwner
-        while (current != null) {
-            if (declaration.owner == DeclarationOwner.Lexical(current)) {
-                return true
-            }
-            current = runCatching { current.parent }.getOrNull()
-        }
-        return false
-    }
-
-    private fun isMethodBoundToBaseIdentifier(declaration: BinderDeclaration, baseName: String): Boolean {
-        val anchorMember = declaration.anchorNode?.parent as? MemberExpression
-        val anchorBase = anchorMember?.base as? Identifier
-        if (anchorBase?.name == baseName) {
-            return true
-        }
-
-        val function = resolveOwningFunctionDeclaration(binder, declaration) ?: return false
-        val identifier = function.identifier as? MemberExpression ?: return false
-        val base = identifier.base as? Identifier ?: return false
-        return base.name == baseName
     }
 
     private fun findVisibleValueDeclaration(name: String, position: Position): BinderDeclaration? {
@@ -1414,12 +1342,6 @@ internal class SignatureHelpProvider(
                 }
             }
         }
-    }
-
-    private fun argumentRegion(call: CallExpression): Range? {
-        val start = call.base.range.end
-        val end = effectiveArgumentRegionEnd(call)
-        return if (compare(start, end) < 0) Range(start, end) else null
     }
 
     private fun contains(range: Range, position: Position): Boolean {

@@ -1089,15 +1089,6 @@ internal class ReferenceQueries(
             ownerDeclaration.kind != DeclarationKind.PARAMETER
     }
 
-    private fun localDeclarationInitializer(declaration: BinderDeclaration): ExpressionNode? {
-        val localStatement = declaration.anchorNode?.parent as? LocalStatement ?: return null
-        val initializerIndex = localStatement.init.indexOf(declaration.anchorNode)
-        if (initializerIndex < 0) {
-            return null
-        }
-        return localStatement.variables.getOrNull(initializerIndex)
-    }
-
     private fun isJavaMemberProviderBase(type: Type): Boolean {
         return when (type) {
             is ModuleType -> type.isJavaBackedModule()
@@ -1142,11 +1133,7 @@ internal class ReferenceQueries(
     }
 
     private fun effectiveCallBase(node: io.github.dingyi222666.luaparser.parser.ast.node.CallExpression): ExpressionNode {
-        val base = if (node.base is StringCallExpression && node.arguments.isEmpty()) {
-            node.base
-        } else {
-            node.base
-        }
+        val base = node.base
         return if (base is StringCallExpression) base.base else base
     }
 

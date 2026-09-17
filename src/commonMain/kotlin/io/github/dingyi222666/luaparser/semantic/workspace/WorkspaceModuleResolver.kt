@@ -326,10 +326,6 @@ internal class WorkspaceModuleResolver(
         return exportedMember(path, member.exportPath)
     }
 
-    fun exportHandle(providerPath: VirtualPath, exportPath: List<String>): String {
-        return ModuleExportIdentity(providerPath, exportPath).asHandle()
-    }
-
     fun importedSymbolsFor(path: VirtualPath): Map<String, WorkspaceImportedSymbol> {
         importedSymbolsCache[path]?.let { return it }
         val facts = snapshot.files[path]?.documentFacts ?: return emptyMap()

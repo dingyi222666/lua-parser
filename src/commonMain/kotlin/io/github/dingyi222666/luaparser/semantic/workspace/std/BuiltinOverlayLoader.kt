@@ -2348,8 +2348,6 @@ object BuiltinOverlayLoader {
 
     private const val ANDROLUA_LUAJAVA_RESOURCE =
         "/io/github/dingyi222666/luaparser/semantic/workspace/std/androlua53-luajava/luajava.lua"
-    private const val ANDROLUA_GLOBALS_RESOURCE =
-        "/io/github/dingyi222666/luaparser/semantic/workspace/std/androlua53-luajava/_G.lua"
     private const val ANDROID_FRAMEWORK_RESOURCE_ROOT =
         "/io/github/dingyi222666/luaparser/semantic/workspace/android-framework/"
     private const val ANDROID_FRAMEWORK_MANIFEST_RESOURCE =
