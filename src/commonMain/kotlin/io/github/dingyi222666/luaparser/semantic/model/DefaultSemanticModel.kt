@@ -29,7 +29,7 @@ internal class DefaultSemanticModel(
     signatureHelpProvider: Lazy<SignatureHelpProvider>,
     private val diagnostics: List<Diagnostic>
 ) : SemanticModel {
-    override val nodePositionIndex by nodePositionIndex
+    val nodePositionIndex by nodePositionIndex
     private val completionProvider by completionProvider
     private val luaLayoutCompletionProvider by luaLayoutCompletionProvider
     private val signatureHelpProvider by signatureHelpProvider
