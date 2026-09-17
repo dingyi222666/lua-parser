@@ -378,11 +378,9 @@ private fun JavaClassType.typeArgumentMapping(typeArguments: List<Type>): Map<St
  * only append additional ranks for this wrapper's [dimensions].
  */
 private fun buildJavaArrayName(elementType: Type, dimensions: Int): String {
-    // Prefer nested single-rank wrappers: component display already carries inner ranks.
-    val root = when (elementType) {
-        is JavaArrayType -> elementType.displayName
-        else -> elementType.displayName
-    }
+    // Nested single-rank wrappers are preferred, so the component display already carries
+    // any inner ranks (JavaArrayType.displayName goes through this same builder).
+    val root = elementType.displayName
     val rank = dimensions.coerceAtLeast(1)
     // Explicit two-char append avoids any platform String.repeat edge and keeps each
     // rank as "[]" (not a collapsed "[[]]" token).

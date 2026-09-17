@@ -266,10 +266,9 @@ class TypeSubstitutor {
         val mapping = typeParameters.zip(type.typeArguments).associate { (parameter, argument) ->
             parameter.name to argument
         }
-        return when (declaredType) {
-            is AliasType -> dropAppliedTypeParameters(substitute(declaredType.target, mapping), mapping)
-            else -> dropAppliedTypeParameters(substitute(declaredType, mapping), mapping)
-        }
+        // Alias targets substitute through the aliased type, not the alias node itself.
+        val substitutionTarget = (declaredType as? AliasType)?.target ?: declaredType
+        return dropAppliedTypeParameters(substitute(substitutionTarget, mapping), mapping)
     }
 
     /**

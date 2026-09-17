@@ -19,8 +19,6 @@ internal object TypeExpansion {
         return expandSurface(type, lexicalScopeId, binder, mutableListOf())
     }
 
-    fun normalizeStructurally(type: Type): Type = TypeNormalizer.normalize(type)
-
     private fun expandSurface(
         type: Type,
         lexicalScopeId: ScopeId,

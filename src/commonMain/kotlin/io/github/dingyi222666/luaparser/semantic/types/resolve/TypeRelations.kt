@@ -172,23 +172,19 @@ object TypeRelations {
                 source.indexSignature?.let { TableType.IndexSignature(it.keyType, it.valueType) }
             )
 
-            is ClassType -> {
-                val availableFields = source.getAllFields()
-                val availableMethods = source.getAllMethods()
-                target.fields.all { (name, type) -> availableFields[name]?.let { isAssignable(type, it) } == true } &&
-                    target.methods.all { (name, type) -> availableMethods[name]?.let { isAssignable(type, it) } == true } &&
-                    target.indexSignature == null
-            }
+            is ClassType -> isMemberBearingTargetAssignableToClass(
+                target.fields,
+                target.methods,
+                target.indexSignature,
+                source
+            )
 
-            is ArrayType -> {
-                if (target.fields.isNotEmpty() || target.methods.isNotEmpty()) {
-                    false
-                } else {
-                    val signature = target.indexSignature ?: return false
-                    isAssignable(signature.keyType, PrimitiveType.NUMBER) &&
-                        isAssignable(signature.valueType, source.elementType)
-                }
-            }
+            is ArrayType -> isMemberBearingTargetAssignableToArray(
+                target.fields,
+                target.methods,
+                target.indexSignature,
+                source
+            )
 
             else -> false
         }
@@ -453,26 +449,51 @@ object TypeRelations {
                 source.indexSignature
             )
 
-            is ClassType -> {
-                val availableFields = source.getAllFields()
-                val availableMethods = source.getAllMethods()
-                target.fields.all { (name, type) -> availableFields[name]?.let { isAssignable(type, it) } == true } &&
-                    target.methods.all { (name, type) -> availableMethods[name]?.let { isAssignable(type, it) } == true } &&
-                    target.indexSignature == null
-            }
+            is ClassType -> isMemberBearingTargetAssignableToClass(
+                target.fields,
+                target.methods,
+                target.indexSignature?.let { TableType.IndexSignature(it.keyType, it.valueType) },
+                source
+            )
 
-            is ArrayType -> {
-                if (target.fields.isNotEmpty() || target.methods.isNotEmpty()) {
-                    false
-                } else {
-                    val signature = target.indexSignature ?: return false
-                    isAssignable(signature.keyType, PrimitiveType.NUMBER) &&
-                        isAssignable(signature.valueType, source.elementType)
-                }
-            }
+            is ArrayType -> isMemberBearingTargetAssignableToArray(
+                target.fields,
+                target.methods,
+                target.indexSignature?.let { TableType.IndexSignature(it.keyType, it.valueType) },
+                source
+            )
 
             else -> false
         }
+    }
+
+    /** Shared ClassType-source branch of the member-bearing ladders (Table/Module targets identical). */
+    private fun isMemberBearingTargetAssignableToClass(
+        targetFields: Map<String, Type>,
+        targetMethods: Map<String, Type>,
+        targetIndexSignature: TableType.IndexSignature?,
+        source: ClassType
+    ): Boolean {
+        val availableFields = source.getAllFields()
+        val availableMethods = source.getAllMethods()
+        return targetFields.all { (name, type) -> availableFields[name]?.let { isAssignable(type, it) } == true } &&
+            targetMethods.all { (name, type) -> availableMethods[name]?.let { isAssignable(type, it) } == true } &&
+            targetIndexSignature == null
+    }
+
+    /** Shared ArrayType-source branch: index-only targets accept positional Lua arrays. */
+    private fun isMemberBearingTargetAssignableToArray(
+        targetFields: Map<String, Type>,
+        targetMethods: Map<String, Type>,
+        targetIndexSignature: TableType.IndexSignature?,
+        source: ArrayType
+    ): Boolean {
+        if (targetFields.isNotEmpty() || targetMethods.isNotEmpty()) {
+            return false
+        }
+        val signature = targetIndexSignature ?: return false
+        return isAssignable(signature.keyType, PrimitiveType.NUMBER) &&
+            isAssignable(signature.valueType, source.elementType)
     }
 
     private fun isArrayAssignable(target: ArrayType, source: Type): Boolean = when (source) {

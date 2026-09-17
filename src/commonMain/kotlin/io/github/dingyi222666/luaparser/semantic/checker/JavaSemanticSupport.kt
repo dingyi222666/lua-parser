@@ -261,7 +261,8 @@ private fun resolveJavaBeanProperty(
         return null
     }
     val getterNames = getters.map { it.first.memberName }.distinct()
-    val capitalizedName = javaBeanCapitalizedName(propertyName)
+    // javaBeanPropertyName never yields an empty name, but keep the guard cheap and local.
+    val capitalizedName = if (propertyName.isEmpty()) propertyName else javaBeanUppercaseFirst(propertyName)
     val getterName = when {
         getterNames.size == 1 -> getterNames.single()
         getterNames.all { it == "is$capitalizedName" || it == "get$capitalizedName" } ->
@@ -301,18 +302,12 @@ private fun javaBeanPropertyName(propertyPart: String): String? {
     if (propertyPart.isEmpty() || !propertyPart.first().isUpperCase()) {
         return null
     }
-    return if (propertyPart.length >= 2 && propertyPart[0].isUpperCase() && propertyPart[1].isUpperCase()) {
+    // propertyPart[0] is already proven uppercase above; all-caps names keep their spelling.
+    return if (propertyPart.length >= 2 && propertyPart[1].isUpperCase()) {
         propertyPart
     } else {
         javaBeanLowercaseFirst(propertyPart)
     }
-}
-
-private fun javaBeanCapitalizedName(propertyName: String): String {
-    if (propertyName.isEmpty()) {
-        return propertyName
-    }
-    return javaBeanUppercaseFirst(propertyName)
 }
 
 private fun javaBeanLowercaseFirst(value: String): String {
