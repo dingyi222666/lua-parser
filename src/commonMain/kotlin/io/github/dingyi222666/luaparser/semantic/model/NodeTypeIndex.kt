@@ -6,12 +6,12 @@ import io.github.dingyi222666.luaparser.parser.ast.node.ExpressionNode
 import io.github.dingyi222666.luaparser.parser.ast.node.Identifier
 import io.github.dingyi222666.luaparser.parser.ast.node.LocalStatement
 import io.github.dingyi222666.luaparser.parser.ast.node.MemberExpression
-import io.github.dingyi222666.luaparser.parser.ast.node.Position
 import io.github.dingyi222666.luaparser.semantic.binder.BinderDeclaration
 import io.github.dingyi222666.luaparser.semantic.binder.BinderPassResult
 import io.github.dingyi222666.luaparser.semantic.binder.DeclarationKind
 import io.github.dingyi222666.luaparser.semantic.binder.DeclarationNamespace
 import io.github.dingyi222666.luaparser.semantic.binder.DeclarationOwner
+import io.github.dingyi222666.luaparser.semantic.binder.comparePositions
 import io.github.dingyi222666.luaparser.semantic.checker.ExpressionTypeEvaluator
 import io.github.dingyi222666.luaparser.semantic.checker.isColonMethodDeclaration
 import io.github.dingyi222666.luaparser.semantic.checker.resolveOwningFunctionDeclaration
@@ -155,7 +155,7 @@ internal class NodeTypeIndex(
                     lexicalOwner != null &&
                     isDeclaredInLexicalOwnerChain(candidate, lexicalOwner) &&
                     isMethodBoundToBaseIdentifier(binder, candidate, baseIdentifier.name) &&
-                    (candidate.range == null || compare(candidate.range.start, position) <= 0)
+                    (candidate.range == null || comparePositions(candidate.range.start, position) <= 0)
             }
             if (declaration != null) {
                 return declaration
@@ -177,7 +177,7 @@ internal class NodeTypeIndex(
                 .firstOrNull { candidate ->
                     candidate.kind.namespace == DeclarationNamespace.VALUE &&
                         candidate.name == name &&
-                        (candidate.range == null || compare(candidate.range.start, position) <= 0)
+                        (candidate.range == null || comparePositions(candidate.range.start, position) <= 0)
                 }
             if (declaration != null) {
                 return declaration
@@ -255,13 +255,6 @@ internal class NodeTypeIndex(
         }
     }
 
-    private fun compare(a: Position, b: Position): Int {
-        val lineComparison = a.line.compareTo(b.line)
-        if (lineComparison != 0) {
-            return lineComparison
-        }
-        return a.column.compareTo(b.column)
-    }
 }
 
 /**

@@ -338,10 +338,11 @@ object DocumentFactsCollector {
         }
 
         private fun collectCallFacts(call: CallExpression, isTopLevel: Boolean) {
-            if (isLuaJavaHelperColonMember(effectiveCallBase(call))) {
+            val callBase = effectiveCallBase(call)
+            if (isLuaJavaHelperColonMember(callBase)) {
                 return
             }
-            val calleeName = calleeName(effectiveCallBase(call)) ?: return
+            val calleeName = calleeName(callBase) ?: return
             when {
                 // Bare `require` resolves through the alias tombstones too: the file-scope
                 // seed makes it true unless a local re-bind wrote a false tombstone over
@@ -414,8 +415,7 @@ object DocumentFactsCollector {
                 // require facts, not unknown callees. A rebind whose RHS still READS
                 // bare require (local require = require or print — polyfill idiom)
                 // keeps the seed alive; anything else retires it.
-                requireAliasScopes.last()[identifier.name] =
-                    value is Identifier && value.name == "require" || readsBareRequire(value)
+                requireAliasScopes.last()[identifier.name] = readsBareRequire(value)
                 declareLocalAlias(identifier.name, value?.let(::jvmClassLoadKindForAliasExpression))
             }
         }
@@ -440,8 +440,7 @@ object DocumentFactsCollector {
                 // Mirror assignAlias's boundary targeting: a bare rebind inside a nested
                 // block rewrites the OUTER scope's registration, so the tombstone must be
                 // written where the alias entry lives (adversarial audit wave X).
-                requireAliasScopeForWrite(identifier.name)[identifier.name] =
-                    value is Identifier && value.name == "require" || readsBareRequire(value)
+                requireAliasScopeForWrite(identifier.name)[identifier.name] = readsBareRequire(value)
                 assignAlias(identifier.name, value?.let(::jvmClassLoadKindForAliasExpression))
             }
         }
@@ -808,12 +807,6 @@ object DocumentFactsCollector {
         }
     }
 
-    private fun splitCreateProxyTargetList(targetList: String): List<String> {
-        return targetList.split(',')
-            .map(String::trim)
-            .filter(String::isNotEmpty)
-    }
-
     private fun extractImportTargets(call: CallExpression): List<String> {
         // AndroLua import accepts multiple targets per call (`import("a.*", "b.*")`, chained
         // compact-call forms, tables, arrays). Every argument — not just the first — feeds the
@@ -1051,4 +1044,14 @@ object DocumentFactsCollector {
         return workspaceFingerprintHash(payload)
     }
 
+}
+
+/**
+ * Splits an AndroLua `createProxy`/`import` comma-separated target list, shared by
+ * DocumentFactsCollector and ExpressionTypeEvaluator (previously two identical private copies).
+ */
+internal fun splitCreateProxyTargetList(targetList: String): List<String> {
+    return targetList.split(',')
+        .map(String::trim)
+        .filter(String::isNotEmpty)
 }

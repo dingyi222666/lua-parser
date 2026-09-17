@@ -6,6 +6,7 @@ import io.github.dingyi222666.luaparser.parser.ast.node.ChunkNode
 import io.github.dingyi222666.luaparser.parser.ast.node.Position
 import io.github.dingyi222666.luaparser.parser.ast.node.Range
 import io.github.dingyi222666.luaparser.parser.ast.visitor.ASTVisitor
+import io.github.dingyi222666.luaparser.semantic.binder.comparePositions
 
 internal class NodePositionIndex(root: BaseASTNode) {
     private data class Entry(
@@ -96,26 +97,18 @@ internal class NodePositionIndex(root: BaseASTNode) {
     }
 
     private fun containsNodeRange(range: Range): Boolean {
-        return compare(range.start, range.end) < 0
+        return comparePositions(range.start, range.end) < 0
     }
 
     private fun contains(range: Range, position: Position): Boolean {
-        return compare(range.start, position) <= 0 && compare(position, range.end) < 0
+        return comparePositions(range.start, position) <= 0 && comparePositions(position, range.end) < 0
     }
 
     private fun compareSpecificity(a: Range, b: Range): Int {
-        val startComparison = compare(b.start, a.start)
+        val startComparison = comparePositions(b.start, a.start)
         if (startComparison != 0) {
             return startComparison
         }
-        return compare(a.end, b.end)
-    }
-
-    private fun compare(a: Position, b: Position): Int {
-        val lineComparison = a.line.compareTo(b.line)
-        if (lineComparison != 0) {
-            return lineComparison
-        }
-        return a.column.compareTo(b.column)
+        return comparePositions(a.end, b.end)
     }
 }

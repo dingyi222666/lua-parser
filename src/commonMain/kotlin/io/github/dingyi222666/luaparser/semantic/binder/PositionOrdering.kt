@@ -17,6 +17,10 @@ internal fun positionLt(a: Position, b: Position): Boolean = comparePositions(a,
 
 internal fun isValidNonEmptyRange(range: Range): Boolean = positionLt(range.start, range.end)
 
+internal fun isPositionWithin(start: Position, end: Position, position: Position): Boolean {
+    return comparePositions(start, position) <= 0 && comparePositions(position, end) < 0
+}
+
 internal fun rangeContains(range: Range, position: Position): Boolean {
     if (!isValidNonEmptyRange(range)) {
         return false

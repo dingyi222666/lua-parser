@@ -19,6 +19,7 @@ import io.github.dingyi222666.luaparser.semantic.api.TypeInfo
 import io.github.dingyi222666.luaparser.semantic.checker.LuaLayoutValueDomains
 import io.github.dingyi222666.luaparser.semantic.api.TypeInfoKind
 import io.github.dingyi222666.luaparser.semantic.WorkspaceImportedSymbol
+import io.github.dingyi222666.luaparser.semantic.importedSymbolHandle
 import io.github.dingyi222666.luaparser.semantic.binder.BinderDeclaration
 import io.github.dingyi222666.luaparser.semantic.binder.DeclarationId
 import io.github.dingyi222666.luaparser.semantic.binder.DeclarationKind
@@ -475,6 +476,11 @@ class LuaWorkspaceQueryFacade(
         val byId = declarations.associateBy(BinderDeclaration::id)
         val childrenByOwner = linkedMapOf<DeclarationId, MutableList<BinderDeclaration>>()
         val roots = mutableListOf<BinderDeclaration>()
+        val declarationSourceOrder = compareBy<BinderDeclaration>(
+            { it.range?.start?.line ?: Int.MAX_VALUE },
+            { it.range?.start?.column ?: Int.MAX_VALUE },
+            { it.name }
+        )
 
         declarations.forEach { declaration ->
             val ownerId = (declaration.owner as? DeclarationOwner.Declaration)?.declarationId
@@ -491,13 +497,7 @@ class LuaWorkspaceQueryFacade(
                 ?: syntheticModuleRange(declaration.name)
             val children = childrenByOwner[declaration.id]
                 .orEmpty()
-                .sortedWith(
-                    compareBy<BinderDeclaration>(
-                        { it.range?.start?.line ?: Int.MAX_VALUE },
-                        { it.range?.start?.column ?: Int.MAX_VALUE },
-                        { it.name }
-                    )
-                )
+                .sortedWith(declarationSourceOrder)
                 .map(::buildNode)
             return WorkspaceDocumentSymbol(
                 name = declaration.name,
@@ -510,13 +510,7 @@ class LuaWorkspaceQueryFacade(
         }
 
         val declarationNodes = roots
-            .sortedWith(
-                compareBy<BinderDeclaration>(
-                    { it.range?.start?.line ?: Int.MAX_VALUE },
-                    { it.range?.start?.column ?: Int.MAX_VALUE },
-                    { it.name }
-                )
-            )
+            .sortedWith(declarationSourceOrder)
             .map(::buildNode)
 
         val exportNodes = hierarchicalExportSymbols(path)
@@ -2625,10 +2619,6 @@ class LuaWorkspaceQueryFacade(
             kind = kind,
             moduleName = moduleType?.moduleName
         )
-    }
-
-    private fun importedSymbolHandle(imported: WorkspaceImportedSymbol): String {
-        return "imported:${imported.providerPath.value}:${imported.alias}"
     }
 
     private fun localInitializerDeclarationIds(

@@ -103,7 +103,7 @@ object BuiltinOverlayLoader {
         }
         val globalsPath = overlayGlobalsPath(catalog.versionSegment)
         val globalsSource = globalsSource(catalog)
-        val providerModuleTypes = documentedGlobalProviderModuleTypes(catalog, providerModules)
+        val providerModuleTypes = documentedGlobalProviderModuleTypes(providerModules)
         val globalsFile = analyze(globalsPath, globalsSource).let { snapshot ->
             snapshot.copy(
                 moduleExportSurface = documentedGlobalsSurface(
@@ -160,7 +160,7 @@ object BuiltinOverlayLoader {
         resourceText: String,
         analyzedSurface: ModuleExportSurface?,
         syntheticSurface: ModuleExportSurface?
-    ): ModuleExportSurface? {
+    ): ModuleExportSurface {
         val documentedSurface = documentedModuleSurface(moduleName, resourceText, analyzedSurface)
         return when (syntheticSurface) {
             null -> documentedSurface
@@ -213,7 +213,6 @@ object BuiltinOverlayLoader {
     }
 
     private fun documentedGlobalProviderModuleTypes(
-        @Suppress("UNUSED_PARAMETER") catalog: Catalog,
         providerModules: Map<VirtualPath, BuiltinOverlaySnapshot.ProviderModuleSnapshot>
     ): Map<String, ModuleType?> {
         // Preserve each provider's own moduleName (luajava stays "luajava").
@@ -1623,7 +1622,7 @@ object BuiltinOverlayLoader {
             resourceText = resourceText,
             analyzedSurface = null,
             syntheticSurface = androluaLuaJavaSyntheticSurface()
-        ) ?: androluaLuaJavaSyntheticSurface()
+        )
     }
 
     private fun androluaLuaJavaSyntheticSurface(): ModuleExportSurface = moduleSurface(
@@ -1925,6 +1924,7 @@ object BuiltinOverlayLoader {
                 moduleName = androidFrameworkSimpleAlias(classModel.binaryName)
             )
             val path = androidFrameworkClassProviderPath(classModel.binaryName)
+            val providerNames = androidFrameworkProviderNames(classModel.binaryName)
             val providerFile = androidFrameworkProviderFile(
                 source = "-- Android framework resource class provider for ${classModel.binaryName}\n",
                 surface = ModuleExportSurface(
@@ -1932,14 +1932,14 @@ object BuiltinOverlayLoader {
                     sourceForm = ModuleExportSurface.SourceForm.RETURN_TABLE_LITERAL,
                     members = androidFrameworkClassModuleMembers(moduleType)
                 ),
-                providedModuleNames = androidFrameworkProviderNames(classModel.binaryName)
+                providedModuleNames = providerNames
             )
             val primaryModuleName = providerModuleNames.getValue(classModel.binaryName)
             providers[path] = BuiltinOverlaySnapshot.ProviderModuleSnapshot(
                 moduleName = primaryModuleName,
                 file = providerFile
             )
-            androidFrameworkProviderNames(classModel.binaryName)
+            providerNames
                 .filterNot { alias -> alias == primaryModuleName }
                 .filterNot { alias ->
                     alias == androidFrameworkSimpleAlias(classModel.binaryName) && primaryModuleName != alias

@@ -57,9 +57,7 @@ object ModuleExportCollector {
         analyzer.visitBlock(chunk.body)
 
         val exportRoot = facts.returnHint.identifierName?.let(analyzer::resolveAlias)
-        val explicitRootNames = buildSet {
-            exportRoot?.aliases?.forEach(::add)
-        }
+        val explicitRootNames: Set<String> = exportRoot?.aliases ?: emptySet()
         val exportTree = ExportTableBuilder()
         val isAlyLayoutModule = facts.path.value.endsWith(".aly")
         val alyModuleName = facts.moduleNameCandidates.firstOrNull()?.moduleName

@@ -17,13 +17,16 @@ import io.github.dingyi222666.luaparser.semantic.api.Symbol
 import io.github.dingyi222666.luaparser.semantic.api.SymbolKind
 import io.github.dingyi222666.luaparser.semantic.api.TypeInfo
 import io.github.dingyi222666.luaparser.semantic.api.TypeInfoKind
+import io.github.dingyi222666.luaparser.semantic.importedSymbolHandle
 import io.github.dingyi222666.luaparser.semantic.binder.BinderDeclaration
 import io.github.dingyi222666.luaparser.semantic.binder.BinderPassResult
 import io.github.dingyi222666.luaparser.semantic.binder.DeclarationKind
 import io.github.dingyi222666.luaparser.semantic.binder.DeclarationNamespace
 import io.github.dingyi222666.luaparser.semantic.binder.Scope
 import io.github.dingyi222666.luaparser.semantic.binder.ScopeId
+import io.github.dingyi222666.luaparser.semantic.binder.comparePositions
 import io.github.dingyi222666.luaparser.semantic.binder.isChunkGlobalFunctionDeclaration
+import io.github.dingyi222666.luaparser.semantic.binder.isPositionWithin
 import io.github.dingyi222666.luaparser.semantic.comments.AliasTagSyntax
 import io.github.dingyi222666.luaparser.semantic.comments.ClassTagSyntax
 import io.github.dingyi222666.luaparser.semantic.comments.FieldTagSyntax
@@ -110,23 +113,9 @@ internal class ReferenceQueries(
             ) {
                 return toImportedSymbol(importedSymbol)
             }
-            // Dynamic import() locals often bind as plain LOCAL with unknown declaredType.
-            // Prefer the resolved import-call module/package/array type for hover/goto.
-            if (
-                declarationSymbol.kind == io.github.dingyi222666.luaparser.semantic.api.SymbolKind.LOCAL ||
-                declarationSymbol.kind == io.github.dingyi222666.luaparser.semantic.api.SymbolKind.VARIABLE
-            ) {
-                importCallTargetLocalSymbolAt(node)?.let { importLocal ->
-                    val declaredDisplay = declarationSymbol.type?.displayName
-                    val needsImportSurface = declaredDisplay.isNullOrBlank() ||
-                        declaredDisplay == "unknown" ||
-                        declaredDisplay == "any" ||
-                        (importLocal.type?.moduleName != null && declarationSymbol.type?.moduleName.isNullOrBlank())
-                    if (needsImportSurface) {
-                        return importLocal
-                    }
-                }
-            }
+            // (Import-call local surfaces never reach this point: importCallTargetLocalSymbolAt
+            // was already consulted unconditionally at the top of getSymbolAt, so a second
+            // identical call here could only observe the same null result.)
             // Prefer declared/inferred FunctionType / ClassType surfaces over bare unknown/any
             // so hover does not collapse annotated or inferable callables/classes to unknown.
             preferDeclaredOrInferredSymbolType(declarationSymbol, node)?.let { return it }
@@ -156,68 +145,6 @@ internal class ReferenceQueries(
         }
     }
 
-    /**
-     * Public preferred-hover collapse for [TypeInfo] pairs (primary symbol surface vs
-     * node/export fallback). Keeps structural table literals as coarse `table`, prefers
-     * MODULE/Array<>/fun( and non-unknown FunctionType/ClassType surfaces.
-     *
-     * Shared by workspace hover and LSP so dual-path unknown does not win when a richer
-     * declared/inferred type is available.
-     */
-    fun preferredHoverType(primary: TypeInfo?, fallback: TypeInfo?): TypeInfo? {
-        return when {
-            primary == null -> fallback
-            // Prefer coarse table kind for local table shadows so hover does not expose
-            // the concrete structural table literal display (kind may be TABLE or UNKNOWN).
-            primary.displayName.startsWith("{") -> {
-                TypeInfo(
-                    displayName = "table",
-                    detail = "table",
-                    typeKey = primary.typeKey,
-                    kind = TypeInfoKind.TABLE,
-                    moduleName = primary.moduleName ?: fallback?.moduleName
-                )
-            }
-            // Prefer Android-Lua multi-import Array<> display over the structural union[] form
-            // produced by generic ArrayType.displayName ("T[]").
-            primary.displayName.endsWith("[]") &&
-                fallback?.displayName?.startsWith("Array<") == true -> fallback
-            isBareWeakType(primary) && fallback != null && !isBareWeakType(fallback) -> fallback
-            isBareWeakType(primary) &&
-                fallback != null &&
-                (isPreferredStructuredKind(fallback.kind) ||
-                    fallback.displayName.contains("fun(") ||
-                    fallback.displayName.contains("fun<") ||
-                    !fallback.moduleName.isNullOrBlank()) -> fallback
-            // Dynamic import() locals often evaluate as unknown/any at the node while the
-            // symbol surface already carries the resolved MODULE type (moduleName / fun(...)).
-            primary.moduleName.isNullOrBlank() && !fallback?.moduleName.isNullOrBlank() -> {
-                fallback!!.copy(
-                    displayName = primary.displayName.takeUnless {
-                        it.isBlank() || it == "unknown" || it == "any"
-                    } ?: fallback.displayName,
-                    detail = primary.detail?.takeUnless {
-                        it.isBlank() || it == "unknown" || it == "any"
-                    } ?: fallback.detail
-                )
-            }
-            !isPreferredStructuredKind(primary.kind) &&
-                fallback != null &&
-                isPreferredStructuredKind(fallback.kind) &&
-                isBareWeakType(primary) -> fallback
-            !primary.displayName.contains("fun(") &&
-                fallback?.displayName?.contains("fun(") == true -> fallback
-            !primary.displayName.contains("fun(") &&
-                fallback?.displayName?.contains("fun<") == true -> fallback
-            isBareWeakType(primary) &&
-                fallback != null &&
-                (fallback.kind == TypeInfoKind.CLASS ||
-                    fallback.kind == TypeInfoKind.FUNCTION ||
-                    fallback.kind == TypeInfoKind.MODULE) -> fallback
-            else -> primary
-        }
-    }
-
     private fun isBareWeakType(type: TypeInfo): Boolean {
         val display = type.displayName
         // Unannotated fun(...): unknown shells lose to body-inferred returns (TextView, …).
@@ -237,12 +164,6 @@ internal class ReferenceQueries(
                 !display.contains("fun(") &&
                 !display.startsWith("Array<") &&
                 type.moduleName.isNullOrBlank())
-    }
-
-    private fun isPreferredStructuredKind(kind: TypeInfoKind): Boolean {
-        return kind == TypeInfoKind.FUNCTION ||
-            kind == TypeInfoKind.CLASS ||
-            kind == TypeInfoKind.MODULE
     }
 
     /**
@@ -624,10 +545,11 @@ internal class ReferenceQueries(
                 ModuleExportIdentity.parse(handle)?.providerPath?.value ==
                     importedProviderPathValue(owningImportedHandle)
         }
+        // workspaceMember?.handle needs no fallback slot here: when acceptable it already is
+        // preferredWorkspaceHandle, and when the takeIf rejects it owningImportedHandle wins.
         val fallbackSymbolId = preferredWorkspaceHandle
             ?: owningImportedHandle
             ?: surfaceHandle
-            ?: workspaceMember?.handle
         return declaration?.let { adapters.toDeclarationSymbol(it, memberType, memberType) }
             ?: preferredWorkspaceHandle?.let { handle ->
                 adapters.syntheticMemberSymbol(
@@ -1930,10 +1852,6 @@ internal class ReferenceQueries(
         )
     }
 
-    private fun importedSymbolHandle(imported: WorkspaceImportedSymbol): String {
-        return "imported:${imported.providerPath.value}:${imported.alias}"
-    }
-
     private fun importedProviderPathValue(handle: String?): String? {
         if (handle == null || !handle.startsWith("imported:")) {
             return null
@@ -1975,36 +1893,24 @@ internal class ReferenceQueries(
         // The declared name itself is always in scope at its own site (hover/rename on
         // `local x` must resolve to the new local even though USES begin after the
         // statement ends).
-        if (compare(range.start, position) <= 0 && compare(position, range.end) < 0) {
+        if (comparePositions(range.start, position) <= 0 && comparePositions(position, range.end) < 0) {
             return true
         }
         // Locals carry `visibleFrom` at the end of their LocalStatement, so `local x = x + 1`
         // resolves the RHS `x` to the outer x (the new local only exists after the statement).
         val visibleFrom = declaration.visibleFrom ?: range.start
-        return compare(visibleFrom, position) <= 0
+        return comparePositions(visibleFrom, position) <= 0
     }
 
     private fun compareSpecificity(a: io.github.dingyi222666.luaparser.parser.ast.node.Range?, b: io.github.dingyi222666.luaparser.parser.ast.node.Range?): Int {
         a ?: return if (b == null) 0 else 1
         b ?: return -1
 
-        val startComparison = compare(b.start, a.start)
+        val startComparison = comparePositions(b.start, a.start)
         if (startComparison != 0) {
             return startComparison
         }
-        return compare(a.end, b.end)
-    }
-
-    private fun isPositionWithin(start: Position, end: Position, position: Position): Boolean {
-        return compare(start, position) <= 0 && compare(position, end) < 0
-    }
-
-    private fun compare(a: Position, b: Position): Int {
-        val lineComparison = a.line.compareTo(b.line)
-        if (lineComparison != 0) {
-            return lineComparison
-        }
-        return a.column.compareTo(b.column)
+        return comparePositions(a.end, b.end)
     }
 
     private fun workspaceModuleMember(
