@@ -863,11 +863,7 @@ class ExpressionTypeEvaluator internal constructor(
 
     private fun resolveBindClassCall(node: CallExpression, context: Context): ModuleType? {
         val target = stringCallTarget(node) ?: return null
-        val base = effectiveCallBase(node)
-        if (!isLuaJavaCallBase(base, context, "bindClass")) {
-            return null
-        }
-        return resolveLuaJavaImportTarget(target)?.moduleType
+        return luaJavaHelperCallReturn("bindClass", node, target, context) as? ModuleType
     }
 
     private fun resolveLuaJavaHelperColonCall(node: CallExpression, context: Context): Type? {
@@ -941,9 +937,7 @@ class ExpressionTypeEvaluator internal constructor(
             }
             val argumentCount = argumentSequences.size
             val arityMatches = signatures.any { signature ->
-                val required = signature.parameters.count { !it.optional && !it.vararg }
-                val hasVararg = signature.parameters.any { it.vararg }
-                argumentCount >= required && (hasVararg || argumentCount <= signature.parameters.size)
+                javaCallArityCompatible(signature, argumentCount)
             }
             if (arityMatches) {
                 return true

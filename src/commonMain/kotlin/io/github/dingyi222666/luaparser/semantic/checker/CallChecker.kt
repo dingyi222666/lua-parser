@@ -113,7 +113,7 @@ class CallChecker(
     }
 
     private fun asCallableType(type: Type, lexicalScopeId: ScopeId): CallableType? {
-        return when (val normalized = TypeExpansion.expandForCallableSurface(type, lexicalScopeId, binder)) {
+        return when (val normalized = TypeExpansion.expandForSurface(type, lexicalScopeId, binder)) {
             is CallableType -> normalized
             is ModuleType -> moduleCallableType(normalized)
                 ?: (normalized.fields["__class"] as? JavaClassType)
