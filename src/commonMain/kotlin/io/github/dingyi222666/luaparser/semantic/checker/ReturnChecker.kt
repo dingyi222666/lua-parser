@@ -70,26 +70,19 @@ class ReturnChecker internal constructor(
     private fun statementMayFallThrough(statement: StatementNode): Boolean {
         return when (statement) {
             is DoStatement -> mayFallThrough(statement.body)
-            is IfStatement -> ifStatementMayFallThrough(statement)
-            is WhenStatement -> whenStatementMayFallThrough(statement)
+            // Falls through when no `else` exists (open condition — an empty cause list is
+            // covered by `none` too) or any branch body itself falls through.
+            is IfStatement -> {
+                val causes = statement.causes
+                if (causes.none { it is ElseClause }) true else causes.any { mayFallThrough(it.body) }
+            }
+            is WhenStatement -> {
+                val elseClause = statement.elseCause
+                elseClause == null || statementMayFallThrough(statement.ifCause) || statementMayFallThrough(elseClause)
+            }
             is FunctionDeclaration -> true
             else -> true
         }
-    }
-
-    private fun ifStatementMayFallThrough(statement: IfStatement): Boolean {
-        if (statement.causes.isEmpty()) {
-            return true
-        }
-        if (statement.causes.none { it is ElseClause }) {
-            return true
-        }
-        return statement.causes.any { mayFallThrough(it.body) }
-    }
-
-    private fun whenStatementMayFallThrough(statement: WhenStatement): Boolean {
-        val elseClause = statement.elseCause ?: return true
-        return statementMayFallThrough(statement.ifCause) || statementMayFallThrough(elseClause)
     }
 
     private fun compareReturnSite(

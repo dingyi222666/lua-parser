@@ -34,16 +34,20 @@ class MemberResolver(
 ) {
 
     fun resolveMember(baseType: Type, memberName: String, preferMethod: Boolean, lexicalScopeId: ScopeId): MemberResolution {
-        val receiverType = baseType
         val normalized = TypeExpansion.expandForSurface(baseType, lexicalScopeId, binder)
 
         return when (normalized) {
-            is TableType -> resolveTableMember(normalized, receiverType, memberName, preferMethod)
-            is ModuleType -> resolveModuleMember(normalized, receiverType, memberName, preferMethod)
-            is ClassType -> resolveClassMember(normalized, receiverType, memberName, preferMethod)
+            is TableType -> resolveTableMember(normalized, baseType, memberName, preferMethod)
+            is ModuleType -> resolveModuleMember(normalized, baseType, memberName, preferMethod)
+            is ClassType -> resolveClassMember(normalized, baseType, memberName, preferMethod)
             is JavaClassType -> resolveJavaStaticMember(normalized, memberName)
             is JavaInstanceType -> resolveJavaInstanceMember(normalized, memberName, preferMethod)
-            is JavaArrayType -> resolveJavaArrayMember(normalized, memberName)
+            is JavaArrayType ->
+                if (memberName == "length") {
+                    MemberResolution(type = PrimitiveType.NUMBER, accessKind = MemberAccessKind.FIELD, baseType = normalized)
+                } else {
+                    MemberResolution(baseType = normalized, failureReason = MemberFailureReason.MISSING_MEMBER)
+                }
             is TypeParameterType -> normalized.constraint
                 ?.let { resolveMember(it, memberName, preferMethod, lexicalScopeId) }
                 ?: MemberResolution(baseType = normalized, failureReason = MemberFailureReason.UNSUPPORTED_BASE_TYPE)
@@ -105,7 +109,11 @@ class MemberResolver(
             is TableType -> resolveTableIndex(normalized, indexNode, indexType)
             is ModuleType -> resolveModuleIndex(normalized, indexNode, indexType)
             is ClassType -> resolveClassIndex(normalized, indexNode)
-            is JavaClassType -> resolveJavaClassIndex(normalized, indexNode)
+            is JavaClassType -> {
+                val key = stringLiteralKey(indexNode)
+                    ?: return MemberResolution(baseType = normalized, failureReason = MemberFailureReason.INVALID_INDEX_TYPE)
+                resolveJavaStaticMember(normalized, key)
+            }
             is JavaInstanceType -> resolveJavaInstanceIndex(normalized, indexNode, indexType)
             is JavaArrayType -> {
                 if (PrimitiveType.NUMBER.isAssignableFrom(indexType)) {
@@ -246,14 +254,6 @@ class MemberResolver(
         )
     }
 
-    private fun resolveJavaArrayMember(arrayType: JavaArrayType, memberName: String): MemberResolution {
-        return if (memberName == "length") {
-            MemberResolution(type = PrimitiveType.NUMBER, accessKind = MemberAccessKind.FIELD, baseType = arrayType)
-        } else {
-            MemberResolution(baseType = arrayType, failureReason = MemberFailureReason.MISSING_MEMBER)
-        }
-    }
-
     private fun resolveModuleMember(
         moduleType: ModuleType,
         receiverType: Type,
@@ -346,15 +346,6 @@ class MemberResolver(
             )
         }
         return MemberResolution(baseType = classType, failureReason = MemberFailureReason.MISSING_MEMBER)
-    }
-
-    private fun resolveJavaClassIndex(
-        classType: JavaClassType,
-        indexNode: ExpressionNode
-    ): MemberResolution {
-        val key = stringLiteralKey(indexNode)
-            ?: return MemberResolution(baseType = classType, failureReason = MemberFailureReason.INVALID_INDEX_TYPE)
-        return resolveJavaStaticMember(classType, key)
     }
 
     private fun resolveJavaInstanceIndex(

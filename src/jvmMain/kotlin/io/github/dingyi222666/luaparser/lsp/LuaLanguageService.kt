@@ -3320,12 +3320,8 @@ class LuaLanguageService(
             "${it.range.start.line}:${it.range.start.column}-${it.range.end.line}:${it.range.end.column}"
         }
 
-        // Group call sites by enclosing local function caller.
-        data class IncomingAgg(
-            val caller: FunctionDeclaration,
-            val fromRanges: MutableList<org.eclipse.lsp4j.Range>
-        )
-        val byCaller = linkedMapOf<FunctionDeclaration, IncomingAgg>()
+        // Group call sites by enclosing local function caller (ranges deduped per caller).
+        val byCaller = linkedMapOf<FunctionDeclaration, MutableList<org.eclipse.lsp4j.Range>>()
 
         for (site in sites) {
             // Skip the declaration name itself.
@@ -3344,13 +3340,8 @@ class LuaLanguageService(
             ) ?: findIdentifierAtRange(chunk, site.range)
                 ?: continue
             val caller = enclosingLocalFunctionAllowSelf(siteId) ?: continue
-            val agg = byCaller.getOrPut(caller) {
-                IncomingAgg(caller, mutableListOf())
-            }
-            val fromRange = site.range.toLspRange()
-            if (agg.fromRanges.none { sameLspRange(it, fromRange) }) {
-                agg.fromRanges += fromRange
-            }
+            byCaller.getOrPut(caller) { mutableListOf() }
+                .addCallRangeIfDistinct(site.range.toLspRange())
         }
 
         // AST walk fallback: find CallExpressions whose base is the target name.
@@ -3366,13 +3357,8 @@ class LuaLanguageService(
                     if (baseName != null && baseName.name == targetName.name) {
                         val caller = enclosingLocalFunctionAllowSelf(node)
                         if (caller != null) {
-                            val agg = byCaller.getOrPut(caller) {
-                                IncomingAgg(caller, mutableListOf())
-                            }
-                            val fromRange = baseName.range.toLspRange()
-                            if (agg.fromRanges.none { sameLspRange(it, fromRange) }) {
-                                agg.fromRanges += fromRange
-                            }
+                            byCaller.getOrPut(caller) { mutableListOf() }
+                                .addCallRangeIfDistinct(baseName.range.toLspRange())
                         }
                     }
                     super.visitCallExpression(node, value)
@@ -3381,9 +3367,9 @@ class LuaLanguageService(
             visitor.visitChunkNode(chunk, Unit)
         }
 
-        return byCaller.values.mapNotNull { agg ->
-            val fromItem = callHierarchyItemForFunction(agg.caller, uri) ?: return@mapNotNull null
-            CallHierarchyIncomingCall(fromItem, agg.fromRanges)
+        return byCaller.mapNotNull { (caller, fromRanges) ->
+            val fromItem = callHierarchyItemForFunction(caller, uri) ?: return@mapNotNull null
+            CallHierarchyIncomingCall(fromItem, fromRanges)
         }
     }
 
@@ -3399,11 +3385,8 @@ class LuaLanguageService(
             ?: return emptyList()
         val body = rootDecl.body ?: return emptyList()
 
-        data class OutgoingAgg(
-            val callee: FunctionDeclaration,
-            val fromRanges: MutableList<org.eclipse.lsp4j.Range>
-        )
-        val byCallee = linkedMapOf<FunctionDeclaration, OutgoingAgg>()
+        // Callee → call-site ranges (deduped per callee), preserving first-seen order.
+        val byCallee = linkedMapOf<FunctionDeclaration, MutableList<org.eclipse.lsp4j.Range>>()
 
         val visitor = object : ASTVisitor<Unit> {
             override fun visitAttributeIdentifier(
@@ -3419,13 +3402,8 @@ class LuaLanguageService(
                         // Prefer calls whose nearest enclosing local function is rootDecl.
                         val enclosing = enclosingLocalFunctionAllowSelf(node)
                         if (enclosing === rootDecl) {
-                            val agg = byCallee.getOrPut(callee) {
-                                OutgoingAgg(callee, mutableListOf())
-                            }
-                            val fromRange = baseName.range.toLspRange()
-                            if (agg.fromRanges.none { sameLspRange(it, fromRange) }) {
-                                agg.fromRanges += fromRange
-                            }
+                            byCallee.getOrPut(callee) { mutableListOf() }
+                                .addCallRangeIfDistinct(baseName.range.toLspRange())
                         }
                     }
                 }
@@ -3439,9 +3417,9 @@ class LuaLanguageService(
             visitor.visitChunkNode(chunk, Unit)
         }
 
-        return byCallee.values.mapNotNull { agg ->
-            val toItem = callHierarchyItemForFunction(agg.callee, uri) ?: return@mapNotNull null
-            CallHierarchyOutgoingCall(toItem, agg.fromRanges)
+        return byCallee.mapNotNull { (callee, fromRanges) ->
+            val toItem = callHierarchyItemForFunction(callee, uri) ?: return@mapNotNull null
+            CallHierarchyOutgoingCall(toItem, fromRanges)
         }
     }
 
@@ -3501,6 +3479,17 @@ class LuaLanguageService(
             left.start.character == right.start.character &&
             left.end.line == right.end.line &&
             left.end.character == right.end.character
+    }
+
+    /**
+     * Shared per-caller/callee range sink for the same-file call graph
+     * ([collectIncomingCalls] / [collectOutgoingCalls]): appends [range] unless an
+     * identical LSP range is already recorded, preserving first-seen insertion order.
+     */
+    private fun MutableList<org.eclipse.lsp4j.Range>.addCallRangeIfDistinct(range: org.eclipse.lsp4j.Range) {
+        if (none { sameLspRange(it, range) }) {
+            add(range)
+        }
     }
 
     /**
