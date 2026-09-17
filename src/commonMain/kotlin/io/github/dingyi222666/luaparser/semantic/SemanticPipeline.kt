@@ -188,6 +188,14 @@ internal data class WorkspaceImportedSymbol(
     val extendsExistingGlobal: Boolean = false
 )
 
+/**
+ * Stable symbol id for an imported workspace symbol, shared by the workspace query facade
+ * and ReferenceQueries (previously two identical private copies).
+ */
+internal fun importedSymbolHandle(imported: WorkspaceImportedSymbol): String {
+    return "imported:${imported.providerPath.value}:${imported.alias}"
+}
+
 internal data class SemanticPipelineSnapshot(
     val chunk: ChunkNode,
     val comments: CommentAttachmentIndex,

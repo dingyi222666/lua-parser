@@ -101,27 +101,15 @@ class BinderPositionQueries(
             if (!isPositionWithin(statement.range.start, statement.range.end, position)) {
                 return@forEach
             }
-            if (compare(body.range.end, position) > 0) {
+            if (comparePositions(body.range.end, position) > 0) {
                 return@forEach
             }
             val current = innermost
-            if (current == null || compare(current.range.start, scope.range.start) < 0) {
+            if (current == null || comparePositions(current.range.start, scope.range.start) < 0) {
                 innermost = scope
             }
         }
         return innermost
-    }
-
-    private fun isPositionWithin(start: Position, end: Position, position: Position): Boolean {
-        return compare(start, position) <= 0 && compare(position, end) < 0
-    }
-
-    private fun compare(a: Position, b: Position): Int {
-        val lineComparison = a.line.compareTo(b.line)
-        if (lineComparison != 0) {
-            return lineComparison
-        }
-        return a.column.compareTo(b.column)
     }
 
     fun getDeclarationsAt(position: Position): List<BinderDeclaration> {

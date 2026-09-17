@@ -51,6 +51,7 @@ import io.github.dingyi222666.luaparser.semantic.binder.Scope
 import io.github.dingyi222666.luaparser.semantic.binder.ScopeId
 import io.github.dingyi222666.luaparser.semantic.binder.isChunkGlobalFunctionDeclaration
 import io.github.dingyi222666.luaparser.semantic.binder.comparePositions
+import io.github.dingyi222666.luaparser.semantic.workspace.splitCreateProxyTargetList
 import io.github.dingyi222666.luaparser.semantic.types.model.AppliedType
 import io.github.dingyi222666.luaparser.semantic.types.model.ArrayType
 import io.github.dingyi222666.luaparser.semantic.types.model.CallableType
@@ -1699,12 +1700,6 @@ class ExpressionTypeEvaluator internal constructor(
             targets += splitCreateProxyTargetList(literal)
         }
         return targets
-    }
-
-    private fun splitCreateProxyTargetList(targetList: String): List<String> {
-        return targetList.split(',')
-            .map(String::trim)
-            .filter(String::isNotEmpty)
     }
 
     private fun stringLiteralOf(expression: ExpressionNode): String? {
