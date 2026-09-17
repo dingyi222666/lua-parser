@@ -92,6 +92,9 @@ class LuaParser(
         const val RECOVER_FIRST_RHS_STATEMENT_LINE_BREAK_RETURN: Boolean = false
         /** Default for non-assignment/local/return explists (for-in iterators, case, arrays). */
         const val RECOVER_FIRST_RHS_STATEMENT_LINE_BREAK_DEFAULT: Boolean = true
+
+        /** Hoisted test-pinned message shared by both lambda version gates (parseSubExp / parsePrimaryExp). */
+        private const val LAMBDA_EXPRESSION_ONLY_ANDROLUA = "lambda expression is only supported in androlua 5.3"
     }
 
     fun parse(source: String): ChunkNode {
@@ -287,6 +290,28 @@ class LuaParser(
         return lexer.hasLineBreakBeforeNextSignificantToken()
     }
 
+    //region Hoisted diagnostics literals: byte-identical message groups shared across
+    // parse sites (several are test-pinned goldens). Interpolated groups use getter-vals
+    // because a `const val` cannot capture `${lexerText()}`: each access re-evaluates the
+    // template exactly where the original inline literal was constructed, so evaluation
+    // timing, side effects, and the produced string are unchanged.
+    private val missingDoExpectedNearToken get() = "The <do> expected near ${lexerText()}"
+    private val unexpectedNearStatement get() = "unexpected ${lexerText()} near '<statement>'"
+    private val missingThenExpectedNearToken get() = "The <then> expected near ${lexerText()}"
+    private val nameExpectedNearToken get() = "<name> expected near ${lexerText()}"
+    private val rbrackExpectedNearToken get() = "']' expected near ${lexerText()}"
+    private val rparenExpectedNearToken get() = "')' expected near ${lexerText()}"
+    private val unexpectedNearEof get() = "unexpected ${lexerText()} near '<eof>"
+    private val unexpectedNearNextTokenEof get() = "unexpected ${lexerText(true)} near '<eof>"
+    private val nameExpectedNearNextToken get() = "<name> expected near ${lexerText(true)}"
+    private val expressionExpectedNearNextToken get() = "<expression> expected near ${lexerText(true)}"
+    private val assignExpectedNearQuotedToken get() = "'=' expected near '${lexerText()}'"
+    private val assignExpectedNearToken get() = "'=' expected near ${lexerText()}"
+    private val colonExpectedNearToken get() = "':' expected near ${lexerText()}"
+    //endregion
+
+    private fun malformedTokenNear(text: CharSequence): String = "malformed token near $text"
+
     private fun error(message: String): Nothing = kotlin.error("(${lexer.line()},${lexer.column()}): " + message)
 
     private fun warning(message: String) {
@@ -439,7 +464,7 @@ class LuaParser(
 
     private fun malformedLiteral(parent: BaseASTNode): ExpressionNode {
         val text = lexerText(true)
-        warning("malformed token near $text")
+        warning(malformedTokenNear(text))
         return ConstantNode(ConstantNode.TYPE.UNKNOWN, malformedTokenHead(text)).also {
             it.parent = parent
             it.bad = true
@@ -465,7 +490,7 @@ class LuaParser(
         } else if (errorRecovery) {
             missingExpression(parent)
         } else {
-            error("<expression> expected near ${lexerText(true)}")
+            error(expressionExpectedNearNextToken)
         }
     }
 
@@ -609,7 +634,7 @@ class LuaParser(
      * line-break recovery (identical historical message shape).
      */
     private fun missingName(parent: BaseASTNode): Identifier {
-        warning("<name> expected near ${lexerText()}")
+        warning(nameExpectedNearToken)
         return Identifier("").also {
             it.parent = parent
             it.bad = true
@@ -622,7 +647,7 @@ class LuaParser(
         } else if (errorRecovery) {
             missingName(parent)
         } else {
-            error("<name> expected near ${lexerText(true)}")
+            error(nameExpectedNearNextToken)
         }
     }
 
@@ -636,7 +661,7 @@ class LuaParser(
         } else if (errorRecovery) {
             missingExpression(parent)
         } else {
-            error("<name> expected near ${lexerText(true)}")
+            error(nameExpectedNearNextToken)
         }
     }
 
@@ -716,10 +741,10 @@ class LuaParser(
         if (!consumeToken(LuaTokenTypes.EOF)) {
             if (!errorRecovery) {
                 // Keep historical message shape (closing quote omitted after <eof>).
-                error("unexpected ${lexerText()} near '<eof>")
+                error(unexpectedNearEof)
             }
             while (peek() != LuaTokenTypes.EOF) {
-                warning("unexpected ${lexerText()} near '<eof>")
+                warning(unexpectedNearEof)
                 advance()
             }
             consumeToken(LuaTokenTypes.EOF)
@@ -756,7 +781,7 @@ class LuaParser(
             if (isBlockTerminator(nextToken)) {
                 if (shouldRecoverTopLevelBlockTerminator(parent, nextToken)) {
                     advance()
-                    warning("unexpected ${lexerText()} near '<statement>'")
+                    warning(unexpectedNearStatement)
                     continue
                 }
                 // TASK-645: unmatched chunk-scope block terminators (end/else/elseif/
@@ -765,7 +790,7 @@ class LuaParser(
                 // path; normal parse/parseWithDiagnostics must hard-reject even when
                 // errorRecovery is on so residual drain cannot silently accept them.
                 if (isOutOfScopeTopLevelBlockTerminator(parent, nextToken)) {
-                    error("unexpected ${lexerText(true)} near '<eof>")
+                    error(unexpectedNearNextTokenEof)
                 }
                 break
             }
@@ -861,7 +886,7 @@ class LuaParser(
 
                 consumeToken(LuaTokenTypes.BAD_CHARACTER) -> {
                     val text = lexerText()
-                    warning("malformed token near $text")
+                    warning(malformedTokenNear(text))
                     malformedTokenHead(text)
                     continue
                 }
@@ -902,7 +927,7 @@ class LuaParser(
                         break
                     }
                     advance()
-                    warning("unexpected ${lexerText()} near '<statement>'")
+                    warning(unexpectedNearStatement)
                     continue
                 }
             }
@@ -953,7 +978,7 @@ class LuaParser(
                 val afterReturn = peek()
                 if (isBlockTerminator(afterReturn)) {
                     if (isOutOfScopeTopLevelBlockTerminator(parent, afterReturn)) {
-                        error("unexpected ${lexerText(true)} near '<eof>")
+                        error(unexpectedNearNextTokenEof)
                     }
                     break
                 }
@@ -1030,13 +1055,13 @@ class LuaParser(
             )
             if (!optionalDoOk) {
                 if (!errorRecovery) {
-                    error("The <do> expected near ${lexerText()}")
+                    error(missingDoExpectedNearToken)
                 }
-                warning("The <do> expected near ${lexerText()}")
+                warning(missingDoExpectedNearToken)
             } else if (errorRecovery) {
                 // Compact AndroLua switch is legal under strict; recovery still records
                 // the historical missing-do diagnostic for inventory determinism.
-                warning("The <do> expected near ${lexerText()}")
+                warning(missingDoExpectedNearToken)
             }
         }
 
@@ -1218,7 +1243,7 @@ class LuaParser(
      */
     private fun absorbDuplicateIfClause(parent: BaseASTNode) {
         val token = peek()
-        warning("unexpected ${lexerText()} near '<statement>'")
+        warning(unexpectedNearStatement)
         advance()
         if (token == LuaTokenTypes.ELSEIF) {
             // Skip residual condition; missing then is fine — body recovery is shared.
@@ -1278,12 +1303,12 @@ class LuaParser(
                     peek() == LuaTokenTypes.ELSEIF ||
                     peek() == LuaTokenTypes.END
                 if (errorRecovery && !silentThenOmission) {
-                    warning("The <then> expected near ${lexerText()}")
+                    warning(missingThenExpectedNearToken)
                 }
             } else if (!errorRecovery) {
-                error("The <then> expected near ${lexerText()}")
+                error(missingThenExpectedNearToken)
             } else {
-                warning("The <then> expected near ${lexerText()}")
+                warning(missingThenExpectedNearToken)
                 bad = true
             }
         }
@@ -1337,7 +1362,7 @@ class LuaParser(
         variable.parent = result
         result.parent = parent
 
-        expectToken(LuaTokenTypes.ASSIGN) { "'=' expected near '${lexerText()}'" }
+        expectToken(LuaTokenTypes.ASSIGN) { assignExpectedNearQuotedToken }
 
         result.start = parseExpressionOrMissing(result)
 
@@ -1357,7 +1382,7 @@ class LuaParser(
     }
 
     private fun parseForBody(parent: BaseASTNode): BlockNode {
-        recoverToken(LuaTokenTypes.DO) { "The <do> expected near ${lexerText()}" }
+        recoverToken(LuaTokenTypes.DO) { missingDoExpectedNearToken }
         return parseBlockNode(parent)
     }
 
@@ -1505,7 +1530,7 @@ class LuaParser(
         result.parent = parent
         result.condition = parseExp(result)
 
-        recoverToken(LuaTokenTypes.DO) { "The <do> expected near ${lexerText()}" }
+        recoverToken(LuaTokenTypes.DO) { missingDoExpectedNearToken }
 
         result.body = parseBlockNode(result)
 
@@ -1706,7 +1731,7 @@ class LuaParser(
             initList.add(parseAssignmentTargetOrMissing(result))
         }
 
-        val hasAssign = recoverToken(LuaTokenTypes.ASSIGN) { "'=' expected near '${lexerText()}'" }
+        val hasAssign = recoverToken(LuaTokenTypes.ASSIGN) { assignExpectedNearQuotedToken }
 
         result.init.addAll(initList)
         if (!hasAssign && errorRecovery) {
@@ -1835,7 +1860,7 @@ class LuaParser(
     }
 
     private fun parseName(parent: BaseASTNode, supportDollarSymbol: Boolean = false): Identifier {
-        expectToken(LuaTokenTypes.NAME) { "<name> expected near ${lexerText()}" }
+        expectToken(LuaTokenTypes.NAME) { nameExpectedNearToken }
         markLocation()
         var name = lexerText()
         if (name.startsWith('$')) {
@@ -1986,7 +2011,7 @@ class LuaParser(
 
             currentToken == LuaTokenTypes.LAMBDA -> {
                 assertVersion(LuaVersion.ANDROLUA_5_3) {
-                    "lambda expression is only supported in androlua 5.3"
+                    LAMBDA_EXPRESSION_ONLY_ANDROLUA
                 }
                 parseLambdaExp(parent)
             }
@@ -2082,7 +2107,7 @@ class LuaParser(
         if (isExpressionStart(peek())) {
             result.values.addAll(parseExpList(result))
         }
-        recoverToken(LuaTokenTypes.RBRACK) { "']' expected near ${lexerText()}" }
+        recoverToken(LuaTokenTypes.RBRACK) { rbrackExpectedNearToken }
 
         return result
     }
@@ -2101,7 +2126,7 @@ class LuaParser(
                     if (peekToken(LuaTokenTypes.NAME)) {
                         result.params.addAll(parseNameList(result))
                     }
-                    recoverToken(LuaTokenTypes.RPAREN) { "')' expected near ${lexerText()}" }
+                    recoverToken(LuaTokenTypes.RPAREN) { rparenExpectedNearToken }
                 }
             }
         }
@@ -2123,9 +2148,9 @@ class LuaParser(
                 return@run
             }
             if (!errorRecovery) {
-                error("':' expected near ${lexerText()}")
+                error(colonExpectedNearToken)
             }
-            warning("':' expected near ${lexerText()}")
+            warning(colonExpectedNearToken)
         }
 
         result.expression = if (errorRecovery && isExpressionTerminator(peek())) {
@@ -2268,12 +2293,12 @@ class LuaParser(
         markLocation()
         result.key = parseExpressionOrMissing(result)
 
-        val hasRightBracket = recoverToken(LuaTokenTypes.RBRACK) { "']' expected near ${lexerText()}" }
+        val hasRightBracket = recoverToken(LuaTokenTypes.RBRACK) { rbrackExpectedNearToken }
         var hasAssign = true
         if (!hasRightBracket && errorRecovery && peekToken(LuaTokenTypes.ASSIGN)) {
             advance()
         } else {
-            hasAssign = recoverToken(LuaTokenTypes.ASSIGN) { "'=' expected near ${lexerText()}" }
+            hasAssign = recoverToken(LuaTokenTypes.ASSIGN) { assignExpectedNearToken }
         }
         result.bad = !hasRightBracket || !hasAssign
 
@@ -2291,7 +2316,7 @@ class LuaParser(
         markLocation()
         result.key = name
 
-        val hasAssign = recoverToken(LuaTokenTypes.ASSIGN) { "'=' expected near ${lexerText()}" }
+        val hasAssign = recoverToken(LuaTokenTypes.ASSIGN) { assignExpectedNearToken }
         result.bad = !hasAssign
 
         result.value = parseExpressionOrMissing(result)
@@ -2308,7 +2333,7 @@ class LuaParser(
                 // following tokens form an AndroLua lambdadef shape, hard-reject even under
                 // recovery — version gating is not residual drain (TASK-679).
                 if (!isAndroLua() && name.name == "lambda" && isAndroLuaLambdaShapeAhead()) {
-                    error("lambda expression is only supported in androlua 5.3")
+                    error(LAMBDA_EXPRESSION_ONLY_ANDROLUA)
                 }
                 name
             }
@@ -2316,11 +2341,11 @@ class LuaParser(
                 advance()
                 markLocation()
                 val exp = parseExp(parent)
-                recoverToken(LuaTokenTypes.RPAREN) { "')' expected near ${lexerText()}" }
+                recoverToken(LuaTokenTypes.RPAREN) { rparenExpectedNearToken }
                 finishNode(exp)
             }
 
-            else -> error("<expression> expected near ${lexerText(true)}")
+            else -> error(expressionExpectedNearNextToken)
         }
     }
 
@@ -2550,7 +2575,7 @@ class LuaParser(
             }
         }
 
-        if (!recoverToken(LuaTokenTypes.RPAREN) { "')' expected near ${lexerText()}" }) {
+        if (!recoverToken(LuaTokenTypes.RPAREN) { rparenExpectedNearToken }) {
             if (errorRecovery) {
                 result.bad = true
             }
@@ -2737,7 +2762,7 @@ class LuaParser(
             parseExpressionOrMissing(result)
         }
 
-        recoverToken(LuaTokenTypes.RBRACK) { "']' expected near ${lexerText()}" }
+        recoverToken(LuaTokenTypes.RBRACK) { rbrackExpectedNearToken }
 
         return result
     }
@@ -2755,7 +2780,7 @@ class LuaParser(
 
         result.identifier = kotlin.runCatching {
             if (hasLineBreakBeforeNextSignificantToken()) {
-                error("<name> expected near ${lexerText()}")
+                error(nameExpectedNearToken)
             }
             parseName(result)
         }

@@ -133,7 +133,7 @@ internal class ReferenceQueries(
                     importedSymbol?.let(::toImportedSymbol)
                         ?: findNearestVisibleValueDeclaration(node.name, position)?.let { declaration ->
                             preferDeclaredOrInferredSymbolType(
-                                adapters.toDeclarationSymbol(declaration) ?: return@let null,
+                                adapters.toDeclarationSymbol(declaration),
                                 node
                             ) ?: adapters.toDeclarationSymbol(declaration)
                         }
