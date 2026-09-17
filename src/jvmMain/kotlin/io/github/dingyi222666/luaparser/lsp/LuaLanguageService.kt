@@ -132,7 +132,6 @@ import java.io.IOException
 import java.io.UncheckedIOException
 import java.net.URI
 import java.nio.charset.StandardCharsets
-import java.nio.file.FileSystemNotFoundException
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
@@ -1947,45 +1946,6 @@ class LuaLanguageService(
 
     private fun shouldCollapseSyntheticWorkspaceRoot(): Boolean = workspaceFolders.isEmpty()
 
-    private fun applyContentChanges(current: String, changes: List<TextDocumentContentChangeEvent>): String {
-        return changes.fold(current) { text, change ->
-            val range = change.range
-            if (range == null) {
-                change.text
-            } else {
-                val start = offsetAt(text, range.start)
-                val end = offsetAt(text, range.end).coerceAtLeast(start)
-                text.replaceRange(start, end, change.text)
-            }
-        }
-    }
-
-    private fun offsetAt(text: String, position: org.eclipse.lsp4j.Position): Int {
-        val lineStarts = mutableListOf(0)
-        text.forEachIndexed { index, character ->
-            if (character == '\n') {
-                lineStarts += index + 1
-            }
-        }
-
-        if (position.line <= 0) {
-            return position.character.coerceAtLeast(0).coerceAtMost(lineEnd(text, 0))
-        }
-
-        if (position.line >= lineStarts.size) {
-            return text.length
-        }
-
-        val lineStart = lineStarts[position.line]
-        val lineEnd = lineEnd(text, lineStart)
-        return (lineStart + position.character.coerceAtLeast(0)).coerceAtMost(lineEnd)
-    }
-
-    private fun lineEnd(text: String, lineStart: Int): Int {
-        val newline = text.indexOf('\n', lineStart)
-        val end = if (newline >= 0) newline else text.length
-        return if (end > lineStart && text[end - 1] == '\r') end - 1 else end
-    }
 
 
     /**
@@ -2685,8 +2645,8 @@ class LuaLanguageService(
 
         // Validate / clamp requested range; invalid → empty edits (safety contract).
         val clamped = validateAndClampFormatRange(range, source) ?: return emptyList()
-        val startOffset = offsetAt(source, clamped.start)
-        val endOffset = offsetAt(source, clamped.end).coerceAtLeast(startOffset)
+        val startOffset = lspOffsetAt(source, clamped.start)
+        val endOffset = lspOffsetAt(source, clamped.end).coerceAtLeast(startOffset)
         if (startOffset == endOffset) {
             // Zero-width selection: no-op is always safe.
             return emptyList()

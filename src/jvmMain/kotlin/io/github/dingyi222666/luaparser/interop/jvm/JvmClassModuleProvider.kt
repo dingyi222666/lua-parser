@@ -202,18 +202,21 @@ class JvmClassModuleProvider(
 
     internal fun importDiagnostics(configuration: JvmWorkspaceConfiguration): List<ImportDiagnostic> {
         val normalized = configuration.normalized(defaultImportPrefixes)
-        return (normalized.classes + normalized.androluaImports)
-            .mapNotNull { importDiagnostic(it, normalized) }
-            .distinctBy { diagnostic ->
-                listOf(diagnostic.importText, diagnostic.pathPrefix, diagnostic.className, diagnostic.code)
-            }
+        return distinctImportDiagnostics(normalized.classes + normalized.androluaImports, normalized)
     }
 
     internal fun importDiagnostics(
         importTargets: Collection<String>,
         configuration: JvmWorkspaceConfiguration
     ): List<ImportDiagnostic> {
-        val normalized = configuration.normalized(defaultImportPrefixes)
+        return distinctImportDiagnostics(importTargets, configuration.normalized(defaultImportPrefixes))
+    }
+
+    /** Shared body behind both [importDiagnostics] overloads (already-normalized config). */
+    private fun distinctImportDiagnostics(
+        importTargets: Collection<String>,
+        normalized: JvmWorkspaceConfiguration
+    ): List<ImportDiagnostic> {
         return importTargets
             .mapNotNull { importDiagnostic(it, normalized) }
             .distinctBy { diagnostic ->
@@ -341,18 +344,6 @@ class JvmClassModuleProvider(
     ): List<String> {
         return resolveClassLoads(importText, importPrefixes, classLoader, configuration)
             .map { it.className }
-    }
-
-    private fun resolvedImportClasses(
-        importText: String,
-        importPrefixes: List<String>,
-        classLoader: ClassLoader,
-        configuration: JvmWorkspaceConfiguration
-    ): List<Class<*>> {
-        return resolveClassLoads(importText, importPrefixes, classLoader, configuration)
-            .mapNotNull { request ->
-                loadClassOrNull(request.className, request.classLoader)
-            }
     }
 
     private fun resolveClassLoads(
@@ -670,14 +661,10 @@ class JvmClassModuleProvider(
             members[simpleName] = memberType
         }
         return ModuleType(
-            moduleName = packageModuleName(packageName),
+            moduleName = packageName,
             fields = members.toSortedMap(),
             indexSignature = ModuleType.IndexSignature(PrimitiveType.STRING, UnknownType)
         )
-    }
-
-    private fun packageModuleName(packageName: String): String {
-        return packageName
     }
 
     /**
@@ -1425,7 +1412,17 @@ class JvmClassModuleProvider(
         return ReflectedMemberMaps(staticFields, staticMethods, instanceFields, instanceMethods)
     }
 
-    private fun shallowJavaClassTypeFor(clazz: Class<*>): JavaClassType {
+    /**
+     * Shared [JavaClassType] core behind the shallow (wildcard) and deep (explicit import)
+     * builders: identical constructor/member/inner-class/type-parameter construction from
+     * the reflected member maps; only the super/interface edges differ (name-only type
+     * references for shallow, recursive member expansion for deep), supplied as lambdas.
+     */
+    private fun reflectedJavaClassType(
+        clazz: Class<*>,
+        superClass: () -> JavaClassType?,
+        interfaces: () -> List<JavaClassType>
+    ): JavaClassType {
         val javaName = javaTypeNameFor(clazz)
         val members = reflectedMemberMapsFor(clazz)
         return JavaClassType(
@@ -1437,10 +1434,18 @@ class JvmClassModuleProvider(
                 .filter { Modifier.isPublic(it.modifiers) }
                 .associate { it.simpleName to typeReferenceForJavaClass(it) }
                 .toSortedMap(),
-            // Name-only super/interface edges — no recursive member expand for wildcards.
-            superClass = clazz.superclass?.let(::typeReferenceForJavaClass),
-            interfaces = clazz.interfaces.map(::typeReferenceForJavaClass),
+            superClass = superClass(),
+            interfaces = interfaces(),
             typeParameters = clazz.typeParameters.map(::javaTypeParameterFor)
+        )
+    }
+
+    private fun shallowJavaClassTypeFor(clazz: Class<*>): JavaClassType {
+        // Name-only super/interface edges — no recursive member expand for wildcards.
+        return reflectedJavaClassType(
+            clazz,
+            superClass = { clazz.superclass?.let(::typeReferenceForJavaClass) },
+            interfaces = { clazz.interfaces.map(::typeReferenceForJavaClass) }
         )
     }
 
@@ -1541,21 +1546,10 @@ class JvmClassModuleProvider(
             return hierarchySkeletonForJavaClass(clazz, hierarchyStack, hierarchyDepth)
         }
         val nextHierarchyStack = hierarchyStack + clazz.name
-        val javaName = javaTypeNameFor(clazz)
-        val members = reflectedMemberMapsFor(clazz)
-        return JavaClassType(
-            javaName = javaName,
-            constructors = constructorTypesFor(clazz, javaName),
-            staticMembers = (members.staticFields + members.staticMethods).toSortedMap(),
-            instanceMembers = (members.instanceFields + members.instanceMethods).toSortedMap(),
-            innerClasses = clazz.classes
-                .filter { Modifier.isPublic(it.modifiers) }
-                .associate { it.simpleName to typeReferenceForJavaClass(it) }
-                .toSortedMap(),
-            superClass = clazz.superclass
-                ?.let { javaClassTypeFor(it, nextHierarchyStack, hierarchyDepth + 1) },
-            interfaces = clazz.interfaces.map { javaClassTypeFor(it, nextHierarchyStack, hierarchyDepth + 1) },
-            typeParameters = clazz.typeParameters.map(::javaTypeParameterFor)
+        return reflectedJavaClassType(
+            clazz,
+            superClass = { clazz.superclass?.let { javaClassTypeFor(it, nextHierarchyStack, hierarchyDepth + 1) } },
+            interfaces = { clazz.interfaces.map { javaClassTypeFor(it, nextHierarchyStack, hierarchyDepth + 1) } }
         )
     }
 
