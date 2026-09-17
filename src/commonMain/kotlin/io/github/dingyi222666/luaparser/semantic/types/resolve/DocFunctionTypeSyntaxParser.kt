@@ -3,6 +3,8 @@ package io.github.dingyi222666.luaparser.semantic.types.resolve
 import io.github.dingyi222666.luaparser.semantic.types.syntax.FunctionParameterSyntax
 import io.github.dingyi222666.luaparser.semantic.types.syntax.FunctionTypeSyntax
 import io.github.dingyi222666.luaparser.semantic.types.syntax.TypeSyntaxParser
+import io.github.dingyi222666.luaparser.semantic.types.syntax.indexOfTopLevelChar
+import io.github.dingyi222666.luaparser.semantic.types.syntax.splitTopLevelTypeText
 
 class DocFunctionTypeSyntaxParser {
 
@@ -42,7 +44,7 @@ class DocFunctionTypeSyntaxParser {
             return emptyList()
         }
 
-        return splitTopLevel(text, ',').map { parseParameter(it) ?: return null }
+        return splitTopLevelTypeText(text, ',').map { parseParameter(it) ?: return null }
     }
 
     private fun parseParameter(text: String): FunctionParameterSyntax? {
@@ -56,7 +58,7 @@ class DocFunctionTypeSyntaxParser {
             return FunctionParameterSyntax(name = "...", type = type, vararg = true)
         }
 
-        findTopLevelChar(normalized, ':')?.let { colonIndex ->
+        indexOfTopLevelChar(normalized, ':').takeIf { it >= 0 }?.let { colonIndex ->
             val nameToken = normalized.substring(0, colonIndex).trim()
             val typeText = normalized.substring(colonIndex + 1).trim()
             if (nameToken.isEmpty() || typeText.isEmpty()) {
@@ -130,88 +132,6 @@ class DocFunctionTypeSyntaxParser {
                 }
             }
         }
-        return null
-    }
-
-    private fun splitTopLevel(text: String, delimiter: Char): List<String> {
-        val parts = mutableListOf<String>()
-        var angleDepth = 0
-        var parenDepth = 0
-        var braceDepth = 0
-        var bracketDepth = 0
-        var quote: Char? = null
-        var escaped = false
-        var start = 0
-
-        text.forEachIndexed { index, char ->
-            if (quote != null) {
-                if (escaped) {
-                    escaped = false
-                } else if (char == '\\') {
-                    escaped = true
-                } else if (char == quote) {
-                    quote = null
-                }
-                return@forEachIndexed
-            }
-
-            when (char) {
-                '\'', '"' -> quote = char
-                '<' -> angleDepth++
-                '>' -> angleDepth--
-                '(' -> parenDepth++
-                ')' -> parenDepth--
-                '{' -> braceDepth++
-                '}' -> braceDepth--
-                '[' -> bracketDepth++
-                ']' -> bracketDepth--
-                delimiter -> if (angleDepth == 0 && parenDepth == 0 && braceDepth == 0 && bracketDepth == 0) {
-                    parts += text.substring(start, index).trim()
-                    start = index + 1
-                }
-            }
-        }
-
-        parts += text.substring(start).trim()
-        return parts.filter { it.isNotEmpty() }
-    }
-
-    private fun findTopLevelChar(text: String, target: Char): Int? {
-        var angleDepth = 0
-        var parenDepth = 0
-        var braceDepth = 0
-        var bracketDepth = 0
-        var quote: Char? = null
-        var escaped = false
-
-        text.forEachIndexed { index, char ->
-            if (quote != null) {
-                if (escaped) {
-                    escaped = false
-                } else if (char == '\\') {
-                    escaped = true
-                } else if (char == quote) {
-                    quote = null
-                }
-                return@forEachIndexed
-            }
-
-            when (char) {
-                '\'', '"' -> quote = char
-                '<' -> angleDepth++
-                '>' -> angleDepth = (angleDepth - 1).coerceAtLeast(0)
-                '(' -> parenDepth++
-                ')' -> parenDepth = (parenDepth - 1).coerceAtLeast(0)
-                '{' -> braceDepth++
-                '}' -> braceDepth = (braceDepth - 1).coerceAtLeast(0)
-                '[' -> bracketDepth++
-                ']' -> bracketDepth = (bracketDepth - 1).coerceAtLeast(0)
-                target -> if (angleDepth == 0 && parenDepth == 0 && braceDepth == 0 && bracketDepth == 0) {
-                    return index
-                }
-            }
-        }
-
         return null
     }
 }

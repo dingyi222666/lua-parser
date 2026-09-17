@@ -306,15 +306,6 @@ function runProtocol(info, files) {
           renameTarget = nameMatch[1];
           renamePosition = positionAt(entry.text, lineStart + localDeclLine.line.indexOf(nameMatch[1]));
         }
-        // Rename probe: a chunk-level LOCAL declaration is always renamable — builtins
-        // like `print` make prepareRename return null and the probe passed vacuously.
-        const localDecl = entryLines
-          .map(function (line, index) { return { line: line, index: index }; })
-          .find(function (entry) { return /^local\s+[A-Za-z_][A-Za-z0-9_]*/.test(entry.line); });
-        const localIdentifierOffset = localDecl
-          ? entry.text.indexOf(localDecl.line) + localDecl.line.indexOf(/^local\s+/.exec(localDecl.line)[0].length) + 1
-          : firstIdentifierOffset(entry.text);
-
         // 1. textDocument/references — must return an array of Locations.
         const references = await request('textDocument/references', {
           textDocument: { uri: entry.uri },

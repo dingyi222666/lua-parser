@@ -322,18 +322,19 @@ function sendToClient(msg) {
   sharedLsp.client.send(JSON.stringify(msg));
 }
 
+function sendBridgeStatus(client, type, message, extra = {}) {
+  if (!client || client.readyState !== client.OPEN) return;
+  client.send(JSON.stringify({ jsonrpc: '2.0', method: '$/bridge', params: { type, message, ...extra } }));
+}
+
 function bridgeStatus(type, message, extra = {}) {
-  sendToClient({ jsonrpc: '2.0', method: '$/bridge', params: { type, message, ...extra } });
+  sendBridgeStatus(sharedLsp && sharedLsp.client, type, message, extra);
 }
 
 wss.on('connection', (ws) => {
   console.log('[bridge] client connected');
 
-  const sendStatus = (type, message, extra = {}) => {
-    if (ws.readyState === ws.OPEN) {
-      ws.send(JSON.stringify({ jsonrpc: '2.0', method: '$/bridge', params: { type, message, ...extra } }));
-    }
-  };
+  const sendStatus = (type, message, extra = {}) => sendBridgeStatus(ws, type, message, extra);
 
   if (sharedLsp) {
     const ownerConnected = sharedLsp.client && sharedLsp.client.readyState === sharedLsp.client.OPEN;

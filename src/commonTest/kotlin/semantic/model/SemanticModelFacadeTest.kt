@@ -173,8 +173,6 @@ class SemanticModelFacadeTest {
         val boxedMembers = harness.model.getMembers(assertNotNull(harness.model.getTypeAt(harness.identifier("boxed"))))
         val mixedMembers = harness.model.getMembers(assertNotNull(harness.model.getTypeAt(harness.identifier("mixed"))))
 
-        println(userMembers)
-
         assertTrue(userMembers.any { it.name == "id" && it.kind == SymbolKind.FIELD })
         assertTrue(userMembers.any { it.name == "getName" && it.kind == SymbolKind.METHOD })
         assertTrue(recordMembers.any { it.name == "plain" && it.kind == SymbolKind.FIELD })
