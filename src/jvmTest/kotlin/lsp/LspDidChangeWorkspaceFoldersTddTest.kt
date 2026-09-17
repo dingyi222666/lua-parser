@@ -6,15 +6,12 @@ import org.eclipse.lsp4j.DidChangeWorkspaceFoldersParams
 import org.eclipse.lsp4j.InitializeParams
 import org.eclipse.lsp4j.WorkspaceFolder
 import org.eclipse.lsp4j.WorkspaceFoldersChangeEvent
-import org.eclipse.lsp4j.WorkspaceServerCapabilities
 import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.io.path.createDirectories
 import kotlin.io.path.writeText
 import kotlin.test.Test
-import kotlin.test.assertEquals
 import kotlin.test.assertFalse
-import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 /**
@@ -296,15 +293,6 @@ class LspDidChangeWorkspaceFoldersTddTest {
             }
         }
         return current
-    }
-
-    private fun isUnsupportedOperation(error: Throwable): Boolean {
-        if (error is UnsupportedOperationException) {
-            return true
-        }
-        val message = error.message.orEmpty()
-        return message.contains("UnsupportedOperationException") ||
-            message.contains("not implemented", ignoreCase = true)
     }
 
     private fun isHardCrash(detail: String): Boolean {

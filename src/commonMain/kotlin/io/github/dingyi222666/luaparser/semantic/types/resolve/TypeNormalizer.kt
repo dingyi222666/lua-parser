@@ -340,6 +340,7 @@ object TypeNormalizer {
     private fun JavaMemberType.javaMemberMetadata(): List<JavaSignatureMetadata> = when (this) {
         is JavaStaticMemberType -> signatureMetadata
         is JavaInstanceMemberType -> signatureMetadata
+        else -> emptyList()
     }
 
     private fun JavaMemberType.withoutSignatureMetadata(): JavaMemberType = when (this) {

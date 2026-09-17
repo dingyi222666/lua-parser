@@ -8,7 +8,6 @@ import org.eclipse.lsp4j.DiagnosticSeverity
 import org.eclipse.lsp4j.DidChangeTextDocumentParams
 import org.eclipse.lsp4j.DidOpenTextDocumentParams
 import org.eclipse.lsp4j.DocumentHighlightParams
-import org.eclipse.lsp4j.Hover
 import org.eclipse.lsp4j.HoverParams
 import org.eclipse.lsp4j.InitializeParams
 import org.eclipse.lsp4j.Position
@@ -1157,21 +1156,6 @@ class LspRealProjectRequireAliasExportTddTest {
         file: WorkspaceFile,
         afterNeedle: String
     ): List<String> = completionItems(service, file, afterNeedle).map { it.label }
-
-    private fun hoverMarkup(hover: Hover): String {
-        val contents = hover.contents ?: return ""
-        return when {
-            contents.isRight -> contents.right?.value.orEmpty()
-            contents.isLeft -> contents.left.orEmpty().joinToString("\n") { either ->
-                when {
-                    either.isRight -> either.right?.value.orEmpty()
-                    either.isLeft -> either.left?.toString().orEmpty()
-                    else -> ""
-                }
-            }
-            else -> hover.toString()
-        }
-    }
 
     private fun isBareUnknownOnly(text: String, symbol: String): Boolean {
         val normalized = text.lowercase()

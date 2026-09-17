@@ -995,13 +995,6 @@ class LspRealProjectEditorLifecycleTddTest {
         return DidOpenTextDocumentParams(TextDocumentItem(uri, "lua", version, text))
     }
 
-    private fun fullChange(uri: String, version: Int?, text: String): DidChangeTextDocumentParams {
-        return DidChangeTextDocumentParams(
-            VersionedTextDocumentIdentifier(uri, version),
-            listOf(TextDocumentContentChangeEvent(text))
-        )
-    }
-
     private fun rangeChange(
         uri: String,
         version: Int,

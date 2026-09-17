@@ -3,17 +3,13 @@ package lsp
 import io.github.dingyi222666.luaparser.interop.jvm.JvmClassModuleProvider
 import io.github.dingyi222666.luaparser.lsp.LuaLanguageService
 import io.github.dingyi222666.luaparser.lsp.LuaTextDocumentService
-import io.github.dingyi222666.luaparser.lsp.LuaWorkspaceService
 import org.eclipse.lsp4j.CompletionParams
 import org.eclipse.lsp4j.DeclarationParams
 import org.eclipse.lsp4j.DefinitionParams
-import org.eclipse.lsp4j.DidChangeConfigurationParams
 import org.eclipse.lsp4j.DidOpenTextDocumentParams
 import org.eclipse.lsp4j.DocumentHighlightParams
 import org.eclipse.lsp4j.DocumentSymbol
-import org.eclipse.lsp4j.DocumentSymbolParams
 import org.eclipse.lsp4j.HoverParams
-import org.eclipse.lsp4j.InitializeParams
 import org.eclipse.lsp4j.Position
 import org.eclipse.lsp4j.ReferenceContext
 import org.eclipse.lsp4j.ReferenceParams
@@ -21,7 +17,6 @@ import org.eclipse.lsp4j.SignatureHelpParams
 import org.eclipse.lsp4j.SymbolKind
 import org.eclipse.lsp4j.TextDocumentIdentifier
 import org.eclipse.lsp4j.TextDocumentItem
-import org.eclipse.lsp4j.WorkspaceSymbolParams
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -30,7 +25,7 @@ import kotlin.test.assertTrue
 class LspNavigationSymbolsTddTest {
     @Test
     fun hover_local_variable_reports_literal_type() {
-        val service = service()
+        val service = serviceWithMetadata()
         val document = service.open("workspace/hover-local.lua", "local value = 42\nreturn value")
 
         val hover = assertNotNull(service.hover(hoverParams(document, "value", occurrence = 2)))
@@ -41,7 +36,7 @@ class LspNavigationSymbolsTddTest {
 
     @Test
     fun hover_jdk_class_member_reports_provider_symbol() {
-        val service = service(jdkMetadata)
+        val service = serviceWithMetadata(jdkMetadata)
         val document = service.open("workspace/hover-jdk-member.lua", "local Arrays = require(\"Arrays\")\nlocal current = Arrays.asList\nreturn current")
 
         val hover = assertNotNull(service.hover(hoverParams(document, "asList")))
@@ -51,7 +46,7 @@ class LspNavigationSymbolsTddTest {
 
     @Test
     fun completion_includes_visible_locals_and_functions() {
-        val service = service()
+        val service = serviceWithMetadata()
         val document = service.open(
             "workspace/completion-locals.lua",
             """
@@ -71,7 +66,7 @@ class LspNavigationSymbolsTddTest {
 
     @Test
     fun completion_for_jdk_class_member_includes_static_method() {
-        val service = service(jdkMetadata)
+        val service = serviceWithMetadata(jdkMetadata)
         val document = service.open("workspace/completion-jdk.lua", "local Arrays = require(\"Arrays\")\nlocal current = Arrays.asList\nreturn current")
 
         val completions = service.completionAt(document, "asList")
@@ -81,7 +76,7 @@ class LspNavigationSymbolsTddTest {
 
     @Test
     fun signature_help_reports_local_function_signature() {
-        val service = service()
+        val service = serviceWithMetadata()
         val document = service.open(
             "workspace/signature-local.lua",
             """
@@ -104,7 +99,7 @@ class LspNavigationSymbolsTddTest {
 
     @Test
     fun go_to_definition_resolves_local_read_to_local_binding() {
-        val service = service()
+        val service = serviceWithMetadata()
         val document = service.open("workspace/definition-local.lua", "local value = 1\nreturn value")
 
         val locations = service.definition(definitionParams(document, "value", occurrence = 2))
@@ -116,7 +111,7 @@ class LspNavigationSymbolsTddTest {
 
     @Test
     fun go_to_definition_resolves_workspace_module_field_to_provider_file() {
-        val service = service()
+        val service = serviceWithMetadata()
         val dep = service.open("workspace/definition-field-dep.lua", "local M = {}\nM.value = 1\nreturn M")
         val document = service.open("workspace/definition-field-main.lua", "local dep = require(\"definition-field-dep\")\nlocal current = dep.value\nreturn current")
 
@@ -127,7 +122,7 @@ class LspNavigationSymbolsTddTest {
 
     @Test
     fun go_to_definition_resolves_jdk_class_member_to_provider_file() {
-        val service = service(jdkMetadata)
+        val service = serviceWithMetadata(jdkMetadata)
         val document = service.open("workspace/definition-jdk.lua", "local Arrays = require(\"Arrays\")\nlocal current = Arrays.asList\nreturn current")
 
         val locations = service.definition(definitionParams(document, "asList"))
@@ -137,7 +132,7 @@ class LspNavigationSymbolsTddTest {
 
     @Test
     fun references_collect_local_declaration_and_reads() {
-        val service = service()
+        val service = serviceWithMetadata()
         val document = service.open("workspace/references-local.lua", "local value = 1\nlocal copy = value\nreturn value + copy")
 
         val references = service.references(referenceParams(document, "value", occurrence = 2))
@@ -148,7 +143,7 @@ class LspNavigationSymbolsTddTest {
 
     @Test
     fun references_cross_workspace_module_field_include_provider_and_usages() {
-        val service = service()
+        val service = serviceWithMetadata()
         val dep = service.open("workspace/references-field-dep.lua", "local M = {}\nM.value = 1\nreturn M")
         val document = service.open("workspace/references-field-main.lua", "local dep = require(\"references-field-dep\")\nlocal first = dep.value\nlocal second = dep.value\nreturn second")
 
@@ -160,7 +155,7 @@ class LspNavigationSymbolsTddTest {
 
     @Test
     fun document_symbols_list_top_level_locals_and_functions() {
-        val service = service()
+        val service = serviceWithMetadata()
         service.open("workspace/document-symbols.lua", "local value = 1\nlocal function render()\n    return value\nend\nreturn render")
 
         val names = service.documentSymbols("workspace/document-symbols.lua").map { it.name }
@@ -171,7 +166,7 @@ class LspNavigationSymbolsTddTest {
 
     @Test
     fun workspace_symbols_find_symbols_across_open_files() {
-        val service = service()
+        val service = serviceWithMetadata()
         service.open("workspace/symbol-alpha.lua", "local function alpha()\n    return 1\nend\nreturn alpha")
         service.open("workspace/symbol-beta.lua", "local beta = 2\nreturn beta")
 
@@ -184,7 +179,7 @@ class LspNavigationSymbolsTddTest {
 
     @Test
     fun hierarchical_document_symbols_nest_class_methods_and_fields() {
-        val service = service()
+        val service = serviceWithMetadata()
         service.open(
             "workspace/hierarchical-class.lua",
             """
@@ -229,7 +224,7 @@ class LspNavigationSymbolsTddTest {
 
     @Test
     fun modern_workspace_symbols_include_provider_modules_and_members() {
-        val service = service(jdkMetadata)
+        val service = serviceWithMetadata(jdkMetadata)
         service.open(
             "workspace/modern-workspace-symbols.lua",
             "local Arrays = require(\"Arrays\")\nlocal current = Arrays.asList\nreturn current"
@@ -241,15 +236,6 @@ class LspNavigationSymbolsTddTest {
         assertTrue(modules.any { it.name == "Arrays" && it.location.left.uri == "file:///__jvm__/classes/java/util/Arrays.lua" })
         assertTrue(members.any { it.name == "asList" && it.location.left.uri == "file:///__jvm__/classes/java/util/Arrays.lua" })
         assertEquals(SymbolKind.Module, modules.first { it.name == "Arrays" }.kind)
-    }
-
-    private fun service(metadata: Map<String, String> = emptyMap()): LuaLanguageService {
-        return LuaLanguageService().apply {
-            initialize(InitializeParams())
-            if (metadata.isNotEmpty()) {
-                setWorkspaceMetadata(metadata)
-            }
-        }
     }
 
     private fun LuaLanguageService.open(path: String, source: String): OpenDocument {

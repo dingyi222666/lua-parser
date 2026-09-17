@@ -1188,21 +1188,6 @@ class LspRealProjectStdlibAndEmmyTddTest {
         return richHints.none { normalized.contains(it) }
     }
 
-    private fun hoverMarkup(hover: org.eclipse.lsp4j.Hover): String {
-        val contents = hover.contents ?: return ""
-        return when {
-            contents.isRight -> contents.right?.value.orEmpty()
-            contents.isLeft -> contents.left.orEmpty().joinToString("\n") { either ->
-                when {
-                    either.isRight -> either.right?.value.orEmpty()
-                    either.isLeft -> either.left?.toString().orEmpty()
-                    else -> ""
-                }
-            }
-            else -> hover.toString()
-        }
-    }
-
     private data class OpenDocument(
         val path: String,
         val source: String,

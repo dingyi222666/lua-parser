@@ -10,13 +10,10 @@ import org.eclipse.lsp4j.SelectionRange
 import org.eclipse.lsp4j.SelectionRangeParams
 import org.eclipse.lsp4j.TextDocumentIdentifier
 import org.eclipse.lsp4j.TextDocumentItem
-import java.util.concurrent.CompletionException
-import java.util.concurrent.ExecutionException
 import kotlin.test.Test
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
-import kotlin.test.fail
 
 /**
  * TASK-269 — LSP selection range nested block corpus.
@@ -323,12 +320,6 @@ class LspSelectionRangeNestedBlockTddTest {
     // Helpers
     // -------------------------------------------------------------------------
 
-    private fun service(): LuaLanguageService {
-        return LuaLanguageService().apply {
-            initialize(InitializeParams())
-        }
-    }
-
     private fun LuaTextDocumentService.open(path: String, source: String): OpenDocument {
         val document = OpenDocument(path = path, source = source.trimIndent())
         didOpen(
@@ -590,26 +581,6 @@ class LspSelectionRangeNestedBlockTddTest {
             detail.contains("ArrayIndexOutOfBoundsException", ignoreCase = true) ||
             detail.contains("StringIndexOutOfBoundsException", ignoreCase = true) ||
             detail.contains("StackOverflowError", ignoreCase = true)
-    }
-
-    private fun unwrap(error: Throwable): Throwable {
-        var current = error
-        while (
-            (current is ExecutionException || current is CompletionException) &&
-            current.cause != null
-        ) {
-            current = current.cause!!
-        }
-        return current
-    }
-
-    private fun isUnsupportedOperation(error: Throwable): Boolean {
-        if (error is UnsupportedOperationException) {
-            return true
-        }
-        val message = error.message.orEmpty()
-        return message.contains("UnsupportedOperationException") ||
-            message.contains("not implemented", ignoreCase = true)
     }
 
     private sealed class SelectionOutcome {

@@ -4,8 +4,6 @@ import io.github.dingyi222666.luaparser.parser.ast.node.AssignmentStatement
 import io.github.dingyi222666.luaparser.parser.ast.node.BlockNode
 import io.github.dingyi222666.luaparser.parser.ast.node.CommentStatement
 import io.github.dingyi222666.luaparser.parser.ast.node.DoStatement
-import io.github.dingyi222666.luaparser.parser.ast.node.ElseClause
-import io.github.dingyi222666.luaparser.parser.ast.node.ElseIfClause
 import io.github.dingyi222666.luaparser.parser.ast.node.ExpressionNode
 import io.github.dingyi222666.luaparser.parser.ast.node.ForGenericStatement
 import io.github.dingyi222666.luaparser.parser.ast.node.ForNumericStatement
@@ -25,6 +23,7 @@ import io.github.dingyi222666.luaparser.semantic.binder.BinderDeclaration
 import io.github.dingyi222666.luaparser.semantic.binder.DeclarationKind
 import io.github.dingyi222666.luaparser.semantic.binder.DeclarationNamespace
 import io.github.dingyi222666.luaparser.semantic.binder.ScopeId
+import io.github.dingyi222666.luaparser.semantic.binder.comparePositions
 import io.github.dingyi222666.luaparser.semantic.checker.ExpressionTypeEvaluator
 import io.github.dingyi222666.luaparser.semantic.comments.ClassTagSyntax
 import io.github.dingyi222666.luaparser.semantic.symbol.GlobalSymbolTable
@@ -55,7 +54,7 @@ internal object LegacyAnalysisAdapters {
 
     private fun toLegacyDiagnostic(diagnostic: io.github.dingyi222666.luaparser.semantic.api.Diagnostic): Diagnostic {
         return Diagnostic(
-            range = diagnostic.range ?: emptyRange(),
+            range = diagnostic.range ?: Range(Position.EMPTY, Position.EMPTY),
             message = diagnostic.message,
             severity = when (diagnostic.severity) {
                 io.github.dingyi222666.luaparser.semantic.api.DiagnosticSeverity.ERROR -> Diagnostic.Severity.ERROR
@@ -65,6 +64,14 @@ internal object LegacyAnalysisAdapters {
         )
     }
 
+    private fun hasClassTagAttachment(snapshot: SemanticPipelineSnapshot, statement: StatementNode): Boolean {
+        return snapshot.comments.getAttachment(statement)
+            ?.docComment
+            ?.tags
+            .orEmpty()
+            .any { it is ClassTagSyntax }
+    }
+
     private fun collectLegacyAssignmentDiagnostics(snapshot: SemanticPipelineSnapshot): List<Diagnostic> {
         val evaluator = ExpressionTypeEvaluator(snapshot.binder)
         val diagnostics = mutableListOf<Diagnostic>()
@@ -72,35 +79,25 @@ internal object LegacyAnalysisAdapters {
         visitStatements(snapshot.chunk.body) { statement ->
             when (statement) {
                 is LocalStatement -> {
-                    val hasClassTag = snapshot.comments.getAttachment(statement)
-                        ?.docComment
-                        ?.tags
-                        .orEmpty()
-                        .any { it is ClassTagSyntax }
+                    if (hasClassTagAttachment(snapshot, statement)) {
+                        return@visitStatements
+                    }
                     statement.init.forEachIndexed { index, identifier ->
                         val declaration = snapshot.binder.declarationIndex.getDeclarations(identifier).lastOrNull() ?: return@forEachIndexed
                         val expectedType = declaration.declaredType ?: return@forEachIndexed
                         val value = statement.variables.getOrNull(index) ?: return@forEachIndexed
-                        if (hasClassTag) {
-                            return@forEachIndexed
-                        }
                         collectTypeMismatchDiagnostic(snapshot, evaluator, value, expectedType, statement.range)?.let(diagnostics::add)
                     }
                 }
 
                 is AssignmentStatement -> {
-                    val hasClassTag = snapshot.comments.getAttachment(statement)
-                        ?.docComment
-                        ?.tags
-                        .orEmpty()
-                        .any { it is ClassTagSyntax }
+                    if (hasClassTagAttachment(snapshot, statement)) {
+                        return@visitStatements
+                    }
                     statement.init.forEachIndexed { index, target ->
                         val identifier = target as? Identifier ?: return@forEachIndexed
                         val value = statement.variables.getOrNull(index) ?: return@forEachIndexed
                         val expectedType = resolveAssignmentDeclaredType(snapshot, statement, identifier) ?: return@forEachIndexed
-                        if (hasClassTag) {
-                            return@forEachIndexed
-                        }
                         collectTypeMismatchDiagnostic(snapshot, evaluator, value, expectedType, statement.range)?.let(diagnostics::add)
                     }
                 }
@@ -132,11 +129,6 @@ internal object LegacyAnalysisAdapters {
             severity = Diagnostic.Severity.ERROR
         )
     }
-
-    private fun emptyRange(): Range = Range(
-        start = io.github.dingyi222666.luaparser.parser.ast.node.Position(1, 1),
-        end = io.github.dingyi222666.luaparser.parser.ast.node.Position(1, 1)
-    )
 
     private fun resolveLegacyExpressionType(
         snapshot: SemanticPipelineSnapshot,
@@ -392,14 +384,6 @@ private fun classTaggedDeclarationType(
         ?.declaredType
 }
 
-private fun comparePositions(left: Position, right: Position): Int {
-    val lineComparison = left.line.compareTo(right.line)
-    if (lineComparison != 0) {
-        return lineComparison
-    }
-    return left.column.compareTo(right.column)
-}
-
 private fun BinderDeclaration.toLegacySymbolKind(): Symbol.Kind {
     if (kind == DeclarationKind.LOCAL && declaredType is io.github.dingyi222666.luaparser.semantic.types.model.ClassType) {
         return Symbol.Kind.CLASS
@@ -488,9 +472,5 @@ private fun visitNestedStatement(statement: StatementNode, visitor: (StatementNo
 }
 
 private fun visitClause(clause: IfClause, visitor: (StatementNode) -> Unit) {
-    when (clause) {
-        is ElseClause -> visitStatements(clause.body, visitor)
-        is ElseIfClause -> visitStatements(clause.body, visitor)
-        else -> visitStatements(clause.body, visitor)
-    }
+    visitStatements(clause.body, visitor)
 }

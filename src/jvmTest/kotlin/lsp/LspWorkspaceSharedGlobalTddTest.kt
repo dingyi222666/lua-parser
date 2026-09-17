@@ -3,9 +3,7 @@ package lsp
 import io.github.dingyi222666.luaparser.lsp.LuaLanguageService
 import org.eclipse.lsp4j.Diagnostic
 import org.eclipse.lsp4j.DidOpenTextDocumentParams
-import org.eclipse.lsp4j.InitializeParams
 import org.eclipse.lsp4j.TextDocumentItem
-import org.eclipse.lsp4j.WorkspaceFolder
 import kotlin.test.Test
 import kotlin.test.assertTrue
 
@@ -21,7 +19,7 @@ class LspWorkspaceSharedGlobalTddTest {
 
     @Test
     fun cross_file_global_read_is_not_reported_unresolved() {
-        val service = service()
+        val service = workspaceService()
         openProject(service)
         val diagnostics = diagnostics(service, "file:///workspace/mods/util.lua")
 
@@ -36,7 +34,7 @@ class LspWorkspaceSharedGlobalTddTest {
 
     @Test
     fun cross_file_global_member_completion_lists_defining_file_members() {
-        val service = service()
+        val service = workspaceService()
         openProject(service)
         val uri = "file:///workspace/mods/util.lua"
 
@@ -51,7 +49,7 @@ class LspWorkspaceSharedGlobalTddTest {
 
     @Test
     fun unknown_globals_still_report_unresolved() {
-        val service = service()
+        val service = workspaceService()
         openProject(service)
         val diagnostics = diagnostics(service, "file:///workspace/mods/util.lua")
 
@@ -74,21 +72,6 @@ class LspWorkspaceSharedGlobalTddTest {
 
     private fun diagnostics(service: LuaLanguageService, uri: String): List<Diagnostic> =
         service.diagnosticsForUri(uri).diagnostics
-
-    private fun codeOf(diagnostic: Diagnostic): String? {
-        val code = diagnostic.code ?: return null
-        return if (code.isLeft) code.left else code.right?.toString()
-    }
-
-    private fun service(): LuaLanguageService {
-        return LuaLanguageService().apply {
-            initialize(
-                InitializeParams().apply {
-                    workspaceFolders = listOf(WorkspaceFolder("file:///workspace", "workspace"))
-                }
-            )
-        }
-    }
 
     private companion object {
         private val FILES = listOf(

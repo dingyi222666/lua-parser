@@ -7,7 +7,6 @@ import org.eclipse.lsp4j.CodeActionKind
 import org.eclipse.lsp4j.CodeActionParams
 import org.eclipse.lsp4j.Diagnostic
 import org.eclipse.lsp4j.DiagnosticSeverity
-import org.eclipse.lsp4j.DidChangeTextDocumentParams
 import org.eclipse.lsp4j.DidCloseTextDocumentParams
 import org.eclipse.lsp4j.DidOpenTextDocumentParams
 import org.eclipse.lsp4j.DocumentFormattingParams
@@ -27,10 +26,8 @@ import org.eclipse.lsp4j.RenameParams
 import org.eclipse.lsp4j.SelectionRangeParams
 import org.eclipse.lsp4j.SemanticTokensParams
 import org.eclipse.lsp4j.SignatureHelpParams
-import org.eclipse.lsp4j.TextDocumentContentChangeEvent
 import org.eclipse.lsp4j.TextDocumentIdentifier
 import org.eclipse.lsp4j.TextDocumentItem
-import org.eclipse.lsp4j.VersionedTextDocumentIdentifier
 import org.eclipse.lsp4j.WorkspaceFolder
 import java.nio.file.Files
 import java.nio.file.Path
@@ -970,13 +967,6 @@ class LspRealProjectDiagnosticsRefactorTddTest {
 
     private fun openParams(uri: String, text: String, version: Int = 1): DidOpenTextDocumentParams {
         return DidOpenTextDocumentParams(TextDocumentItem(uri, "lua", version, text))
-    }
-
-    private fun fullChange(uri: String, version: Int?, text: String): DidChangeTextDocumentParams {
-        return DidChangeTextDocumentParams(
-            VersionedTextDocumentIdentifier(uri, version),
-            listOf(TextDocumentContentChangeEvent(text))
-        )
     }
 
     private fun closeParams(uri: String): DidCloseTextDocumentParams {

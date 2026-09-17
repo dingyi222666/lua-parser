@@ -3,9 +3,7 @@ package lsp
 import io.github.dingyi222666.luaparser.lsp.LuaLanguageService
 import org.eclipse.lsp4j.Diagnostic
 import org.eclipse.lsp4j.DidOpenTextDocumentParams
-import org.eclipse.lsp4j.InitializeParams
 import org.eclipse.lsp4j.TextDocumentItem
-import org.eclipse.lsp4j.WorkspaceFolder
 import kotlin.test.Test
 import kotlin.test.assertTrue
 
@@ -30,7 +28,7 @@ class AndroLuaDialectTddTest {
 
     @Test
     fun bindings_inside_switch_case_bodies_resolve() {
-        val service = service()
+        val service = workspaceService()
         val uri = "file:///workspace/iso.lua"
         service.didOpen(DidOpenTextDocumentParams(TextDocumentItem(uri, "lua", 1, ISO_SOURCE)))
 
@@ -46,7 +44,7 @@ class AndroLuaDialectTddTest {
 
     @Test
     fun if_without_then_before_else_parses_silently_under_androlua() {
-        val service = service()
+        val service = workspaceService()
         val uri = "file:///workspace/androlua-if-else.lua"
         service.didOpen(
             DidOpenTextDocumentParams(
@@ -65,7 +63,7 @@ class AndroLuaDialectTddTest {
 
     @Test
     fun switch_condition_resolves_enclosing_function_parameter() {
-        val service = service()
+        val service = workspaceService()
         val uri = "file:///workspace/switch-cond.lua"
         service.didOpen(
             DidOpenTextDocumentParams(
@@ -87,21 +85,6 @@ class AndroLuaDialectTddTest {
 
     private fun diagnostics(service: LuaLanguageService, uri: String): List<Diagnostic> =
         service.diagnosticsForUri(uri).diagnostics
-
-    private fun codeOf(diagnostic: Diagnostic): String? {
-        val code = diagnostic.code ?: return null
-        return if (code.isLeft) code.left else code.right?.toString()
-    }
-
-    private fun service(): LuaLanguageService {
-        return LuaLanguageService().apply {
-            initialize(
-                InitializeParams().apply {
-                    workspaceFolders = listOf(WorkspaceFolder("file:///workspace", "workspace"))
-                }
-            )
-        }
-    }
 
     private companion object {
         private val ISO_SOURCE = """

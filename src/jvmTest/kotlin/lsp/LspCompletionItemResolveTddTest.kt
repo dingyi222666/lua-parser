@@ -14,8 +14,6 @@ import org.eclipse.lsp4j.Position
 import org.eclipse.lsp4j.TextDocumentIdentifier
 import org.eclipse.lsp4j.TextDocumentItem
 import org.eclipse.lsp4j.jsonrpc.messages.Either
-import java.util.concurrent.CompletionException
-import java.util.concurrent.ExecutionException
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -257,12 +255,6 @@ class LspCompletionItemResolveTddTest {
     // Helpers
     // -------------------------------------------------------------------------
 
-    private fun service(): LuaLanguageService {
-        return LuaLanguageService().apply {
-            initialize(InitializeParams())
-        }
-    }
-
     private fun LuaTextDocumentService.open(path: String, source: String): OpenDocument {
         val document = OpenDocument(path = path, source = source.trimIndent())
         didOpen(
@@ -483,26 +475,6 @@ class LspCompletionItemResolveTddTest {
             detail.contains("AssertionError", ignoreCase = true) ||
             detail.contains("KotlinNullPointerException", ignoreCase = true) ||
             detail.contains("IndexOutOfBoundsException", ignoreCase = true)
-    }
-
-    private fun unwrap(error: Throwable): Throwable {
-        var current = error
-        while (
-            (current is ExecutionException || current is CompletionException) &&
-            current.cause != null
-        ) {
-            current = current.cause!!
-        }
-        return current
-    }
-
-    private fun isUnsupportedOperation(error: Throwable): Boolean {
-        if (error is UnsupportedOperationException) {
-            return true
-        }
-        val message = error.message.orEmpty()
-        return message.contains("UnsupportedOperationException") ||
-            message.contains("not implemented", ignoreCase = true)
     }
 
     private fun String.lineCount(): Int {

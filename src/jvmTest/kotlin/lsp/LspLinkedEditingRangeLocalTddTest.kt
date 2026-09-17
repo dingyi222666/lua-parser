@@ -4,15 +4,12 @@ import io.github.dingyi222666.luaparser.lsp.LuaLanguageService
 import io.github.dingyi222666.luaparser.lsp.LuaTextDocumentService
 import org.eclipse.lsp4j.DidOpenTextDocumentParams
 import org.eclipse.lsp4j.DocumentHighlightParams
-import org.eclipse.lsp4j.InitializeParams
 import org.eclipse.lsp4j.LinkedEditingRangeParams
 import org.eclipse.lsp4j.LinkedEditingRanges
 import org.eclipse.lsp4j.Position
 import org.eclipse.lsp4j.Range
 import org.eclipse.lsp4j.TextDocumentIdentifier
 import org.eclipse.lsp4j.TextDocumentItem
-import java.util.concurrent.CompletionException
-import java.util.concurrent.ExecutionException
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -177,12 +174,6 @@ class LspLinkedEditingRangeLocalTddTest {
     // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------
-
-    private fun service(): LuaLanguageService {
-        return LuaLanguageService().apply {
-            initialize(InitializeParams())
-        }
-    }
 
     private fun LuaLanguageService.open(path: String, source: String): OpenDocument {
         val document = OpenDocument(path = path, source = source.trimIndent())
@@ -509,26 +500,6 @@ class LspLinkedEditingRangeLocalTddTest {
 
     private fun formatRanges(ranges: List<Range>): String {
         return ranges.joinToString(prefix = "[", postfix = "]") { formatRange(it) }
-    }
-
-    private fun unwrap(error: Throwable): Throwable {
-        var current = error
-        while (
-            (current is ExecutionException || current is CompletionException) &&
-            current.cause != null
-        ) {
-            current = current.cause!!
-        }
-        return current
-    }
-
-    private fun isUnsupportedOperation(error: Throwable): Boolean {
-        if (error is UnsupportedOperationException) {
-            return true
-        }
-        val message = error.message.orEmpty()
-        return message.contains("UnsupportedOperationException") ||
-            message.contains("not implemented", ignoreCase = true)
     }
 
     private sealed class LinkedEditingOutcome {

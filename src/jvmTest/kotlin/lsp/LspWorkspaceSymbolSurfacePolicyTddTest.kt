@@ -10,7 +10,6 @@ import io.github.dingyi222666.luaparser.semantic.workspace.VirtualPath
 import io.github.dingyi222666.luaparser.semantic.workspace.WorkspaceModuleGraph
 import io.github.dingyi222666.luaparser.semantic.workspace.WorkspaceSnapshot
 import org.eclipse.lsp4j.DidOpenTextDocumentParams
-import org.eclipse.lsp4j.InitializeParams
 import org.eclipse.lsp4j.Location
 import org.eclipse.lsp4j.Position
 import org.eclipse.lsp4j.Range
@@ -269,12 +268,6 @@ class LspWorkspaceSymbolSurfacePolicyTddTest {
     // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------
-
-    private fun service(): LuaLanguageService {
-        return LuaLanguageService().apply {
-            initialize(InitializeParams())
-        }
-    }
 
     private fun LuaLanguageService.open(path: String, source: String) {
         didOpen(

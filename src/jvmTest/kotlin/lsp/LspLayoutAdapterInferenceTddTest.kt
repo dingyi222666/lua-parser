@@ -3,9 +3,7 @@ package lsp
 import io.github.dingyi222666.luaparser.lsp.LuaLanguageService
 import org.eclipse.lsp4j.DidOpenTextDocumentParams
 import org.eclipse.lsp4j.HoverParams
-import org.eclipse.lsp4j.InitializeParams
 import org.eclipse.lsp4j.TextDocumentItem
-import org.eclipse.lsp4j.WorkspaceFolder
 import kotlin.test.Test
 import kotlin.test.assertTrue
 
@@ -21,7 +19,7 @@ class LspLayoutAdapterInferenceTddTest {
 
     @Test
     fun id_view_member_completion_offers_adapter_methods() {
-        val service = service()
+        val service = workspaceService()
         val uri = open(service)
 
         // Line 12: `tab.poplist.adapter.clear()` — caret on `clear` (0-based chars 20..24).
@@ -33,7 +31,7 @@ class LspLayoutAdapterInferenceTddTest {
 
     @Test
     fun id_view_hover_keeps_view_class_surface() {
-        val service = service()
+        val service = workspaceService()
         val uri = open(service)
 
         // Hover on `poplist` in `tab.poplist.adapter.clear()` (0-based chars 4..10).
@@ -57,7 +55,7 @@ class LspLayoutAdapterInferenceTddTest {
             ?.sortedByDescending { it.name }
             ?.firstNotNullOfOrNull { dir -> dir.resolve("android.jar").takeIf { it.isFile } }
             ?: return
-        val service = service()
+        val service = workspaceService()
         // The Monaco demo sends jvm.importPrefixes WITHOUT com.androlua; the bundled
         // runtime package must stay reachable anyway (prefix union, not replacement).
         io.github.dingyi222666.luaparser.lsp.LuaWorkspaceService(service).didChangeConfiguration(
@@ -112,16 +110,6 @@ class LspLayoutAdapterInferenceTddTest {
         val uri = "file:///workspace/popup.lua"
         service.didOpen(DidOpenTextDocumentParams(TextDocumentItem(uri, "lua", 1, SOURCE.trimIndent())))
         return uri
-    }
-
-    private fun service(): LuaLanguageService {
-        return LuaLanguageService().apply {
-            initialize(
-                InitializeParams().apply {
-                    workspaceFolders = listOf(WorkspaceFolder("file:///workspace", "workspace"))
-                }
-            )
-        }
     }
 
     private companion object {

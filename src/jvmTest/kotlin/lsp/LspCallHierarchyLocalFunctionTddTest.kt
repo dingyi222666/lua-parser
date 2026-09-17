@@ -15,8 +15,6 @@ import org.eclipse.lsp4j.Range
 import org.eclipse.lsp4j.SymbolKind
 import org.eclipse.lsp4j.TextDocumentIdentifier
 import org.eclipse.lsp4j.TextDocumentItem
-import java.util.concurrent.CompletionException
-import java.util.concurrent.ExecutionException
 import kotlin.test.Test
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
@@ -304,12 +302,6 @@ class LspCallHierarchyLocalFunctionTddTest {
     // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------
-
-    private fun service(): LuaLanguageService {
-        return LuaLanguageService().apply {
-            initialize(InitializeParams())
-        }
-    }
 
     private fun LuaTextDocumentService.open(path: String, source: String): OpenDocument {
         val document = OpenDocument(path = path, source = source.trimIndent())
@@ -608,26 +600,6 @@ class LspCallHierarchyLocalFunctionTddTest {
 
     private fun formatPosition(position: Position): String {
         return "${position.line}:${position.character}"
-    }
-
-    private fun unwrap(error: Throwable): Throwable {
-        var current = error
-        while (
-            (current is ExecutionException || current is CompletionException) &&
-            current.cause != null
-        ) {
-            current = current.cause!!
-        }
-        return current
-    }
-
-    private fun isUnsupportedOperation(error: Throwable): Boolean {
-        if (error is UnsupportedOperationException) {
-            return true
-        }
-        val message = error.message.orEmpty()
-        return message.contains("UnsupportedOperationException") ||
-            message.contains("not implemented", ignoreCase = true)
     }
 
     private sealed class PrepareOutcome {

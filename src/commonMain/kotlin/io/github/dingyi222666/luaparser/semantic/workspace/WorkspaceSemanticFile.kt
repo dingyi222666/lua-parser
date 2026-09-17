@@ -11,8 +11,8 @@ import io.github.dingyi222666.luaparser.parser.ast.node.MemberExpression
 import io.github.dingyi222666.luaparser.parser.ast.node.Position
 import io.github.dingyi222666.luaparser.parser.ast.visitor.ASTVisitor
 import io.github.dingyi222666.luaparser.semantic.SemanticPipelineSnapshot
+import io.github.dingyi222666.luaparser.semantic.model.DefaultSemanticModel
 import io.github.dingyi222666.luaparser.semantic.model.NodePositionIndex
-import io.github.dingyi222666.luaparser.semantic.model.NodePositionIndexProvider
 import io.github.dingyi222666.luaparser.semantic.model.SemanticModel
 
 class WorkspaceSemanticFile internal constructor(
@@ -34,7 +34,9 @@ class WorkspaceSemanticFile internal constructor(
     // documents actually queried (hover, rename, completion) need these indexes. The model
     // already indexes this exact chunk, so reuse it instead of walking the AST a second time.
     internal val nodeIndex: NodePositionIndex by lazy {
-        (model as? NodePositionIndexProvider)?.nodePositionIndex ?: NodePositionIndex(chunk)
+        // DefaultSemanticModel is the only SemanticModel the pipeline builds, so this cast
+        // always succeeds in practice; the fallback keeps EmptySemanticModel-style models safe.
+        (model as? DefaultSemanticModel)?.nodePositionIndex ?: NodePositionIndex(chunk)
     }
 
     private val nodeLists: NodeLists by lazy { collectNodeLists(chunk) }

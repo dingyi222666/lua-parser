@@ -5,14 +5,12 @@ import io.github.dingyi222666.luaparser.lsp.LuaTextDocumentService
 import org.eclipse.lsp4j.DidOpenTextDocumentParams
 import org.eclipse.lsp4j.Hover
 import org.eclipse.lsp4j.HoverParams
-import org.eclipse.lsp4j.InitializeParams
 import org.eclipse.lsp4j.Position
 import org.eclipse.lsp4j.TextDocumentIdentifier
 import org.eclipse.lsp4j.TextDocumentItem
 import kotlin.test.Test
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
-import kotlin.test.fail
 
 /**
  * TASK-355 — LSP hover Emmy/doc-comment surface corpus.
@@ -135,12 +133,6 @@ class LspHoverDocCommentSurfaceTddTest {
     // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------
-
-    private fun service(): LuaLanguageService {
-        return LuaLanguageService().apply {
-            initialize(InitializeParams())
-        }
-    }
 
     private fun LuaLanguageService.open(path: String, source: String): OpenDocument {
         val document = OpenDocument(path = path, source = source.trimIndent())

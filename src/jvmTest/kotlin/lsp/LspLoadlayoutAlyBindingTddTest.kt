@@ -4,9 +4,7 @@ import io.github.dingyi222666.luaparser.lsp.LuaLanguageService
 import org.eclipse.lsp4j.Diagnostic
 import org.eclipse.lsp4j.DidOpenTextDocumentParams
 import org.eclipse.lsp4j.HoverParams
-import org.eclipse.lsp4j.InitializeParams
 import org.eclipse.lsp4j.TextDocumentItem
-import org.eclipse.lsp4j.WorkspaceFolder
 import kotlin.test.Test
 import kotlin.test.assertTrue
 
@@ -28,7 +26,7 @@ class LspLoadlayoutAlyBindingTddTest {
 
     @Test
     fun string_path_without_ids_registers_typed_globals() {
-        val service = service()
+        val service = workspaceService()
         val uri = openProject(service)
 
         // `  navBar.getChildAt(0)` — caret on `getChildAt`.
@@ -43,7 +41,7 @@ class LspLoadlayoutAlyBindingTddTest {
 
     @Test
     fun string_path_globals_do_not_flag_unresolved() {
-        val service = service()
+        val service = workspaceService()
         val uri = openProject(service)
 
         val unresolved = diagnostics(service, uri).filter {
@@ -57,7 +55,7 @@ class LspLoadlayoutAlyBindingTddTest {
 
     @Test
     fun string_path_hover_shows_view_surface() {
-        val service = service()
+        val service = workspaceService()
         val uri = openProject(service)
 
         val line = MAIN_LINES.first { it.contains("searchText.setText") }
@@ -74,7 +72,7 @@ class LspLoadlayoutAlyBindingTddTest {
 
     @Test
     fun string_path_with_ids_table_binds_fields() {
-        val service = service()
+        val service = workspaceService()
         val uri = openProject(service)
 
         // `  ids.progress.setVisibility(0)` — caret on `setVisibility`.
@@ -89,7 +87,7 @@ class LspLoadlayoutAlyBindingTddTest {
 
     @Test
     fun index_expression_sink_binds_onto_elements() {
-        val service = service()
+        val service = workspaceService()
         val uri = openProject(service)
 
         // `  _pageids[1].pager.setCurrentItem(0)` — caret on `setCurrentItem`.
@@ -104,7 +102,7 @@ class LspLoadlayoutAlyBindingTddTest {
 
     @Test
     fun inline_table_with_nil_sink_registers_globals() {
-        val service = service()
+        val service = workspaceService()
         val uri = openProject(service)
 
         // `  titleCard.setRadius(8)` — caret on `setRadius`.
@@ -119,7 +117,7 @@ class LspLoadlayoutAlyBindingTddTest {
 
     @Test
     fun inline_named_sink_still_binds() {
-        val service = service()
+        val service = workspaceService()
         val uri = openProject(service)
 
         // `  _ids.pg.setCurrentItem(0)` — caret on `setCurrentItem`.
@@ -134,7 +132,7 @@ class LspLoadlayoutAlyBindingTddTest {
 
     @Test
     fun injected_ids_are_enumerated_as_globals() {
-        val service = service()
+        val service = workspaceService()
         val uri = openProject(service)
 
         // `  navBar.getChildAt(0)` — caret on `navBar` (word prefix completion).
@@ -162,11 +160,6 @@ class LspLoadlayoutAlyBindingTddTest {
     private fun diagnostics(service: LuaLanguageService, uri: String): List<Diagnostic> =
         service.diagnosticsForUri(uri).diagnostics
 
-    private fun codeOf(diagnostic: Diagnostic): String? {
-        val code = diagnostic.code ?: return null
-        return if (code.isLeft) code.left else code.right?.toString()
-    }
-
     private fun openProject(service: LuaLanguageService): String {
         // Layout files are indexed before the consumer in a real workspace folder walk;
         // opening them first matches that order (adding a layout file later does not
@@ -180,16 +173,6 @@ class LspLoadlayoutAlyBindingTddTest {
             service.didOpen(DidOpenTextDocumentParams(TextDocumentItem(uri, "lua", 1, source)))
         }
         return "file:///workspace/main.lua"
-    }
-
-    private fun service(): LuaLanguageService {
-        return LuaLanguageService().apply {
-            initialize(
-                InitializeParams().apply {
-                    workspaceFolders = listOf(WorkspaceFolder("file:///workspace", "workspace"))
-                }
-            )
-        }
     }
 
     private fun String.lineOf(needle: String): Int =

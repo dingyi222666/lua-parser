@@ -1,7 +1,6 @@
 package lsp
 
 import io.github.dingyi222666.luaparser.interop.jvm.JvmClassModuleProvider
-import io.github.dingyi222666.luaparser.lsp.LuaLanguageServer
 import io.github.dingyi222666.luaparser.lsp.LuaLanguageService
 import io.github.dingyi222666.luaparser.lsp.LuaWorkspaceService
 import org.eclipse.lsp4j.ClientCapabilities
@@ -9,7 +8,6 @@ import org.eclipse.lsp4j.DidOpenTextDocumentParams
 import org.eclipse.lsp4j.InitializeParams
 import org.eclipse.lsp4j.SymbolCapabilities
 import org.eclipse.lsp4j.SymbolInformation
-import org.eclipse.lsp4j.SymbolKind
 import org.eclipse.lsp4j.TextDocumentItem
 import org.eclipse.lsp4j.WorkspaceClientCapabilities
 import org.eclipse.lsp4j.WorkspaceSymbol
@@ -18,7 +16,6 @@ import org.eclipse.lsp4j.WorkspaceSymbolParams
 import org.eclipse.lsp4j.WorkspaceSymbolResolveSupportCapabilities
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
@@ -69,7 +66,7 @@ class LspModernWorkspaceSymbolTddTest {
 
     @Test
     fun initialize_advertises_workspace_symbol_provider_options() {
-        val service = service()
+        val service = serviceWithMetadata()
         val capabilities = service.initialize(InitializeParams()).capabilities
 
         val provider = assertNotNull(
@@ -95,7 +92,7 @@ class LspModernWorkspaceSymbolTddTest {
 
     @Test
     fun modern_workspace_symbols_return_workspace_symbol_payloads() {
-        val service = service()
+        val service = serviceWithMetadata()
         service.open(
             "workspace/modern-ws-payload.lua",
             """
@@ -127,7 +124,7 @@ class LspModernWorkspaceSymbolTddTest {
 
     @Test
     fun modern_and_legacy_workspace_symbols_stay_in_lockstep_for_query() {
-        val service = service()
+        val service = serviceWithMetadata()
         service.open(
             "workspace/modern-ws-lockstep-a.lua",
             """
@@ -165,7 +162,7 @@ class LspModernWorkspaceSymbolTddTest {
         // Ideal (TASK-397): client resolveSupport → Either.right(modern WorkspaceSymbol list).
         // Today product ignores client caps and always returns Either.left. Dual-path:
         // accept left (documented gap) OR right with modern payloads matching the helper.
-        val service = service()
+        val service = serviceWithMetadata()
         // Client caps are accepted on initialize even if product does not branch yet.
         service.initialize(initializeParamsWithModernResolveSupport())
         val workspace = LuaWorkspaceService(service)
@@ -225,15 +222,6 @@ class LspModernWorkspaceSymbolTddTest {
     // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------
-
-    private fun service(metadata: Map<String, String> = emptyMap()): LuaLanguageService {
-        return LuaLanguageService().apply {
-            initialize(InitializeParams())
-            if (metadata.isNotEmpty()) {
-                setWorkspaceMetadata(metadata)
-            }
-        }
-    }
 
     private fun initializeParamsWithModernResolveSupport(): InitializeParams {
         return InitializeParams().apply {

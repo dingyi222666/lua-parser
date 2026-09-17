@@ -123,21 +123,6 @@ class MonacoNumericForLoopVarTddTest {
         return Position(line, offset - lineStart)
     }
 
-    private fun hoverMarkup(hover: Hover): String {
-        val contents = hover.contents ?: return ""
-        return when {
-            contents.isRight -> contents.right?.value.orEmpty()
-            contents.isLeft -> contents.left.orEmpty().joinToString("\n") { either ->
-                when {
-                    either.isRight -> either.right?.value.orEmpty()
-                    either.isLeft -> either.left?.toString().orEmpty()
-                    else -> ""
-                }
-            }
-            else -> hover.toString()
-        }
-    }
-
     companion object {
         // Avoid identifiers that contain the letter sequence "i" as substring of another name
         // for simpler whole-identifier occurrence counting (items → list).

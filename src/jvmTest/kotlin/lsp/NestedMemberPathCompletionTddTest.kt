@@ -1,10 +1,7 @@
 package lsp
 
-import io.github.dingyi222666.luaparser.lsp.LuaLanguageService
 import org.eclipse.lsp4j.DidOpenTextDocumentParams
-import org.eclipse.lsp4j.InitializeParams
 import org.eclipse.lsp4j.TextDocumentItem
-import org.eclipse.lsp4j.WorkspaceFolder
 import kotlin.test.Test
 import kotlin.test.assertTrue
 
@@ -20,7 +17,7 @@ class NestedMemberPathCompletionTddTest {
 
     @Test
     fun nested_member_assignments_complete_on_the_sub_table() {
-        val service = service()
+        val service = workspaceService()
         val uri = "file:///workspace/nested-path.lua"
         service.didOpen(DidOpenTextDocumentParams(TextDocumentItem(uri, "lua", 1, SOURCE.trimIndent())))
 
@@ -35,7 +32,7 @@ class NestedMemberPathCompletionTddTest {
 
     @Test
     fun unknown_typed_assignments_still_offer_completion_presence() {
-        val service = service()
+        val service = workspaceService()
         val uri = "file:///workspace/nested-path-unknown.lua"
         service.didOpen(DidOpenTextDocumentParams(TextDocumentItem(uri, "lua", 1, UNKNOWN_RHS_SOURCE.trimIndent())))
 
@@ -48,16 +45,6 @@ class NestedMemberPathCompletionTddTest {
             "last" in labels && "page" in labels,
             "RHS typed as a bare parameter (unknown) must still offer the field; got $labels"
         )
-    }
-
-    private fun service(): LuaLanguageService {
-        return LuaLanguageService().apply {
-            initialize(
-                InitializeParams().apply {
-                    workspaceFolders = listOf(WorkspaceFolder("file:///workspace", "workspace"))
-                }
-            )
-        }
     }
 
     private companion object {
