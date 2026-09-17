@@ -16,6 +16,13 @@ data class Diagnostic(
     val tags: List<Int> = emptyList()
 )
 
+/**
+ * LSP DiagnosticTag.Unnecessary (org.eclipse.lsp4j.DiagnosticTag value 1) — the canonical
+ * unused-code signal; emitted by the checker and translated by the JVM LSP publish mapping.
+ * Previously duplicated as private consts in ExpressionUsageChecker and LuaLanguageService.
+ */
+internal const val DIAGNOSTIC_TAG_UNNECESSARY = 1
+
 enum class DiagnosticSeverity {
     ERROR,
     WARNING,

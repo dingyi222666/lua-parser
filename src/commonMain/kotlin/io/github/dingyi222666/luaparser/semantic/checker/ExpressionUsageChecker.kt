@@ -22,6 +22,7 @@ import io.github.dingyi222666.luaparser.parser.ast.node.TableCallExpression
 import io.github.dingyi222666.luaparser.parser.ast.node.TableKeyString
 import io.github.dingyi222666.luaparser.parser.ast.visitor.ASTVisitor
 import io.github.dingyi222666.luaparser.semantic.SemanticWorkspaceContext
+import io.github.dingyi222666.luaparser.semantic.api.DIAGNOSTIC_TAG_UNNECESSARY
 import io.github.dingyi222666.luaparser.semantic.api.Diagnostic
 import io.github.dingyi222666.luaparser.semantic.api.DiagnosticSeverity
 import io.github.dingyi222666.luaparser.semantic.binder.BinderDeclaration
@@ -603,11 +604,6 @@ internal class ExpressionUsageChecker(
     }
 
     private companion object {
-        const val UNUSED_LOCAL_CODE = "checker.local.unused"
-
-        /** LSP DiagnosticTag.Unnecessary — the canonical unused-code signal clients fade. */
-        const val DIAGNOSTIC_TAG_UNNECESSARY = 1
-
         const val MEMBER_MISSING_CODE = "checker.member.missing"
         const val LUAJAVA_TARGET_UNRESOLVED_CODE = "checker.luajava.target.unresolved"
         const val GLOBAL_UNRESOLVED_CODE = "checker.global.unresolved"

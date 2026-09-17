@@ -10,6 +10,7 @@ import io.github.dingyi222666.luaparser.semantic.mergeWorkspaceGlobalExtension
 import io.github.dingyi222666.luaparser.semantic.api.SymbolKind
 import io.github.dingyi222666.luaparser.semantic.binder.DeclarationKind
 import io.github.dingyi222666.luaparser.semantic.binder.DeclarationOrigin
+import io.github.dingyi222666.luaparser.semantic.binder.rangeContains
 import io.github.dingyi222666.luaparser.semantic.checker.ExpressionTypeEvaluator
 import io.github.dingyi222666.luaparser.semantic.types.model.CallableType
 import io.github.dingyi222666.luaparser.semantic.types.model.ClassType
@@ -152,9 +153,8 @@ internal class WorkspaceModuleResolver(
         if (dependency != null) {
             // Always keep the resolved provider. Free-form .aly modules historically dropped here
             // when export collection was partial (`exportSurface(...) ?: return null`).
-            val surface = exportSurface(dependency.provider)
-                ?: syntheticAlyLayoutSurface(dependency.provider)
-                ?: return null
+            // exportSurface already falls back to syntheticAlyLayoutSurface internally.
+            val surface = exportSurface(dependency.provider) ?: return null
             return resolvedRequire(moduleName, dependency.provider, surface)
         }
 
@@ -192,7 +192,7 @@ internal class WorkspaceModuleResolver(
         // Previously only "import" recovered here, so require("…representative_layout") without a
         // dependency edge returned null even when the .aly file was present in the workspace.
         val provider = activeProvider(moduleName) ?: return null
-        val surface = exportSurface(provider) ?: syntheticAlyLayoutSurface(provider) ?: return null
+        val surface = exportSurface(provider) ?: return null
         return resolvedRequire(moduleName, provider, surface)
     }
 
@@ -322,7 +322,11 @@ internal class WorkspaceModuleResolver(
 
     fun exportAt(path: VirtualPath, position: io.github.dingyi222666.luaparser.parser.ast.node.Position): ResolvedExportMember? {
         val surface = fileSnapshot(path)?.moduleExportSurface ?: return null
-        val member = surface.members.firstOrNull { rangeContains(it.range, position) } ?: return null
+        // Binder PositionOrdering.rangeContains is end-exclusive here too; its empty/invalid
+        // range rejection matches the removed private copy, which rejected them by contradiction.
+        val member = surface.members.firstOrNull { member ->
+            member.range?.let { rangeContains(it, position) } == true
+        } ?: return null
         return exportedMember(path, member.exportPath)
     }
 
@@ -347,7 +351,7 @@ internal class WorkspaceModuleResolver(
             if (normalized.endsWith(".*")) {
                 return@forEach
             }
-            val simpleName = normalized.substringAfterLast('.').substringAfterLast('/').substringAfterLast('$').substringAfterLast('_')
+            val simpleName = explicitImportSimpleName(normalized)
             if (simpleName.isNotBlank()) {
                 importTargetSymbol(normalized)?.let { symbol ->
                     imported[simpleName] = symbol.copy(alias = simpleName)
@@ -522,23 +526,16 @@ internal class WorkspaceModuleResolver(
         // Path-scoped bare-name recovery: only when this file actively imported a matching target.
         val facts = snapshot.files[path]?.documentFacts ?: return null
         val match = activeImportTargets(facts).firstOrNull { target ->
-            val normalized = normalizeImportTarget(target)
-            if (normalized.endsWith(".*")) {
-                false
-            } else {
-                val simpleName = normalized.substringAfterLast('.').substringAfterLast('/').substringAfterLast('$').substringAfterLast('_')
-                simpleName == alias || normalized == alias
-            }
+                val normalized = normalizeImportTarget(target)
+                if (normalized.endsWith(".*")) {
+                    false
+                } else {
+                    explicitImportSimpleName(normalized) == alias || normalized == alias
+                }
         } ?: return null
         return importTargetSymbol(match)?.copy(alias = alias)
     }
 
-    /**
-     * Workspace shared-global fallback: the defining chunk-level global in ANOTHER project
-     * file. Multiple defining files merge (first definition carries identity, later ones
-     * contribute their member surfaces); the consumer's own file is excluded so a same-name
-     * read inside the defining file still resolves through its own scope first.
-     */
     /**
      * ALL chunk-level globals defined in OTHER project files (AndroLua shared global
      * environment), deduped by alias, sorted by defining path. Used by completion
@@ -562,13 +559,20 @@ internal class WorkspaceModuleResolver(
         return result.values.toList()
     }
 
+    /**
+     * Workspace shared-global fallback: the defining chunk-level global in ANOTHER project
+     * file. Multiple defining files merge (first definition carries identity, later ones
+     * contribute their member surfaces); the consumer's own file is excluded so a same-name
+     * read inside the defining file still resolves through its own scope first.
+     */
     private fun sharedGlobalSymbol(consumerPath: VirtualPath, alias: String): WorkspaceImportedSymbol? {
         if (alias.isBlank()) {
             return null
         }
-        // Re-entrancy guard: evaluating a candidate file's global anchor can itself fall
-        // back to this lookup for the SAME alias from another defining file, ping-ponging
-        // between files until the stack overflows. One in-flight resolution per alias.
+        // Re-entrancy guard wraps the WHOLE scan: evaluating a candidate file's global anchor
+        // can itself fall back to this lookup for the SAME alias from another defining file,
+        // ping-ponging between files until the stack overflows; a throw mid-scan must not
+        // leave the alias blocked for later queries. One in-flight resolution per alias.
         if (alias in sharedGlobalInFlight) {
             return null
         }
@@ -581,14 +585,9 @@ internal class WorkspaceModuleResolver(
     }
 
     private fun computeSharedGlobalSymbol(alias: String): WorkspaceImportedSymbol? {
-        if (alias.isBlank()) {
-            return null
-        }
-        // In-flight marker wraps the WHOLE scan: evaluating candidate anchors can
-        // re-enter this lookup for the same alias from other files, and any throw
-        // mid-scan must not leave the alias blocked for later queries.
-        sharedGlobalInFlight += alias
-        try {
+        // Blank / in-flight guarding is owned by [sharedGlobalSymbol]; this scan only has to
+        // keep pathological anchor evaluation from poisoning the completion pipeline.
+        return try {
             val candidates = sharedGlobalSymbolsCache.getOrPut(alias) {
                 snapshot.graph.providersByModuleName.values.asSequence()
                     .flatten()
@@ -602,13 +601,13 @@ internal class WorkspaceModuleResolver(
                     }
                     .toList()
             }
-            return candidates.reduceOrNull { merged, next ->
+            candidates.reduceOrNull { merged, next ->
                 merged.copy(valueType = mergeWorkspaceGlobalExtension(merged.valueType, next.valueType))
             }
         } catch (error: Throwable) {
             // Deep or pathological anchor evaluation degrades this alias to "unresolved"
-            // for this query instead of poisoning/crashing the completion pipeline.
-            return null
+            // for this query instead of crashing the query surface.
+            null
         }
     }
 
@@ -872,24 +871,14 @@ internal class WorkspaceModuleResolver(
         }
         // Path-suffix recovery: __lua_std__/<ver>/socket.url.lua for module "socket.url".
         // Also accept nested historical paths (__lua_std__/<ver>/socket/url.lua) when present.
+        // endsWith(subsumes) both the equality case and the leading-slash candidate spellings.
         val dotted = moduleName.replace('\\', '/').replace('/', '.')
         val slash = dotted.replace('.', '/')
-        val candidates = listOf(
-            "/$dotted.lua",
-            "$dotted.lua",
-            "/$slash.lua",
-            "$slash.lua"
-        )
         snapshot.builtinOverlay.providerModules.entries.firstOrNull { (path, provider) ->
             val value = path.value
             val providerDotted = provider.moduleName.replace('\\', '/').replace('/', '.')
             val nameMatches = providerDotted == dotted || provider.moduleName == moduleName
-            val pathMatches = candidates.any { candidate ->
-                value == candidate.trimStart('/') ||
-                    value.endsWith(candidate) ||
-                    value.endsWith("/$dotted.lua") ||
-                    value.endsWith("/$slash.lua")
-            }
+            val pathMatches = value.endsWith("$dotted.lua") || value.endsWith("$slash.lua")
             pathMatches && (nameMatches || provider.moduleName.isBlank())
         }?.let { (path, provider) ->
             return WorkspaceModuleGraph.ModuleProvider(
@@ -969,6 +958,14 @@ internal class WorkspaceModuleResolver(
             .trim()
     }
 
+    /**
+     * Simple activation name for an explicit (non-wildcard) import target: File from
+     * java.io.File, the tail segment after '.' / '/' / '$' / luajava-style '_' binary names.
+     * Shared by the import-alias index and bare-name recovery so both agree on the tail rule.
+     */
+    private fun explicitImportSimpleName(normalized: String): String =
+        normalized.substringAfterLast('.').substringAfterLast('/').substringAfterLast('$').substringAfterLast('_')
+
     private fun classAliasCandidates(importText: String): List<String> {
         val normalized = normalizeImportTarget(importText)
         if (normalized.isBlank() || normalized.endsWith(".*")) {
@@ -1029,22 +1026,6 @@ internal class WorkspaceModuleResolver(
                 )
             )
         )
-    }
-
-    private fun rangeContains(
-        range: io.github.dingyi222666.luaparser.parser.ast.node.Range?,
-        position: io.github.dingyi222666.luaparser.parser.ast.node.Position
-    ): Boolean {
-        range ?: return false
-        return compare(range.start, position) <= 0 && compare(position, range.end) < 0
-    }
-
-    private fun compare(
-        left: io.github.dingyi222666.luaparser.parser.ast.node.Position,
-        right: io.github.dingyi222666.luaparser.parser.ast.node.Position
-    ): Int {
-        val lineComparison = left.line.compareTo(right.line)
-        return if (lineComparison != 0) lineComparison else left.column.compareTo(right.column)
     }
 
     data class ResolvedRequire(

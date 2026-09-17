@@ -305,13 +305,20 @@ object BuiltinOverlayLoader {
         )
     }
 
-    private fun documentedMemberPaths(moduleName: String, resourceText: String): Set<List<String>> {
-        // Match full dotted names and short local aliases (socket.url + url) so synthetic
-        // method kinds can merge with documented ranges for AndroLua helper modules.
+    // Full dotted module name plus its short local alias (socket.url + url); AndroLua docs
+    // address dotted-module members through either form.
+    private fun dottedModuleNameAliases(moduleName: String): LinkedHashSet<String> {
         val nameAliases = linkedSetOf(moduleName)
         if (moduleName.contains('.')) {
             nameAliases += moduleName.substringAfterLast('.')
         }
+        return nameAliases
+    }
+
+    private fun documentedMemberPaths(moduleName: String, resourceText: String): Set<List<String>> {
+        // Match full dotted names and short local aliases (socket.url + url) so synthetic
+        // method kinds can merge with documented ranges for AndroLua helper modules.
+        val nameAliases = dottedModuleNameAliases(moduleName)
         val namePattern = nameAliases.joinToString("|") { Regex.escape(it) }
         val functionRegex = Regex("""^\s*function\s+(?:$namePattern)[.:]([A-Za-z_][A-Za-z0-9_]*)\s*\(""")
         val assignmentRegex = Regex("""^\s*(?:$namePattern)\.([A-Za-z_][A-Za-z0-9_]*)\s*=""")
@@ -673,10 +680,7 @@ object BuiltinOverlayLoader {
         // AndroLua dotted modules (socket.url) document methods as `function url.parse(...)`
         // while the require module name stays dotted. Accept both the full moduleName and the
         // short local alias so parse/build stay on the export surface as methods.
-        val nameAliases = linkedSetOf(moduleName)
-        if (moduleName.contains('.')) {
-            nameAliases += moduleName.substringAfterLast('.')
-        }
+        val nameAliases = dottedModuleNameAliases(moduleName)
         val namePattern = nameAliases.joinToString("|") { Regex.escape(it) }
         val functionRegex = Regex("""^\s*function\s+(?:$namePattern)([.:])([A-Za-z_][A-Za-z0-9_]*)\s*\(([^)]*)\)""")
         val assignmentRegex = Regex("""^\s*(?:$namePattern)\.([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$""")

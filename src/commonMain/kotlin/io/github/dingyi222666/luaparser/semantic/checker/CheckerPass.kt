@@ -86,7 +86,7 @@ class CheckerPass {
         }
     }
 
-    private companion object {
-        const val UNUSED_LOCAL_CODE = "checker.local.unused"
-    }
 }
+
+/** Wire-protocol code shared by the unused-local emitter and the empty-chunk filter. */
+internal const val UNUSED_LOCAL_CODE = "checker.local.unused"

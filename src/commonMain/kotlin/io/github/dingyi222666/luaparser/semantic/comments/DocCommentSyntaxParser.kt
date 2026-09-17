@@ -27,7 +27,7 @@ class DocCommentSyntaxParser(
 
         comments.forEach { comment ->
             val rawLines = comment.comment.lines()
-            normalizeDocLines(comment.comment).forEachIndexed { index, line ->
+            normalizeDocLines(rawLines).forEachIndexed { index, line ->
                 val lineInfo = DocLineInfo(
                     sourceLine = comment.range.start.line + index,
                     rawLine = rawLines.getOrElse(index) { "" },
@@ -451,7 +451,9 @@ class DocCommentSyntaxParser(
 
     /** Shared tag-tail rule: the parsed type's description, else the unconsumed remainder text. */
     private fun fallbackDescription(parsedType: ParsedTypeText?, remainder: String): String {
-        return parsedType?.description ?: remainder.takeIf { it.isNotBlank() && parsedType == null }.orEmpty()
+        // The elvis RHS is only reached when parsedType is null (description is non-null),
+        // so no extra null re-check is needed here.
+        return parsedType?.description ?: remainder.takeIf { it.isNotBlank() }.orEmpty()
     }
 
     private fun stripVisibilityModifier(text: String): String {
@@ -464,7 +466,11 @@ class DocCommentSyntaxParser(
     }
 
     private fun normalizeDocLines(rawComment: String): List<String> {
-        return rawComment.lines().map(::normalizeCommentLine)
+        return normalizeDocLines(rawComment.lines())
+    }
+
+    private fun normalizeDocLines(rawLines: List<String>): List<String> {
+        return rawLines.map(::normalizeCommentLine)
     }
 
     private fun normalizeCommentLine(rawLine: String): String {
