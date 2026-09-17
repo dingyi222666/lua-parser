@@ -108,9 +108,9 @@ internal class CompletionProvider(
     private fun lexicalCompletions(position: Position, node: BaseASTNode?): List<CompletionItem> {
         val visibleItems = referenceQueries.visibleValueDeclarations(position)
             .mapNotNull { visible ->
-                adapters.toDeclarationSymbol(visible.declaration)?.let { symbol ->
-                    // Prefer declaredType-backed detail/kind for ambient binder builtins
-                    // (activity/service VARIABLE, load* FUNCTION, luajava MODULE).
+                // Prefer declaredType-backed detail/kind for ambient binder builtins
+                // (activity/service VARIABLE, load* FUNCTION, luajava MODULE).
+                adapters.toDeclarationSymbol(visible.declaration).let { symbol ->
                     completionItem(symbol, categoryPrefix(symbol), visible.lexicalDepth)
                 }
             }

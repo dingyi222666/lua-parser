@@ -82,7 +82,8 @@ internal class ApiAdapters(
         )
     }
 
-    fun toDeclarationSymbol(declaration: BinderDeclaration): Symbol? {
+    /** Never null: falls back to a declaration-backed symbol when no binder symbol exists. */
+    fun toDeclarationSymbol(declaration: BinderDeclaration): Symbol {
         val symbolId = declaration.symbolId
         val symbol = symbolId?.let(binder.declarationIndex::getSymbol)
         return if (symbol != null) {
@@ -105,7 +106,7 @@ internal class ApiAdapters(
         typeOverride: Type? = declaration.declaredType,
         declaredTypeOverride: Type? = declaration.declaredType
     ): Symbol {
-        val base = toDeclarationSymbol(declaration)!!
+        val base = toDeclarationSymbol(declaration)
         return base.copy(
             type = toTypeInfo(typeOverride, declaration),
             declaredType = toTypeInfo(declaredTypeOverride, declaration),

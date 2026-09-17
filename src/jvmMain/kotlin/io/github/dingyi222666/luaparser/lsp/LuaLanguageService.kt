@@ -264,7 +264,7 @@ class LuaLanguageService(
                 }
 
                 FileChangeType.Created, FileChangeType.Changed -> {
-                    val source = readWorkspaceSourceFromUri(uri)
+                    val source = pathFromFileUri(uri)?.let(::readWorkspaceSource)
                     if (source != null) {
                         val previous = indexedWorkspaceFiles.put(virtualPath, source)
                         indexedWorkspaceUris[virtualPath] = uri
@@ -1734,11 +1734,6 @@ class LuaLanguageService(
         }
     }
 
-    private fun readWorkspaceSourceFromUri(uri: String): String? {
-        val path = pathFromFileUri(uri) ?: return null
-        return readWorkspaceSource(path)
-    }
-
     /**
      * Shared file/scheme-less URI → filesystem [Path] conversion used by rootUri,
      * workspace folders, watched-file events, and disk reads.
@@ -2980,34 +2975,31 @@ class LuaLanguageService(
     /**
      * Prefer non-weak FunctionType/ClassType/MODULE displays for LSP hover markup.
      * Bare unknown/any loses to any richer candidate (TASK-601).
+     *
+     * [strong] holds present, non-unknown/any candidates; the ladders run a fixed
+     * preference order over it — module-prefixed, callable, Array-prefixed,
+     * non-quoted-literal, then any strong candidate — falling back to the first
+     * present (possibly weak) candidate only when every candidate is weak.
      */
     private fun preferredLspHoverTypeDisplay(
         primary: String?,
         secondary: String?,
         tertiary: String?
     ): String? {
-        fun isWeak(value: String?): Boolean {
-            if (value.isNullOrBlank()) return true
-            return value == "unknown" || value == "any"
-        }
         fun isQuotedLiteral(value: String): Boolean {
             return value.length >= 2 && value.startsWith('"') && value.endsWith('"')
         }
-        val candidates = listOf(primary, secondary, tertiary).filterNot { it.isNullOrBlank() }
-        candidates.firstOrNull { value ->
-            !isWeak(value) && value!!.startsWith("module ")
-        }?.let { return it }
-        candidates.firstOrNull { value ->
-            !isWeak(value) && (value!!.contains("fun(") || value.contains("fun<"))
-        }?.let { return it }
-        candidates.firstOrNull { value ->
-            !isWeak(value) && value!!.startsWith("Array<")
-        }?.let { return it }
-        candidates.firstOrNull { value ->
-            !isWeak(value) && !isQuotedLiteral(value!!)
-        }?.let { return it }
-        candidates.firstOrNull { value -> !isWeak(value) }?.let { return it }
-        return candidates.firstOrNull()
+        val present = sequenceOf(primary, secondary, tertiary)
+            .filterNotNull()
+            .filter { it.isNotBlank() }
+            .toList()
+        // On an already-non-blank candidate, weak reduces to unknown/any.
+        val strong = present.filter { it != "unknown" && it != "any" }
+        strong.firstOrNull { it.startsWith("module ") }?.let { return it }
+        strong.firstOrNull { it.contains("fun(") || it.contains("fun<") }?.let { return it }
+        strong.firstOrNull { it.startsWith("Array<") }?.let { return it }
+        strong.firstOrNull { !isQuotedLiteral(it) }?.let { return it }
+        return strong.firstOrNull() ?: present.firstOrNull()
     }
 
     // -------------------------------------------------------------------------

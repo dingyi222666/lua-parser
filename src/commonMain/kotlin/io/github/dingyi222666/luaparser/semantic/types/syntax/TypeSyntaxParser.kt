@@ -30,6 +30,16 @@ object TypeSyntaxParser {
     }
 
     private class Parser(private val source: String) {
+        private companion object {
+            // Hoisted diagnostics literals: byte-identical fail/consume message groups
+            // (several are test-pinned; values kept byte-identical).
+            private const val EXPECTED_RPAREN_TO_CLOSE_FUNCTION_PARAMS = "Expected ')' to close function parameter list"
+            private const val EXPECTED_VARARG_ELLIPSIS = "Expected '...' for vararg parameter"
+            private const val EXPECTED_GT_TO_CLOSE_GENERIC_ARGS = "Expected '>' to close generic argument list"
+            private const val EXPECTED_IDENTIFIER = "Expected identifier"
+            private const val EXPECTED_STRING_LITERAL = "Expected string literal"
+        }
+
         var currentIndex: Int = 0
             private set
 
@@ -159,7 +169,7 @@ object TypeSyntaxParser {
             val typeParameters = if (peek() == '<') parseTypeParameters() else emptyList()
             consume('(', "Expected '(' to start function parameter list")
             val parameters = parseFunctionParameters()
-            consume(')', "Expected ')' to close function parameter list")
+            consume(')', EXPECTED_RPAREN_TO_CLOSE_FUNCTION_PARAMS)
             // The return annotation is optional: `fun(message: any)` is idiomatic in the
             // AndroLua/EmmyLua corpus and means "returns nil".
             val returnType = if (match(':')) {
@@ -211,7 +221,7 @@ object TypeSyntaxParser {
                     return parameters
                 }
                 if (isAtEnd()) {
-                    fail("Expected ')' to close function parameter list")
+                    fail(EXPECTED_RPAREN_TO_CLOSE_FUNCTION_PARAMS)
                 }
                 if (!match(',')) {
                     fail("Expected ',' or ')' in function parameter list")
@@ -224,7 +234,7 @@ object TypeSyntaxParser {
             // Prefix vararg parameter: `fun(...)` / `fun(...: any)`. The postfix `T...` spelling
             // below is the canonical one, but EmmyLua-style docs use the prefix form.
             if (startsWith("...")) {
-                consumeText("...", "Expected '...' for vararg parameter")
+                consumeText("...", EXPECTED_VARARG_ELLIPSIS)
                 skipWhitespace()
                 val type = if (match(':')) {
                     parseType(allowMultiReturn = false, allowPostfixVararg = false)
@@ -243,7 +253,7 @@ object TypeSyntaxParser {
                 if (match(':')) {
                     val type = parseType(allowMultiReturn = false, allowPostfixVararg = false)
                     val vararg = if (startsWith("...")) {
-                        consumeText("...", "Expected '...' for vararg parameter")
+                        consumeText("...", EXPECTED_VARARG_ELLIPSIS)
                         true
                     } else {
                         false
@@ -255,7 +265,7 @@ object TypeSyntaxParser {
 
             val type = parseType(allowMultiReturn = false, allowPostfixVararg = false)
             val vararg = if (startsWith("...")) {
-                consumeText("...", "Expected '...' for vararg parameter")
+                consumeText("...", EXPECTED_VARARG_ELLIPSIS)
                 true
             } else {
                 false
@@ -368,7 +378,7 @@ object TypeSyntaxParser {
 
             while (true) {
                 if (isAtEnd()) {
-                    fail("Expected '>' to close generic argument list")
+                    fail(EXPECTED_GT_TO_CLOSE_GENERIC_ARGS)
                 }
 
                 arguments.add(parseType(allowMultiReturn = false))
@@ -376,11 +386,11 @@ object TypeSyntaxParser {
 
                 when {
                     match('>') -> return arguments
-                    isAtEnd() -> fail("Expected '>' to close generic argument list")
+                    isAtEnd() -> fail(EXPECTED_GT_TO_CLOSE_GENERIC_ARGS)
                     match(',') -> {
                         skipWhitespace()
                         if (isAtEnd()) {
-                            fail("Expected '>' to close generic argument list")
+                            fail(EXPECTED_GT_TO_CLOSE_GENERIC_ARGS)
                         }
                     }
 
@@ -474,9 +484,9 @@ object TypeSyntaxParser {
         private fun parseIdentifier(): String {
             skipWhitespace()
             val start = currentIndex
-            val first = peek() ?: fail("Expected identifier")
+            val first = peek() ?: fail(EXPECTED_IDENTIFIER)
             if (!first.isLetter() && first != '_') {
-                fail("Expected identifier")
+                fail(EXPECTED_IDENTIFIER)
             }
             advance()
             while (peek()?.let { it.isLetterOrDigit() || it == '_' } == true) {
@@ -507,9 +517,9 @@ object TypeSyntaxParser {
 
         private fun parseQuotedText(): String {
             skipWhitespace()
-            val quote = peek() ?: fail("Expected string literal")
+            val quote = peek() ?: fail(EXPECTED_STRING_LITERAL)
             if (quote != '\'' && quote != '"') {
-                fail("Expected string literal")
+                fail(EXPECTED_STRING_LITERAL)
             }
 
             val start = currentIndex

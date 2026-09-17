@@ -24,6 +24,7 @@ import io.github.dingyi222666.luaparser.semantic.binder.DeclarationNamespace
 import io.github.dingyi222666.luaparser.semantic.binder.DeclarationOrigin
 import io.github.dingyi222666.luaparser.semantic.binder.DeclarationOwner
 import io.github.dingyi222666.luaparser.semantic.binder.ScopeId
+import io.github.dingyi222666.luaparser.semantic.binder.comparePositions
 import io.github.dingyi222666.luaparser.semantic.binder.isChunkGlobalFunctionDeclaration
 import io.github.dingyi222666.luaparser.semantic.binder.rangeContains
 import io.github.dingyi222666.luaparser.semantic.checker.CallChecker
@@ -373,7 +374,7 @@ internal class SignatureHelpProvider(
         }
 
         val firstArgumentStart = arguments.first().range.start
-        if (compare(position, firstArgumentStart) < 0) {
+        if (comparePositions(position, firstArgumentStart) < 0) {
             return receiverOffset
         }
 
@@ -384,7 +385,7 @@ internal class SignatureHelpProvider(
             }
 
             val nextArgumentStart = arguments.getOrNull(index + 1)?.range?.start
-            if (nextArgumentStart != null && compare(position, range.end) >= 0 && compare(position, nextArgumentStart) < 0) {
+            if (nextArgumentStart != null && comparePositions(position, range.end) >= 0 && comparePositions(position, nextArgumentStart) < 0) {
                 return receiverOffset + index + 1
             }
         }
@@ -1060,13 +1061,13 @@ internal class SignatureHelpProvider(
             return true
         }
         val range = declaration.range ?: return true
-        if (compare(range.start, position) <= 0 && compare(position, range.end) < 0) {
+        if (comparePositions(range.start, position) <= 0 && comparePositions(position, range.end) < 0) {
             return true
         }
         // Locals become visible after their whole LocalStatement (`visibleFrom`), so the
         // initializer of `local x = x + 1` still resolves to the outer x.
         val visibleFrom = declaration.visibleFrom ?: range.start
-        return compare(visibleFrom, position) <= 0
+        return comparePositions(visibleFrom, position) <= 0
     }
 
     private fun findBackingMemberDeclaration(
@@ -1233,15 +1234,15 @@ internal class SignatureHelpProvider(
         val regionEnd = effectiveArgumentRegionEnd(call)
         if (arguments.isEmpty()) {
             val start = call.base.range.end
-            if (compare(start, regionEnd) >= 0) {
+            if (comparePositions(start, regionEnd) >= 0) {
                 return false
             }
             // End-inclusive argument region (empty `f()` and inflated next-token end).
-            return compare(position, start) >= 0 && compare(position, regionEnd) <= 0
+            return comparePositions(position, start) >= 0 && comparePositions(position, regionEnd) <= 0
         }
 
         val firstArgumentStart = arguments.first().range.start
-        if (compare(position, call.base.range.end) >= 0 && compare(position, firstArgumentStart) < 0) {
+        if (comparePositions(position, call.base.range.end) >= 0 && comparePositions(position, firstArgumentStart) < 0) {
             return true
         }
 
@@ -1251,14 +1252,14 @@ internal class SignatureHelpProvider(
             }
 
             val nextArgumentStart = arguments.getOrNull(index + 1)?.range?.start
-            if (nextArgumentStart != null && compare(position, argument.range.end) >= 0 && compare(position, nextArgumentStart) < 0) {
+            if (nextArgumentStart != null && comparePositions(position, argument.range.end) >= 0 && comparePositions(position, nextArgumentStart) < 0) {
                 return true
             }
         }
 
         // From the last argument through call.range.end (inclusive) and, when product policy
         // inflates past a tight `)`, through the next significant statement token start.
-        return compare(position, arguments.last().range.end) >= 0 && compare(position, regionEnd) <= 0
+        return comparePositions(position, arguments.last().range.end) >= 0 && comparePositions(position, regionEnd) <= 0
     }
 
     /**
@@ -1272,7 +1273,7 @@ internal class SignatureHelpProvider(
     private fun effectiveArgumentRegionEnd(call: CallExpression): Position {
         val callEnd = call.range.end
         val inflated = nextSiblingStatementStart(call) ?: return callEnd
-        return if (compare(inflated, callEnd) > 0) inflated else callEnd
+        return if (comparePositions(inflated, callEnd) > 0) inflated else callEnd
     }
 
     private fun nextSiblingStatementStart(call: CallExpression): Position? {
@@ -1342,13 +1343,6 @@ internal class SignatureHelpProvider(
     }
 
     private fun contains(range: Range, position: Position): Boolean {
-        return compare(position, range.start) >= 0 && compare(position, range.end) <= 0
-    }
-
-    private fun compare(left: Position, right: Position): Int {
-        return when {
-            left.line != right.line -> left.line.compareTo(right.line)
-            else -> left.column.compareTo(right.column)
-        }
+        return comparePositions(position, range.start) >= 0 && comparePositions(position, range.end) <= 0
     }
 }
