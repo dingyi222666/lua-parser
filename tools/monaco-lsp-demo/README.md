@@ -31,7 +31,7 @@ Browser (Monaco)  --WS JSON-RPC-->  Node bridge  --stdio Content-Length-->  JVM 
 
 - Server: `io.github.dingyi222666.luaparser.lsp.LuaLanguageServerLauncherKt`
 - Workspace: recursive `.lua` / `.aly` files under `tools/monaco-lsp-demo/workspace`
-- Config: `jvm.androidJar` auto-detected from `ANDROID_HOME`, `ANDROID_SDK_ROOT`, or standard host SDK locations
+- Config: `jvm.androidJar` auto-detected from `ANDROID_HOME`, `ANDROID_SDK_ROOT`, or standard host SDK locations; `jvm.classpath` (dex) auto-injected by the bridge from `workspace/libs/classes.dex` — see "Dex support" below
 
 ## Try
 
@@ -54,11 +54,12 @@ Browser (Monaco)  --WS JSON-RPC-->  Node bridge  --stdio Content-Length-->  JVM 
 
 ### Diagnostics you will see
 
-`main.lua` ships one intentional INFO marker: its `android.support.v7.widget.*`
-wildcard mounts zero classes from `android.jar` because the support library lives
-in the workspace's own `libs/classes.dex`, which the analyzer does not load —
-the members exist at runtime on-device. `mods/dingyi.lua` carries a real
-catch: an unresolved global `h` (a typo for the `w` parameter).
+`mods/dingyi.lua` carries a real catch: an unresolved global `h` (a typo for
+the `w` parameter). `main.lua` used to ship a second intentional INFO marker:
+its `android.support.v7.widget.*` wildcard mounted zero classes because the
+support library lives in the workspace's own `libs/classes.dex`, which the
+analyzer did not load. With dex support wired (see below), those members now
+resolve from the dex, so that marker no longer appears.
 
 ### AndroLua layout (.aly) completions
 
@@ -91,6 +92,40 @@ com.project.MyBanner: autoScroll|boolean
 
 FQCN keys are also matched by simple name.
 
+## Dex support
+
+The demo workspace ships a real Android dex library at
+`workspace/libs/classes.dex` (Dalvik 035, 929 classes — the same fixture the
+`interop.jvm.DexRealFixtureTddTest` suite runs against). The Node bridge wires
+it into the language server automatically: when forwarding
+`workspace/didChangeConfiguration` it merges a `jvm.classpath` entry pointing
+at that file into the settings, and the LSP mounts it as a dex library
+(`JvmWorkspaceConfiguration` → `DexLibraryMounter`).
+
+What works with the demo dex:
+
+- `luajava.bindClass("com.example.SomeClass")` resolves classes from the dex,
+  with the full member surface (`__class` instance shell, constructor `__call`,
+  public static fields, methods)
+- `import "libs/classes.dex:com.example.SomeClass"` — path-prefixed imports
+  resolve the class inside that library
+- bare `import "libs/classes.dex"` — mounts the library module plus per-class
+  providers, so short class names resolve afterwards
+- `import "android.support.v7.widget.*"`-style wildcards pick up the dex's
+  support-library classes (previously diagnosed as mounting zero classes)
+
+What to configure (the demo bridge does this for you; embedders send the same
+keys themselves):
+
+- LSP workspace-configuration key **`jvm.classpath`** in
+  `workspace/didChangeConfiguration` settings: a newline-separated string or an
+  array of paths; `.dex` and `.apk` entries mount as dex libraries (`.jar` and
+  class directories stay on the reflective classpath)
+- The bridge logs the resolved entry at startup
+  (`dex classpath: ... present=true`), exposes it as `demoDex`/`demoDexPresent`
+  on `GET /api/info`, and honors the `DEMO_DEX` env override; without the
+  fixture it forwards configuration untouched
+
 ## Single editor session
 
 Only one browser tab can hold the language server at a time. A second tab that
@@ -99,7 +134,7 @@ connects while another session is active receives a busy message from the bridge
 status bar shows the reason. Stop the session in the active tab (or close it)
 before connecting from a new one.
 
-Env overrides: `PORT`, `JAVA_HOME`, `ANDROID_JAR`, `LUA_PARSER_ROOT`.
+Env overrides: `PORT`, `JAVA_HOME`, `ANDROID_JAR`, `DEMO_DEX`, `LUA_PARSER_ROOT`.
 
 Run `npm run smoke` to build/start the real Gradle LSP path, initialize the full
 demo workspace, open its entry file, receive diagnostics, and shut down cleanly.

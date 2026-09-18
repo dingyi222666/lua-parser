@@ -1,0 +1,85 @@
+# Linux self-hosted dex-slice runner: ONLY the dex-relevant jvmTest slices,
+# kept fast (the full suite stays owned by the windows-full-jvmtest workflow).
+# Modeled on windows-jvmtest.yml: self-hosted runner, workflow-level toolchain
+# env, scoped daemon cleanup, non-fatal artifact uploads.
+name: dex-jvmtest
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [windows-verify, linux-verify]
+
+# Machine-specific toolchain locations for the self-hosted Linux runner.
+# Kept at workflow level so the machine owner edits ONE place here.
+env:
+  JAVA_HOME: /home/dingyi/.jdks/temurin-17
+  ANDROID_HOME: /home/dingyi/Android/Sdk
+
+jobs:
+  dex-jvmtest:
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # The dex slices include the real-fixture test against the demo corpus
+      # (DexRealFixtureTddTest walks up from user.dir to this exact path);
+      # fail fast with a clear marker when the fixture is missing.
+      - name: Verify dex fixture exists
+        run: |
+          test -f tools/monaco-lsp-demo/workspace/libs/classes.dex && echo fixture-present
+
+      - name: Show environment
+        run: |
+          export PATH="$JAVA_HOME/bin:$PATH"
+          echo "JAVA_HOME=$JAVA_HOME"
+          java -version
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          git rev-parse --short HEAD
+          echo "mode=dex-slices gradle --parallel"
+
+      # Dex-relevant slices only. Filters verified against real files:
+      #   interop.dex.DexParserCommonTddTest
+      #       -> src/commonTest/kotlin/interop/dex/DexParserCommonTddTest.kt
+      #   interop.jvm.DexMountingTddTest
+      #       -> src/jvmTest/kotlin/interop/jvm/DexMountingTddTest.kt
+      #   interop.jvm.DexRealFixtureTddTest
+      #       -> src/jvmTest/kotlin/interop/jvm/DexRealFixtureTddTest.kt
+      #   io.github.dingyi222666.luaparser.interop.jvm.DexClassModelAdapterTest
+      #       -> src/commonTest/kotlin/interop/jvm/DexClassModelAdapterTest.kt
+      #   lsp.RuntimeJarTempLeakTddTest
+      #       -> src/jvmTest/kotlin/lsp/RuntimeJarTempLeakTddTest.kt
+      - name: Run dex test slices
+        run: |
+          export PATH="$JAVA_HOME/bin:$PATH"
+          ./gradlew jvmTest --parallel \
+            --tests "interop.dex.*" \
+            --tests "interop.jvm.Dex*" \
+            --tests "io.github.dingyi222666.luaparser.interop.jvm.DexClassModelAdapterTest" \
+            --tests "lsp.RuntimeJarTempLeakTddTest"
+
+      - name: Stop Gradle daemons
+        if: always()
+        # Scoped cleanup: `gradlew --stop` stops only the daemons registered
+        # under this Gradle user home/version. Never a blanket java kill on a
+        # shared self-hosted runner.
+        run: |
+          export PATH="$JAVA_HOME/bin:$PATH"
+          ./gradlew --stop || true
+
+      - name: Upload JUnit XML
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dex-junit-xml
+          path: build/test-results/jvmTest/**
+          if-no-files-found: warn
+
+      - name: Upload HTML report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dex-test-report-html
+          path: build/reports/tests/jvmTest/**
+          if-no-files-found: warn
