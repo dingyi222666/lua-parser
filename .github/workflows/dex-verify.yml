@@ -24,15 +24,16 @@ jobs:
         uses: actions/checkout@v4
 
       # The dex slices include the real-fixture test against the demo corpus
-      # (DexRealFixtureTddTest walks up from user.dir to this exact path);
-      # fail fast with a clear marker when the fixture is missing.
+      # (DexRealFixtureTddTest walks up from user.dir to this exact path); the
+      # corpus is gitignored, so absence is informational (the fixture test
+      # soft-skips via JUnit Assume) — never a workflow failure.
       - name: Verify dex fixture exists
         run: |
           if [ -f tools/monaco-lsp-demo/workspace/libs/classes.dex ]; then
-          echo "fixture-present"
-        else
-          echo "fixture-absent (gitignored demo corpus) — DexRealFixtureTddTest soft-skips"
-        fi
+            echo "fixture-present"
+          else
+            echo "fixture-absent (gitignored demo corpus) — DexRealFixtureTddTest soft-skips"
+          fi
 
       - name: Show environment
         run: |
