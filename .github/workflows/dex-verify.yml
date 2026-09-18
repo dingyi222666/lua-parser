@@ -28,7 +28,11 @@ jobs:
       # fail fast with a clear marker when the fixture is missing.
       - name: Verify dex fixture exists
         run: |
-          test -f tools/monaco-lsp-demo/workspace/libs/classes.dex && echo fixture-present
+          if [ -f tools/monaco-lsp-demo/workspace/libs/classes.dex ]; then
+          echo "fixture-present"
+        else
+          echo "fixture-absent (gitignored demo corpus) — DexRealFixtureTddTest soft-skips"
+        fi
 
       - name: Show environment
         run: |
