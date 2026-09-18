@@ -144,13 +144,22 @@ object DexClassModelAdapter {
         return JavaClassType(javaName = javaTypeNameFor(binaryName))
     }
 
+    /**
+     * Canonical cycle-guard key for a binary name: normalized to dots so the
+     * resolving stack is spelling-independent (dex binary names are slash-form,
+     * descriptor bodies keep the same form, but every guard/lookup below
+     * normalizes first so a form mismatch can never break the guard).
+     */
+    private fun binaryNameKey(binaryName: String): String = binaryName.replace('/', '.')
+
     private fun javaClassTypeFor(
         cls: DexClass,
         dexByName: Map<String, DexClass>,
         resolving: Set<String>,
         referenceDepth: Int
     ): JavaClassType {
-        if (cls.binaryName in resolving) {
+        val clsKey = binaryNameKey(cls.binaryName)
+        if (clsKey in resolving) {
             return typeReferenceForBinaryName(cls.binaryName)
         }
         val javaName = javaTypeNameFor(cls.binaryName)
@@ -159,7 +168,7 @@ object DexClassModelAdapter {
         // level past the adaptation target (referenceDepth > 0) every further
         // reference stays a shell — the same bounded-surface policy as the
         // provider's shallow wildcard modules.
-        val memberResolving = resolving + cls.binaryName
+        val memberResolving = resolving + clsKey
         val constructors = JavaOverloadSet(constructorTypesFor(cls, javaName, dexByName, memberResolving, referenceDepth))
         val staticMembers = linkedMapOf<String, JavaStaticMemberType>()
         val instanceMembers = linkedMapOf<String, JavaInstanceMemberType>()
@@ -267,6 +276,13 @@ object DexClassModelAdapter {
     ): List<JavaConstructorType> {
         val ownerReference = typeReferenceForBinaryName(cls.binaryName)
         return cls.methods.mapNotNull { method ->
+            if (method.name == "<clinit>") {
+                // Class initializer: carries ACC_CONSTRUCTOR in real dex files and can pass
+                // the visibility gate, but reflection never exposes it and scripts can never
+                // call it — it is neither a constructor overload nor a callable member
+                // (groupedVisibleMethods drops it from the method surfaces too).
+                return@mapNotNull null
+            }
             val isConstructor = method.accessFlags and ACC_CONSTRUCTOR != 0 || method.name == "<init>"
             if (!isConstructor || !isVisibleMember(method.accessFlags, isMethod = true)) {
                 return@mapNotNull null
@@ -478,8 +494,10 @@ object DexClassModelAdapter {
      * [JavaInstanceType] shell — member-carrying only when the referenced
      * class is in the same dex set.
      *
-     * [binaryName] is the raw slash-form descriptor body; dex-set lookups and
-     * cycle guards key on that raw form (dex binary names are slash-form),
+     * [binaryName] is the raw descriptor body (slash-form for dex); dex-set
+     * lookups accept both slash and dotted spellings — dex binary names and
+     * descriptor bodies come from the same dex string pool so they always
+     * share one form, and the fallback makes a form mismatch impossible —
      * while type-model names normalize to dots via [javaTypeNameFor].
      */
     private fun lDescriptorToType(
@@ -488,7 +506,7 @@ object DexClassModelAdapter {
         resolving: Set<String>,
         referenceDepth: Int
     ): Type {
-        when (binaryName.replace('/', '.')) {
+        when (binaryNameKey(binaryName)) {
             "java.lang.Boolean" -> return PrimitiveType.BOOLEAN
             "java.lang.Character",
             "java.lang.String",
@@ -506,15 +524,18 @@ object DexClassModelAdapter {
             "java.math.BigDecimal" -> return PrimitiveType.NUMBER
         }
         val shell = typeReferenceForBinaryName(binaryName)
-        if (binaryName in resolving || referenceDepth > 0) {
+        if (binaryNameKey(binaryName) in resolving || referenceDepth > 0) {
             return JavaInstanceType(shell)
         }
-        val dexClass = dexByName[binaryName] ?: return JavaInstanceType(shell)
+        val dexClass = dexByName[binaryName]
+            ?: dexByName[binaryNameKey(binaryName)]
+            ?: dexByName[binaryName.replace('.', '/')]
+            ?: return JavaInstanceType(shell)
         return JavaInstanceType(
             javaClassTypeFor(
                 cls = dexClass,
                 dexByName = dexByName,
-                resolving = resolving + binaryName,
+                resolving = resolving + binaryNameKey(binaryName),
                 referenceDepth = referenceDepth + 1
             )
         )
