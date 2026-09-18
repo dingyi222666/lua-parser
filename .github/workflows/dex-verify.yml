@@ -58,6 +58,7 @@ jobs:
       - name: Run dex test slices
         run: |
           export PATH="$JAVA_HOME/bin:$PATH"
+          chmod +x ./gradlew
           ./gradlew jvmTest --parallel \
             --tests "interop.dex.*" \
             --tests "interop.jvm.Dex*" \
