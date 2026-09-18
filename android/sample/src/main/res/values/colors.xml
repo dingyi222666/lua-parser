@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Window chrome only; the editor's real palette comes from the TextMate
+         theme assets/textmate/lua-dark.json via TextMateColorScheme. -->
+    <color name="editor_background">#1E1F22</color>
+</resources>

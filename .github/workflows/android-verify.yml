@@ -63,6 +63,17 @@ jobs:
           chmod +x ./gradlew
           ./gradlew :android:assembleRelease :android:androidReleaseJar --parallel
 
+      # Also builds the sample app (includes sample app APK, android/sample).
+      # Activates when the sample-app lane lands: :android:sample is not yet in
+      # settings.gradle.kts, so this step fails (intentionally, no always-pass
+      # guard) until that lane adds android/sample/build.gradle.kts + the
+      # settings include. Kept plain so it is a real gate, not a no-op.
+      - name: Assemble sample app (includes sample app)
+        run: |
+          export PATH="$JAVA_HOME/bin:$PATH"
+          chmod +x ./gradlew
+          ./gradlew :android:sample:assembleDebug --parallel
+
       - name: Stop Gradle daemons
         if: always()
         # Scoped cleanup: `gradlew --stop` stops only the daemons registered

@@ -46,7 +46,7 @@
 //         entry points are usable without any copying.
 //      2. Plain AAR copy: download the android-release-aar artifact from the
 //         android-verify workflow, drop it into app/libs/, and re-declare the
-//         compile deps by hand (lsp4j 0.23.1 x2, gson 2.11.0, kotlin-stdlib
+//         compile deps by hand (lsp4j 0.24.0 x2, gson 2.11.0, kotlin-stdlib
 //         2.2.0) — a bare AAR carries no POM. R8 rules ship inside the AAR
 //         via consumerProguardFiles(proguard-consumer.pro).
 //     The sora-editor integration (editor-lsp over LocalSocket) lives in the
@@ -202,8 +202,21 @@ dependencies {
     // api(): mirrors root jvmMain — lsp4j types are part of the public
     // LuaLanguageService surface (Hover, CompletionList, ...), so embedders
     // need them at compile time.
-    api("org.eclipse.lsp4j:org.eclipse.lsp4j:0.23.1")
-    api("org.eclipse.lsp4j:org.eclipse.lsp4j.jsonrpc:0.23.1")
+    //
+    // 0.24.0 (mirrors the root jvmMain pin): sora-editor editor-lsp 0.23.6 —
+    // the sample app's LSP connection layer — declares lsp4j 0.24.0 as a
+    // RUNTIME-only dependency (Gradle module metadata variant
+    // releaseVariantReleaseRuntimePublication; POM <scope>runtime</scope>), so
+    // a consumer of both artifacts resolves 0.24.0 at runtime regardless.
+    // Compiling against the same version avoids a compile(0.23.1)/run(0.24.0)
+    // skew. Verified binary-compatible with 0.23.1 for every class this repo
+    // imports (javap member-signature diff: only the internal
+    // adapters.InlineValueResponseAdapter changed). Do NOT jump to 1.0.0:
+    // Diagnostic.message -> Either<String,MarkupContent>,
+    // TextDocumentEdit.edits -> Either<...,SnippetTextEdit> and removals of
+    // deprecated Either/FormattingOptions APIs require a source migration.
+    api("org.eclipse.lsp4j:org.eclipse.lsp4j:0.24.0")
+    api("org.eclipse.lsp4j:org.eclipse.lsp4j.jsonrpc:0.24.0")
 
     // The root project never pins gson (it resolves transitively through
     // lsp4j.jsonrpc's [2.9.1,3.0) range). A bare AAR loses that POM metadata,
