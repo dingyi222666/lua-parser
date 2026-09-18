@@ -1,5 +1,6 @@
 package io.github.dingyi222666.luaparser.interop.jvm
 
+import io.github.dingyi222666.luaparser.interop.dex.DexClass
 import io.github.dingyi222666.luaparser.semantic.WorkspaceImportedSymbol
 import io.github.dingyi222666.luaparser.semantic.types.model.ArrayType
 import io.github.dingyi222666.luaparser.semantic.types.model.ClassType
@@ -77,6 +78,13 @@ class JvmClassModuleProvider(
     // thousands of absent names (import guesses, wildcard expansions) dominated analysis
     // time. Keyed per resolved classloader string so a classpath change re-probes.
     private val classLoadMisses = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
+    // Dex mounting (libs/classes.dex): parse caching is process-wide in DexLibraryMounter;
+    // this instance map additionally registers libraries discovered through bare
+    // `import "libs/classes.dex"` source imports so later bindClass/newInstance dotted
+    // targets resolve against them within the same provider (workspace update) lifetime —
+    // mirroring the AndroLua runtime where importing a dex loads it.
+    private val mountedDexLibraries = linkedMapOf<String, DexLibraryMounter.DexLibrary>()
+    private val dexLibrariesCache = linkedMapOf<String, List<DexLibraryMounter.DexLibrary>>()
 
     private fun loadClassOrNull(className: String, classLoader: ClassLoader): Class<*>? {
         val key = className + '#' + System.identityHashCode(classLoader)
@@ -98,15 +106,70 @@ class JvmClassModuleProvider(
         val normalized = configuration.normalized(defaultImportPrefixes)
         val classLoader = normalized.classLoader ?: classLoaderFor(normalized)
         val requested = requestedClassLoads(normalized, classLoader)
-        if (requested.isEmpty()) {
+        val bareDexTargets = bareDexLibraryTargets(normalized)
+        if (requested.isEmpty() && bareDexTargets.isEmpty()) {
             return emptyMap()
         }
 
-        return requested.mapNotNull { request ->
-            // Never invent framework members: only mount classes that Class.forName can load.
-            loadClassOrNull(request.className, request.classLoader)
-                ?.let(::providerForClass)
-        }.associate { it.first to it.second }
+        val providers = linkedMapOf<VirtualPath, WorkspaceSnapshot.FileSnapshot>()
+        requested.forEach { request ->
+            // Never invent framework members: only mount classes that Class.forName can
+            // load — or that a configured/imported dex library actually declares (dex
+            // classes cannot load reflectively; they mount through DexClassModelAdapter).
+            val provider = request.dexLibrary
+                ?.let { dex ->
+                    dex.classForBinaryName(request.className.replace('.', '/'))
+                        ?.let { cls -> providerForDexClass(dex, cls) }
+                }
+                ?: loadClassOrNull(request.className, request.classLoader)?.let(::providerForClass)
+            if (provider != null) {
+                providers[provider.first] = provider.second
+            }
+        }
+        // Bare `import "libs/classes.dex"` targets mount the library module plus a
+        // provider per declared class (the packageMemberClassProvidersFor pattern) so
+        // simple-name aliases resolve through the workspace provider graph.
+        bareDexTargets.forEach { target -> mountDexLibraryProviders(target, providers) }
+        return providers
+    }
+
+    /**
+     * Mount providers for bare dex library import targets (`import "libs/classes.dex"`).
+     *
+     * Fed by [JvmWorkspaceEngine.extraProviders] with configured imports, document
+     * source imports and AST import targets; this provider re-filters to bare,
+     * existing, mountable dex/apk paths. Workspace `libs/` directories are never
+     * auto-scanned — a dex library mounts only when explicitly named (classpath
+     * entry or import target), matching the existing reflective classpath contract.
+     */
+    internal fun dexLibraryProvidersFor(
+        importTargets: Collection<String>,
+        configuration: JvmWorkspaceConfiguration
+    ): Map<VirtualPath, WorkspaceSnapshot.FileSnapshot> {
+        configuration.normalized(defaultImportPrefixes)
+        val providers = linkedMapOf<VirtualPath, WorkspaceSnapshot.FileSnapshot>()
+        importTargets.forEach { importText ->
+            val parsed = parseImportTarget(importText) ?: return@forEach
+            if (parsed.pathPrefix != null) {
+                return@forEach
+            }
+            mountDexLibraryProviders(parsed.className, providers)
+        }
+        return providers
+    }
+
+    private fun mountDexLibraryProviders(
+        target: String,
+        providers: MutableMap<VirtualPath, WorkspaceSnapshot.FileSnapshot>
+    ) {
+        val library = bareDexLibrary(target)?.let { DexLibraryMounter.libraryFor(it) } ?: return
+        registerDexLibrary(library)
+        val (libraryPath, librarySnapshot) = providerForDexLibrary(library, target.trim())
+        providers.putIfAbsent(libraryPath, librarySnapshot)
+        library.classes.forEach { cls ->
+            val (classPath, classSnapshot) = providerForDexClass(library, cls)
+            providers.putIfAbsent(classPath, classSnapshot)
+        }
     }
 
     /**
@@ -227,6 +290,9 @@ class JvmClassModuleProvider(
     internal fun importedSymbolForTarget(importText: String, configuration: JvmWorkspaceConfiguration): WorkspaceImportedSymbol? {
         val normalized = configuration.normalized(defaultImportPrefixes)
         val classLoader = classLoaderForPackageEnumeration(normalized)
+        // 0) bare dex library target (`import "libs/classes.dex"`) → library module symbol
+        //    with every declared class keyed by simple name.
+        importedDexLibrarySymbol(importText, normalized)?.let { return it }
         // 1) wildcard package  2) loadable class  3) package-name alias when package enumerates.
         return when {
             wildcardPackageName(importText) != null -> importedPackageSymbol(importText, normalized, classLoader)
@@ -254,15 +320,55 @@ class JvmClassModuleProvider(
             configuration = configuration,
             allowPackageEnumeration = false
         )
-        val clazz = loads.firstOrNull()?.let { request ->
-            loadClassOrNull(request.className, request.classLoader)
-        } ?: return null
+        val request = loads.firstOrNull() ?: return null
+        // Dex classes cannot Class.forName: mount through the parsed dex library instead.
+        request.dexLibrary?.let { dex ->
+            val cls = dex.classForBinaryName(request.className.replace('.', '/')) ?: return null
+            registerDexLibrary(dex)
+            val moduleType = dex.moduleTypeFor(cls)
+            val (providerPath, _) = providerForDexClass(dex, cls)
+            return WorkspaceImportedSymbol(
+                // Alias by the std-collision-guarded module name so a dex `R$string`
+                // class never activates the bare "string" Lua std alias.
+                alias = moduleType.moduleName,
+                moduleName = moduleType.moduleName,
+                providerPath = providerPath,
+                moduleType = moduleType
+            )
+        }
+        val clazz = loadClassOrNull(request.className, request.classLoader) ?: return null
         val (providerPath, _) = providerForClass(clazz)
         return WorkspaceImportedSymbol(
             alias = clazz.simpleName,
             moduleName = clazz.simpleName,
             providerPath = providerPath,
             moduleType = moduleTypeFor(clazz)
+        )
+    }
+
+    /**
+     * Bare dex library import target (`import "libs/classes.dex"`): mounts the library
+     * module (fields keyed by class simple name) and registers the library so later
+     * dotted/simple-name targets resolve against it. Prefix forms
+     * (`libs/classes.dex:com.foo.Bar`) resolve per-class via [resolveDexClassLoad] instead.
+     */
+    private fun importedDexLibrarySymbol(
+        importText: String,
+        configuration: JvmWorkspaceConfiguration
+    ): WorkspaceImportedSymbol? {
+        val parsed = parseImportTarget(importText) ?: return null
+        if (parsed.pathPrefix != null) {
+            return null
+        }
+        val library = bareDexLibrary(parsed.className)?.let { DexLibraryMounter.libraryFor(it) } ?: return null
+        registerDexLibrary(library)
+        val (providerPath, snapshot) = providerForDexLibrary(library, parsed.className.trim())
+        val moduleType = snapshot.moduleExportSurface?.moduleType ?: return null
+        return WorkspaceImportedSymbol(
+            alias = moduleType.moduleName,
+            moduleName = moduleType.moduleName,
+            providerPath = providerPath,
+            moduleType = moduleType
         )
     }
 
@@ -368,6 +474,11 @@ class JvmClassModuleProvider(
             if (asClass != null) {
                 return asClass
             }
+            // Dex classes cannot Class.forName: resolve dotted targets against the
+            // prefix-named dex library first (`libs/classes.dex:com.foo.Bar`), then every
+            // visible dex library (classpath entries + bare-imported libraries).
+            // Reflection keeps precedence — this only runs after every Class.forName miss.
+            resolveDexClassLoad(parsed, target, configuration)?.let { return listOf(it) }
             // Package-name alias support (import "android.widget") only when explicitly allowed.
             // Default class-load paths keep this off so providersFor does not reflect whole packages.
             if (allowPackageEnumeration) {
@@ -396,7 +507,117 @@ class JvmClassModuleProvider(
                     ?.name
                     ?.let { listOf(ResolvedClassLoad(it, targetClassLoader)) }
             }
-        }.orEmpty()
+        }.orEmpty().ifEmpty {
+            // Dex simple-name fallback for short AndroLua names (`bindClass("Greeter")`
+            // after `import "libs/classes.dex"`): unambiguous bare aliases only, never
+            // Lua std module names.
+            listOfNotNull(resolveDexSimpleNameLoad(target, configuration))
+        }
+    }
+
+    /**
+     * Dotted-target dex resolution: a dex library path prefix scopes the lookup to that
+     * library (`libs/classes.dex:com.foo.Bar`); otherwise every visible dex library
+     * ([dexLibrariesFor]) is consulted. Returns null when the target declares nothing.
+     */
+    private fun resolveDexClassLoad(
+        parsed: ImportTarget,
+        target: String,
+        configuration: JvmWorkspaceConfiguration
+    ): ResolvedClassLoad? {
+        parsed.pathPrefix?.trim()?.takeIf(String::isNotEmpty)?.let { prefix ->
+            DexLibraryMounter.libraryFor(File(prefix))?.let { scoped ->
+                scoped.classForTarget(target)?.let { cls ->
+                    return dexResolvedClassLoad(cls, scoped)
+                }
+            }
+        }
+        return dexLibrariesFor(configuration).firstNotNullOfOrNull { library ->
+            library.classForTarget(target)?.let { cls -> dexResolvedClassLoad(cls, library) }
+        }
+    }
+
+    /**
+     * Short-name dex resolution (no dots/slashes): unambiguous simple aliases only;
+     * Lua std module names never resolve bare (string/io/... stay library names).
+     */
+    private fun resolveDexSimpleNameLoad(
+        target: String,
+        configuration: JvmWorkspaceConfiguration
+    ): ResolvedClassLoad? {
+        if (target.isBlank() || '.' in target || '/' in target) {
+            return null
+        }
+        return dexLibrariesFor(configuration).firstNotNullOfOrNull { library ->
+            library.classForSimpleAlias(target)?.let { cls -> dexResolvedClassLoad(cls, library) }
+        }
+    }
+
+    /** Dex loads key [ResolvedClassLoad.className] by the dotted binary name. */
+    private fun dexResolvedClassLoad(
+        cls: DexClass,
+        library: DexLibraryMounter.DexLibrary
+    ): ResolvedClassLoad {
+        return ResolvedClassLoad(
+            className = cls.binaryName.replace('/', '.'),
+            classLoader = baseClassLoader,
+            dexLibrary = library
+        )
+    }
+
+    /**
+     * Bare dex library path target (`libs/classes.dex`, absolute `.apk` path), or null.
+     * Bare = no `path:Class` separator; the extension must be dex/apk and the file must
+     * exist. Workspace `libs/` directories are never auto-scanned by path — dex libraries
+     * mount only when explicitly named (mirrors the reflective classpath contract).
+     */
+    private fun bareDexLibrary(target: String): File? {
+        val trimmed = target.trim()
+        if (trimmed.isEmpty() || ':' in trimmed) {
+            return null
+        }
+        val file = File(trimmed)
+        return file.takeIf(DexLibraryMounter::isMountableDexLibrary)
+    }
+
+    private fun bareDexLibraryTargets(normalized: JvmWorkspaceConfiguration): List<String> {
+        return (normalized.classes.asSequence() + normalized.androluaImports.asSequence())
+            .filter { bareDexLibrary(it) != null }
+            .map(String::trim)
+            .distinct()
+            .toList()
+    }
+
+    private fun registerDexLibrary(library: DexLibraryMounter.DexLibrary) {
+        mountedDexLibraries.putIfAbsent(library.cacheIdentity, library)
+    }
+
+    /**
+     * Dex libraries visible to resolution: configured classpath dex/apk entries, bare
+     * dex paths named in classes/androluaImports, plus libraries registered by bare
+     * `import "libs/classes.dex"` source imports during this provider instance.
+     */
+    private fun dexLibrariesFor(configuration: JvmWorkspaceConfiguration): List<DexLibraryMounter.DexLibrary> {
+        val cacheKey = buildString {
+            configuration.classpathEntries.forEach { append(it).append(';') }
+            append('#')
+            configuration.classes.forEach { append(it).append(';') }
+            append('#')
+            configuration.androluaImports.forEach { append(it).append(';') }
+        }
+        dexLibrariesCache[cacheKey]?.let { configured ->
+            return (configured + mountedDexLibraries.values).distinctBy(DexLibraryMounter.DexLibrary::cacheIdentity)
+        }
+        val configured = buildList {
+            configuration.classpathEntries.forEach { entry ->
+                DexLibraryMounter.libraryFor(File(entry.trim()))?.let(::add)
+            }
+            (configuration.classes + configuration.androluaImports).forEach { target ->
+                bareDexLibrary(target)?.let { path -> DexLibraryMounter.libraryFor(path)?.let(::add) }
+            }
+        }.distinctBy(DexLibraryMounter.DexLibrary::cacheIdentity)
+        dexLibrariesCache[cacheKey] = configured
+        return (configured + mountedDexLibraries.values).distinctBy(DexLibraryMounter.DexLibrary::cacheIdentity)
     }
 
     /**
@@ -559,6 +780,11 @@ class JvmClassModuleProvider(
     ): ClassLoader? {
         val pathPrefix = importTarget.pathPrefix ?: return fallback
         val entry = configuration.prefixedImportClasspathEntry(pathPrefix) ?: return fallback
+        // Dex/apk prefix entries carry Dalvik bytecode a URLClassLoader cannot define:
+        // the scoped lookup in resolveDexClassLoad resolves them against the fallback.
+        if (DexLibraryMounter.isMountableDexLibrary(entry)) {
+            return fallback
+        }
         return cachedImportTargetClassLoader(entry, fallback) ?: fallback
     }
 
@@ -620,7 +846,10 @@ class JvmClassModuleProvider(
 
     private data class ResolvedClassLoad(
         val className: String,
-        val classLoader: ClassLoader
+        val classLoader: ClassLoader,
+        // Non-null when className resolved from a dex library (Class.forName can never
+        // load it); providersFor/importedClassSymbol mount through DexClassModelAdapter.
+        val dexLibrary: DexLibraryMounter.DexLibrary? = null
     )
 
     private fun packageModuleTypeFor(
@@ -1154,6 +1383,67 @@ class JvmClassModuleProvider(
         val moduleType = shallowModuleTypeFor(clazz)
         val provider = classProviderSnapshot(clazz, moduleType)
         shallowClassProviderCache[cacheKey] = provider
+        return provider
+    }
+
+    /**
+     * Provider snapshot for one dex class, mounted at the same `__jvm__/classes/...`
+     * path convention as reflected classes so workspace path recovery, export lookup
+     * and the fingerprint machinery work unchanged. Module tables come from
+     * [DexClassModelAdapter] (same `__class`/`__call`/static/instance shape).
+     */
+    private fun providerForDexClass(
+        library: DexLibraryMounter.DexLibrary,
+        cls: DexClass
+    ): Pair<VirtualPath, WorkspaceSnapshot.FileSnapshot> {
+        val cacheKey = "dex#${library.cacheIdentity}#${cls.binaryName}"
+        fullClassProviderCache[cacheKey]?.let { return it }
+        val moduleType = library.moduleTypeFor(cls)
+        val provider = moduleProviderSnapshot(
+            providerPath = VirtualPath.of("__jvm__/classes/${cls.binaryName}.lua"),
+            providerKind = "dex class",
+            claimName = cls.binaryName.replace('/', '.'),
+            providedModuleNames = linkedSetOf(moduleType.moduleName),
+            moduleType = moduleType
+        )
+        fullClassProviderCache[cacheKey] = provider
+        return provider
+    }
+
+    /**
+     * Library module provider for a bare dex import target (`import "libs/classes.dex"`):
+     * module fields keyed by class simple name → the class module table, mirroring the
+     * package-module shape (first-by-sorted-binary-name wins simple-name collisions).
+     * No `__class` field, so the resolver never mistakes it for a class provider.
+     */
+    private fun providerForDexLibrary(
+        library: DexLibraryMounter.DexLibrary,
+        target: String
+    ): Pair<VirtualPath, WorkspaceSnapshot.FileSnapshot> {
+        val cacheKey = "dexlib#${library.cacheIdentity}#$target"
+        packageProviderCache[cacheKey]?.let { return it }
+        val moduleAlias = File(target).nameWithoutExtension.ifBlank { target }
+        val members = linkedMapOf<String, Type>()
+        library.classes.sortedBy(DexClass::binaryName).forEach { cls ->
+            val simpleName = cls.binaryName.substringAfterLast('/')
+            if (simpleName.isEmpty() || simpleName in members) {
+                return@forEach
+            }
+            members[simpleName] = library.moduleTypeFor(cls)
+        }
+        val moduleType = ModuleType(
+            moduleName = moduleAlias,
+            fields = members.toSortedMap(),
+            indexSignature = ModuleType.IndexSignature(PrimitiveType.STRING, UnknownType)
+        )
+        val provider = moduleProviderSnapshot(
+            providerPath = VirtualPath.of("__jvm__/dex/$target.lua"),
+            providerKind = "dex library",
+            claimName = target,
+            providedModuleNames = linkedSetOf(moduleAlias),
+            moduleType = moduleType
+        )
+        packageProviderCache[cacheKey] = provider
         return provider
     }
 

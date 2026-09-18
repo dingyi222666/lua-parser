@@ -88,7 +88,9 @@ data class JvmWorkspaceConfiguration(
     internal fun prefixedImportClasspathEntry(pathPrefix: String): File? {
         val file = File(pathPrefix.trim())
         return file.takeIf { entry ->
-            entry.isDirectory || entry.isFile && entry.extension.equals("jar", ignoreCase = true)
+            entry.isDirectory ||
+                entry.isFile && entry.extension.equals("jar", ignoreCase = true) ||
+                DexLibraryMounter.isMountableDexLibrary(entry)
         }
     }
 
@@ -96,10 +98,17 @@ data class JvmWorkspaceConfiguration(
         if (prefixedImportClasspathEntry(pathPrefix) != null) {
             return null
         }
-        return if (looksLikeDexImportPrefix(pathPrefix)) {
-            PrefixedImportUnsupportedReason.ANDROID_DEX_UNSUPPORTED
+        if (!looksLikeDexImportPrefix(pathPrefix)) {
+            return PrefixedImportUnsupportedReason.NOT_JVM_CLASSPATH_ENTRY
+        }
+        // Real .dex/.apk files resolve as classpath entries above and mount through
+        // DexLibraryMounter; only non-resolving dex-ish prefixes stay diagnosed here.
+        // Optimized device artifacts (odex/vdex) can never mount and keep their own reason.
+        val extension = File(pathPrefix.trim()).extension.lowercase()
+        return if (extension in DexLibraryMounter.ODEX_LIKE_EXTENSIONS) {
+            PrefixedImportUnsupportedReason.ANDROID_ODEX_UNSUPPORTED
         } else {
-            PrefixedImportUnsupportedReason.NOT_JVM_CLASSPATH_ENTRY
+            PrefixedImportUnsupportedReason.ANDROID_DEX_UNSUPPORTED
         }
     }
 
@@ -564,9 +573,20 @@ data class JvmWorkspaceConfiguration(
 internal enum class PrefixedImportUnsupportedReason(
     val diagnosticDetail: String
 ) {
+    /**
+     * Non-resolving dex/apk prefixes only: an EXISTING .dex/.apk file mounts
+     * through [DexLibraryMounter] and never reaches this reason. Kept for
+     * literal `dexPath`-style names and dex paths that do not resolve to a
+     * readable file on the current host.
+     */
     ANDROID_DEX_UNSUPPORTED(
-        "Android dex/apk import prefixes are not loadable by the JVM reflection provider; " +
-            "convert the dex input to a JVM jar or add a class-directory root to jvm.classpath."
+        "Dex import prefixes only mount when they name an existing .dex or .apk file " +
+            "(via jvm.classpath or a path:Class import); this prefix did not resolve to a " +
+            "readable dex/apk file."
+    ),
+    ANDROID_ODEX_UNSUPPORTED(
+        "Android optimized dex (odex/vdex) is a device build artifact the JVM reflection " +
+            "provider cannot load; supply the original classes.dex or a jar instead."
     ),
     NOT_JVM_CLASSPATH_ENTRY(
         "Import prefixes must name an existing JVM classpath directory or jar."

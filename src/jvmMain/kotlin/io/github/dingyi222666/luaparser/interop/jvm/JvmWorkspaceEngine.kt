@@ -149,6 +149,14 @@ class JvmWorkspaceEngine(
             packageTargets,
             resolvedConfiguration
         )
+        // Bare `import "libs/classes.dex"` library mounts (library module + per-class
+        // providers) fed from configured imports, document source imports and AST targets.
+        // The provider re-filters to bare existing dex/apk paths; nothing mounts by
+        // directory scan alone.
+        val dexLibraryProviders = classModuleProvider.dexLibraryProvidersFor(
+            collectDexLibraryImportTargets(baseConfiguration, documentFacts, astImportTargets),
+            resolvedConfiguration
+        )
         val providerConfiguration = if (sourceDiscoveredClasses.isEmpty()) {
             resolvedConfiguration
         } else {
@@ -157,9 +165,11 @@ class JvmWorkspaceEngine(
                     .toCollection(linkedSetOf())
             )
         }
-        // Package modules + shallow class providers first; explicit/full providers win on
-        // path collision so bindClass / configured classes keep deep reflection surfaces.
-        return packageProviders + packageMemberClassProviders + classModuleProvider.providersFor(providerConfiguration)
+        // Package modules + shallow class providers + dex library mounts first; explicit/
+        // full providers win on path collision so bindClass / configured classes keep deep
+        // reflection surfaces.
+        return packageProviders + packageMemberClassProviders + dexLibraryProviders +
+            classModuleProvider.providersFor(providerConfiguration)
     }
 
     internal override fun workspaceContext(
@@ -564,6 +574,27 @@ class JvmWorkspaceEngine(
     private fun stringLiteral(expression: ExpressionNode?): String? {
         val constant = expression as? ConstantNode ?: return null
         return constant.takeIf { it.constantType == ConstantNode.TYPE.STRING }?.stringOf()
+    }
+
+    /**
+     * Candidate import targets for dex library mounts (`import "libs/classes.dex"`):
+     * configured imports, document source imports and AST import targets. The provider
+     * re-filters to bare, existing dex/apk paths — this set is only the candidate pool.
+     */
+    private fun collectDexLibraryImportTargets(
+        configuration: JvmWorkspaceConfiguration,
+        documentFacts: Map<VirtualPath, DocumentFacts>,
+        astImportTargets: Collection<String>
+    ): Set<String> {
+        return buildSet {
+            configuration.normalized().androluaImports.forEach(::add)
+            documentFacts.values.forEach { facts ->
+                facts.sourceImports.forEach { importFact ->
+                    add(importFact.target)
+                }
+            }
+            astImportTargets.forEach(::add)
+        }
     }
 
     private fun collectWildcardImportTargets(
