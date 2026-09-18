@@ -82,10 +82,10 @@ object DexClassModelAdapter {
      *
      * With an empty [dexClasses] every `L...;` member reference is a
      * name-only shell. With a dex set, `L...;` references whose binary name
-     * is present in [dexClasses] hydrate a one-level member surface (the
-     * referenced class carries its own members; its own references stay
-     * shells), mirroring the provider's bounded expansion. Super/interface
-     * edges stay name-only references in both modes.
+     * is present in [dexClasses] hydrate member-carrying surfaces
+     * transitively over the same-dex reference graph; cyclic references
+     * degrade to shells at the repeated key (resolving-stack cycle guard).
+     * Super/interface edges stay name-only references in both modes.
      */
     fun toJavaClassType(cls: DexClass, dexClasses: Collection<DexClass> = emptyList()): JavaClassType {
         return javaClassTypeFor(
@@ -164,10 +164,11 @@ object DexClassModelAdapter {
         }
         val javaName = javaTypeNameFor(cls.binaryName)
         // Members of cls resolve L-descriptors with cls itself on the resolving
-        // stack so self-referential fields/methods degrade to shells, and one
-        // level past the adaptation target (referenceDepth > 0) every further
-        // reference stays a shell — the same bounded-surface policy as the
-        // provider's shallow wildcard modules.
+        // stack so self-referential fields/methods degrade to shells. In-set
+        // references beyond cls keep hydrating (transitively); termination is
+        // guaranteed because hydration requires the target key to be absent
+        // from [resolving] and every javaClassTypeFor entry grows the set its
+        // members resolve against.
         val memberResolving = resolving + clsKey
         val constructors = JavaOverloadSet(constructorTypesFor(cls, javaName, dexByName, memberResolving, referenceDepth))
         val staticMembers = linkedMapOf<String, JavaStaticMemberType>()
@@ -449,13 +450,17 @@ object DexClassModelAdapter {
      * CharSequence family stay [PrimitiveType.STRING] on the `L` branch so dex
      * strings behave exactly like reflected android.jar strings. Every other
      * `L<binary>;` becomes [JavaInstanceType] over a name-only shell — or, when
-     * the binary name is in the same dex set at [referenceDepth] 0, over a
-     * one-level member-carrying [JavaClassType]. `[X` nests single-rank
-     * [JavaArrayType] wrappers. Malformed descriptors degrade to [UnknownType].
+     * the binary name is in the same dex set, over a member-carrying
+     * [JavaClassType] hydrated transitively across the in-set reference graph.
+     * `[X` nests single-rank [JavaArrayType] wrappers. Malformed descriptors
+     * degrade to [UnknownType].
      *
      * [resolving] holds binary names whose members are currently being built
-     * (cycle guard so self-referential dex classes terminate); depths above 0
-     * stop hydrating further dex-set members.
+     * (normalized via [binaryNameKey]): a descriptor whose key is already on
+     * the stack degrades to a shell, so self-referential and
+     * mutually-referential dex classes terminate. [referenceDepth] is
+     * call-site threading only — hydration is bounded by the resolving stack,
+     * not a depth budget.
      */
     private fun descriptorToType(
         descriptor: String,
@@ -531,14 +536,19 @@ object DexClassModelAdapter {
             ?: dexByName[binaryNameKey(binaryName)]
             ?: dexByName[binaryName.replace('.', '/')]
             ?: return JavaInstanceType(shell)
-        // Same-dex-set references carry their member surface (one-hop hydration
-        // is the product contract); the cycle guard above, not a depth budget,
-        // bounds recursion — a cycle degrades to a shell at the repeated key.
+        // Same-dex-set references carry their member surface (hydration is
+        // transitive for in-set classes); the cycle guard above, not a depth
+        // budget, bounds recursion — a cycle degrades to a shell at the
+        // repeated key. The referenced class's key is deliberately NOT
+        // pre-added to [resolving]: javaClassTypeFor itself puts it on the
+        // stack while building that class's members, and pre-adding it here
+        // would make the freshly-resolved class see itself as "resolving" and
+        // immediately degrade to a member-less shell.
         return JavaInstanceType(
             javaClassTypeFor(
                 cls = dexClass,
                 dexByName = dexByName,
-                resolving = resolving + binaryNameKey(binaryName),
+                resolving = resolving,
                 referenceDepth = 0
             )
         )
