@@ -38,6 +38,8 @@ class PrefixedDexImportUnsupportedTddTest {
 
     private val dexReasonDetail =
         PrefixedImportUnsupportedReason.ANDROID_DEX_UNSUPPORTED.diagnosticDetail
+    private val odexReasonDetail =
+        PrefixedImportUnsupportedReason.ANDROID_ODEX_UNSUPPORTED.diagnosticDetail
     private val nonClasspathDetail =
         PrefixedImportUnsupportedReason.NOT_JVM_CLASSPATH_ENTRY.diagnosticDetail
 
@@ -118,9 +120,16 @@ class PrefixedDexImportUnsupportedTddTest {
             diagnostics.map { it.pathPrefix }.toSet()
         )
         diagnostics.forEach { diagnostic ->
+            // odex/vdex carry their own reason (device build artifacts can never
+            // mount); dex/apk keep the plain dex reason.
+            val expectedDetail = when {
+                diagnostic.importText.endsWith(".odex:java.lang.String") ||
+                    diagnostic.importText.endsWith(".vdex:java.util.Locale") -> odexReasonDetail
+                else -> dexReasonDetail
+            }
             assertTrue(
-                diagnostic.message.contains(dexReasonDetail),
-                "Expected ANDROID_DEX_UNSUPPORTED detail in message for ${diagnostic.importText}; " +
+                diagnostic.message.contains(expectedDetail),
+                "Expected the prefixed-import reason detail in message for ${diagnostic.importText}; " +
                     "message='${diagnostic.message}'"
             )
             assertTrue(

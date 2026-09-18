@@ -13,6 +13,7 @@
  *   PORT=3099
  *   JAVA_HOME=...      JDK used to run Gradle
  *   ANDROID_JAR=...   optional override
+ *   DEMO_DEX=...       optional dex classpath override (default: workspace/libs/classes.dex)
  *   LUA_PARSER_ROOT=... repo root (auto-detected)
  */
 import http from 'node:http';
@@ -45,6 +46,21 @@ function findRepoRoot() {
 
 const REPO_ROOT = findRepoRoot();
 const PORT = Number(process.env.PORT || 3099);
+
+/**
+ * Dex library shipped with the demo workspace. The bridge injects its path as a
+ * "jvm.classpath" entry on workspace/didChangeConfiguration (see injectDexClasspath
+ * below and the README "Dex support" section); the LSP mounts it through
+ * JvmWorkspaceConfiguration/DexLibraryMounter.
+ */
+const DEMO_DEX_PATH = path.join(WORKSPACE_DIR, 'libs', 'classes.dex');
+
+function resolveDexClasspath() {
+  if (process.env.DEMO_DEX && fs.existsSync(process.env.DEMO_DEX)) {
+    return path.resolve(process.env.DEMO_DEX);
+  }
+  return fs.existsSync(DEMO_DEX_PATH) ? DEMO_DEX_PATH : '';
+}
 
 function resolveAndroidJar() {
   if (process.env.ANDROID_JAR && fs.existsSync(process.env.ANDROID_JAR)) {
@@ -218,6 +234,47 @@ function frameMessage(obj) {
   return Buffer.concat([header, body]);
 }
 
+/**
+ * Dex support (see README "Dex support"): the browser client pushes workspace
+ * settings via workspace/didChangeConfiguration but only knows the
+ * jvm.androidJar / jvm.importPrefixes / androlua.imports keys. The LSP also
+ * reads the exact key "jvm.classpath" from those settings
+ * (LuaWorkspaceService.parseWorkspaceMetadata -> JvmWorkspaceConfiguration,
+ * entries accepted when DexLibraryMounter.isMountableDexLibrary passes), so the
+ * bridge merges the demo's libs/classes.dex into every forwarded
+ * didChangeConfiguration. Additive-only merge: a client-provided jvm.classpath
+ * is preserved (the demo entry is appended when missing), and without the
+ * fixture the message is forwarded untouched.
+ */
+function injectDexClasspath(message) {
+  const dexPath = resolveDexClasspath();
+  if (!dexPath) return message;
+  if (
+    message &&
+    message.method === 'workspace/didChangeConfiguration' &&
+    message.params &&
+    typeof message.params.settings === 'object' &&
+    message.params.settings !== null
+  ) {
+    const settings = message.params.settings;
+    const current = settings['jvm.classpath'];
+    if (current == null || current === '') {
+      settings['jvm.classpath'] = dexPath;
+    } else if (Array.isArray(current)) {
+      if (!current.some((entry) => String(entry).trim() === dexPath)) {
+        settings['jvm.classpath'] = [...current, dexPath];
+      }
+    } else if (typeof current === 'string') {
+      // The LSP parses string values as newline-separated entries.
+      const entries = current.split('\n').map((entry) => entry.trim()).filter(Boolean);
+      if (!entries.includes(dexPath)) {
+        settings['jvm.classpath'] = [...entries, dexPath].join('\n');
+      }
+    }
+  }
+  return message;
+}
+
 function mime(filePath) {
   if (filePath.endsWith('.html')) return 'text/html; charset=utf-8';
   if (filePath.endsWith('.js')) return 'text/javascript; charset=utf-8';
@@ -229,12 +286,15 @@ function mime(filePath) {
 
 function apiInfo() {
   const androidJar = resolveAndroidJar();
+  const demoDex = resolveDexClasspath();
   return {
     repoRoot: REPO_ROOT,
     workspaceDir: WORKSPACE_DIR,
     workspaceUri: fileUri(WORKSPACE_DIR),
     androidJar,
     androidJarPresent: !!(androidJar && fs.existsSync(androidJar)),
+    demoDex,
+    demoDexPresent: !!(demoDex && fs.existsSync(demoDex)),
     sampleFiles: listWorkspaceFiles().map((f) => ({ name: f.name, uri: f.uri })),
     lspMain: 'io.github.dingyi222666.luaparser.lsp.LuaLanguageServerLauncherKt',
     lspLaunch: process.platform === 'win32'
@@ -425,7 +485,7 @@ wss.on('connection', (ws) => {
     let text = Buffer.isBuffer(data) ? data.toString('utf8') : String(data);
     try {
       const obj = JSON.parse(text);
-      lsp.child.stdin.write(frameMessage(obj));
+      lsp.child.stdin.write(frameMessage(injectDexClasspath(obj)));
     } catch {
       // Never forward unparseable bytes: raw writes would desync the Content-Length
       // framer and corrupt every subsequent message on the shared stream.
@@ -460,5 +520,6 @@ server.listen(PORT, '127.0.0.1', () => {
   console.log(`[monaco-lsp-demo] http://127.0.0.1:${PORT}/`);
   console.log(`[monaco-lsp-demo] workspace: ${info.workspaceDir}`);
   console.log(`[monaco-lsp-demo] android.jar: ${info.androidJar} present=${info.androidJarPresent}`);
+  console.log(`[monaco-lsp-demo] dex classpath: ${info.demoDex || '(none)'} present=${info.demoDexPresent}`);
   console.log(`[monaco-lsp-demo] repo: ${REPO_ROOT}`);
 });

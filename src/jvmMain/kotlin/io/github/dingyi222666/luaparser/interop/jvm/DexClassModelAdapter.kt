@@ -524,19 +524,22 @@ object DexClassModelAdapter {
             "java.math.BigDecimal" -> return PrimitiveType.NUMBER
         }
         val shell = typeReferenceForBinaryName(binaryName)
-        if (binaryNameKey(binaryName) in resolving || referenceDepth > 0) {
+        if (binaryNameKey(binaryName) in resolving) {
             return JavaInstanceType(shell)
         }
         val dexClass = dexByName[binaryName]
             ?: dexByName[binaryNameKey(binaryName)]
             ?: dexByName[binaryName.replace('.', '/')]
             ?: return JavaInstanceType(shell)
+        // Same-dex-set references carry their member surface (one-hop hydration
+        // is the product contract); the cycle guard above, not a depth budget,
+        // bounds recursion — a cycle degrades to a shell at the repeated key.
         return JavaInstanceType(
             javaClassTypeFor(
                 cls = dexClass,
                 dexByName = dexByName,
                 resolving = resolving + binaryNameKey(binaryName),
-                referenceDepth = referenceDepth + 1
+                referenceDepth = 0
             )
         )
     }
