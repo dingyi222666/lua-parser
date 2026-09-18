@@ -13,6 +13,8 @@ pluginManagement {
     // compiler behavior matches the desktop jvm() artifact exactly.
     plugins {
         id("com.android.library") version "8.5.2"
+        // Same AGP line as the library plugin above; used only by the sample app.
+        id("com.android.application") version "8.5.2"
         id("org.jetbrains.kotlin.android") version "2.2.0"
     }
 }
@@ -34,4 +36,10 @@ rootProject.name = "luaparser"
 // (see android/build.gradle.kts for the full rationale).
 include(":android")
 project(":android").projectDir = file("android")
+
+// Minimal sora-editor style sample app embedding the LSP over a LocalSocket
+// (see android/sample/README.md). NOT built by android-verify CI yet; the app
+// is compiled on demand via `:android:sample:assembleDebug`.
+include(":android:sample")
+project(":android:sample").projectDir = file("android/sample")
 

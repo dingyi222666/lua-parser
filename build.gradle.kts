@@ -147,8 +147,20 @@ kotlin {
             dependencies {
                 // api(): lsp4j types are part of the public LuaLanguageService surface
                 // (Hover, CompletionList, ...), so embedders need them at compile time.
-                api("org.eclipse.lsp4j:org.eclipse.lsp4j:0.23.1")
-                api("org.eclipse.lsp4j:org.eclipse.lsp4j.jsonrpc:0.23.1")
+                //
+                // 0.24.0 (not 0.23.1): sora-editor editor-lsp 0.23.6 (used by the Android
+                // sample app) pulls lsp4j 0.24.0 as a runtime dependency, so a consumer
+                // resolving both artifacts runs against 0.24.0. Compiling against the same
+                // version removes the compile/runtime skew. Verified binary-compatible:
+                // all 450 org.eclipse.lsp4j classes + jsonrpc have IDENTICAL member
+                // signatures vs 0.23.1 except the internal adapters.InlineValueResponseAdapter.
+                // Do NOT jump to lsp4j 1.0.0: it breaks source compat
+                // (Diagnostic.message -> Either<String,MarkupContent>,
+                // TextDocumentEdit.edits -> Either<...,SnippetTextEdit>, deprecated
+                // Either statics / FormattingOptions accessors removed) and needs a
+                // repo-wide source migration first.
+                api("org.eclipse.lsp4j:org.eclipse.lsp4j:0.24.0")
+                api("org.eclipse.lsp4j:org.eclipse.lsp4j.jsonrpc:0.24.0")
             }
         }
 

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- AppCompat theme: the only requirement is an AppCompat descendant since
+         MainActivity extends AppCompatActivity (same host as the sora sample). -->
+    <style name="Theme.LuaLspSample" parent="Theme.AppCompat.NoActionBar">
+        <item name="android:windowBackground">@color/editor_background</item>
+    </style>
+</resources>

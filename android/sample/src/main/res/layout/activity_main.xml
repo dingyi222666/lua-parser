@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The sora-editor CodeEditor fills the whole window; all wiring
+     (LspEditor attach, TextMate language/theme) happens in MainActivity. -->
+<io.github.rosemoe.sora.widget.CodeEditor xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/code_editor"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/editor_background" />

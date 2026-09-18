@@ -1,0 +1,78 @@
+{
+  "name": "Lua",
+  "scopeName": "source.lua",
+  "patterns": [
+    { "include": "#comment" },
+    { "include": "#string" },
+    { "include": "#number" },
+    { "include": "#constant" },
+    { "include": "#keyword" },
+    { "include": "#function-call" },
+    { "include": "#operator" },
+    { "include": "#identifier" }
+  ],
+  "repository": {
+    "comment": {
+      "patterns": [
+        {
+          "begin": "--\\[\\[",
+          "end": "\\]\\]",
+          "name": "comment.block.lua"
+        },
+        {
+          "begin": "--",
+          "end": "$",
+          "name": "comment.line.double-dash.lua"
+        }
+      ]
+    },
+    "string": {
+      "patterns": [
+        {
+          "begin": "\"",
+          "end": "\"",
+          "name": "string.quoted.double.lua",
+          "patterns": [
+            { "include": "#escape" }
+          ]
+        },
+        {
+          "begin": "'",
+          "end": "'",
+          "name": "string.quoted.single.lua",
+          "patterns": [
+            { "include": "#escape" }
+          ]
+        }
+      ]
+    },
+    "escape": {
+      "match": "\\\\(a|b|f|n|r|t|v|\\\\|\"|'|\\[|\\]|x[0-9a-fA-F]{2}|\\d{1,3})",
+      "name": "constant.character.escape.lua"
+    },
+    "number": {
+      "match": "\\b(0[xX][0-9a-fA-F]+|\\d+\\.?\\d*(?:[eE][+-]?\\d+)?)\\b",
+      "name": "constant.numeric.lua"
+    },
+    "constant": {
+      "match": "\\b(true|false|nil)\\b",
+      "name": "constant.language.lua"
+    },
+    "keyword": {
+      "match": "\\b(and|break|do|else|elseif|end|for|function|goto|if|in|local|not|or|repeat|return|then|until|while)\\b",
+      "name": "keyword.control.lua"
+    },
+    "function-call": {
+      "match": "\\b([A-Za-z_][A-Za-z0-9_]*)\\s*(?=\\()",
+      "name": "entity.name.function.lua"
+    },
+    "operator": {
+      "match": "(\\+|-|\\*|/|%|\\^|#|==|~=|<=|>=|<|>|=|\\.\\.\\.|\\.|::)",
+      "name": "keyword.operator.lua"
+    },
+    "identifier": {
+      "match": "\\b[A-Za-z_][A-Za-z0-9_]*\\b",
+      "name": "variable.other.lua"
+    }
+  }
+}
