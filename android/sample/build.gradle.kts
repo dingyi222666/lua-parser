@@ -38,12 +38,12 @@ plugins {
 
 android {
     namespace = "io.github.dingyi222666.luaparser.sample"
-    compileSdk = 34
+    compileSdk = 35
 
     defaultConfig {
         applicationId = "io.github.dingyi222666.luaparser.sample"
         minSdk = 26
-        targetSdk = 34
+        targetSdk = 35
         versionCode = 1
         versionName = "1.0.0"
     }
