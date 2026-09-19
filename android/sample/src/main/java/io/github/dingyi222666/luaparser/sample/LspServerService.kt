@@ -99,7 +99,10 @@ class LspServerService : Service() {
                 // Expected shutdown path: onDestroy closed the listener.
                 break
             }
-            Log.i(TAG, "client connected: ${client.remoteSocketAddress ?: "local"}")
+            // NOTE: never call client.remoteSocketAddress here — LocalSocket
+            // throws UnsupportedOperationException for abstract-namespace
+            // sockets (device-verified crash).
+            Log.i(TAG, "LSP client connected")
             connections += scope.launch { serve(client) }
         }
     }
