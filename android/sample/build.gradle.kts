@@ -28,7 +28,7 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
-    // Versions pinned in settings.gradle.kts pluginManagement (AGP 8.5.2,
+    // Versions pinned in settings.gradle.kts pluginManagement (AGP 8.13.2,
     // Kotlin Android 2.2.0) so this file stays declarative like android/build.gradle.kts.
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
