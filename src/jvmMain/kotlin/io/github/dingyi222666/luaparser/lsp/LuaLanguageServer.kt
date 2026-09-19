@@ -298,11 +298,14 @@ class LuaLanguageServer(
     }
 
     override fun initialize(params: InitializeParams): CompletableFuture<InitializeResult> {
+        println("LSP-DEVICE: initialize entered, state=$lifecycleState")
         return synchronized(lifecycleLock) {
             when (lifecycleState) {
                 LifecycleState.CREATED -> {
                     try {
+                        val t0 = System.currentTimeMillis()
                         val result = languageService.initialize(params)
+                        println("LSP-DEVICE: languageService.initialize done in ${System.currentTimeMillis() - t0}ms")
                         lifecycleState = LifecycleState.INITIALIZED
                         CompletableFuture.completedFuture(result)
                     } catch (throwable: Throwable) {
