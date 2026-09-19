@@ -56,16 +56,19 @@ android {
         }
     }
 
+    // Java 17 + jvmTarget 17: a transitive sora dep ships Java 16+ records,
+    // and D8's Record desugaring fails with "Invalid build configuration ...
+    // without a global synthetic" unless the app's dex pipeline runs with a
+    // matching (>= 17) class file target.
     compileOptions {
-        // Match android/ (JVM 11 bytecode, no desugaring needed at minSdk 26).
-        sourceCompatibility = JavaVersion.VERSION_11
-        targetCompatibility = JavaVersion.VERSION_11
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
     }
-}
-
-kotlin {
-    compilerOptions {
-        jvmTarget.set(JvmTarget.JVM_11)
+    kotlinOptions {
+        jvmTarget = "17"
+    }
+    packaging {
+        resources.excludes += "META-INF/{AL2.0,LGPL2.1}"
     }
 }
 
