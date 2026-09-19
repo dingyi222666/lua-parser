@@ -270,6 +270,12 @@ class MainActivity : AppCompatActivity(), FileBrowserFragment.Listener {
             isApplyingProgrammaticText = false
             currentFile = relativePath
             toolbar.subtitle = relativePath
+            // XML res-auto attrs (app:title* / app:iconTint) are avoided on
+            // purpose: AAPT2 attr linking against the material/appcompat AARs
+            // proved cache-sensitive on the CI runner; everything visual is
+            // set programmatically here instead.
+            toolbar.setTitleTextColor(ContextCompat.getColor(this, R.color.toolbar_title))
+            toolbar.setSubtitleTextColor(ContextCompat.getColor(this, R.color.toolbar_subtitle))
         }
 
         var connected = false

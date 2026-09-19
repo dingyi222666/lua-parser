@@ -19,9 +19,7 @@
         android:layout_height="?attr/actionBarSize"
         android:background="@color/editor_background"
         android:elevation="4dp"
-        app:subtitleTextColor="@color/toolbar_subtitle"
-        app:title="@string/app_name"
-        app:titleTextColor="@color/toolbar_title" />
+        />
 
     <io.github.rosemoe.sora.widget.CodeEditor
         android:id="@+id/code_editor"
