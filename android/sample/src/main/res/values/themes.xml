@@ -1,8 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- AppCompat theme: the only requirement is an AppCompat descendant since
-         MainActivity extends AppCompatActivity (same host as the sora sample). -->
-    <style name="Theme.LuaLspSample" parent="Theme.AppCompat.NoActionBar">
+    <!-- Material 3 theme (View-based M3 from com.google.android.material, NOT
+         Compose — the app hosts the View-based sora CodeEditor).
+         DayNight drives the M3 chrome (bottom sheet, diagnostics bar, ripples);
+         the editor itself keeps its fixed dark TextMate pairing
+         (assets/textmate/lua-dark.json via TextMateColorScheme), and the
+         MaterialToolbar is styled dark in-layout to blend with it. -->
+    <style name="Theme.LuaLspSample" parent="Theme.Material3.DayNight.NoActionBar">
         <item name="android:windowBackground">@color/editor_background</item>
     </style>
 </resources>

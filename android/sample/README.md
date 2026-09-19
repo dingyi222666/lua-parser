@@ -26,12 +26,18 @@ android/sample/
     ├── java/io/github/dingyi222666/luaparser/sample/
     │   ├── MainActivity.kt               sora-pattern activity: TextMate theme/grammar,
     │   │                                 LspProject/LspEditor attach, connect, jvm config, dispose
+    │   ├── ProjectBootstrapper.kt        assets/project -> filesDir/project copy driven by
+    │   │                                 manifest.txt + a SHA-256 version marker in filesDir
     │   ├── LspServerService.kt           LocalServerSocket("lua-lsp") accept loop;
     │   │                                 LuaLanguageServerLauncher.launch(in, out) PER connection
     │   └── LocalSocketStreamProvider.kt  client half of the LocalSocket (CustomConnectProvider)
     ├── res/                              layout (CodeEditor), theme, colors, strings
     └── assets/
-        ├── sample.lua, sample_module.lua demo workspace (copied to filesDir/project on first run)
+        ├── project/                      the REAL demo corpus (tools/monaco-lsp-demo/workspace):
+        │   │                             main.lua + adapter/ + model/ + mods/ + views/ +
+        │   │                             layout/ + image/ + libs/classes.dex
+        │   └── manifest.txt              one project-relative path per line (AssetManager
+        │                                 cannot list directories — the bootstrapper reads this)
         └── textmate/                     source.lua grammar + language-configuration + lua-dark theme
 ```
 
@@ -69,13 +75,11 @@ flat workspace configuration:
 `jvm.androidJar` key or a nested `jvm { "androidJar": ... }` section; without
 the asset the key is simply omitted and everything else keeps working.)
 
-**dex note:** a `classes.dex` (or `.apk`) can be provided the same way — drop
-it as `android/sample/src/main/assets/classes.dex` and the app advertises it
-via `jvm.classpath`; dex libraries are mounted through the parser's dex reader
-(see `src/jvmTest/kotlin/interop/jvm/DexMountingTddTest.kt` for the accepted
-entries, including `path:Class` prefixed imports). A prebuilt
-`libs/classes.dex` produced by the `:android` `androidReleaseJar` + `d8`
-pipeline works as well.
+**dex note:** the bundled demo corpus ships `project/libs/classes.dex`, which
+the bootstrapper copies to `filesDir/project/libs/classes.dex` and the app
+advertises via `jvm.classpath`; dex libraries are mounted through the parser's
+dex reader (see `src/jvmTest/kotlin/interop/jvm/DexMountingTddTest.kt` for the
+accepted entries, including `path:Class` prefixed imports).
 
 ## What works
 
@@ -83,9 +87,10 @@ pipeline works as well.
   formatting / semantic tokens** — served by the embedded
   `LuaLanguageServer` (one instance per connection), including stdlib
   completion for `math.`, `string.`, ... from the builtin overlay mirror.
-* **Workspace features** — `filesDir/project` (with `sample.lua` +
-  `sample_module.lua`) is registered as a workspace folder, so
-  `require("sample_module")` resolves across files.
+* **Workspace features** — `filesDir/project` (the real demo corpus, opened on
+  `main.lua`) is registered as a workspace folder, so cross-file references —
+  `require("mods.util")`, `adapter.MyLuaAdapter`, `views.*`, `layout/*.aly`,
+  `model.AppListStream` — resolve across files.
 * **JVM interop** — with `assets/android.jar` provided, `luajava.bindClass`
   targets and `import "android.foo.Bar"` resolve with full member hover and
   completion.

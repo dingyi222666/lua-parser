@@ -3,4 +3,15 @@
     <!-- Window chrome only; the editor's real palette comes from the TextMate
          theme assets/textmate/lua-dark.json via TextMateColorScheme. -->
     <color name="editor_background">#1E1F22</color>
+
+    <!-- Dark toolbar chrome paired with the dark editor surface (the toolbar
+         keeps this pairing in BOTH light and dark M3 modes; the rest of the
+         M3 chrome follows DayNight). -->
+    <color name="toolbar_title">#F2F2F2</color>
+    <color name="toolbar_subtitle">#9E9E9E</color>
+    <color name="toolbar_icon">#E6E6E6</color>
+
+    <!-- Save indicator: the toolbar save icon warms up while the buffer has
+         unsaved edits (set from MainActivity#setDirty). -->
+    <color name="save_dirty">#FFB74D</color>
 </resources>

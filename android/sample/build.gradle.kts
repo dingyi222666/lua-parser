@@ -98,4 +98,15 @@ dependencies {
     // AppCompatActivity + lifecycleScope (same hosts the sora sample uses).
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
+
+    // Material 3, View-based (NOT Compose): the app hosts sora's View-based
+    // CodeEditor, so the M3 surface comes from MaterialComponents —
+    // Theme.Material3.DayNight.NoActionBar, MaterialToolbar and
+    // BottomSheetDialogFragment for the workspace file browser.
+    implementation("com.google.android.material:material:1.12.0")
+
+    // RecyclerView for the file browser (material ships it transitively; the
+    // explicit pin keeps the compile classpath independent of material's
+    // internal dependency resolution).
+    implementation("androidx.recyclerview:recyclerview:1.3.2")
 }
