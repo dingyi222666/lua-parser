@@ -1547,6 +1547,8 @@ class LuaLanguageService(
      */
     private fun rebuildFull(): Set<VirtualPath> {
         val files = currentWorkspaceFiles()
+        val t0 = System.currentTimeMillis()
+        println("LSP-DEVICE: rebuildFull starting, files=${files.size}, metadata=$workspaceMetadata")
         val result = engine.build(
             LuaWorkspaceInput(
                 files = files,
@@ -1555,6 +1557,7 @@ class LuaLanguageService(
         )
         fullRebuildCount += 1
         applyWorkspaceResult(result, files)
+        println("LSP-DEVICE: rebuildFull done in ${System.currentTimeMillis() - t0}ms, affected=${result.affectedDocuments.size}")
         return result.affectedDocuments
     }
 
