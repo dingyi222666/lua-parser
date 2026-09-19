@@ -8,21 +8,15 @@
     <item
         android:id="@+id/action_open_file"
         android:icon="@drawable/ic_folder_open"
-        android:title="@string/action_open_file"
-        app:iconTint="@color/toolbar_icon"
-        app:showAsAction="always" />
+        android:title="@string/action_open_file" />
 
     <item
         android:id="@+id/action_format"
         android:icon="@drawable/ic_format"
-        android:title="@string/action_format"
-        app:iconTint="@color/toolbar_icon"
-        app:showAsAction="always" />
+        android:title="@string/action_format" />
 
     <item
         android:id="@+id/action_save"
         android:icon="@drawable/ic_save"
-        android:title="@string/action_save"
-        app:iconTint="@color/toolbar_icon"
-        app:showAsAction="always" />
+        android:title="@string/action_save" />
 </menu>
