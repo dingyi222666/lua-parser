@@ -109,3 +109,11 @@ jobs:
           name: android-release-fat-jar
           path: android/build/libs/*.jar
           if-no-files-found: warn
+
+      - name: Upload sample APK
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: androlua-sample-apk
+          path: android/sample/build/outputs/apk/debug/*.apk
+          if-no-files-found: warn
