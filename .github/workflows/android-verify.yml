@@ -42,10 +42,14 @@ jobs:
       - name: Verify Android SDK
         run: |
           echo "ANDROID_HOME=$ANDROID_HOME"
-          if command -v sdkmanager >/dev/null 2>&1; then
-            sdkmanager --version
-          elif [ -x "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" ]; then
-            "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --version
+          SDKM=$(command -v sdkmanager || echo "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager")
+          if [ ! -x "$SDKM" ] && [ -x "$ANDROID_HOME/tools/bin/sdkmanager" ]; then SDKM="$ANDROID_HOME/tools/bin/sdkmanager"; fi
+          if [ -x "$SDKM" ]; then
+            "$SDKM" --version
+            # Accept all licenses + pre-install exactly what the build needs, so
+            # AGP never trips on "licences have not been accepted" mid-compile.
+            yes | "$SDKM" --licenses > /dev/null 2>&1 || true
+            "$SDKM" "platforms;android-34" "build-tools;35.0.0" > /dev/null 2>&1 ||               echo "WARN: sdkmanager install failed — relying on pre-installed components"
           else
             echo "WARN: sdkmanager not found (relying on pre-installed platforms/build-tools)"
           fi
