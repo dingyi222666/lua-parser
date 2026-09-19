@@ -42,21 +42,25 @@ jobs:
       - name: Verify Android SDK
         run: |
           echo "ANDROID_HOME=$ANDROID_HOME"
-          SDKM=$(command -v sdkmanager || echo "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager")
-          if [ ! -x "$SDKM" ] && [ -x "$ANDROID_HOME/tools/bin/sdkmanager" ]; then SDKM="$ANDROID_HOME/tools/bin/sdkmanager"; fi
-          if [ -x "$SDKM" ]; then
-            "$SDKM" --version
-            # Accept all licenses + pre-install exactly what the build needs, so
-            # AGP never trips on "licences have not been accepted" mid-compile.
-            yes | "$SDKM" --licenses > /dev/null 2>&1 || true
-            "$SDKM" "platforms;android-35" "build-tools;35.0.0" > /dev/null 2>&1 ||               echo "WARN: sdkmanager install failed — relying on pre-installed components"
-          else
-            echo "WARN: sdkmanager not found (relying on pre-installed platforms/build-tools)"
-          fi
+          # The runner has no cmdline-tools (no sdkmanager), so AGP's own
+          # auto-installer is the only installer. It refuses to run unless the
+          # license files exist — write the standard license hashes directly
+          # (these are the well-known SHA1s of the SDK license texts, same on
+          # every machine; sdkmanager itself just writes these files).
+          mkdir -p "$ANDROID_HOME/licenses"
+          printf "24333f8a63b6825ea9c5514f83c2829b004d1fee\n" > "$ANDROID_HOME/licenses/android-sdk-license"
+          printf "84831b9409646a918e30573bab4c9c91346d8abd\n" > "$ANDROID_HOME/licenses/android-sdk-preview-license"
+          echo "license files written:"
+          ls "$ANDROID_HOME/licenses"
           if [ -d "$ANDROID_HOME/platforms" ]; then
             ls "$ANDROID_HOME/platforms" | sed 's/^/platform: /'
           else
             echo "WARN: no platforms directory under ANDROID_HOME"
+          fi
+          if [ -d "$ANDROID_HOME/build-tools" ]; then
+            ls "$ANDROID_HOME/build-tools" | sed 's/^/build-tools: /'
+          else
+            echo "WARN: no build-tools directory under ANDROID_HOME"
           fi
 
       # assembleRelease needs NO signing config for a library (AARs are never
