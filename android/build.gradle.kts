@@ -235,14 +235,17 @@ dependencies {
 // androidReleaseJar — fat classes jar (see header comment for the trade-offs;
 // the AAR from assembleRelease remains the recommended artifact).
 // ---------------------------------------------------------------------------
-val releaseAarTask = tasks.named("bundleReleaseAar")
+// The AAR bundle task resolves only AFTER the android plugin creates its
+// variants; tasks.named at configuration time raced plugin application in CI
+// ("Task with name 'bundleReleaseAar' not found"), so resolve lazily.
+val releaseAarTask = tasks.matching { it.name == "bundleReleaseAar" }
 val releaseAarExtractDir = layout.buildDirectory.dir("androidReleaseJar/aar")
 val releaseClassesDir = layout.buildDirectory.dir("androidReleaseJar/classes")
 
 // AAR is a zip whose classes.jar is itself a zip: two extraction steps.
 val extractAndroidReleaseAar = tasks.register<Copy>("extractAndroidReleaseAar") {
     dependsOn(releaseAarTask)
-    from({ zipTree(releaseAarTask.get().outputs.files.singleFile) })
+    from({ zipTree(releaseAarTask.single().outputs.files.singleFile) })
     into(releaseAarExtractDir)
 }
 
