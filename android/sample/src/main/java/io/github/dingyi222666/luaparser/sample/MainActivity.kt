@@ -274,8 +274,8 @@ class MainActivity : AppCompatActivity(), FileBrowserFragment.Listener {
             // purpose: AAPT2 attr linking against the material/appcompat AARs
             // proved cache-sensitive on the CI runner; everything visual is
             // set programmatically here instead.
-            toolbar.setTitleTextColor(ContextCompat.getColor(this, R.color.toolbar_title))
-            toolbar.setSubtitleTextColor(ContextCompat.getColor(this, R.color.toolbar_subtitle))
+            toolbar.setTitleTextColor(ContextCompat.getColor(this@MainActivity, R.color.toolbar_title))
+            toolbar.setSubtitleTextColor(ContextCompat.getColor(this@MainActivity, R.color.toolbar_subtitle))
         }
 
         var connected = false
@@ -563,10 +563,10 @@ class MainActivity : AppCompatActivity(), FileBrowserFragment.Listener {
     private fun showDiagnostics(diagnostics: List<Diagnostic>) {
         latestDiagnostics = diagnostics
         val errors = diagnostics.count {
-            it.severity != null && it.severity == DiagnosticSeverity.Error.value
+            it.severity == DiagnosticSeverity.Error
         }
         val warnings = diagnostics.count {
-            it.severity != null && it.severity == DiagnosticSeverity.Warning.value
+            it.severity == DiagnosticSeverity.Warning
         }
         diagSummary.text = if (errors == 0 && warnings == 0) {
             getString(R.string.diag_none)
@@ -593,9 +593,9 @@ class MainActivity : AppCompatActivity(), FileBrowserFragment.Listener {
         editor.setSelection(line, column)
     }
 
-    private fun severityRank(diagnostic: Diagnostic): Int = when {
-        diagnostic.severity != null && diagnostic.severity == DiagnosticSeverity.Error.value -> 0
-        diagnostic.severity != null && diagnostic.severity == DiagnosticSeverity.Warning.value -> 1
+    private fun severityRank(diagnostic: Diagnostic): Int = when (diagnostic.severity) {
+        DiagnosticSeverity.Error -> 0
+        DiagnosticSeverity.Warning -> 1
         else -> 2
     }
 

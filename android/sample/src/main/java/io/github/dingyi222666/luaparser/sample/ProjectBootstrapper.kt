@@ -13,8 +13,8 @@ import java.security.MessageDigest
  * `tools/monaco-lsp-demo/workspace` (main.lua + adapter/ + model/ + mods/ +
  * views/ + layout/ + image/ + libs/classes.dex), not a hand-written
  * sample.lua — so the in-app LSP exercises cross-file workspace resolution
- * (`require("mods.util")`, layout/*.aly references, and dex mounting through
- * jvm.classpath) exactly like the web demo does.
+ * (`require("mods.util")`, `layout/<name>.aly` references, and dex mounting
+ * through jvm.classpath) exactly like the web demo does.
  *
  * Why a manifest: [android.content.res.AssetManager] cannot enumerate asset
  * directories (it only opens known paths), so `assets/project/manifest.txt`
