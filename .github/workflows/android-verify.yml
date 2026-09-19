@@ -37,7 +37,7 @@ jobs:
 
       # ANDROID_HOME is pre-set on the runner; sdkmanager may or may not be on
       # PATH depending on the cmdline-tools layout — warn, never fail here.
-      # Missing android-34 platform/build-tools are auto-installed by AGP iff
+      # Missing platform/build-tools are auto-installed by AGP iff
       # SDK licenses are already accepted on this machine.
       - name: Verify Android SDK
         run: |
@@ -49,7 +49,7 @@ jobs:
             # Accept all licenses + pre-install exactly what the build needs, so
             # AGP never trips on "licences have not been accepted" mid-compile.
             yes | "$SDKM" --licenses > /dev/null 2>&1 || true
-            "$SDKM" "platforms;android-34" "build-tools;35.0.0" > /dev/null 2>&1 ||               echo "WARN: sdkmanager install failed — relying on pre-installed components"
+            "$SDKM" "platforms;android-35" "build-tools;35.0.0" > /dev/null 2>&1 ||               echo "WARN: sdkmanager install failed — relying on pre-installed components"
           else
             echo "WARN: sdkmanager not found (relying on pre-installed platforms/build-tools)"
           fi

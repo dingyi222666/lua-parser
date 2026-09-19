@@ -155,7 +155,7 @@ tasks.matching { it.name == "preBuild" }.configureEach {
 // ---------------------------------------------------------------------------
 android {
     namespace = "io.github.dingyi222666.luaparser.android"
-    compileSdk = 34
+    compileSdk = 35
 
     defaultConfig {
         minSdk = 26
