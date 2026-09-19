@@ -1,0 +1,26 @@
+appname="应用管理"
+appver="1.0"
+appcode="1"
+appsdk="21"
+path_pattern=""
+packagename="com.dingyi.appmanager"
+theme="Theme_DeviceDefault_Light"
+app_key=""
+app_channel=""
+developer="dingyi"
+description=""
+debugmode=true
+user_permission={
+  "BATTERY_STATS",
+  "CLEAR_APP_CACHE",
+  "FOREGROUND_SERVICE",
+  "GET_PACKAGE_SIZE",
+  "INTERNET",
+  "KILL_BACKGROUND_PROCESSES",
+  "READ_EXTERNAL_STORAGE",
+  "READ_FRAME_BUFFER",
+  "READ_PHONE_STATE",
+  "SYSTEM_ALERT_WINDOW",
+  "WRITE_EXTERNAL_STORAGE",
+  "WRITE_SMS"
+}

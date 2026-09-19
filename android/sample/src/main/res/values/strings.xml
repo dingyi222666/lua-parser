@@ -1,4 +1,28 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Lua LSP Sample</string>
+
+    <!-- Toolbar actions -->
+    <string name="action_open_file">Open file</string>
+    <string name="action_format">Format</string>
+    <string name="action_save">Save</string>
+
+    <!-- File browser bottom sheet -->
+    <string name="browser_title">Workspace files</string>
+    <string name="browser_empty">No .lua/.aly files in the workspace</string>
+
+    <!-- Diagnostics bar -->
+    <string name="diag_none">No problems</string>
+    <string name="diag_summary">%1$d error(s), %2$d warning(s) — tap to jump</string>
+
+    <!-- Toasts -->
+    <string name="msg_starting_server">Starting Lua language server…</string>
+    <string name="msg_server_connected">Lua language server connected</string>
+    <string name="msg_server_failed">Unable to connect the Lua language server</string>
+    <string name="msg_open_failed">Unable to open %1$s</string>
+    <string name="msg_saved">Saved %1$s</string>
+    <string name="msg_save_failed">Save failed</string>
+    <string name="msg_formatted">Formatted (unsaved — use Save to persist)</string>
+    <string name="msg_no_formatting">No formatting edits returned</string>
+    <string name="msg_not_connected">Language server is not connected</string>
 </resources>
