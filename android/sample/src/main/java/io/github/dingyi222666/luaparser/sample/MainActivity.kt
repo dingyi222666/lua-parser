@@ -10,6 +10,9 @@ import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
 import com.google.android.material.appbar.MaterialToolbar
 import io.github.rosemoe.sora.event.ContentChangeEvent
 import io.github.rosemoe.sora.event.EventReceiver
@@ -119,6 +122,9 @@ class MainActivity : AppCompatActivity(), FileBrowserFragment.Listener {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Draw edge-to-edge and pad the toolbar below the status bar — without
+        // this the MIUI status bar overlays/hides the MaterialToolbar entirely.
+        WindowCompat.setDecorFitsSystemWindows(window, false)
         setContentView(R.layout.activity_main)
 
         toolbar = findViewById(R.id.toolbar)
@@ -129,6 +135,14 @@ class MainActivity : AppCompatActivity(), FileBrowserFragment.Listener {
         editor.apply {
             typefaceText = Typeface.MONOSPACE
             typefaceLineNumber = Typeface.MONOSPACE
+        }
+
+        // Status-bar insets keep the toolbar visible under edge-to-edge.
+        val root = findViewById<View>(R.id.root_layout)
+        ViewCompat.setOnApplyWindowInsetsListener(root) { view, insets ->
+            val statusBars = insets.getInsets(WindowInsetsCompat.Type.statusBars())
+            view.setPadding(view.paddingLeft, statusBars.top, view.paddingRight, view.paddingBottom)
+            insets
         }
 
         ensureTextmateTheme()
@@ -282,7 +296,25 @@ class MainActivity : AppCompatActivity(), FileBrowserFragment.Listener {
         try {
             // 7. initialize/initialized handshake (retries until the service
             //    accepts the socket; throws TimeoutException on failure).
-            withContext(Dispatchers.IO) { lspEditor.connectWithTimeout() }
+            // sora's INIT retry window is a hard-coded 10s and our first
+            // initialize on-device builds the whole corpus + mounts the 929-class
+            // dex synchronously — longer than that window on first run. Keep
+            // calling connectWithTimeout (it retries internally); the outer
+            // retry loop below survives the first cold-start timeout and wins
+            // on the second pass once the server has warmed up.
+            var warmed = false
+            repeat(3) { attempt ->
+                try {
+                    withContext(Dispatchers.IO) { lspEditor.connectWithTimeout() }
+                    warmed = true
+                    return@repeat
+                } catch (e: java.util.concurrent.TimeoutException) {
+                    Log.w(TAG, "LSP connect attempt ${attempt + 1} timed out; retrying (server warms up in background)", e)
+                }
+            }
+            if (!warmed) {
+                withContext(Dispatchers.IO) { lspEditor.connectWithTimeout() }
+            }
 
             withContext(Dispatchers.IO) {
                 // 8. (Re-)register the demo workspace folder and push the JVM

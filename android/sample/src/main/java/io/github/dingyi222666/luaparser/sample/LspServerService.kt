@@ -99,6 +99,7 @@ class LspServerService : Service() {
                 // Expected shutdown path: onDestroy closed the listener.
                 break
             }
+            Log.i(TAG, "client connected: ${client.remoteSocketAddress ?: "local"}")
             connections += scope.launch { serve(client) }
         }
     }
