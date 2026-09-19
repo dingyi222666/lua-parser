@@ -28,8 +28,10 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
-    // Versions pinned in settings.gradle.kts pluginManagement (AGP 8.13.2,
+    // Versions pinned in settings.gradle.kts pluginManagement (AGP 8.10.0,
     // Kotlin Android 2.2.0) so this file stays declarative like android/build.gradle.kts.
+    // The `com.android.* apply false` entries in the ROOT build.gradle.kts are
+    // required by the same KT-57162 classloader workaround that fixes :android.
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
 }

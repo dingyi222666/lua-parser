@@ -5,15 +5,20 @@ pluginManagement {
         mavenCentral()
     }
 
-    // Versions for the android/ embedding subproject (android/build.gradle.kts
-    // applies these plugins WITHOUT versions). AGP 8.10.0: the TOP of the
-    // officially supported range for KGP 2.2.0 (7.3.1-8.10.0 per the Kotlin
-    // docs compatibility map). KGP 2.2.0's KotlinAndroidTarget decorates
-    // against the deprecated BaseVariant API, which AGP 8.12+/8.13 removed
-    // (CI: NoClassDefFoundError with both 8.5.2 and 8.13.2); needs Gradle
-    // >= 8.7 (wrapper is 8.14.4) and JDK 17 — all satisfied here; Kotlin
-    // Android plugin is pinned to the same 2.2.0 the root multiplatform build
-    // uses so compiler behavior matches the desktop jvm() artifact exactly.
+    // Versions for the android/ embedding subprojects (android/build.gradle.kts
+    // and android/sample/build.gradle.kts apply these plugins WITHOUT versions).
+    // AGP 8.10.0: the TOP of the officially supported range for KGP 2.2.0
+    // (7.3.1-8.10.0 per the Kotlin/AGP compatibility map); needs Gradle
+    // >= 8.11.1 (wrapper is 8.14.4) and JDK 17 — both satisfied here.
+    // NOTE: the earlier "AGP 8.12+ removed the BaseVariant API" theory for the
+    // CI NoClassDefFoundError was wrong — the error was IDENTICAL with AGP
+    // 8.5.2, 8.10.0 and 8.13.2, and com/android/build/gradle/api/BaseVariant
+    // is still present in every AGP 8.x (and 9.x) main jar. The real cause is
+    // the KGP/AGP plugin classloader split (KT-57162 / gradle/gradle#25616):
+    // KGP is defined by the ROOT project's plugin classloader, AGP by the
+    // subprojects', so KGP's KotlinAndroidTarget cannot resolve BaseVariant.
+    // Worked around in the ROOT build.gradle.kts plugins block
+    // (com.android.* apply false); these pins stay version-only.
     plugins {
         id("com.android.library") version "8.10.0"
         // Same AGP line as the library plugin above; used only by the sample app.
