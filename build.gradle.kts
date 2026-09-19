@@ -9,6 +9,21 @@ plugins {
     // reject the 2.2 metadata with "compiled with an incompatible version of Kotlin").
     // Documented for consumers in README.md (Dependencies).
     kotlin("multiplatform") version "2.2.0"
+    // KT-57162 / gradle/gradle#25616 workaround — plugin classloader layout:
+    // Gradle loads the Kotlin Gradle Plugin in the ROOT project's plugin
+    // classloader, and AGP in the android/ subprojects' classloader. KGP
+    // applied in a subproject therefore cannot see AGP classes, and Gradle's
+    // decorated-class generation for KotlinAndroidTarget fails with
+    //   NoClassDefFoundError: com/android/build/gradle/api/BaseVariant
+    // (identical with AGP 8.5.2 / 8.10.0 / 8.13.2 — the class is missing from
+    // the root's KGP loader, not from the AGP jars). Loading AGP onto THIS
+    // classpath restores visibility. `apply false` resolves the plugin onto
+    // the root classpath WITHOUT applying it: the root stays a pure KMP build
+    // (no AGP extension created, no Android SDK needed by the jvmTest CI job).
+    // Versions are pinned in settings.gradle.kts pluginManagement.plugins.
+    id("com.android.library") apply false
+    // Same classpath story for android/sample (com.android.application).
+    id("com.android.application") apply false
     id("com.vanniktech.maven.publish") version "0.29.0"
     id("maven-publish")
     signing

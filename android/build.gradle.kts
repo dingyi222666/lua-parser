@@ -62,8 +62,12 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
-    // Versions pinned in settings.gradle.kts pluginManagement (AGP 8.13.2,
-    // Kotlin Android 2.2.0) so this file stays declarative.
+    // Versions pinned in settings.gradle.kts pluginManagement (AGP 8.10.0,
+    // Kotlin Android 2.2.0) so this file stays declarative. The matching
+    // `com.android.* apply false` entries in the ROOT build.gradle.kts plugins
+    // block are REQUIRED (KT-57162 / gradle#25616): without them KGP is
+    // defined in the root's AGP-less classloader and this plugins block fails
+    // with NoClassDefFoundError com/android/build/gradle/api/BaseVariant.
     id("com.android.library")
     id("org.jetbrains.kotlin.android")
 }
