@@ -1726,7 +1726,13 @@ class LuaLanguageService(
 
     private fun readWorkspaceSource(path: Path): String? {
         return try {
-            Files.readString(path, StandardCharsets.UTF_8)
+            // Files.readString is Java 11+/Android API 33+: the android/ module
+            // compiles against the Android SDK classpath where it does not
+            // exist below API 33, so use stream-based reading — available on
+            // every API level, identical semantics here.
+            Files.newInputStream(path).use { input ->
+                input.readBytes().toString(StandardCharsets.UTF_8)
+            }
         } catch (_: IOException) {
             null
         } catch (_: SecurityException) {
