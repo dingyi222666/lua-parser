@@ -128,6 +128,7 @@ class LspSemanticTokensCacheEvictionTddTest {
                     workspaceFolders = listOf(WorkspaceFolder(root.toUri().toString(), root.fileName.toString()))
                 }
             )
+            check(service.awaitWorkspaceReady()) { "background workspace build did not finish" }
         }
     }
 
