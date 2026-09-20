@@ -37,7 +37,11 @@ jobs:
           D8=$(ls "$ANDROID_HOME"/build-tools/*/d8 | sort | tail -1)
           echo "d8: $D8"
           mkdir -p android/sample/src/main/assets
-          "$D8" --release --min-api 26 --lib "$ANDROID_HOME/platforms/android-35/android.jar"             --output android/sample/src/main/assets             "$ANDROID_HOME/platforms/android-35/android.jar"
+          "$D8" --release --min-api 26 --lib "$ANDROID_HOME/platforms/android-35/android.jar" \
+            --output android/sample/src/main/assets \
+            "$ANDROID_HOME/platforms/android-35/android.jar"
+          # d8 names its output classes.dex regardless of input name
+          mv android/sample/src/main/assets/classes.dex android/sample/src/main/assets/android.dex
           ls -la android/sample/src/main/assets/android.dex
 
       - name: Show environment
