@@ -27,9 +27,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Show environment
-
       # Convert the platform android.jar (Java bytecode) to dex so the sample
+      # app can load it through DexClassLoader on-device. The jar on the runner
+      # is the API-35 platform stub — signatures only, exactly what reflection
+      # needs. Output lands in the sample assets and gets packaged into the APK.
+      - name: Convert android.jar to android.dex (Java bytecode) to dex so the sample
       # app can load it through DexClassLoader on-device. The jar on the runner
       # is the API-35 platform stub — signatures only, exactly what reflection
       # needs. Output lands in the sample assets and gets packaged into the APK.
