@@ -52,7 +52,7 @@ class LspInlayHintsParamNameTddTest {
     @Test
     fun initialize_inlay_hint_capability_is_probeable() {
         val service = plainService()
-        val capabilities = service.initialize(InitializeParams()).capabilities
+        val capabilities = service.initialize(InitializeParams()).also { check(service.awaitWorkspaceReady()) }.capabilities
 
         // Capability may be null today (documented gap) or present once product
         // lands inlay hints. Reading the field must not throw either way.

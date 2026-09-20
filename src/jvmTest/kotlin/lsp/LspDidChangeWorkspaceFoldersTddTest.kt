@@ -51,7 +51,7 @@ class LspDidChangeWorkspaceFoldersTddTest {
 
     @Test
     fun did_change_workspace_folders_surface_is_invokable_without_killing_service() {
-        val languageService = LuaLanguageService().also { it.initialize(InitializeParams()) }
+        val languageService = LuaLanguageService().also { it.initialize(InitializeParams()); check(it.awaitWorkspaceReady()) }
         val workspace = LuaWorkspaceService(languageService)
         val root = tempWorkspace("surface")
         val folder = WorkspaceFolder(root.uri, root.fileName.toString())
@@ -87,7 +87,7 @@ class LspDidChangeWorkspaceFoldersTddTest {
 
     @Test
     fun future_support_added_folder_indexes_lua_without_server_restart() {
-        val languageService = LuaLanguageService().also { it.initialize(InitializeParams()) }
+        val languageService = LuaLanguageService().also { it.initialize(InitializeParams()); check(it.awaitWorkspaceReady()) }
         val workspace = LuaWorkspaceService(languageService)
         val addedRoot = tempWorkspace("added")
         val dep = addedRoot.resolve("dep.lua").writeLua("local M = {}\nM.addedMarker = 1\nreturn M")

@@ -285,6 +285,7 @@ class LspHierarchicalDocumentSymbolTddTest {
             if (metadata.isNotEmpty()) {
                 setWorkspaceMetadata(metadata)
             }
+            check(awaitWorkspaceReady()) { "background build did not finish" }
         }
     }
 

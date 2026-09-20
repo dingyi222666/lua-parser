@@ -266,24 +266,42 @@ class LuaLanguageService(
         }
         Thread({
             try {
-                val t0 = System.currentTimeMillis()
-                val rebuild = synchronized(stateLock) {
-                    // Recompute under stateLock so the file map is consistent;
-                    // the heavy build itself must stay OUTSIDE stateLock or it
-                    // blocks every request again.
-                    val files = currentWorkspaceFiles()
-                    Triple(files, rebuildFullLocked(files), workspaceMetadata)
-                }
-                @Suppress("UNUSED_EXPRESSION")
-                rebuild
-            } catch (t: Throwable) {
-                println("LSP-DEVICE: background rebuild failed: $t")
+                runBackgroundRebuild()
             } finally {
                 synchronized(rebuildLock) { backgroundRebuildRunning = false }
             }
         }, "lsp-workspace-build").apply {
             isDaemon = true
         }.start()
+    }
+
+    /**
+     * Test/device hook: runs the pending background rebuild synchronously and
+     * returns once snapshotReady is true. No-op when nothing is pending.
+     */
+    internal fun flushBackgroundRebuild(timeoutMs: Long = 60_000): Boolean {
+        if (awaitWorkspaceReady(timeoutMs)) {
+            return true
+        }
+        // Background build never completed (slow device, dropped thread):
+        // run it synchronously so test/device observers see a settled state.
+        return synchronized(stateLock) {
+            rebuildFullLocked(currentWorkspaceFiles())
+            snapshotReady
+        }
+    }
+
+    private fun runBackgroundRebuild() {
+        try {
+            synchronized(stateLock) {
+                // Recompute under stateLock so the file map is consistent; the
+                // heavy build itself must stay OUTSIDE stateLock or it blocks
+                // every request again.
+                rebuildFullLocked(currentWorkspaceFiles())
+            }
+        } catch (t: Throwable) {
+            println("LSP-DEVICE: background rebuild failed: $t")
+        }
     }
 
     /**

@@ -35,6 +35,7 @@ class LspIncrementalWorkspaceUpdateTddTest {
     fun open_change_close_use_engine_update_after_initial_build() {
         val service = LuaLanguageService()
         service.initialize(InitializeParams())
+        service.flushBackgroundRebuild()
 
         assertEquals(1, service.fullRebuildCount, "initialize should full-build once")
         assertEquals(0, service.incrementalUpdateCount)
@@ -87,6 +88,7 @@ class LspIncrementalWorkspaceUpdateTddTest {
                 workspaceFolders = listOf(WorkspaceFolder(root.toUri().toString(), root.fileName.toString()))
             }
         )
+        service.flushBackgroundRebuild()
 
         assertEquals(1, service.fullRebuildCount)
         val updatesAfterInit = service.incrementalUpdateCount
@@ -159,6 +161,7 @@ class LspIncrementalWorkspaceUpdateTddTest {
     fun metadata_configuration_uses_full_rebuild_fallback() {
         val service = LuaLanguageService()
         service.initialize(InitializeParams())
+        service.flushBackgroundRebuild()
         assertEquals(1, service.fullRebuildCount)
 
         val uri = "file:///workspace/meta-main.lua"
