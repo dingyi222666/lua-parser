@@ -306,11 +306,24 @@ class LuaLanguageService(
     private fun runBackgroundRebuild() {
         // Hold stateLock for the WHOLE build (read files → engine.build →
         // apply). Requests during the build queue briefly on the lock — the
-        // same consistency contract as the original synchronous path, which
-        // every lsp test encodes. The cold build is a one-off (~13-18s on a
-        // phone first run; near-instant once the dex parse cache is warm).
-        synchronized(stateLock) {
-            rebuildFullLocked(currentWorkspaceFiles())
+        // same consistency contract as the original synchronous path. After
+        // applying, re-check whether the workspace moved (didOpen/didChange
+        // that queued behind the lock) and rebuild once more if so, so the
+        // final snapshot always reflects the latest state.
+        var attempts = 0
+        while (attempts < 3) {
+            val generationAtStart = synchronized(stateLock) {
+                backgroundBuildGeneration = workspaceGeneration
+                rebuildFullLocked(currentWorkspaceFiles())
+                workspaceGeneration
+            }
+            val moved = synchronized(stateLock) {
+                workspaceGeneration != generationAtStart
+            }
+            if (!moved) {
+                return
+            }
+            attempts += 1
         }
     }
 
