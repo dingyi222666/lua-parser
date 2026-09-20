@@ -489,6 +489,7 @@ class LspAndroidLuaE2eTddTest {
     private fun initializedService(): LuaLanguageService {
         return LuaLanguageService().also { service ->
             service.initialize(workspaceInitializeParams())
+            service.flushBackgroundRebuild()
         }
     }
 
