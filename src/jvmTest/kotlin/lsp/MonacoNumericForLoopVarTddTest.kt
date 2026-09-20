@@ -74,9 +74,6 @@ class MonacoNumericForLoopVarTddTest {
         service.initialize(InitializeParams().apply {
             workspaceFolders = listOf(WorkspaceFolder(root.toUri().toString(), "ws"))
         })
-        service.flushBackgroundRebuild()
-            workspaceFolders = listOf(WorkspaceFolder(root.toUri().toString(), "ws"))
-        })
         val uri = root.resolve("utils.lua").toUri().toString()
         service.didOpen(DidOpenTextDocumentParams(TextDocumentItem(uri, "lua", 1, source)))
         return service

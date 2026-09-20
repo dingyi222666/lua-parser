@@ -257,12 +257,21 @@ class LuaLanguageService(
      */
     private val rebuildLock = Any()
     private var backgroundRebuildRunning = false
+    /**
+     * Bumped by every snapshot-affecting mutation (incremental apply, metadata
+     * change). The background cold build records the generation when it starts
+     * and discards its result if the generation moved — a stale full build must
+     * never stomp a newer incremental snapshot.
+     */
+    private var workspaceGeneration: Long = 0
+    private var backgroundBuildGeneration: Long = -1
     private fun scheduleBackgroundRebuild() {
         synchronized(rebuildLock) {
             if (backgroundRebuildRunning) {
                 return
             }
             backgroundRebuildRunning = true
+            backgroundBuildGeneration = workspaceGeneration
         }
         Thread({
             try {
@@ -293,12 +302,32 @@ class LuaLanguageService(
 
     private fun runBackgroundRebuild() {
         try {
-            // Read the file map under stateLock, then build WITHOUT the lock:
-            // requests (didOpen/completions) keep flowing on the overlay
-            // snapshot while the heavy build runs. publishRebuild swaps the
-            // finished snapshot in atomically.
-            val files = synchronized(stateLock) { currentWorkspaceFiles() }
-            synchronized(stateLock) { rebuildFullLocked(files) }
+            // Snapshot the file map + generation under stateLock, then build
+            // WITHOUT the lock: requests (didOpen/completions) keep flowing on
+            // the overlay snapshot while the heavy build runs.
+            val (files, startGeneration) = synchronized(stateLock) {
+                backgroundBuildGeneration = workspaceGeneration
+                currentWorkspaceFiles() to workspaceGeneration
+            }
+            val result = engine.build(
+                LuaWorkspaceInput(
+                    files = files,
+                    metadata = synchronized(stateLock) { workspaceMetadata }
+                )
+            )
+            // Stale-swap guard: if an incremental/metadata change bumped the
+            // generation while we built, it already produced (or scheduled) a
+            // newer snapshot — discard ours rather than regressing state.
+            val stale = synchronized(stateLock) {
+                val moved = workspaceGeneration != startGeneration
+                if (!moved) {
+                    applyWorkspaceResult(result, files)
+                }
+                moved
+            }
+            if (stale) {
+                println("LSP-DEVICE: background rebuild discarded (workspace moved during build)")
+            }
         } catch (t: Throwable) {
             println("LSP-DEVICE: background rebuild failed: $t")
         }
@@ -1635,6 +1664,7 @@ class LuaLanguageService(
         queries = LuaWorkspaceQueryFacade(snapshot)
         lastSyncedFiles = files.toMap()
         snapshotReady = true
+        workspaceGeneration += 1
     }
 
     /**

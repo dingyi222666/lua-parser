@@ -223,7 +223,6 @@ class LspFormattingIfEndReparseGuardTddTest {
 
     private fun plainService(): LuaLanguageService {
         return LuaLanguageService().also { it.initialize(InitializeParams()) }
-        it.flushBackgroundRebuild()
     }
 
     private fun openParams(uri: String, text: String, version: Int = 1): DidOpenTextDocumentParams {

@@ -62,7 +62,6 @@ class LspSignatureHelpActiveParameterTddTest {
     fun signature_help_capability_advertises_trigger_characters() {
         val service = plainService()
         val capabilities = service.initialize(InitializeParams()).capabilities
-        service.flushBackgroundRebuild()
         val provider = assertNotNull(
             capabilities.signatureHelpProvider,
             "signatureHelpProvider must be advertised"

@@ -485,11 +485,6 @@ class LspRenamePrepareMultiFileTddTest {
                     workspaceFolders = listOf(WorkspaceFolder(root.uri, root.fileName.toString()))
                 }
             )
-            service.flushBackgroundRebuild()
-                InitializeParams().apply {
-                    workspaceFolders = listOf(WorkspaceFolder(root.uri, root.fileName.toString()))
-                }
-            )
         }
     }
 

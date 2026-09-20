@@ -45,11 +45,6 @@ class LspFoldingRangeForwarderTddTest {
                 WorkspaceFolder("file://${workspace.absolutePath}", "monaco-lsp-demo")
             )
         })
-        server.flushBackgroundRebuild()
-            workspaceFolders = listOf(
-                WorkspaceFolder("file://${workspace.absolutePath}", "monaco-lsp-demo")
-            )
-        })
         val serverService = server.textDocumentService
         val main = File(workspace, "main.lua")
         service.didOpen(

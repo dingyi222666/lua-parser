@@ -57,7 +57,6 @@ class LspHoverMarkupContentTddTest {
     fun initialize_hover_provider_is_advertised_or_explicitly_enabled() {
         val service = service()
         val capabilities = service.initialize(InitializeParams()).capabilities
-        service.flushBackgroundRebuild()
         assertNotNull(capabilities, "initialize must return ServerCapabilities")
 
         val provider = capabilities.hoverProvider
@@ -160,7 +159,6 @@ class LspHoverMarkupContentTddTest {
     fun hover_never_opened_uri_does_not_hard_crash() {
         val service = service()
         service.initialize(InitializeParams())
-        service.flushBackgroundRebuild()
 
         val params = HoverParams(
             TextDocumentIdentifier("file:///workspace/never-opened-hover-markup.lua"),

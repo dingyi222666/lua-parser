@@ -108,7 +108,6 @@ class LspDiagnosticSeverityMappingTddTest {
     fun queriedDiagnosticsAgreeWithPublishedSeveritiesForParseError() {
         val service = LuaLanguageService()
         service.initialize(InitializeParams())
-        service.flushBackgroundRebuild()
         val uri = "file:///workspace/severity-query-agree.lua"
         val path = "workspace/severity-query-agree.lua"
         val published = mutableListOf<PublishDiagnosticsParams>()
@@ -135,7 +134,6 @@ class LspDiagnosticSeverityMappingTddTest {
     private fun openAndCollect(uri: String, source: String): PublishDiagnosticsParams {
         val service = LuaLanguageService()
         service.initialize(InitializeParams())
-        service.flushBackgroundRebuild()
         val published = mutableListOf<PublishDiagnosticsParams>()
         val textDocuments = LuaTextDocumentService(service, publishDiagnostics = { published += it })
         textDocuments.didOpen(openParams(uri, source))

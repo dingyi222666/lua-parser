@@ -55,7 +55,6 @@ class LspDefinitionLocationLinkTddTest {
     fun definition_provider_is_advertised_on_initialize() {
         val service = bareService()
         val capabilities = service.initialize(InitializeParams()).capabilities
-        service.flushBackgroundRebuild()
 
         assertNotNull(capabilities, "initialize must return ServerCapabilities")
         assertNotNull(
