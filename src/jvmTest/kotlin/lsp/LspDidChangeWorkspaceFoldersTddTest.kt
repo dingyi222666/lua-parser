@@ -264,6 +264,7 @@ class LspDidChangeWorkspaceFoldersTddTest {
                     }
                 }
             )
+            service.flushBackgroundRebuild()
         }
     }
 

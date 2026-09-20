@@ -186,7 +186,7 @@ class LspLifecycleDiagnosticsTddTest {
                     importPrefixes = listOf("java.math")
                 )
             )
-        ).also { it.initialize(InitializeParams()) }
+        ).also { it.initialize(InitializeParams()); it.flushBackgroundRebuild() }
     }
 
     private class RecordingLanguageClient : InvocationHandler {

@@ -37,6 +37,7 @@ class MonacoUtilsDotProbeTddTest {
             it.initialize(InitializeParams().apply {
                 workspaceFolders = listOf(WorkspaceFolder(root.toUri().toString(), root.fileName.toString()))
             })
+            it.flushBackgroundRebuild()
         }
         val mainPath = root.resolve("main.lua")
         val src = main
@@ -75,6 +76,7 @@ class MonacoUtilsDotProbeTddTest {
             it.initialize(InitializeParams().apply {
                 workspaceFolders = listOf(WorkspaceFolder(root.toUri().toString(), root.fileName.toString()))
             })
+            it.flushBackgroundRebuild()
         }
         val mainPath = root.resolve("main.lua")
         val src = main

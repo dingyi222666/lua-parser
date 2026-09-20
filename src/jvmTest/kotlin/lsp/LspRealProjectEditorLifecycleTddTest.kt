@@ -956,7 +956,7 @@ class LspRealProjectEditorLifecycleTddTest {
     // -------------------------------------------------------------------------
 
     private fun harness(): Harness {
-        val languageService = LuaLanguageService().also { it.initialize(InitializeParams()) }
+        val languageService = LuaLanguageService().also { it.initialize(InitializeParams()); it.flushBackgroundRebuild() }
         val published = mutableListOf<PublishDiagnosticsParams>()
         val textDocuments = LuaTextDocumentService(
             languageService = languageService,
@@ -966,7 +966,7 @@ class LspRealProjectEditorLifecycleTddTest {
     }
 
     private fun plainService(): LuaLanguageService {
-        return LuaLanguageService().also { it.initialize(InitializeParams()) }
+        return LuaLanguageService().also { it.initialize(InitializeParams()); it.flushBackgroundRebuild() }
     }
 
     private fun initializedService(root: Path): LuaLanguageService {

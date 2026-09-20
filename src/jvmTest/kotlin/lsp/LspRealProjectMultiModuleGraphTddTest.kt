@@ -917,6 +917,7 @@ class LspRealProjectMultiModuleGraphTddTest {
                     workspaceFolders = listOf(WorkspaceFolder(root.toUri().toString(), root.fileName.toString()))
                 }
             )
+            service.flushBackgroundRebuild()
         }
         return ProjectWorkspace(root, service, written)
     }

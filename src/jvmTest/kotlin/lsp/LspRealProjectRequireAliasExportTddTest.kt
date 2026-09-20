@@ -1071,6 +1071,7 @@ class LspRealProjectRequireAliasExportTddTest {
                     workspaceFolders = listOf(WorkspaceFolder(root.toUri().toString(), root.fileName.toString()))
                 }
             )
+            service.flushBackgroundRebuild()
         }
         return AliasWorkspace(root, service, written)
     }

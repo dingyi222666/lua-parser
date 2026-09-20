@@ -67,7 +67,7 @@ class LspDidChangeConfigurationRepublishTddTest {
 
     @Test
     fun invalid_configuration_keeps_prior_metadata_snapshot_and_does_not_republish() {
-        val languageService = LuaLanguageService().also { it.initialize(InitializeParams()) }
+        val languageService = LuaLanguageService().also { it.initialize(InitializeParams()); it.flushBackgroundRebuild() }
         val published = mutableListOf<PublishDiagnosticsParams>()
         val textDocuments = LuaTextDocumentService(
             languageService = languageService,
@@ -110,7 +110,7 @@ class LspDidChangeConfigurationRepublishTddTest {
 
     @Test
     fun nested_jvm_and_androlua_sections_update_metadata_and_republish() {
-        val languageService = LuaLanguageService().also { it.initialize(InitializeParams()) }
+        val languageService = LuaLanguageService().also { it.initialize(InitializeParams()); it.flushBackgroundRebuild() }
         val published = mutableListOf<PublishDiagnosticsParams>()
         val textDocuments = LuaTextDocumentService(
             languageService = languageService,
@@ -160,7 +160,7 @@ class LspDidChangeConfigurationRepublishTddTest {
 
     @Test
     fun gson_json_object_settings_republish_open_document_diagnostics() {
-        val languageService = LuaLanguageService().also { it.initialize(InitializeParams()) }
+        val languageService = LuaLanguageService().also { it.initialize(InitializeParams()); it.flushBackgroundRebuild() }
         val published = mutableListOf<PublishDiagnosticsParams>()
         val textDocuments = LuaTextDocumentService(
             languageService = languageService,
