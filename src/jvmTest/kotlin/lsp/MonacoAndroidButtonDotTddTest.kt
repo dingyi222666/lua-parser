@@ -42,6 +42,9 @@ class MonacoAndroidButtonDotTddTest {
         service.initialize(InitializeParams().apply {
             workspaceFolders = listOf(WorkspaceFolder(root.toUri().toString(), "monaco-lsp-demo"))
         })
+        service.flushBackgroundRebuild()
+            workspaceFolders = listOf(WorkspaceFolder(root.toUri().toString(), "monaco-lsp-demo"))
+        })
         LuaWorkspaceService(service).didChangeConfiguration(
             DidChangeConfigurationParams(
                 mapOf(
@@ -98,6 +101,9 @@ class MonacoAndroidButtonDotTddTest {
             )
         )
         service.initialize(InitializeParams().apply {
+            workspaceFolders = listOf(WorkspaceFolder(root.toUri().toString(), "ws"))
+        })
+        service.flushBackgroundRebuild()
             workspaceFolders = listOf(WorkspaceFolder(root.toUri().toString(), "ws"))
         })
         LuaWorkspaceService(service).didChangeConfiguration(
@@ -174,6 +180,9 @@ class MonacoAndroidButtonDotTddTest {
         service.initialize(InitializeParams().apply {
             workspaceFolders = listOf(WorkspaceFolder(root.toUri().toString(), "ws"))
         })
+        service.flushBackgroundRebuild()
+            workspaceFolders = listOf(WorkspaceFolder(root.toUri().toString(), "ws"))
+        })
         LuaWorkspaceService(service).didChangeConfiguration(
             DidChangeConfigurationParams(mapOf("jvm.androidJar" to jarPath))
         )
@@ -205,6 +214,9 @@ class MonacoAndroidButtonDotTddTest {
             JvmWorkspaceEngine(configuration = JvmWorkspaceConfiguration(androidJar = jarPath))
         )
         service.initialize(InitializeParams().apply {
+            workspaceFolders = listOf(WorkspaceFolder(root.toUri().toString(), "ws"))
+        })
+        service.flushBackgroundRebuild()
             workspaceFolders = listOf(WorkspaceFolder(root.toUri().toString(), "ws"))
         })
         LuaWorkspaceService(service).didChangeConfiguration(

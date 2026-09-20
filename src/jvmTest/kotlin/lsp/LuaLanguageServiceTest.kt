@@ -32,6 +32,7 @@ class LuaLanguageServiceTest {
     fun language_service_exposes_signature_help_for_workspace_functions() {
         val service = LuaLanguageService()
         service.initialize(InitializeParams())
+        service.flushBackgroundRebuild()
 
         val uri = "file:///workspace/signature-help.lua"
         service.didOpen(
@@ -58,6 +59,7 @@ class LuaLanguageServiceTest {
     fun language_service_exposes_hover_completion_definition_and_diagnostics() {
         val service = LuaLanguageService()
         service.initialize(InitializeParams())
+        service.flushBackgroundRebuild()
         service.setWorkspaceMetadata(mapOf(JvmClassModuleProvider.CLASSES_METADATA_KEY to "java.util.Arrays"))
 
         val uri = "file:///workspace/main.lua"
@@ -93,6 +95,7 @@ class LuaLanguageServiceTest {
     fun text_document_service_publishes_diagnostics_and_returns_query_results() {
         val service = LuaLanguageService()
         service.initialize(InitializeParams())
+        service.flushBackgroundRebuild()
         service.setWorkspaceMetadata(mapOf(JvmClassModuleProvider.CLASSES_METADATA_KEY to "java.util.Arrays"))
 
         val published = mutableListOf<String>()
@@ -128,6 +131,7 @@ class LuaLanguageServiceTest {
     fun language_service_exposes_references_for_workspace_and_provider_symbols() {
         val service = LuaLanguageService()
         service.initialize(InitializeParams())
+        service.flushBackgroundRebuild()
         service.setWorkspaceMetadata(mapOf(JvmClassModuleProvider.CLASSES_METADATA_KEY to "java.util.Arrays"))
 
         val uri = "file:///workspace/main.lua"
@@ -149,6 +153,7 @@ class LuaLanguageServiceTest {
     fun workspace_service_applies_jvm_configuration_metadata() {
         val service = LuaLanguageService()
         service.initialize(InitializeParams())
+        service.flushBackgroundRebuild()
         val workspace = LuaWorkspaceService(service)
         workspace.didChangeConfiguration(
             DidChangeConfigurationParams(
@@ -177,6 +182,7 @@ class LuaLanguageServiceTest {
     fun language_service_uses_androlua_overlay_globals_by_default() {
         val service = LuaLanguageService()
         service.initialize(InitializeParams())
+        service.flushBackgroundRebuild()
 
         val uri = "file:///workspace/androlua-overlay.lua"
         service.didOpen(
@@ -208,6 +214,7 @@ class LuaLanguageServiceTest {
     fun language_service_accumulates_wildcard_import_packages_for_later_unqualified_android_lua_resolution() {
         val service = LuaLanguageService()
         service.initialize(InitializeParams())
+        service.flushBackgroundRebuild()
         val workspace = LuaWorkspaceService(service)
         workspace.didChangeConfiguration(
             DidChangeConfigurationParams(
@@ -242,6 +249,7 @@ class LuaLanguageServiceTest {
     fun language_service_exposes_dynamic_wildcard_import_package_members() {
         val service = LuaLanguageService()
         service.initialize(InitializeParams())
+        service.flushBackgroundRebuild()
         val workspace = LuaWorkspaceService(service)
         workspace.didChangeConfiguration(
             DidChangeConfigurationParams(
@@ -276,6 +284,7 @@ class LuaLanguageServiceTest {
     fun language_service_resolves_wildcard_imports_and_dynamic_jvm_bindings() {
         val service = LuaLanguageService()
         service.initialize(InitializeParams())
+        service.flushBackgroundRebuild()
 
         val wildcardUri = "file:///workspace/wildcard.lua"
         service.didOpen(
@@ -316,6 +325,11 @@ class LuaLanguageServiceTest {
     fun language_server_initializes_and_exposes_services() {
         val server = LuaLanguageServer()
         val initialize = server.initialize(
+            InitializeParams().apply {
+                workspaceFolders = listOf(WorkspaceFolder("file:///workspace", "workspace"))
+            }
+        ).get()
+        server.flushBackgroundRebuild()
             InitializeParams().apply {
                 workspaceFolders = listOf(WorkspaceFolder("file:///workspace", "workspace"))
             }

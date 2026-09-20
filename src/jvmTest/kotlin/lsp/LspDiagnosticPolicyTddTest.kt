@@ -234,6 +234,7 @@ class LspDiagnosticPolicyTddTest {
     private fun initializedService(): LuaLanguageService {
         val service = LuaLanguageService()
         service.initialize(InitializeParams())
+        service.flushBackgroundRebuild()
         return service
     }
 

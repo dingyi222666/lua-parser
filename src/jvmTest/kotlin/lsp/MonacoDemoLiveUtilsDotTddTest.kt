@@ -37,6 +37,11 @@ class MonacoDemoLiveUtilsDotTddTest {
                     WorkspaceFolder(root.toUri().toString(), "monaco-lsp-demo")
                 )
             })
+            it.flushBackgroundRebuild()
+                workspaceFolders = listOf(
+                    WorkspaceFolder(root.toUri().toString(), "monaco-lsp-demo")
+                )
+            })
         }
 
         val mainPath = root.resolve("main.lua")
@@ -110,6 +115,9 @@ class MonacoDemoLiveUtilsDotTddTest {
         write(root, "main.lua", mainDisk)
         val service = LuaLanguageService().also {
             it.initialize(InitializeParams().apply {
+                workspaceFolders = listOf(WorkspaceFolder(root.toUri().toString(), "ws"))
+            })
+            it.flushBackgroundRebuild()
                 workspaceFolders = listOf(WorkspaceFolder(root.toUri().toString(), "ws"))
             })
         }

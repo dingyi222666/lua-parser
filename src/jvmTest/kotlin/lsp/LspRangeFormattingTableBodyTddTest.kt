@@ -60,6 +60,7 @@ class LspRangeFormattingTableBodyTddTest {
     fun range_formatting_capability_or_explicit_skip_when_unimplemented() {
         val service = service()
         val capabilities = service.initialize(InitializeParams()).capabilities
+        service.flushBackgroundRebuild()
         val textDocuments = LuaTextDocumentService(service)
         val document = textDocuments.open(
             "workspace/range-format-capability-probe.lua",

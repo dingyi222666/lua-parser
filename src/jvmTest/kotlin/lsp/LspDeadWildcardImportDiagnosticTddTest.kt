@@ -102,6 +102,7 @@ class LspDeadWildcardImportDiagnosticTddTest {
     private fun initializedService(): LuaLanguageService {
         val service = LuaLanguageService()
         service.initialize(InitializeParams())
+        service.flushBackgroundRebuild()
         // initialize builds the workspace on a background thread now; these
         // tests assert diagnostics/symbols that only exist once it completes.
         check(service.awaitWorkspaceReady()) { "background build did not finish" }
