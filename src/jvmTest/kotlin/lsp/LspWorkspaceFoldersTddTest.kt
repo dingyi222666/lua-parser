@@ -128,6 +128,7 @@ class LspWorkspaceFoldersTddTest {
                     rootUri = root.uri
                 }
             )
+            service.flushBackgroundRebuild()
         }
 
         val symbols = service.workspaceSymbols("value")
@@ -144,6 +145,7 @@ class LspWorkspaceFoldersTddTest {
                     workspaceFolders = listOf(WorkspaceFolder(root.uri, root.fileName.toString()))
                 }
             )
+            service.flushBackgroundRebuild()
         }
     }
 

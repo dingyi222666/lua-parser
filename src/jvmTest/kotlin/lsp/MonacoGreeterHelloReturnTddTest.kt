@@ -131,6 +131,7 @@ class MonacoGreeterHelloReturnTddTest {
                     workspaceFolders = listOf(WorkspaceFolder(root.toUri().toString(), root.fileName.toString()))
                 }
             )
+            service.flushBackgroundRebuild()
         }
         return DemoWorkspace(root, service, written)
     }

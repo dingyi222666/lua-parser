@@ -177,6 +177,7 @@ class LspWatchedFilesTddTest {
                     workspaceFolders = listOf(WorkspaceFolder(root.uri, root.fileName.toString()))
                 }
             )
+            service.flushBackgroundRebuild()
         }
     }
 
