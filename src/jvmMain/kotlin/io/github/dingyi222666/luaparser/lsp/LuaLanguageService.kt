@@ -223,9 +223,73 @@ class LuaLanguageService(
         workspaceFolders = configuredWorkspaceFolders(params)
         refreshWorkspaceFolderUriPrefixes()
         refreshWorkspaceFolderIndex()
-        // Cold start always uses a full rebuild so the first snapshot is authoritative.
-        rebuildFull()
-        InitializeResult(serverCapabilities())
+        // The full workspace build (corpus analyze + dex mount) takes 13-18s on a
+        // phone — running it here blocks the initialize RESPONSE and every
+        // subsequent request serializes behind stateLock (completions time out,
+        // the editor looks dead). Answer immediately with an empty snapshot:
+        // didOpen documents still resolve through openDocuments overlays, and
+        // the authoritative build runs on a background thread.
+        InitializeResult(serverCapabilities()).also {
+            scheduleBackgroundRebuild()
+        }
+    }
+
+    /**
+     * Runs the authoritative workspace build off the request path. While it
+     * runs, requests serve from openDocuments overlays (empty snapshot).
+     * Completion of the build flips [snapshotReady], after which cross-file
+     * resolution (dex classes, workspace globals) lights up.
+     */
+    private val rebuildLock = Any()
+    private var backgroundRebuildRunning = false
+    private fun scheduleBackgroundRebuild() {
+        synchronized(rebuildLock) {
+            if (backgroundRebuildRunning) {
+                return
+            }
+            backgroundRebuildRunning = true
+        }
+        Thread({
+            try {
+                val t0 = System.currentTimeMillis()
+                val rebuild = synchronized(stateLock) {
+                    // Recompute under stateLock so the file map is consistent;
+                    // the heavy build itself must stay OUTSIDE stateLock or it
+                    // blocks every request again.
+                    val files = currentWorkspaceFiles()
+                    Triple(files, rebuildFullLocked(files), workspaceMetadata)
+                }
+                @Suppress("UNUSED_EXPRESSION")
+                rebuild
+            } catch (t: Throwable) {
+                println("LSP-DEVICE: background rebuild failed: $t")
+            } finally {
+                synchronized(rebuildLock) { backgroundRebuildRunning = false }
+            }
+        }, "lsp-workspace-build").apply {
+            isDaemon = true
+        }.start()
+    }
+
+    /**
+     * The heavy build, called with stateLock HELD (thread is the state owner).
+     * Split from [rebuildFull] so the background thread can hold the lock for
+     * the whole build while request threads queue briefly on it — same
+     * semantics as the old synchronous path, just off the initialize response.
+     */
+    private fun rebuildFullLocked(files: Map<VirtualPath, String>): Set<VirtualPath> {
+        val t0 = System.currentTimeMillis()
+        println("LSP-DEVICE: rebuildFull starting, files=${files.size}, metadata=$workspaceMetadata")
+        val result = engine.build(
+            LuaWorkspaceInput(
+                files = files,
+                metadata = workspaceMetadata
+            )
+        )
+        fullRebuildCount += 1
+        applyWorkspaceResult(result, files)
+        println("LSP-DEVICE: rebuildFull done in ${System.currentTimeMillis() - t0}ms, affected=${result.affectedDocuments.size}")
+        return result.affectedDocuments
     }
 
     fun setWorkspaceMetadata(metadata: Map<String, String>): Unit = synchronized(stateLock) {
@@ -1545,20 +1609,8 @@ class LuaLanguageService(
      * Returns the documents the engine reported as affected (every analyzed file on a
      * cold build) so callers can republish diagnostics without re-deriving the set.
      */
-    private fun rebuildFull(): Set<VirtualPath> {
-        val files = currentWorkspaceFiles()
-        val t0 = System.currentTimeMillis()
-        println("LSP-DEVICE: rebuildFull starting, files=${files.size}, metadata=$workspaceMetadata")
-        val result = engine.build(
-            LuaWorkspaceInput(
-                files = files,
-                metadata = workspaceMetadata
-            )
-        )
-        fullRebuildCount += 1
-        applyWorkspaceResult(result, files)
-        println("LSP-DEVICE: rebuildFull done in ${System.currentTimeMillis() - t0}ms, affected=${result.affectedDocuments.size}")
-        return result.affectedDocuments
+    private fun rebuildFull(): Set<VirtualPath> = synchronized(stateLock) {
+        rebuildFullLocked(currentWorkspaceFiles())
     }
 
     /**
@@ -1572,7 +1624,11 @@ class LuaLanguageService(
     private fun refreshIncremental(): Set<VirtualPath> {
         val files = currentWorkspaceFiles()
         if (!snapshotReady) {
-            return rebuildFull()
+            // Background build in flight (or scheduled): serve from overlays.
+            // Re-running the full build here would serialize didOpen/didChange
+            // behind a 13-18s mount again — exactly what async init removed.
+            scheduleBackgroundRebuild()
+            return emptySet()
         }
 
         val upserts = linkedMapOf<VirtualPath, String>()
