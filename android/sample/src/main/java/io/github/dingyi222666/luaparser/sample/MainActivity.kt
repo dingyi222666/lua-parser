@@ -16,6 +16,8 @@ import androidx.core.view.WindowInsetsCompat
 import android.view.View
 import com.google.android.material.appbar.MaterialToolbar
 import io.github.rosemoe.sora.event.ContentChangeEvent
+import io.github.rosemoe.sora.lsp.requests.Timeout
+import io.github.rosemoe.sora.lsp.requests.Timeouts
 import io.github.rosemoe.sora.event.EventReceiver
 import io.github.rosemoe.sora.event.Unsubscribe
 import io.github.rosemoe.sora.langs.textmate.TextMateColorScheme
@@ -148,6 +150,12 @@ class MainActivity : AppCompatActivity(), FileBrowserFragment.Listener {
 
         ensureTextmateTheme()
         setupToolbar()
+
+        // Our first on-device initialize builds the whole demo corpus AND mounts
+        // the 929-class demo dex synchronously (13-16s on a flagship; slower on
+        // low-end). sora's default INIT window is 10s — raise it for this app.
+        Timeout[Timeouts.INIT] = 60_000
+        Timeout[Timeouts.SHUTDOWN] = 15_000
         subscribeDirtyTracking()
         diagnosticsBar.setOnClickListener { jumpToFirstProblem() }
 
@@ -695,12 +703,17 @@ class MainActivity : AppCompatActivity(), FileBrowserFragment.Listener {
         // through a fresh IO scope instead — LspEditor.dispose() writes to the
         // local socket and must not run on the main thread anyway.
         editor.release()
+        // LspProject.dispose() -> closeAllEditors() -> LspEditor.dispose() has a
+        // race in sora 0.23.6 (its internal edit-history removeAll can hit an
+        // empty list — IndexOutOfBoundsException, device-verified crash on
+        // destroy). Guard the whole dispose path; a leaked connection on
+        // process teardown is harmless (the service closes the sockets).
         val disposeScope = CoroutineScope(Dispatchers.IO)
         if (this::lspEditor.isInitialized) {
-            disposeScope.launch { lspEditor.dispose() }
+            disposeScope.launch { runCatching { lspEditor.dispose() } }
         }
         if (this::lspProject.isInitialized) {
-            disposeScope.launch { lspProject.dispose() }
+            disposeScope.launch { runCatching { lspProject.dispose() } }
         }
         stopService(Intent(this, LspServerService::class.java))
     }
