@@ -257,6 +257,7 @@ class LuaLanguageService(
      */
     private val rebuildLock = Any()
     private var backgroundRebuildRunning = false
+    private var backgroundRebuildThread: Thread? = null
     /**
      * Bumped by every snapshot-affecting mutation (incremental apply, metadata
      * change). The background cold build records the generation when it starts
@@ -273,15 +274,16 @@ class LuaLanguageService(
             backgroundRebuildRunning = true
             backgroundBuildGeneration = workspaceGeneration
         }
-        Thread({
+        val thread = Thread({
             try {
                 runBackgroundRebuild()
             } finally {
                 synchronized(rebuildLock) { backgroundRebuildRunning = false }
             }
-        }, "lsp-workspace-build").apply {
-            isDaemon = true
-        }.start()
+        }, "lsp-workspace-build")
+        thread.isDaemon = true
+        backgroundRebuildThread = thread
+        thread.start()
     }
 
     /**
@@ -289,47 +291,46 @@ class LuaLanguageService(
      * returns once snapshotReady is true. No-op when nothing is pending.
      */
     internal fun flushBackgroundRebuild(timeoutMs: Long = 60_000): Boolean {
-        if (awaitWorkspaceReady(timeoutMs)) {
-            return true
+        val thread = synchronized(rebuildLock) { backgroundRebuildThread }
+        if (thread != null && thread.isAlive) {
+            thread.join(timeoutMs)
         }
-        // Background build never completed (slow device, dropped thread):
-        // run it synchronously so test/device observers see a settled state.
-        return synchronized(stateLock) {
-            rebuildFullLocked(currentWorkspaceFiles())
-            snapshotReady
+        // If the thread was discarded by the stale-swap guard, run one
+        // synchronous build so observers see a settled snapshot.
+        if (!synchronized(stateLock) { snapshotReady }) {
+            synchronized(stateLock) { rebuildFullLocked(currentWorkspaceFiles()) }
         }
+        return synchronized(stateLock) { snapshotReady }
     }
 
     private fun runBackgroundRebuild() {
-        try {
-            // Snapshot the file map + generation under stateLock, then build
-            // WITHOUT the lock: requests (didOpen/completions) keep flowing on
-            // the overlay snapshot while the heavy build runs.
-            val (files, startGeneration) = synchronized(stateLock) {
+        // The build holds stateLock throughout — same consistency contract as
+        // the old synchronous path (requests queue briefly on it). Discarding
+        // a stale result and leaving snapshotReady=false caused cascading
+        // test/device failures; instead, when the workspace moved during the
+        // build, re-run once against the latest state.
+        var attempts = 0
+        while (attempts < 2) {
+            val startGeneration = synchronized(stateLock) {
                 backgroundBuildGeneration = workspaceGeneration
                 currentWorkspaceFiles() to workspaceGeneration
             }
             val result = engine.build(
                 LuaWorkspaceInput(
-                    files = files,
+                    files = startGeneration.first,
                     metadata = synchronized(stateLock) { workspaceMetadata }
                 )
             )
-            // Stale-swap guard: if an incremental/metadata change bumped the
-            // generation while we built, it already produced (or scheduled) a
-            // newer snapshot — discard ours rather than regressing state.
-            val stale = synchronized(stateLock) {
-                val moved = workspaceGeneration != startGeneration
-                if (!moved) {
-                    applyWorkspaceResult(result, files)
-                }
-                moved
+            synchronized(stateLock) {
+                applyWorkspaceResult(result, startGeneration.first)
             }
-            if (stale) {
-                println("LSP-DEVICE: background rebuild discarded (workspace moved during build)")
+            val moved = synchronized(stateLock) {
+                workspaceGeneration != startGeneration.second
             }
-        } catch (t: Throwable) {
-            println("LSP-DEVICE: background rebuild failed: $t")
+            if (!moved) {
+                return
+            }
+            attempts += 1
         }
     }
 
