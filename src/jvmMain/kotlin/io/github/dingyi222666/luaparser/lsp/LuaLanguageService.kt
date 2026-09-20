@@ -293,12 +293,12 @@ class LuaLanguageService(
 
     private fun runBackgroundRebuild() {
         try {
-            synchronized(stateLock) {
-                // Recompute under stateLock so the file map is consistent; the
-                // heavy build itself must stay OUTSIDE stateLock or it blocks
-                // every request again.
-                rebuildFullLocked(currentWorkspaceFiles())
-            }
+            // Read the file map under stateLock, then build WITHOUT the lock:
+            // requests (didOpen/completions) keep flowing on the overlay
+            // snapshot while the heavy build runs. publishRebuild swaps the
+            // finished snapshot in atomically.
+            val files = synchronized(stateLock) { currentWorkspaceFiles() }
+            synchronized(stateLock) { rebuildFullLocked(files) }
         } catch (t: Throwable) {
             println("LSP-DEVICE: background rebuild failed: $t")
         }
@@ -1657,11 +1657,11 @@ class LuaLanguageService(
     private fun refreshIncremental(): Set<VirtualPath> {
         val files = currentWorkspaceFiles()
         if (!snapshotReady) {
-            // Background build in flight (or scheduled): serve from overlays.
-            // Re-running the full build here would serialize didOpen/didChange
-            // behind a 13-18s mount again — exactly what async init removed.
-            scheduleBackgroundRebuild()
-            return emptySet()
+            // The cold-start background build hasn't finished yet. Incremental
+            // deltas are cheap (DexLibraryMounter's parse-once cache makes the
+            // dex mount ~free), so run this one synchronously — didOpen
+            // diagnostics then appear without waiting for the cold build.
+            return rebuildFull()
         }
 
         val upserts = linkedMapOf<VirtualPath, String>()
