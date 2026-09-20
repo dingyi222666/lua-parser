@@ -52,7 +52,6 @@ class LspSemanticTokensBasicTddTest {
     fun initialize_semantic_tokens_capability_is_probeable() {
         val service = service()
         val capabilities = service.initialize(InitializeParams()).capabilities
-        service.flushBackgroundRebuild()
 
         // Capability may be null today (documented gap) or present once product
         // lands semantic tokens. Either way, reading the field must not throw.
@@ -139,7 +138,6 @@ class LspSemanticTokensBasicTddTest {
                 val decoded = decodeTokens(data)
 
                 val provider = service.initialize(InitializeParams()).capabilities.semanticTokensProvider
-                service.flushBackgroundRebuild()
                 if (provider?.legend?.tokenTypes != null) {
                     val legendTypes = provider.legend.tokenTypes
                     val keywordType = legendTypes.indexOf(SemanticTokenTypes.Keyword)
@@ -192,7 +190,6 @@ class LspSemanticTokensBasicTddTest {
     fun semantic_tokens_delta_and_full_remain_consistent_when_exposed() {
         val service = service()
         val provider = service.initialize(InitializeParams()).capabilities.semanticTokensProvider
-        service.flushBackgroundRebuild()
 
         Assume.assumeTrue(
             "TASK-252 skipped: semanticTokensProvider not advertised; delta/full consistency deferred.",

@@ -63,7 +63,6 @@ class LspCompletionItemResolveTddTest {
     fun initialize_completion_resolve_provider_is_null_false_or_true_when_product_lands() {
         val service = service()
         val capabilities = service.initialize(InitializeParams()).capabilities
-        service.flushBackgroundRebuild()
         val completion = assertNotNull(
             capabilities.completionProvider,
             "completionProvider must be advertised"
@@ -88,7 +87,6 @@ class LspCompletionItemResolveTddTest {
     fun completion_item_resolve_surface_is_invokable_without_killing_service() {
         val service = service()
         val capabilities = service.initialize(InitializeParams()).capabilities
-        service.flushBackgroundRebuild()
         val textDocuments = LuaTextDocumentService(service)
         val unresolved = CompletionItem("probe").apply {
             kind = CompletionItemKind.Variable

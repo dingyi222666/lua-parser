@@ -54,7 +54,6 @@ class LspShutdownExitIdempotencyTddTest {
     fun repeated_shutdown_after_initialize_is_idempotent() {
         val server = LuaLanguageServer()
         server.initialize(InitializeParams()).get()
-        server.flushBackgroundRebuild()
 
         assertEquals(0, server.shutdown().get(5, TimeUnit.SECONDS))
         assertEquals(0, server.shutdown().get(5, TimeUnit.SECONDS))
@@ -65,7 +64,6 @@ class LspShutdownExitIdempotencyTddTest {
     fun repeated_exit_after_shutdown_is_idempotent() {
         val server = LuaLanguageServer()
         server.initialize(InitializeParams()).get()
-        server.flushBackgroundRebuild()
         server.shutdown().get()
 
         server.exit()
@@ -80,7 +78,6 @@ class LspShutdownExitIdempotencyTddTest {
         )
         assertFutureFails(
             server.initialize(InitializeParams()),
-            server.flushBackgroundRebuild()
             "initialize after repeated exit should remain rejected"
         )
         assertFutureFails(
@@ -94,7 +91,6 @@ class LspShutdownExitIdempotencyTddTest {
         val exitCodes = mutableListOf<Int>()
         val server = LuaLanguageServer(processExit = exitCodes::add)
         server.initialize(InitializeParams()).get()
-        server.flushBackgroundRebuild()
         server.shutdown().get()
 
         server.exit()
@@ -108,7 +104,6 @@ class LspShutdownExitIdempotencyTddTest {
         val exitCodes = mutableListOf<Int>()
         val server = LuaLanguageServer(processExit = exitCodes::add)
         server.initialize(InitializeParams()).get()
-        server.flushBackgroundRebuild()
 
         server.exit()
 
@@ -119,7 +114,6 @@ class LspShutdownExitIdempotencyTddTest {
     fun post_shutdown_requests_are_refused_across_repeated_shutdown_calls() {
         val server = LuaLanguageServer()
         server.initialize(InitializeParams()).get()
-        server.flushBackgroundRebuild()
         val uri = "file:///workspace/post-shutdown-refuse.lua"
         server.textDocumentService.didOpen(openParams(uri, "local value = 1\nreturn value"))
 
@@ -150,7 +144,6 @@ class LspShutdownExitIdempotencyTddTest {
     fun exit_without_shutdown_is_idempotent_and_rejects_text_document_requests() {
         val server = LuaLanguageServer()
         server.initialize(InitializeParams()).get()
-        server.flushBackgroundRebuild()
         val uri = "file:///workspace/exit-without-shutdown.lua"
         server.textDocumentService.didOpen(openParams(uri, "local value = 1\nreturn value"))
 
@@ -168,7 +161,6 @@ class LspShutdownExitIdempotencyTddTest {
         )
         assertFutureFails(
             server.initialize(InitializeParams()),
-            server.flushBackgroundRebuild()
             "initialize after direct exit should complete exceptionally"
         )
     }
@@ -177,7 +169,6 @@ class LspShutdownExitIdempotencyTddTest {
     fun interleaved_shutdown_and_exit_converge_to_exited_policy() {
         val server = LuaLanguageServer()
         server.initialize(InitializeParams()).get()
-        server.flushBackgroundRebuild()
         val uri = "file:///workspace/interleaved-shutdown-exit.lua"
         server.textDocumentService.didOpen(openParams(uri, "local value = 1\nreturn value"))
         val position = Position(1, 7)
@@ -220,7 +211,6 @@ class LspShutdownExitIdempotencyTddTest {
         )
         assertFutureFails(
             server.initialize(InitializeParams()),
-            server.flushBackgroundRebuild()
             "initialize after interleaved shutdown/exit should be rejected"
         )
         assertFutureFails(

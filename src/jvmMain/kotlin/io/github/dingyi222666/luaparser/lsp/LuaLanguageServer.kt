@@ -355,10 +355,6 @@ class LuaLanguageServer(
 
     override fun getWorkspaceService(): WorkspaceService = workspace
 
-    /** Test/embedding hook: wait for the background workspace build to settle. */
-    internal fun flushBackgroundRebuild(timeoutMs: Long = 60_000): Boolean =
-        languageService.awaitWorkspaceReady(timeoutMs)
-
     override fun connect(client: LanguageClient) {
         synchronized(lifecycleLock) {
             if (lifecycleState != LifecycleState.EXITED) {

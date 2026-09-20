@@ -50,7 +50,6 @@ class LspCallHierarchyLocalFunctionTddTest {
     fun call_hierarchy_capability_or_documented_gap_when_unimplemented() {
         val service = service()
         val capabilities = service.initialize(InitializeParams()).capabilities
-        service.flushBackgroundRebuild()
         val textDocuments = LuaTextDocumentService(service)
         val document = textDocuments.open(
             "workspace/call-hierarchy-capability-probe.lua",

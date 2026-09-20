@@ -31,9 +31,6 @@ class MonacoUriPathCompletionTddTest {
         service.initialize(InitializeParams().apply {
             workspaceFolders = listOf(WorkspaceFolder(root.toUri().toString(), "ws"))
         })
-        service.flushBackgroundRebuild()
-            workspaceFolders = listOf(WorkspaceFolder(root.toUri().toString(), "ws"))
-        })
 
         val mainUri = root.resolve("main.lua").toUri().toString()
         val utilsUri = root.resolve("utils.lua").toUri().toString()
@@ -74,9 +71,6 @@ class MonacoUriPathCompletionTddTest {
         write(root, "main.lua", main)
         val service = LuaLanguageService()
         service.initialize(InitializeParams().apply {
-            workspaceFolders = listOf(WorkspaceFolder(root.toUri().toString(), "ws"))
-        })
-        service.flushBackgroundRebuild()
             workspaceFolders = listOf(WorkspaceFolder(root.toUri().toString(), "ws"))
         })
         val mainUri = root.resolve("main.lua").toUri().toString()

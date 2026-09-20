@@ -256,11 +256,6 @@ class LspAndroidLuaE2eActivityStubTddTest {
                     workspaceFolders = listOf(WorkspaceFolder("file:///workspace", "workspace"))
                 }
             )
-            service.flushBackgroundRebuild()
-                InitializeParams().apply {
-                    workspaceFolders = listOf(WorkspaceFolder("file:///workspace", "workspace"))
-                }
-            )
             // Flat config keeps metadata in sync for import prefixes / androlua imports.
             LuaWorkspaceService(service).didChangeConfiguration(
                 DidChangeConfigurationParams(

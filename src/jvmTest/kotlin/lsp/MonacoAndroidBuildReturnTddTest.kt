@@ -121,9 +121,6 @@ class MonacoAndroidBuildReturnTddTest {
         service.initialize(InitializeParams().apply {
             workspaceFolders = listOf(WorkspaceFolder(root.toUri().toString(), "ws"))
         })
-        service.flushBackgroundRebuild()
-            workspaceFolders = listOf(WorkspaceFolder(root.toUri().toString(), "ws"))
-        })
         LuaWorkspaceService(service).didChangeConfiguration(
             DidChangeConfigurationParams(mapOf("jvm.androidJar" to jarPath))
         )

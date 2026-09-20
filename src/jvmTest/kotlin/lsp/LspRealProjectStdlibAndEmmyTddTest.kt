@@ -1089,17 +1089,6 @@ class LspRealProjectStdlibAndEmmyTddTest {
                     )
                 }
             )
-            service.flushBackgroundRebuild()
-                InitializeParams().apply {
-                    workspaceFolders = listOf(
-                        if (workspaceRoot != null) {
-                            WorkspaceFolder(workspaceRoot.toUri().toString(), workspaceRoot.fileName.toString())
-                        } else {
-                            WorkspaceFolder("file:///workspace", "workspace")
-                        }
-                    )
-                }
-            )
         }
     }
 

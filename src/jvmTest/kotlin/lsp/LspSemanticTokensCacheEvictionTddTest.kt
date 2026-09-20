@@ -128,11 +128,6 @@ class LspSemanticTokensCacheEvictionTddTest {
                     workspaceFolders = listOf(WorkspaceFolder(root.toUri().toString(), root.fileName.toString()))
                 }
             )
-            service.flushBackgroundRebuild()
-                InitializeParams().apply {
-                    workspaceFolders = listOf(WorkspaceFolder(root.toUri().toString(), root.fileName.toString()))
-                }
-            )
         }
     }
 
