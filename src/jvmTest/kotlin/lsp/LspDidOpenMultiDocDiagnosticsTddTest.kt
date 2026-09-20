@@ -44,7 +44,7 @@ class LspDidOpenMultiDocDiagnosticsTddTest {
 
     @Test
     fun sequential_did_open_publishes_one_payload_per_document_in_open_order() {
-        val languageService = LuaLanguageService().also { it.initialize(InitializeParams()) }
+        val languageService = LuaLanguageService().also { it.initialize(InitializeParams()); check(it.awaitWorkspaceReady()) }
         val published = mutableListOf<PublishDiagnosticsParams>()
         val textDocuments = LuaTextDocumentService(
             languageService = languageService,
@@ -71,7 +71,7 @@ class LspDidOpenMultiDocDiagnosticsTddTest {
 
     @Test
     fun mixed_valid_and_invalid_opens_isolate_diagnostics_per_uri() {
-        val languageService = LuaLanguageService().also { it.initialize(InitializeParams()) }
+        val languageService = LuaLanguageService().also { it.initialize(InitializeParams()); check(it.awaitWorkspaceReady()) }
         val published = mutableListOf<PublishDiagnosticsParams>()
         val textDocuments = LuaTextDocumentService(
             languageService = languageService,
@@ -102,7 +102,7 @@ class LspDidOpenMultiDocDiagnosticsTddTest {
 
     @Test
     fun close_one_document_clears_only_that_uri_while_siblings_keep_diagnostics() {
-        val languageService = LuaLanguageService().also { it.initialize(InitializeParams()) }
+        val languageService = LuaLanguageService().also { it.initialize(InitializeParams()); check(it.awaitWorkspaceReady()) }
         val published = mutableListOf<PublishDiagnosticsParams>()
         val textDocuments = LuaTextDocumentService(
             languageService = languageService,
@@ -152,7 +152,7 @@ class LspDidOpenMultiDocDiagnosticsTddTest {
 
     @Test
     fun multi_doc_open_keeps_each_documents_symbols_queryable() {
-        val languageService = LuaLanguageService().also { it.initialize(InitializeParams()) }
+        val languageService = LuaLanguageService().also { it.initialize(InitializeParams()); check(it.awaitWorkspaceReady()) }
         val published = mutableListOf<PublishDiagnosticsParams>()
         val textDocuments = LuaTextDocumentService(
             languageService = languageService,

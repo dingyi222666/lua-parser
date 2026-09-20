@@ -235,6 +235,21 @@ class LuaLanguageService(
     }
 
     /**
+     * Test/device hook: blocks until the background build flips [snapshotReady].
+     * Returns true when ready, false on timeout.
+     */
+    internal fun awaitWorkspaceReady(timeoutMs: Long = 30_000): Boolean {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            if (synchronized(stateLock) { snapshotReady }) {
+                return true
+            }
+            Thread.sleep(50)
+        }
+        return synchronized(stateLock) { snapshotReady }
+    }
+
+    /**
      * Runs the authoritative workspace build off the request path. While it
      * runs, requests serve from openDocuments overlays (empty snapshot).
      * Completion of the build flips [snapshotReady], after which cross-file
