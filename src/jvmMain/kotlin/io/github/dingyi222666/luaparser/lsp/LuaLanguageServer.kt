@@ -25,11 +25,17 @@ import org.eclipse.lsp4j.SemanticTokens
 import org.eclipse.lsp4j.SemanticTokensDelta
 import org.eclipse.lsp4j.SemanticTokensDeltaParams
 import org.eclipse.lsp4j.SemanticTokensParams
+import org.eclipse.lsp4j.ProgressParams
+import org.eclipse.lsp4j.WorkDoneProgressBegin
+import org.eclipse.lsp4j.WorkDoneProgressCreateParams
+import org.eclipse.lsp4j.WorkDoneProgressEnd
+import org.eclipse.lsp4j.WorkDoneProgressReport
 import org.eclipse.lsp4j.TextEdit
 import org.eclipse.lsp4j.WorkspaceEdit
 import org.eclipse.lsp4j.jsonrpc.messages.Either3
 
 import io.github.dingyi222666.luaparser.interop.jvm.JvmWorkspaceEngine
+import io.github.dingyi222666.luaparser.semantic.workspace.AnalysisProgress
 import org.eclipse.lsp4j.CompletionItem
 import org.eclipse.lsp4j.CompletionList
 import org.eclipse.lsp4j.CompletionParams
@@ -83,6 +89,7 @@ class LuaLanguageServer(
     private var lifecycleState = LifecycleState.CREATED
     @Volatile
     private var client: LanguageClient? = null
+    private var indexingProgressToken: Either<String, Int>? = null
     private val textDocuments = LuaTextDocumentService(
         languageService = languageService,
         publishDiagnostics = ::publishDiagnostics,
@@ -363,6 +370,48 @@ class LuaLanguageServer(
         synchronized(lifecycleLock) {
             if (lifecycleState != LifecycleState.EXITED) {
                 this.client = client
+            }
+        }
+        // Forward background-build progress as standard $/progress work-done
+        // notifications (create/report/end) so editors show indexing status.
+        languageService.onBuildProgress = { progress ->
+            val proxy = client
+            runCatching {
+                when (progress.phase) {
+                    AnalysisProgress.Phase.COMPLETE -> {
+                        synchronized(this@LuaLanguageServer) {
+                            indexingProgressToken?.let { token ->
+                                proxy.notifyProgress(
+                                    ProgressParams(
+                                        token,
+                                        Either.forRight(
+                                            WorkDoneProgressEnd().apply { message = "Indexing complete" }
+                                        )
+                                    )
+                                )
+                            }
+                            indexingProgressToken = null
+                        }
+                    }
+                    else -> {
+                        val report = WorkDoneProgressReport().apply {
+                            message = "${progress.phase}: ${progress.currentFile?.value.orEmpty()}"
+                            percentage = if (progress.totalFiles > 0) {
+                                progress.completedFiles * 100 / progress.totalFiles
+                            } else {
+                                null
+                            }
+                        }
+                        val token: Either<String, Int> = synchronized(this@LuaLanguageServer) {
+                            val existing = indexingProgressToken
+                            existing ?: Either.forLeft<String, Int>("luaparser-indexing").also {
+                                indexingProgressToken = it
+                                proxy.createProgress(WorkDoneProgressCreateParams(it))
+                            }
+                        }
+                        proxy.notifyProgress(ProgressParams(token, Either.forRight(report)))
+                    }
+                }
             }
         }
     }

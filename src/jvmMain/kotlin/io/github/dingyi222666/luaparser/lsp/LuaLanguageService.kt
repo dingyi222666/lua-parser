@@ -32,6 +32,8 @@ import io.github.dingyi222666.luaparser.semantic.api.DIAGNOSTIC_TAG_UNNECESSARY
 import io.github.dingyi222666.luaparser.semantic.api.CompletionItemKind
 import io.github.dingyi222666.luaparser.semantic.api.DiagnosticSeverity
 import io.github.dingyi222666.luaparser.semantic.api.SymbolKind as SemanticSymbolKind
+import io.github.dingyi222666.luaparser.semantic.workspace.AnalysisProgress
+import io.github.dingyi222666.luaparser.semantic.workspace.ProgressReporter
 import io.github.dingyi222666.luaparser.semantic.workspace.LuaWorkspaceInput
 import io.github.dingyi222666.luaparser.semantic.workspace.LuaWorkspaceQueryFacade
 import io.github.dingyi222666.luaparser.semantic.workspace.VirtualPath
@@ -333,18 +335,35 @@ class LuaLanguageService(
      * the whole build while request threads queue briefly on it — same
      * semantics as the old synchronous path, just off the initialize response.
      */
+    /** Editor-visible build progress sink (AnalysisProgress), throttled upstream. */
+    internal var onBuildProgress: ((AnalysisProgress) -> Unit)? = null
+
     private fun rebuildFullLocked(files: Map<VirtualPath, String>): Set<VirtualPath> {
         val t0 = System.currentTimeMillis()
-        println("LSP-DEVICE: rebuildFull starting, files=${files.size}, metadata=$workspaceMetadata")
+        val progressSink = onBuildProgress
+        val reporter = if (progressSink != null) {
+            ProgressReporter { progress ->
+                if (progress.phase == AnalysisProgress.Phase.COMPLETE ||
+                    progress.completedFiles % 5 == 0
+                ) {
+                    progressSink(progress)
+                }
+            }
+        } else {
+            ProgressReporter.NONE
+        }
         val result = engine.build(
             LuaWorkspaceInput(
                 files = files,
                 metadata = workspaceMetadata
-            )
+            ),
+            reporter = reporter
         )
         fullRebuildCount += 1
         applyWorkspaceResult(result, files)
-        println("LSP-DEVICE: rebuildFull done in ${System.currentTimeMillis() - t0}ms, affected=${result.affectedDocuments.size}")
+        progressSink?.invoke(
+            AnalysisProgress(AnalysisProgress.Phase.COMPLETE, completedFiles = files.size, totalFiles = files.size)
+        )
         return result.affectedDocuments
     }
 
