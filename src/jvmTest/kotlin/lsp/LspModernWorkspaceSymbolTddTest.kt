@@ -68,6 +68,7 @@ class LspModernWorkspaceSymbolTddTest {
     fun initialize_advertises_workspace_symbol_provider_options() {
         val service = serviceWithMetadata()
         val capabilities = service.initialize(InitializeParams()).capabilities
+        service.flushBackgroundRebuild()
 
         val provider = assertNotNull(
             capabilities.workspaceSymbolProvider,
@@ -165,6 +166,7 @@ class LspModernWorkspaceSymbolTddTest {
         val service = serviceWithMetadata()
         // Client caps are accepted on initialize even if product does not branch yet.
         service.initialize(initializeParamsWithModernResolveSupport())
+        service.flushBackgroundRebuild()
         val workspace = LuaWorkspaceService(service)
         service.open(
             "workspace/modern-ws-wire-modern-caps.lua",

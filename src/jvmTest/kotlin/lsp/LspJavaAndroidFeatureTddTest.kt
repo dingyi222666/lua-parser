@@ -222,6 +222,11 @@ class LspJavaAndroidFeatureTddTest {
                 workspaceFolders = listOf(WorkspaceFolder("file:///workspace", "workspace"))
             }
         ).get()
+        server.flushBackgroundRebuild()
+            InitializeParams().apply {
+                workspaceFolders = listOf(WorkspaceFolder("file:///workspace", "workspace"))
+            }
+        ).get()
         server.workspaceService.didChangeConfiguration(
             DidChangeConfigurationParams(
                 mapOf(
@@ -297,6 +302,11 @@ class LspJavaAndroidFeatureTddTest {
     private fun initializedService(): LuaLanguageService {
         return LuaLanguageService().also { service ->
             service.initialize(
+                InitializeParams().apply {
+                    workspaceFolders = listOf(WorkspaceFolder("file:///workspace", "workspace"))
+                }
+            )
+            service.flushBackgroundRebuild()
                 InitializeParams().apply {
                     workspaceFolders = listOf(WorkspaceFolder("file:///workspace", "workspace"))
                 }

@@ -27,6 +27,7 @@ class LspUriHandlingTddTest {
     fun untitled_documents_preserve_exact_uri_for_diagnostics_republish_and_close() {
         val service = LuaLanguageService()
         service.initialize(InitializeParams())
+        service.flushBackgroundRebuild()
         val published = mutableListOf<PublishDiagnosticsParams>()
         val textDocuments = LuaTextDocumentService(service, publishDiagnostics = { diagnostics -> published += diagnostics })
         val uri = "untitled:Untitled-1"
@@ -45,6 +46,7 @@ class LspUriHandlingTddTest {
     fun opaque_custom_document_uri_is_preserved_for_same_document_definition_locations() {
         val service = LuaLanguageService()
         service.initialize(InitializeParams())
+        service.flushBackgroundRebuild()
         val uri = "custom-lua:opaque-document"
         val source = "local function target()\n    return 1\nend\nreturn target()\n"
 

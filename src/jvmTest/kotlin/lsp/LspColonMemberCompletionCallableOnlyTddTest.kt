@@ -134,6 +134,11 @@ class LspColonMemberCompletionCallableOnlyTddTest {
                     workspaceFolders = listOf(WorkspaceFolder("file:///workspace", "workspace"))
                 }
             )
+            service.flushBackgroundRebuild()
+                InitializeParams().apply {
+                    workspaceFolders = listOf(WorkspaceFolder("file:///workspace", "workspace"))
+                }
+            )
             check(service.awaitWorkspaceReady()) { "background build did not finish" }
         }
     }

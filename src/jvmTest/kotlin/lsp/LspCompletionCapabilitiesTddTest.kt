@@ -12,6 +12,7 @@ class LspCompletionCapabilitiesTddTest {
         val server = LuaLanguageServer()
 
         val completionProvider = assertNotNull(server.initialize(InitializeParams()).get().capabilities.completionProvider)
+        server.flushBackgroundRebuild()
 
         assertEquals(listOf(".", ":"), completionProvider.triggerCharacters)
     }

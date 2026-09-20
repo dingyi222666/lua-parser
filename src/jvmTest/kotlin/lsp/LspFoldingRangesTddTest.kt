@@ -45,6 +45,7 @@ class LspFoldingRangesTddTest {
     fun folding_range_capability_or_explicit_skip_when_unimplemented() {
         val service = service()
         val capabilities = service.initialize(InitializeParams()).capabilities
+        service.flushBackgroundRebuild()
         val textDocuments = LuaTextDocumentService(service)
         val document = textDocuments.open(
             "workspace/folding-capability-probe.lua",

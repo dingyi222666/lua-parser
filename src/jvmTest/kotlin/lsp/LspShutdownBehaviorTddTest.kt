@@ -61,6 +61,7 @@ class LspShutdownBehaviorTddTest {
     fun after_shutdown_before_exit_rejects_text_document_and_workspace_requests() {
         val server = LuaLanguageServer()
         server.initialize(InitializeParams()).get()
+        server.flushBackgroundRebuild()
         val uri = "file:///workspace/post-shutdown-requests.lua"
         server.textDocumentService.didOpen(openParams(uri, "local value = 1\nreturn value"))
 
@@ -91,6 +92,7 @@ class LspShutdownBehaviorTddTest {
         val client = RecordingLanguageClient()
         server.connect(client.asClient())
         server.initialize(InitializeParams()).get()
+        server.flushBackgroundRebuild()
         val uri = "file:///workspace/post-shutdown-notifications.lua"
         server.textDocumentService.didOpen(openParams(uri, "local value = 1\nreturn value"))
         client.published.clear()
@@ -117,6 +119,7 @@ class LspShutdownBehaviorTddTest {
     fun server_requests_and_notifications_can_overlap_shutdown_without_escaping_post_shutdown_state() {
         val server = LuaLanguageServer()
         server.initialize(InitializeParams()).get()
+        server.flushBackgroundRebuild()
         val uri = "file:///workspace/concurrent-shutdown.lua"
         server.textDocumentService.didOpen(openParams(uri, "local value = 1\nreturn value"))
         val position = Position(1, 7)
@@ -166,6 +169,7 @@ class LspShutdownBehaviorTddTest {
     fun exit_after_shutdown_rejects_text_document_and_workspace_requests() {
         val server = LuaLanguageServer()
         server.initialize(InitializeParams()).get()
+        server.flushBackgroundRebuild()
         val uri = "file:///workspace/post-exit.lua"
         server.textDocumentService.didOpen(openParams(uri, "local value = 1\nreturn value"))
 

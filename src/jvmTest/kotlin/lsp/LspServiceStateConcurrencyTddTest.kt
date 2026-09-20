@@ -30,6 +30,7 @@ class LspServiceStateConcurrencyTddTest {
     fun document_and_workspace_requests_can_overlap_lifecycle_state_changes() {
         val languageService = LuaLanguageService()
         languageService.initialize(InitializeParams())
+        languageService.flushBackgroundRebuild()
 
         val publishedDiagnostics = ConcurrentLinkedQueue<PublishDiagnosticsParams>()
         val textDocuments = LuaTextDocumentService(languageService, publishDiagnostics = publishedDiagnostics::add)

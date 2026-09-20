@@ -49,6 +49,7 @@ class LspSelectionRangeNestedBlockTddTest {
     fun selection_range_capability_is_null_or_explicit_when_product_lands() {
         val service = service()
         val capabilities = service.initialize(InitializeParams()).capabilities
+        service.flushBackgroundRebuild()
 
         assertNotNull(capabilities, "initialize must return ServerCapabilities")
         val provider = capabilities.selectionRangeProvider
@@ -65,6 +66,7 @@ class LspSelectionRangeNestedBlockTddTest {
     fun selection_range_surface_is_invokable_without_killing_service() {
         val service = service()
         val capabilities = service.initialize(InitializeParams()).capabilities
+        service.flushBackgroundRebuild()
         val textDocuments = LuaTextDocumentService(service)
         val document = textDocuments.open(
             "workspace/selection-range-surface.lua",

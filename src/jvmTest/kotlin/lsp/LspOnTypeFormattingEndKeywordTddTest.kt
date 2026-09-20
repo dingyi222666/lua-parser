@@ -51,6 +51,7 @@ class LspOnTypeFormattingEndKeywordTddTest {
     fun initialize_on_type_formatting_capability_is_probeable() {
         val service = service()
         val capabilities = service.initialize(InitializeParams()).capabilities
+        service.flushBackgroundRebuild()
 
         // Capability may be null today (documented gap) or present once product
         // lands on-type formatting. Reading the field must not throw.
