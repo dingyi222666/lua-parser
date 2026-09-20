@@ -198,7 +198,7 @@ class LspDiagnosticsPublishOnChangeTddTest {
     // --- helpers -----------------------------------------------------------------
 
     private fun harness(): Harness {
-        val languageService = LuaLanguageService().also { it.initialize(InitializeParams()) }
+        val languageService = LuaLanguageService().also { it.initialize(InitializeParams()); check(it.awaitWorkspaceReady()) }
         val published = mutableListOf<PublishDiagnosticsParams>()
         val textDocuments = LuaTextDocumentService(
             languageService = languageService,

@@ -55,7 +55,7 @@ class LspHierarchicalDocumentSymbolTddTest {
     @Test
     fun initialize_advertises_document_symbol_provider() {
         val service = service()
-        val capabilities = service.initialize(InitializeParams()).capabilities
+        val capabilities = service.initialize(InitializeParams()).also { check(service.awaitWorkspaceReady()) }.capabilities
 
         assertNotNull(
             capabilities.documentSymbolProvider,

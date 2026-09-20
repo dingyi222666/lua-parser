@@ -29,7 +29,18 @@ internal fun serviceWithMetadata(metadata: Map<String, String> = emptyMap()): Lu
         if (metadata.isNotEmpty()) {
             setWorkspaceMetadata(metadata)
         }
+        // initialize now builds the workspace on a background thread; tests
+        // observe snapshot state right after setup, so wait for readiness.
+        check(awaitWorkspaceReady()) { "background workspace build did not finish" }
     }
+}
+
+/**
+ * Waits for the background workspace build started by initialize/setWorkspaceMetadata.
+ */
+internal fun LuaLanguageService.awaitReady(): LuaLanguageService {
+    check(awaitWorkspaceReady()) { "background workspace build did not finish" }
+    return this
 }
 
 internal fun workspaceService(): LuaLanguageService {
