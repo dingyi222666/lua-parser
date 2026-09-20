@@ -399,43 +399,6 @@ class LuaLanguageServer(
                     }
                 }
             }
-            runCatching {
-                when (progress.phase) {
-                    AnalysisProgress.Phase.COMPLETE -> {
-                        synchronized(this@LuaLanguageServer) {
-                            indexingProgressToken?.let { token ->
-                                proxy.notifyProgress(
-                                    ProgressParams(
-                                        token,
-                                        Either.forRight(
-                                            WorkDoneProgressEnd().apply { message = "Indexing complete" }
-                                        )
-                                    )
-                                )
-                            }
-                            indexingProgressToken = null
-                        }
-                    }
-                    else -> {
-                        val report = WorkDoneProgressReport().apply {
-                            message = "${progress.phase}: ${progress.currentFile?.value.orEmpty()}"
-                            percentage = if (progress.totalFiles > 0) {
-                                progress.completedFiles * 100 / progress.totalFiles
-                            } else {
-                                null
-                            }
-                        }
-                        val token: Either<String, Int> = synchronized(this@LuaLanguageServer) {
-                            val existing = indexingProgressToken
-                            existing ?: Either.forLeft<String, Int>("luaparser-indexing").also {
-                                indexingProgressToken = it
-                                proxy.createProgress(WorkDoneProgressCreateParams(it))
-                            }
-                        }
-                        proxy.notifyProgress(ProgressParams(token, Either.forRight(report)))
-                    }
-                }
-            }
         }
     }
 
