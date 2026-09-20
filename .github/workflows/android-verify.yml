@@ -33,6 +33,7 @@ jobs:
       - name: Convert android.jar to android.dex
         run: |
           set -euxo pipefail
+          export PATH="$JAVA_HOME/bin:$PATH"
           D8=$(ls "$ANDROID_HOME"/build-tools/*/d8 | sort | tail -1)
           echo "d8: $D8"
           mkdir -p android/sample/src/main/assets
