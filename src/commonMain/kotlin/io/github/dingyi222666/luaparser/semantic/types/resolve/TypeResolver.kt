@@ -781,6 +781,31 @@ class TypeResolver(
                 }
             }
 
+            // Multi-parent @class (e.g. `LuaActivity: AndroidLuaContext|android.app.Activity`):
+            // merge every resolvable branch's members into one surface.
+            is UnionType -> {
+                val branches = type.types.mapNotNull { branch ->
+                    materializeParentClassSurface(branch, context, aliasStack)
+                }
+                when (branches.size) {
+                    0 -> null
+                    1 -> branches.single()
+                    else -> {
+                        val primary = branches.first()
+                        val mergedFields = linkedMapOf<String, Type>()
+                        val mergedMethods = linkedMapOf<String, Type>()
+                        branches.forEach { branch ->
+                            mergedFields.putAll(branch.getAllFields())
+                            mergedMethods.putAll(branch.getAllMethods())
+                        }
+                        primary.copy(
+                            fields = mergedFields,
+                            methods = mergedMethods
+                        )
+                    }
+                }
+            }
+
             else -> type.unwrapAliases() as? ClassType
         }
     }
