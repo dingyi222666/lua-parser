@@ -304,33 +304,13 @@ class LuaLanguageService(
     }
 
     private fun runBackgroundRebuild() {
-        // The build holds stateLock throughout — same consistency contract as
-        // the old synchronous path (requests queue briefly on it). Discarding
-        // a stale result and leaving snapshotReady=false caused cascading
-        // test/device failures; instead, when the workspace moved during the
-        // build, re-run once against the latest state.
-        var attempts = 0
-        while (attempts < 2) {
-            val startGeneration = synchronized(stateLock) {
-                backgroundBuildGeneration = workspaceGeneration
-                currentWorkspaceFiles() to workspaceGeneration
-            }
-            val result = engine.build(
-                LuaWorkspaceInput(
-                    files = startGeneration.first,
-                    metadata = synchronized(stateLock) { workspaceMetadata }
-                )
-            )
-            synchronized(stateLock) {
-                applyWorkspaceResult(result, startGeneration.first)
-            }
-            val moved = synchronized(stateLock) {
-                workspaceGeneration != startGeneration.second
-            }
-            if (!moved) {
-                return
-            }
-            attempts += 1
+        // Hold stateLock for the WHOLE build (read files → engine.build →
+        // apply). Requests during the build queue briefly on the lock — the
+        // same consistency contract as the original synchronous path, which
+        // every lsp test encodes. The cold build is a one-off (~13-18s on a
+        // phone first run; near-instant once the dex parse cache is warm).
+        synchronized(stateLock) {
+            rebuildFullLocked(currentWorkspaceFiles())
         }
     }
 
