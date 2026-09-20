@@ -95,7 +95,9 @@ LuaExpandableListAdapter = LuaExpandableListAdapter
 ---@type LuaMultiAdapter
 LuaMultiAdapter = LuaMultiAdapter
 
----@class LuaActivity: AndroidLuaContext
+--- android.app.Activity parent gives framework members (getPackageManager,
+--- startActivity, ...): on desktop via reflection, on device via the dex mount.
+---@class LuaActivity: AndroidLuaContext|android.app.Activity
 --- Reflected from the Android-Lua runtime jar bundled with the JVM engine: the real
 --- com.androlua.LuaActivity surface extends android.app.Activity, so inherited framework
 --- methods (getPackageManager, startActivity, ...) resolve through reflection too.
@@ -105,7 +107,7 @@ LuaMultiAdapter = LuaMultiAdapter
 ---@field get fun(name: string): any
 local LuaActivity = {}
 
----@class LuaService: AndroidLuaContext
+---@class LuaService: AndroidLuaContext|android.app.Service
 --- Reflected from the Android-Lua runtime jar bundled with the JVM engine
 --- (extends android.app.Service).
 ---@java-class com.androlua.LuaService
