@@ -304,7 +304,14 @@ class LuaLanguageServer(
         }
     }
 
+    @Volatile
+    private var clientSupportsWorkDoneProgress: Boolean = false
+
     override fun initialize(params: InitializeParams): CompletableFuture<InitializeResult> {
+        clientSupportsWorkDoneProgress = params.capabilities
+            ?.window
+            ?.workDoneProgress == true
+        println("LSP-DEVICE: client window.workDoneProgress=$clientSupportsWorkDoneProgress")
         println("LSP-DEVICE: initialize entered, state=$lifecycleState")
         return synchronized(lifecycleLock) {
             when (lifecycleState) {
@@ -376,6 +383,22 @@ class LuaLanguageServer(
         // notifications (create/report/end) so editors show indexing status.
         languageService.onBuildProgress = { progress ->
             val proxy = client
+            // sora's client proxy throws UnsupportedOperationException on
+            // createProgress/notifyProgress (device-verified) — when the client
+            // didn't advertise window.workDoneProgress, log instead of spamming.
+            val progressSink: (org.eclipse.lsp4j.jsonrpc.messages.Either<String, Int>) -> Unit = when {
+                clientSupportsWorkDoneProgress -> { token ->
+                    proxy.notifyProgress(ProgressParams(token, Either.forRight(null as org.eclipse.lsp4j.WorkDoneProgressReport?)))
+                }
+                else -> { _ ->
+                    runCatching {
+                        proxy.logMessage(org.eclipse.lsp4j.MessageParams().apply {
+                            type = org.eclipse.lsp4j.MessageType.Info
+                            message = "indexing update"
+                        })
+                    }
+                }
+            }
             runCatching {
                 when (progress.phase) {
                     AnalysisProgress.Phase.COMPLETE -> {
