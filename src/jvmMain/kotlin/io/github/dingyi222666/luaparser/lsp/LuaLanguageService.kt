@@ -355,6 +355,7 @@ class LuaLanguageService(
     }
 
     fun setWorkspaceMetadata(metadata: Map<String, String>): Unit = synchronized(stateLock) {
+        workspaceGeneration += 1
         workspaceMetadata = metadata.toMap()
         // Configuration that invalidates global metadata falls back to a full rebuild.
         rebuildFull()
@@ -367,6 +368,7 @@ class LuaLanguageService(
      * unsaved buffers. Non-Lua/ALY files are ignored.
      */
     fun applyWatchedFileChanges(changes: List<FileEvent>): Unit = synchronized(stateLock) {
+        workspaceGeneration += 1
         var mutated = false
         changes.forEach { event ->
             val uri = event.uri?.takeIf { it.isNotBlank() } ?: return@forEach
@@ -1664,7 +1666,6 @@ class LuaLanguageService(
         queries = LuaWorkspaceQueryFacade(snapshot)
         lastSyncedFiles = files.toMap()
         snapshotReady = true
-        workspaceGeneration += 1
     }
 
     /**
@@ -1691,8 +1692,10 @@ class LuaLanguageService(
             // deltas are cheap (DexLibraryMounter's parse-once cache makes the
             // dex mount ~free), so run this one synchronously — didOpen
             // diagnostics then appear without waiting for the cold build.
+            workspaceGeneration += 1
             return rebuildFull()
         }
+        workspaceGeneration += 1
 
         val upserts = linkedMapOf<VirtualPath, String>()
         val removals = linkedSetOf<VirtualPath>()
