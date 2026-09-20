@@ -13,6 +13,10 @@ data class JvmWorkspaceConfiguration(
     val classLoader: ClassLoader? = null,
     val classpathEntries: List<String> = emptyList(),
     val androidJar: String? = null,
+    /** Device path of a dex file holding framework classes (android.jar converted
+     *  by d8). On an Android host the reflection pipeline loads this through
+     *  DexClassLoader instead of URLClassLoader-over-android.jar. */
+    val androidDex: String? = null,
     val classes: Set<String> = emptySet(),
     val androluaImports: List<String> = emptyList(),
     val importPrefixes: List<String> = emptyList()
@@ -116,6 +120,7 @@ data class JvmWorkspaceConfiguration(
         return copy(
             classpathEntries = classpathEntries.map(String::trim).filter(String::isNotEmpty),
             androidJar = androidJar?.trim()?.takeIf(String::isNotEmpty),
+            androidDex = androidDex?.trim()?.takeIf(String::isNotEmpty),
             classes = classes.map(String::trim).filter(String::isNotEmpty).toCollection(linkedSetOf()),
             androluaImports = androluaImports.map(String::trim).filter(String::isNotEmpty),
             importPrefixes = normalizedImportPrefixes(defaultImportPrefixes)
@@ -130,6 +135,7 @@ data class JvmWorkspaceConfiguration(
             copy(
                 classpathEntries = classpathEntries.map(String::trim).filter(String::isNotEmpty),
                 androidJar = androidJar?.trim()?.takeIf(String::isNotEmpty),
+                androidDex = androidDex?.trim()?.takeIf(String::isNotEmpty),
                 classes = classes.map(String::trim).filter(String::isNotEmpty).toCollection(linkedSetOf()),
                 androluaImports = androluaImports.map(String::trim).filter(String::isNotEmpty),
                 importPrefixes = importPrefixes.map(String::trim).filter(String::isNotEmpty)
@@ -151,6 +157,7 @@ data class JvmWorkspaceConfiguration(
         result[JvmClassModuleProvider.CLASSES_METADATA_KEY] = normalized.classes.joinToString("\n")
         result[JvmClassModuleProvider.IMPORTS_METADATA_KEY] = normalized.androluaImports.joinToString("\n")
         result[CLASSPATH_METADATA_KEY] = normalized.classpathEntries.joinToString("\n")
+        normalized.androidDex?.let { result[ANDROID_DEX_METADATA_KEY] = it } ?: result.remove(ANDROID_DEX_METADATA_KEY)
         normalized.androidJar?.let { result[ANDROID_JAR_METADATA_KEY] = it } ?: result.remove(ANDROID_JAR_METADATA_KEY)
         if (normalized.hasExplicitImportPrefixes()) {
             result[IMPORT_PREFIXES_METADATA_KEY] = normalized.importPrefixes.joinToString("\n")
@@ -194,6 +201,7 @@ data class JvmWorkspaceConfiguration(
     companion object {
         const val CLASSPATH_METADATA_KEY = "jvm.classpath"
         const val ANDROID_JAR_METADATA_KEY = "jvm.androidJar"
+        const val ANDROID_DEX_METADATA_KEY = "jvm.androidDex"
         const val IMPORT_PREFIXES_METADATA_KEY = "jvm.importPrefixes"
         const val ANDROID_HOME_ENV = "ANDROID_HOME"
         const val ANDROID_SDK_ROOT_ENV = "ANDROID_SDK_ROOT"
@@ -245,6 +253,9 @@ data class JvmWorkspaceConfiguration(
                     .filter(String::isNotEmpty)
                     .toList(),
                 androidJar = metadata[ANDROID_JAR_METADATA_KEY]
+                    ?.trim()
+                    ?.takeIf(String::isNotEmpty),
+                androidDex = metadata[ANDROID_DEX_METADATA_KEY]
                     ?.trim()
                     ?.takeIf(String::isNotEmpty),
                 classes = metadata[JvmClassModuleProvider.CLASSES_METADATA_KEY]

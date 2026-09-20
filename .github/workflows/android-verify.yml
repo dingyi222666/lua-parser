@@ -28,6 +28,21 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Show environment
+
+      # Convert the platform android.jar (Java bytecode) to dex so the sample
+      # app can load it through DexClassLoader on-device. The jar on the runner
+      # is the API-35 platform stub — signatures only, exactly what reflection
+      # needs. Output lands in the sample assets and gets packaged into the APK.
+      - name: Convert android.jar to android.dex
+        run: |
+          set -euxo pipefail
+          D8=$(ls "$ANDROID_HOME"/build-tools/*/d8 | sort | tail -1)
+          echo "d8: $D8"
+          mkdir -p android/sample/src/main/assets
+          "$D8" --release --min-api 26 --lib "$ANDROID_HOME/platforms/android-35/android.jar"             --output android/sample/src/main/assets             "$ANDROID_HOME/platforms/android-35/android.jar"
+          ls -la android/sample/src/main/assets/android.dex
+
+      - name: Show environment
         run: |
           export PATH="$JAVA_HOME/bin:$PATH"
           echo "JAVA_HOME=$JAVA_HOME"
