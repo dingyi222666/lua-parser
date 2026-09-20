@@ -1338,8 +1338,11 @@ class JvmClassModuleProvider(
     ): ClassLoader {
         val parent = configuration.classLoader ?: baseClassLoader
         val entries = reflectiveClasspathFiles(configuration)
+        val dexLoader = dexReflectionLoaderFor(configuration, parent)
         if (entries.isEmpty()) {
-            return parent
+            // Device path: no jar/dir entries, but a configured framework dex
+            // (android.jar converted by d8) reflects through DexClassLoader.
+            return dexLoader ?: parent
         }
         val cacheKey = classLoaderCacheKey(cacheKeyKind, parent, entries)
         classLoaderCache[cacheKey]?.let { return it }
@@ -1347,7 +1350,33 @@ class JvmClassModuleProvider(
             .map(File::toURI)
             .map { it.toURL() }
             .toTypedArray()
-        return URLClassLoader(urls, parent).also { classLoaderCache[cacheKey] = it }
+        return URLClassLoader(urls, dexLoader ?: parent).also { classLoaderCache[cacheKey] = it }
+    }
+
+    /**
+     * On an Android host, a configured `jvm.androidDex` (android.jar converted by
+     * d8) reflects through DexClassLoader instead of URLClassLoader-over-jar:
+     * parent delegation against the app classloader resolves the REAL framework
+     * classes, so the entire reflection pipeline works unchanged.
+     */
+    private fun dexReflectionLoaderFor(
+        configuration: JvmWorkspaceConfiguration,
+        parent: ClassLoader
+    ): ClassLoader? {
+        val dexPath = configuration.androidDex?.trim()?.takeIf(String::isNotEmpty) ?: return null
+        val dexFile = File(dexPath)
+        if (!dexFile.isFile) {
+            return null
+        }
+        val cacheKey = "dex#$cacheKeyKind#${System.identityHashCode(parent)}#${dexFile.absolutePath}#${dexFile.lastModified()}"
+        classLoaderCache[cacheKey]?.let { return it }
+        val optimizedDir = File(System.getProperty("java.io.tmpdir"), "luaparser-dexopt")
+            .apply { mkdirs() }
+        val loader = AndroidDexClassLoaderFactory.create(
+            listOf(dexFile.absolutePath), optimizedDir, parent
+        ) ?: return null
+        classLoaderCache[cacheKey] = loader
+        return loader
     }
 
     private fun classLoaderCacheKey(kind: String, parent: ClassLoader, entries: List<File>): String {

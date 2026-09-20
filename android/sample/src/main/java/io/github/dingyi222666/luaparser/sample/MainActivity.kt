@@ -105,6 +105,7 @@ class MainActivity : AppCompatActivity(), FileBrowserFragment.Listener {
 
     /** Optional android.jar pushed into assets (see README.md). */
     private lateinit var androidJarCopy: File
+    private lateinit var androidDexCopy: File
 
     /** Demo corpus dex (filesDir/project/libs/classes.dex) advertised via jvm.classpath. */
     private lateinit var dexCopy: File
@@ -196,6 +197,20 @@ class MainActivity : AppCompatActivity(), FileBrowserFragment.Listener {
                 // No android.jar in assets: jvm.androidJar simply stays unset.
                 androidJarCopy.delete()
                 Log.i(TAG, "no $ANDROID_JAR_ASSET in assets; JVM interop config omitted")
+            }
+        }
+
+        // assets/android.dex (CI: platform android.jar converted by d8) loads
+        // framework classes through DexClassLoader on-device; optional-if-present.
+        androidDexCopy = File(filesDir, "android.dex")
+        if (!androidDexCopy.isFile) {
+            runCatching {
+                assets.open(ANDROID_DEX_ASSET).use { input ->
+                    androidDexCopy.outputStream().use { output -> input.copyTo(output) }
+                }
+            }.onFailure {
+                Log.i(TAG, "no $ANDROID_DEX_ASSET in assets; device framework reflection omitted")
+                androidDexCopy.delete()
             }
         }
 
@@ -405,6 +420,9 @@ class MainActivity : AppCompatActivity(), FileBrowserFragment.Listener {
         val settings = linkedMapOf<String, Any>()
         if (this::androidJarCopy.isInitialized && androidJarCopy.isFile) {
             settings["jvm.androidJar"] = androidJarCopy.absolutePath
+        }
+        if (this::androidDexCopy.isInitialized && androidDexCopy.isFile) {
+            settings["jvm.androidDex"] = androidDexCopy.absolutePath
         }
         if (this::dexCopy.isInitialized && dexCopy.isFile) {
             settings["jvm.classpath"] = dexCopy.absolutePath
@@ -725,5 +743,6 @@ class MainActivity : AppCompatActivity(), FileBrowserFragment.Listener {
     private companion object {
         const val TAG = "MainActivity"
         const val ANDROID_JAR_ASSET = "android.jar"
+        const val ANDROID_DEX_ASSET = "android.dex"
     }
 }

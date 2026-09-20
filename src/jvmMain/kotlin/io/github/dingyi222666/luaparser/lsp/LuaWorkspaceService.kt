@@ -126,6 +126,7 @@ class LuaWorkspaceService(
         val imports = settings.stringList("androlua.imports") + androluaSettings.stringList("imports")
         val classpath = settings.stringList("jvm.classpath") + jvmSettings.stringList("classpath")
         val androidJar = settings.stringValue("jvm.androidJar") ?: jvmSettings.stringValue("androidJar")
+        val androidDex = settings.stringValue("jvm.androidDex") ?: jvmSettings.stringValue("androidDex")
         val importPrefixes = settings.stringList("jvm.importPrefixes") + jvmSettings.stringList("importPrefixes")
 
         val configuration = JvmWorkspaceConfiguration(
@@ -133,6 +134,7 @@ class LuaWorkspaceService(
             androluaImports = imports.distinct(),
             classpathEntries = classpath.distinct(),
             androidJar = androidJar,
+            androidDex = androidDex,
             importPrefixes = importPrefixes.distinct()
         )
         // applyToMetadata copies into a fresh map and returns it; the layout extension key
