@@ -1338,7 +1338,7 @@ class JvmClassModuleProvider(
     ): ClassLoader {
         val parent = configuration.classLoader ?: baseClassLoader
         val entries = reflectiveClasspathFiles(configuration)
-        val dexLoader = dexReflectionLoaderFor(configuration, parent)
+        val dexLoader = dexReflectionLoaderFor(configuration, parent, cacheKeyKind)
         if (entries.isEmpty()) {
             // Device path: no jar/dir entries, but a configured framework dex
             // (android.jar converted by d8) reflects through DexClassLoader.
@@ -1361,7 +1361,8 @@ class JvmClassModuleProvider(
      */
     private fun dexReflectionLoaderFor(
         configuration: JvmWorkspaceConfiguration,
-        parent: ClassLoader
+        parent: ClassLoader,
+        cacheKeyKind: String
     ): ClassLoader? {
         val dexPath = configuration.androidDex?.trim()?.takeIf(String::isNotEmpty) ?: return null
         val dexFile = File(dexPath)
