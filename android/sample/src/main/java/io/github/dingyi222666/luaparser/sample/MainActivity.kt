@@ -161,11 +161,24 @@ class MainActivity : AppCompatActivity(), FileBrowserFragment.Listener {
         diagnosticsBar.setOnClickListener { jumpToFirstProblem() }
 
         lifecycleScope.launch {
+            val t0 = System.currentTimeMillis()
+            fun mark(phase: String) {
+                val total = System.currentTimeMillis() - t0
+                Log.i("PerfTiming", "$phase at +${total}ms")
+                runOnUiThread {
+                    diagSummary.text = getString(R.string.diag_opening, phase, total.toInt())
+                }
+            }
+            mark("copying workspace")
             prepareWorkspace()
-            connectToLanguageServer()
-            // Open the corpus entry point through the SAME flow the file
-            // browser uses: attach bridge -> load text -> connect -> didOpen.
+            mark("workspace ready")
+            // Second-level open: openFile shows the text immediately and runs
+            // the LSP bridge attach + connect on IO — the editor is usable
+            // while the language server warms up in the background.
+            mark("editor text loading")
             openFile(sampleFile.toRelativeString(projectDir))
+            mark("open complete")
+            Log.i("PerfTiming", "TOTAL open at +${System.currentTimeMillis() - t0}ms (lsp continues async)")
         }
     }
 
