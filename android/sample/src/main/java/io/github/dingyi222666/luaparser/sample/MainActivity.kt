@@ -168,6 +168,14 @@ class MainActivity : AppCompatActivity(), FileBrowserFragment.Listener {
         subscribeDirtyTracking()
         diagnosticsBar.setOnClickListener { jumpToFirstProblem() }
 
+        // Live indexing status in the bottom bar: the service hosts the LSP
+        // in-process, so progress arrives without any client round-trip.
+        lifecycleScope.launch {
+            LspServerService.buildProgress.collect { status ->
+                diagSummary.text = status
+            }
+        }
+
         lifecycleScope.launch {
             val t0 = System.currentTimeMillis()
             fun mark(phase: String) {
