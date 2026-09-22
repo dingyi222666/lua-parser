@@ -87,13 +87,20 @@ object DexClassModelAdapter {
      * degrade to shells at the repeated key (resolving-stack cycle guard).
      * Super/interface edges stay name-only references in both modes.
      */
+    private val javaClassTypeMemo = java.util.concurrent.ConcurrentHashMap<String, JavaClassType>()
+
     fun toJavaClassType(cls: DexClass, dexClasses: Collection<DexClass> = emptyList()): JavaClassType {
-        return javaClassTypeFor(
-            cls = cls,
-            dexByName = dexClasses.associateBy(DexClass::binaryName),
-            resolving = emptySet(),
-            referenceDepth = 0
-        )
+        // Memoize per (class, dex-set identity): surface building walks the dex
+        // parent chain and costs seconds on-device for framework classes.
+        val key = cls.binaryName + "#" + System.identityHashCode(dexClasses)
+        return javaClassTypeMemo.computeIfAbsent(key) {
+            javaClassTypeFor(
+                cls = cls,
+                dexByName = dexClasses.associateBy(DexClass::binaryName),
+                resolving = emptySet(),
+                referenceDepth = 0
+            )
+        }
     }
 
     /**
@@ -102,12 +109,8 @@ object DexClassModelAdapter {
      * completion/hover over a dex-typed value re-requests the same class. Keyed
      * by binary name; surfaces are immutable so sharing is safe.
      */
-    private val moduleTypeByBinaryName = java.util.concurrent.ConcurrentHashMap<String, ModuleType>()
-
     fun cachedModuleType(cls: DexClass, dexClasses: Collection<DexClass>): ModuleType =
-        moduleTypeByBinaryName.computeIfAbsent(cls.binaryName) {
-            toModuleType(cls, dexClasses)
-        }
+        toModuleType(cls, dexClasses)
 
     /**
      * Adapt one dex class into the provider-shaped module table:
@@ -115,8 +118,13 @@ object DexClassModelAdapter {
      * static field values, static method overloads, and direct inner classes
      * from [dexClasses] keyed by simple name (depth-1 policy).
      */
+    private val moduleTypeMemo = java.util.concurrent.ConcurrentHashMap<String, ModuleType>()
+
     fun toModuleType(cls: DexClass, dexClasses: Collection<DexClass> = emptyList()): ModuleType {
-        return toModuleType(cls, dexClasses.associateBy(DexClass::binaryName), innerClassDepth = 0)
+        val key = cls.binaryName + "#" + System.identityHashCode(dexClasses)
+        return moduleTypeMemo.computeIfAbsent(key) {
+            toModuleType(cls, dexClasses.associateBy(DexClass::binaryName), innerClassDepth = 0)
+        }
     }
 
     /**
