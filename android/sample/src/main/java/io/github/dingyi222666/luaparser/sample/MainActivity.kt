@@ -158,14 +158,12 @@ class MainActivity : AppCompatActivity(), FileBrowserFragment.Listener {
         ensureTextmateTheme()
         setupToolbar()
 
-        // Our first on-device initialize builds the whole demo corpus AND mounts
-        // the 929-class demo dex synchronously (13-16s on a flagship; slower on
-        // low-end). sora's default INIT window is 10s — raise it for this app.
-        // Completion requests that land during the cold build queue behind
-        // stateLock, so the 3s default COMPLETION timeout also needs raising.
+        // INIT needs the long window: the first on-device initialize builds the
+        // whole demo corpus AND mounts the 929-class demo dex. COMPLETION/HOVER
+        // stay at sora's fast 3s defaults — completions never queue behind the
+        // cold build (lock-free snapshot read), so 3s is plenty and keeps the
+        // popup snappy.
         Timeout[Timeouts.INIT] = 60_000
-        Timeout[Timeouts.COMPLETION] = 30_000
-        Timeout[Timeouts.HOVER] = 30_000
         Timeout[Timeouts.SHUTDOWN] = 15_000
         subscribeDirtyTracking()
         diagnosticsBar.setOnClickListener { jumpToFirstProblem() }
