@@ -548,9 +548,11 @@ class LuaLanguageService(
     fun didSave(@Suppress("UNUSED_PARAMETER") params: DidSaveTextDocumentParams) {
     }
 
-    fun hover(params: HoverParams): Hover? = synchronized(stateLock) {
+    fun hover(params: HoverParams): Hover? {
+        // Lock-free read (see completion): never queue behind the cold build.
+        val queriesNow = queries
         val path = pathOf(params.textDocument)
-        val result = queries.hover(path, params.position.toParserPosition()) ?: return@synchronized null
+        val result = queriesNow.hover(path, params.position.toParserPosition()) ?: return null
         // Prefer collapsed preferredHoverType surface (FunctionType/ClassType/MODULE) over bare
         // unknown symbol detail so multi-doc Android-Lua import hovers stay non-empty/rich.
         val preferredTypeDisplay = preferredLspHoverTypeDisplay(
@@ -567,10 +569,10 @@ class LuaLanguageService(
                         preferredTypeDisplay != detail)
             },
             typeDisplayName = preferredTypeDisplay
-        ) ?: return@synchronized null
+        ) ?: return null
         val hover = Hover()
         hover.contents = Either.forRight(MarkupContent(MarkupKind.MARKDOWN, content))
-        hover
+        return hover
     }
 
     /**
@@ -580,9 +582,16 @@ class LuaLanguageService(
      * they are converted to the parser's 1-based [Position] internally
      * (`Position(line + 1, character + 1)`) before hitting the semantic model.
      */
-    fun completion(path: String, line: Int, character: Int): CompletionList = synchronized(stateLock) {
+    fun completion(path: String, line: Int, character: Int): CompletionList {
+        // Lock-free read: never queue behind the cold build's stateLock — the
+        // popup must appear instantly. During the first background build the
+        // snapshot is the empty overlay (few/no items); cross-file entries
+        // light up the moment the build swaps its snapshot in. `queries` is an
+        // atomically-swapped reference and the facade is read-only, so a
+        // lock-free read is safe.
         val t0 = System.currentTimeMillis()
-        val items = queries.completions(pathFromClientPath(path), Position(line + 1, character + 1)).map { completion ->
+        val queriesNow = queries
+        val items = queriesNow.completions(pathFromClientPath(path), Position(line + 1, character + 1)).map { completion ->
             CompletionItem(completion.label).apply {
                 kind = completion.kind.toLspKind()
                 detail = completion.detail
@@ -592,7 +601,7 @@ class LuaLanguageService(
             }
         }
         println("LSP-DEVICE: completion ${System.currentTimeMillis() - t0}ms items=${items.size} ready=$snapshotReady path=$path")
-        CompletionList(false, items)
+        return CompletionList(false, items)
     }
 
     /**
