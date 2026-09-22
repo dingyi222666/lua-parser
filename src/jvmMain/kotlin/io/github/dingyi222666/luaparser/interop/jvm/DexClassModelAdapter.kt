@@ -191,7 +191,12 @@ object DexClassModelAdapter {
         // from [resolving] and every javaClassTypeFor entry grows the set its
         // members resolve against.
         val memberResolving = resolving + clsKey
-        val constructors = JavaOverloadSet(constructorTypesFor(cls, javaName, dexByName, memberResolving, referenceDepth))
+        // Bounded surface: the requested class gets full members; member TYPES
+        // resolve one level deeper only (dex hydration of every transitively
+        // referenced class cost minutes on-device). Depth >= 1 in-set
+        // references become name-only shells.
+        val memberDepth = referenceDepth + 1
+        val constructors = JavaOverloadSet(constructorTypesFor(cls, javaName, dexByName, memberResolving, memberDepth))
         val staticMembers = linkedMapOf<String, JavaStaticMemberType>()
         val instanceMembers = linkedMapOf<String, JavaInstanceMemberType>()
 
@@ -199,7 +204,7 @@ object DexClassModelAdapter {
             if (!isVisibleMember(field.accessFlags, isMethod = false)) {
                 return@forEach
             }
-            val valueType = descriptorToType(field.typeDescriptor, dexByName, memberResolving, referenceDepth)
+            val valueType = descriptorToType(field.typeDescriptor, dexByName, memberResolving, memberDepth)
             if (field.accessFlags and ACC_STATIC != 0) {
                 staticMembers[field.name] = JavaStaticMemberType(
                     owner = javaName,
@@ -219,7 +224,7 @@ object DexClassModelAdapter {
 
         groupedVisibleMethods(cls).forEach { (name, overloads) ->
             val signatures = overloads.map { overload ->
-                functionTypeFor(overload, dexByName, memberResolving, referenceDepth)
+                functionTypeFor(overload, dexByName, memberResolving, memberDepth)
             }
             val signatureMetadata = overloads.map(::signatureMetadataFor)
             val member = if (signatures.size == 1) {
@@ -479,9 +484,9 @@ object DexClassModelAdapter {
      * [resolving] holds binary names whose members are currently being built
      * (normalized via [binaryNameKey]): a descriptor whose key is already on
      * the stack degrades to a shell, so self-referential and
-     * mutually-referential dex classes terminate. [referenceDepth] is
-     * call-site threading only — hydration is bounded by the resolving stack,
-     * not a depth budget.
+     * mutually-referential dex classes terminate. Hydration is bounded:
+     * depth 0 carries full members; depth >= 1 dex-class references are
+     * member-less shells (transitive hydration cost minutes on-device).
      */
     private fun descriptorToType(
         descriptor: String,
@@ -557,20 +562,20 @@ object DexClassModelAdapter {
             ?: dexByName[binaryNameKey(binaryName)]
             ?: dexByName[binaryName.replace('.', '/')]
             ?: return JavaInstanceType(shell)
-        // Same-dex-set references carry their member surface (hydration is
-        // transitive for in-set classes); the cycle guard above, not a depth
-        // budget, bounds recursion — a cycle degrades to a shell at the
-        // repeated key. The referenced class's key is deliberately NOT
-        // pre-added to [resolving]: javaClassTypeFor itself puts it on the
-        // stack while building that class's members, and pre-adding it here
-        // would make the freshly-resolved class see itself as "resolving" and
-        // immediately degrade to a member-less shell.
+        // Same-dex-set references carry their member surface, but only at
+        // depth 0 (the directly-requested class). Deeper references get
+        // name-only shells: transitive hydration walked the entire 929-class
+        // reference graph on-device (minutes per cold build) and the memo
+        // makes repeated requests cheap anyway. Cycle guard still applies.
+        if (referenceDepth > 0) {
+            return JavaInstanceType(shell)
+        }
         return JavaInstanceType(
             javaClassTypeFor(
                 cls = dexClass,
                 dexByName = dexByName,
                 resolving = resolving,
-                referenceDepth = 0
+                referenceDepth = 1
             )
         )
     }
