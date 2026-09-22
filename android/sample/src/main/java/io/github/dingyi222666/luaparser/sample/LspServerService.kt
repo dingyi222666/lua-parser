@@ -10,6 +10,7 @@ import android.net.LocalServerSocket
 import android.net.LocalSocket
 import android.os.IBinder
 import android.util.Log
+import io.github.dingyi222666.luaparser.lsp.LuaLanguageServer
 import io.github.dingyi222666.luaparser.lsp.LuaLanguageServerLauncher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -53,6 +54,9 @@ class LspServerService : Service() {
          * (LocalSocketStreamProvider in MainActivity.kt).
          */
         const val SOCKET_NAME = "lua-lsp"
+
+        /** Live workspace-build status for the app UI ("PARSING 5/12", ...). */
+        val buildProgress = kotlinx.coroutines.flow.MutableStateFlow("indexing: starting")
         private const val CHANNEL_ID = "lsp-server"
         private const val NOTIFICATION_ID = 42
 
@@ -145,9 +149,6 @@ class LspServerService : Service() {
      * [LuaLanguageServerLauncher] connection over the socket streams and blocks
      * until the lsp4j reading loop finishes (peer disconnect, error or cancel).
      */
-    /** Live workspace-build status for the app UI ("PARSING 5/12", ...). */
-    val buildProgress = kotlinx.coroutines.flow.MutableStateFlow("indexing: starting")
-
     private suspend fun serve(client: LocalSocket) {
         try {
             // Fresh LuaLanguageServer per connection (mandatory, see
