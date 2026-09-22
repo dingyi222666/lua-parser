@@ -1,5 +1,9 @@
 package io.github.dingyi222666.luaparser.sample
 
+import androidx.core.app.NotificationCompat
+import android.content.pm.ServiceInfo
+import android.app.NotificationManager
+import android.app.NotificationChannel
 import android.app.Service
 import android.content.Intent
 import android.net.LocalServerSocket
@@ -49,6 +53,8 @@ class LspServerService : Service() {
          * (LocalSocketStreamProvider in MainActivity.kt).
          */
         const val SOCKET_NAME = "lua-lsp"
+        private const val CHANNEL_ID = "lsp-server"
+        private const val NOTIFICATION_ID = 42
 
         private const val TAG = "LspServerService"
     }
@@ -66,11 +72,38 @@ class LspServerService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        promoteToForeground()
         if (acceptLoopRunning.compareAndSet(false, true)) {
             scope.launch { acceptLoop() }
         }
         // Not sticky: the Activity restarts the service on its next connect.
         return START_NOT_STICKY
+    }
+
+    /**
+     * Foreground promotion: without it MIUI freezes the whole process seconds
+     * after the app goes background — freezing the LSP socket, threads and the
+     * in-flight workspace build mid-handshake (device-verified: "Killing ...
+     * for binder freeze failed but process frozen").
+     */
+    private fun promoteToForeground() {
+        val manager = getSystemService(NotificationManager::class.java)
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            manager.createNotificationChannel(
+                android.app.NotificationChannel(CHANNEL_ID, "Lua language server", android.app.NotificationManager.IMPORTANCE_MIN)
+            )
+        }
+        val notification = androidx.core.app.NotificationCompat.Builder(this, CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.ic_menu_manage)
+            .setContentTitle("Lua language server")
+            .setContentText("Indexing workspace")
+            .setOngoing(true)
+            .build()
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+            startForeground(NOTIFICATION_ID, notification, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+        } else {
+            startForeground(NOTIFICATION_ID, notification)
+        }
     }
 
     /**
