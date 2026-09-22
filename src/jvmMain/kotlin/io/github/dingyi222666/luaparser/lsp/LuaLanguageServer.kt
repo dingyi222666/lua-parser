@@ -369,6 +369,19 @@ class LuaLanguageServer(
 
     override fun getWorkspaceService(): WorkspaceService = workspace
 
+    /**
+     * Host hook (in-process embedding): receives throttled workspace build
+     * progress (phase + completed/total) so the app UI can show indexing status
+     * directly — no client round-trip needed.
+     */
+    fun setOnBuildProgressListener(listener: ((Int, Int, String) -> Unit)?) {
+        languageService.onBuildProgress = listener?.let { cb ->
+            { progress: io.github.dingyi222666.luaparser.semantic.workspace.AnalysisProgress ->
+                cb(progress.completedFiles, progress.totalFiles, progress.phase.name)
+            }
+        }
+    }
+
     /** Test/embedding hook: wait for the background workspace build to settle. */
     internal fun flushBackgroundRebuild(timeoutMs: Long = 60_000): Boolean =
         languageService.awaitWorkspaceReady(timeoutMs)
@@ -380,7 +393,12 @@ class LuaLanguageServer(
             }
         }
         // Forward background-build progress as standard $/progress work-done
-        // notifications (create/report/end) so editors show indexing status.
+        // notifications for capability-advertising clients. When the client
+        // doesn't support them (sora), leave any host-set listener in place —
+        // an in-process host gets progress directly.
+        if (languageService.onBuildProgress != null) {
+            return
+        }
         languageService.onBuildProgress = { progress ->
             val proxy = client
             // sora's client proxy throws UnsupportedOperationException on

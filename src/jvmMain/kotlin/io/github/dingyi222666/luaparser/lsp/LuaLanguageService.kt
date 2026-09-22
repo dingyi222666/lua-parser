@@ -323,6 +323,13 @@ class LuaLanguageService(
                 workspaceGeneration != generationAtStart
             }
             if (!moved) {
+                // Warm the Java member surfaces (dex/framework classes) so the
+                // FIRST user completion isn't the one paying the build cost.
+                runCatching {
+                    queries.completions(
+                        VirtualPath.of("warmup/main.lua"), Position(1, 1)
+                    )
+                }
                 return
             }
             attempts += 1

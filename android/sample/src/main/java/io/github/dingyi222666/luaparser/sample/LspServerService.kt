@@ -145,15 +145,21 @@ class LspServerService : Service() {
      * [LuaLanguageServerLauncher] connection over the socket streams and blocks
      * until the lsp4j reading loop finishes (peer disconnect, error or cancel).
      */
+    /** Live workspace-build status for the app UI ("PARSING 5/12", ...). */
+    val buildProgress = kotlinx.coroutines.flow.MutableStateFlow("indexing: starting")
+
     private suspend fun serve(client: LocalSocket) {
         try {
+            // Fresh LuaLanguageServer per connection (mandatory, see
+            // LuaLspServerHost's concurrency contract) + no-op exit hook.
+            val server = LuaLanguageServer()
+            server.setOnBuildProgressListener { done, total, phase ->
+                buildProgress.value = "$phase $done/$total"
+            }
             val connection = LuaLanguageServerLauncher.launch(
                 client.inputStream,
-                client.outputStream
-                // Defaults are correct here: a FRESH LuaLanguageServer per
-                // connection (mandatory, see LuaLspServerHost's concurrency
-                // contract) and a no-op exit hook (an embedded server must
-                // never kill the host app process on LSP `exit`).
+                client.outputStream,
+                server = server
             )
             // Blocks until the peer closes the stream or we get cancelled.
             connection.listening.get()
