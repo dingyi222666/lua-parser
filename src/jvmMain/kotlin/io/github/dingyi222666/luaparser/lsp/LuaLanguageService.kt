@@ -581,6 +581,7 @@ class LuaLanguageService(
      * (`Position(line + 1, character + 1)`) before hitting the semantic model.
      */
     fun completion(path: String, line: Int, character: Int): CompletionList = synchronized(stateLock) {
+        val t0 = System.currentTimeMillis()
         val items = queries.completions(pathFromClientPath(path), Position(line + 1, character + 1)).map { completion ->
             CompletionItem(completion.label).apply {
                 kind = completion.kind.toLspKind()
@@ -590,6 +591,7 @@ class LuaLanguageService(
                 sortText = completion.sortText
             }
         }
+        println("LSP-DEVICE: completion ${System.currentTimeMillis() - t0}ms items=${items.size} ready=$snapshotReady path=$path")
         CompletionList(false, items)
     }
 
