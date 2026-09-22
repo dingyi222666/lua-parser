@@ -181,6 +181,7 @@ class LspIncrementalWorkspaceUpdateTddTest {
         service.setWorkspaceMetadata(
             mapOf(JvmClassModuleProvider.CLASSES_METADATA_KEY to "java.util.Locale")
         )
+        service.flushBackgroundRebuild()
 
         assertEquals(2, service.fullRebuildCount, "metadata invalidation must full-rebuild")
         assertEquals(1, service.incrementalUpdateCount, "metadata path must not use update deltas")
