@@ -205,7 +205,7 @@ object DexLibraryMounter {
          */
         fun moduleTypeFor(cls: DexClass): ModuleType {
             moduleTypeCache[cls.binaryName]?.let { return it }
-            val moduleType = DexClassModelAdapter.toModuleType(cls, classes)
+            val moduleType = DexClassModelAdapter.cachedModuleType(cls, classes)
             moduleTypeCache[cls.binaryName] = moduleType
             return moduleType
         }

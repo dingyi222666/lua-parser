@@ -97,6 +97,19 @@ object DexClassModelAdapter {
     }
 
     /**
+     * Per-class ModuleType memo: building a framework class surface (hundreds of
+     * reflected-style members from the dex) costs seconds on a phone; every
+     * completion/hover over a dex-typed value re-requests the same class. Keyed
+     * by binary name; surfaces are immutable so sharing is safe.
+     */
+    private val moduleTypeByBinaryName = java.util.concurrent.ConcurrentHashMap<String, ModuleType>()
+
+    fun cachedModuleType(cls: DexClass, dexClasses: Collection<DexClass>): ModuleType =
+        moduleTypeByBinaryName.computeIfAbsent(cls.binaryName) {
+            toModuleType(cls, dexClasses)
+        }
+
+    /**
      * Adapt one dex class into the provider-shaped module table:
      * `__class` (instance shell), `__call` (when constructors exist), public
      * static field values, static method overloads, and direct inner classes
