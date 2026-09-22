@@ -172,13 +172,19 @@ class MainActivity : AppCompatActivity(), FileBrowserFragment.Listener {
             mark("copying workspace")
             prepareWorkspace()
             mark("workspace ready")
-            // Second-level open: openFile shows the text immediately and runs
-            // the LSP bridge attach + connect on IO — the editor is usable
-            // while the language server warms up in the background.
+            // Second-level open: show the file text in the editor FIRST
+            // (plain sora editor — readable without the language server),
+            // then attach the LSP bridge and run the handshake.
             mark("editor text loading")
+            withContext(Dispatchers.Main) {
+                editor.setText(sampleFile.readText())
+            }
+            mark("editor text shown")
+            connectToLanguageServer()
+            mark("lsp connected")
             openFile(sampleFile.toRelativeString(projectDir))
             mark("open complete")
-            Log.i("PerfTiming", "TOTAL open at +${System.currentTimeMillis() - t0}ms (lsp continues async)")
+            Log.i("PerfTiming", "TOTAL open at +${System.currentTimeMillis() - t0}ms")
         }
     }
 
