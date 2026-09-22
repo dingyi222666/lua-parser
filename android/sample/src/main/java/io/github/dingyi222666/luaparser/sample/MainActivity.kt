@@ -730,7 +730,8 @@ class MainActivity : AppCompatActivity(), FileBrowserFragment.Listener {
         FileProviderRegistry.getInstance().addFileProvider(AssetsFileResolver(assets))
 
         val themeRegistry = ThemeRegistry.getInstance()
-        val themePath = "textmate/lua-dark.json"
+        // sora LSP sample's own theme — known-good with this engine version.
+        val themePath = "textmate/quietlight.json"
         themeRegistry.loadTheme(
             ThemeModel(
                 IThemeSource.fromInputStream(
@@ -738,10 +739,10 @@ class MainActivity : AppCompatActivity(), FileBrowserFragment.Listener {
                     themePath,
                     null
                 ),
-                "lua-dark"
+                "quietlight"
             )
         )
-        themeRegistry.setTheme("lua-dark")
+        themeRegistry.setTheme("quietlight")
 
         editor.colorScheme = TextMateColorScheme.create(themeRegistry)
     }
