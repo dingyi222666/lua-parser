@@ -149,13 +149,23 @@ class MainActivity : AppCompatActivity(), FileBrowserFragment.Listener {
             insets
         }
 
+        // Android 13+: the foreground-service notification is invisible without
+        // the runtime notification permission (service keeps running either way).
+        if (android.os.Build.VERSION.SDK_INT >= 33) {
+            requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 1)
+        }
+
         ensureTextmateTheme()
         setupToolbar()
 
         // Our first on-device initialize builds the whole demo corpus AND mounts
         // the 929-class demo dex synchronously (13-16s on a flagship; slower on
         // low-end). sora's default INIT window is 10s — raise it for this app.
+        // Completion requests that land during the cold build queue behind
+        // stateLock, so the 3s default COMPLETION timeout also needs raising.
         Timeout[Timeouts.INIT] = 60_000
+        Timeout[Timeouts.COMPLETION] = 30_000
+        Timeout[Timeouts.HOVER] = 30_000
         Timeout[Timeouts.SHUTDOWN] = 15_000
         subscribeDirtyTracking()
         diagnosticsBar.setOnClickListener { jumpToFirstProblem() }
