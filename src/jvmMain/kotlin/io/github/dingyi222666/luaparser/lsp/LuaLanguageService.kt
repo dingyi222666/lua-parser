@@ -374,12 +374,23 @@ class LuaLanguageService(
         return result.affectedDocuments
     }
 
-    fun setWorkspaceMetadata(metadata: Map<String, String>): Unit = synchronized(stateLock) {
-        workspaceGeneration += 1
-        workspaceMetadata = metadata.toMap()
-        // Configuration that invalidates global metadata falls back to a full rebuild.
-        rebuildFull()
-        Unit
+    fun setWorkspaceMetadata(metadata: Map<String, String>): Unit {
+        // Store + bump generation under lock, then run the heavy rebuild on the
+        // background thread (scheduleBackgroundRebuild no-ops if one is already
+        // running; its post-build moved-check re-runs with the NEW metadata).
+        // A synchronous rebuild here blocked every completion/hover request for
+        // the whole 13-18s dex+corpus build on device.
+        val changed = synchronized(stateLock) {
+            val moved = workspaceMetadata != metadata.toMap()
+            if (moved) {
+                workspaceGeneration += 1
+                workspaceMetadata = metadata.toMap()
+            }
+            moved
+        }
+        if (changed) {
+            scheduleBackgroundRebuild()
+        }
     }
 
     /**
