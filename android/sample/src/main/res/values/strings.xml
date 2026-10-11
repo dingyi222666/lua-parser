@@ -24,6 +24,7 @@
     <string name="msg_save_failed">Save failed</string>
     <string name="msg_formatted">Formatted (unsaved — use Save to persist)</string>
     <string name="msg_no_formatting">No formatting edits returned</string>
+    <string name="msg_format_failed">Formatting failed</string>
     <string name="msg_not_connected">Language server is not connected</string>
     <string name="diag_opening">%1$s + %2$dms</string>
 </resources>

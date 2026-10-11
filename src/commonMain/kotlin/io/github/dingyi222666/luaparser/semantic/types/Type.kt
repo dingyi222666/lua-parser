@@ -19,6 +19,7 @@ data class PrimitiveType(
     val kind: Kind
 ) : Type {
     enum class Kind {
+        VOID,
         NIL,
         NUMBER,
         STRING,
@@ -50,6 +51,7 @@ data class PrimitiveType(
     }
 
     companion object {
+        val VOID = PrimitiveType("void", Kind.VOID)
         val NIL = PrimitiveType("nil", Kind.NIL)
         val NUMBER = PrimitiveType("number", Kind.NUMBER)
         val STRING = PrimitiveType("string", Kind.STRING)
@@ -128,7 +130,8 @@ data class FunctionType(
 
 data class OverloadedFunctionType(
     override val callSignatures: List<FunctionType>,
-    override val name: String = callSignatures.joinToString(" & ") { it.name }
+    override val name: String = callSignatures.firstOrNull()?.name.orEmpty() +
+        if (callSignatures.size > 1) " (+${callSignatures.size - 1} overloads)" else ""
 ) : CallableType {
     override fun isAssignableFrom(other: Type): Boolean {
         val normalizedOther = other.unwrapAliases()

@@ -55,8 +55,8 @@ class TypeModelTest {
         val alias = AliasType("WidgetAlias", classType)
         val union = UnionType(linkedSetOf(alias, LiteralType("ready", PrimitiveType.STRING), ArrayType(TupleType(listOf(PrimitiveType.STRING, PrimitiveType.NUMBER)))))
 
-        assertEquals("fun<T: string>(value: T, rest: number...): T, nil", callable.displayName)
-        assertEquals("{ name: string, call: fun<T: string>(value: T, rest: number...): T, nil, [string]: number }", table.displayName)
+        assertEquals("fun<T: string>(value: T, rest: number...): (T, nil)", callable.displayName)
+        assertEquals("{ name: string, call: fun<T: string>(value: T, rest: number...): (T, nil), [string]: number }", table.displayName)
         assertEquals("number", classType.getAllFields().getValue("id").displayName)
         assertEquals("WidgetAlias", alias.displayName)
         assertEquals("\"ready\"", (union.types.elementAt(1)).displayName)

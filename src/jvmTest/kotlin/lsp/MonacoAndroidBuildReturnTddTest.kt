@@ -18,7 +18,7 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 /**
- * Monaco android_sample: unannotated local `build` that returns `tv = TextView()` after
+ * Monaco android_sample: unannotated local `build` that returns `tv = TextView(activity)` after
  * `import "android.widget.*"` must surface a TextView-ish return type on hover of `build`
  * and on the call result `local view = build()`.
  */
@@ -60,7 +60,7 @@ class MonacoAndroidBuildReturnTddTest {
             require "import"
             import "android.widget.*"
             local function build()
-                local tv = TextView()
+                local tv = TextView(activity)
                 return tv
             end
             local view = build()
@@ -193,7 +193,7 @@ class MonacoAndroidBuildReturnTddTest {
             import "android.widget.*"
 
             local function build()
-                local tv = TextView()
+                local tv = TextView(activity)
                 local button = Button()
                 return tv
             end

@@ -215,6 +215,25 @@ object TypeRelations {
         if (isJavaContainerAssignableFromLuaTable(target, source)) {
             return true
         }
+        // LuaJava boxes primitive values for reference parameters. Apply the same rule to
+        // assignments and overload ranking instead of guessing a return after a failed call.
+        val primitive = (source as? LiteralType)?.baseType ?: source as? PrimitiveType
+        val name = target.javaName.binaryName
+        if (primitive?.kind == PrimitiveType.Kind.NIL) return true
+        if (name == "java.lang.Object") return true
+        if (primitive != null) {
+            val accepted = when (name) {
+                "java.lang.CharSequence", "java.lang.String" -> primitive.kind == PrimitiveType.Kind.STRING
+                "java.lang.Number", "java.lang.Byte", "java.lang.Short", "java.lang.Integer",
+                "java.lang.Long", "java.lang.Float", "java.lang.Double" -> primitive.kind == PrimitiveType.Kind.NUMBER
+                "java.lang.Boolean" -> primitive.kind == PrimitiveType.Kind.BOOLEAN
+                "java.io.Serializable", "java.lang.Comparable" -> primitive.kind in setOf(
+                    PrimitiveType.Kind.STRING, PrimitiveType.Kind.NUMBER, PrimitiveType.Kind.BOOLEAN
+                )
+                else -> false
+            }
+            if (accepted) return true
+        }
         val sourceInstance = source as? JavaInstanceType ?: return false
         if (!isSameOrJavaSubclass(target.classType, sourceInstance.classType)) {
             return false
@@ -425,7 +444,7 @@ object TypeRelations {
             JavaPrimitiveType.Kind.LONG,
             JavaPrimitiveType.Kind.FLOAT,
             JavaPrimitiveType.Kind.DOUBLE -> PrimitiveType.NUMBER.isAssignableFrom(source)
-            JavaPrimitiveType.Kind.VOID -> source == PrimitiveType.NIL
+            JavaPrimitiveType.Kind.VOID -> source == PrimitiveType.VOID
         }
     }
 
@@ -798,6 +817,7 @@ object TypeRelations {
     }
 
     private fun canonicalPrimitive(type: PrimitiveType): PrimitiveType = when (type.kind) {
+        PrimitiveType.Kind.VOID -> PrimitiveType.VOID
         PrimitiveType.Kind.NIL -> PrimitiveType.NIL
         PrimitiveType.Kind.BOOLEAN -> PrimitiveType.BOOLEAN
         PrimitiveType.Kind.NUMBER -> PrimitiveType.NUMBER

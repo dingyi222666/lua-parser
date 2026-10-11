@@ -49,6 +49,39 @@ import kotlin.test.assertTrue
 class SemanticPipelineIntegrationTest {
 
     @Test
+    fun incomplete_colon_member_expression_offers_method_completions() {
+        val source = """
+            ---@class Receiver
+            ---@method Receiver:refresh(): string
+            ---@type Receiver
+            local receiver = {}
+            receiver:
+        """.trimIndent()
+        val chunk = LuaParser().parseWorkspaceSnippet(source)
+        val snapshot = SemanticPipeline().analyzeSnapshot(chunk)
+        val items = snapshot.model.getCompletionsAt(Position(5, 10)).map { it.label }
+        assertTrue("refresh" in items, "colon completion must include Receiver methods: $items")
+    }
+
+    @Test
+    fun incomplete_member_after_newline_dot_keeps_fluent_receiver_surface() {
+        val source = """
+            ---@class Receiver
+            ---@field value number
+            ---@method Receiver:setShape(value: number): Receiver
+            ---@type Receiver
+            local receiver = {}
+            receiver:setShape(1)
+            .
+        """.trimIndent()
+        val chunk = LuaParser().parseWorkspaceSnippet(source)
+        val snapshot = SemanticPipeline().analyzeSnapshot(chunk)
+        val items = snapshot.model.getCompletionsAt(Position(7, 2)).map { it.label }
+        assertTrue("setShape" in items, "newline-dot completion must keep fluent receiver: $items")
+        assertTrue("value" in items, "newline-dot completion must expose receiver fields: $items")
+    }
+
+    @Test
     fun shadowing_visibility_and_position_queries() {
         val harness = integrationHarness(
             """

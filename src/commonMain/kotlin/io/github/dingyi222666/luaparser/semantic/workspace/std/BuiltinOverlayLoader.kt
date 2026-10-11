@@ -1,20 +1,24 @@
 package io.github.dingyi222666.luaparser.semantic.workspace.std
 
 import io.github.dingyi222666.luaparser.parser.LuaVersion
+import io.github.dingyi222666.luaparser.parser.LuaParser
+import io.github.dingyi222666.luaparser.parser.ast.node.Identifier
+import io.github.dingyi222666.luaparser.parser.ast.node.MemberExpression
+import io.github.dingyi222666.luaparser.semantic.SemanticPipeline
+import io.github.dingyi222666.luaparser.semantic.SemanticWorkspaceContext
+import io.github.dingyi222666.luaparser.semantic.checker.ExpressionTypeEvaluator
+import io.github.dingyi222666.luaparser.semantic.types.model.CallableType
 import io.github.dingyi222666.luaparser.parser.ast.node.Range
 import io.github.dingyi222666.luaparser.semantic.api.SymbolKind
 import io.github.dingyi222666.luaparser.semantic.types.model.AppliedType
 import io.github.dingyi222666.luaparser.semantic.types.model.ArrayType
 import io.github.dingyi222666.luaparser.semantic.types.model.ClassType
 import io.github.dingyi222666.luaparser.semantic.types.model.CustomType
-import io.github.dingyi222666.luaparser.semantic.types.model.FunctionParameter
 import io.github.dingyi222666.luaparser.semantic.types.model.FunctionType
 import io.github.dingyi222666.luaparser.semantic.types.model.IntersectionType
-import io.github.dingyi222666.luaparser.semantic.types.model.JavaArrayType
 import io.github.dingyi222666.luaparser.semantic.types.model.JavaClassType
 import io.github.dingyi222666.luaparser.semantic.types.model.JavaInstanceType
 import io.github.dingyi222666.luaparser.semantic.types.model.JavaTypeName
-import io.github.dingyi222666.luaparser.semantic.types.model.LiteralType
 import io.github.dingyi222666.luaparser.semantic.types.model.ModuleType
 import io.github.dingyi222666.luaparser.semantic.types.model.MultiReturnType
 import io.github.dingyi222666.luaparser.semantic.types.model.OverloadedFunctionType
@@ -22,40 +26,58 @@ import io.github.dingyi222666.luaparser.semantic.types.model.PrimitiveType
 import io.github.dingyi222666.luaparser.semantic.types.model.TableType
 import io.github.dingyi222666.luaparser.semantic.types.model.TupleType
 import io.github.dingyi222666.luaparser.semantic.types.model.Type
-import io.github.dingyi222666.luaparser.semantic.types.model.TypeParameterType
 import io.github.dingyi222666.luaparser.semantic.types.model.UnionType
 import io.github.dingyi222666.luaparser.semantic.types.model.UnknownType
 import io.github.dingyi222666.luaparser.semantic.types.model.VarargType
 import io.github.dingyi222666.luaparser.semantic.types.resolve.unionTypeOf
-import io.github.dingyi222666.luaparser.semantic.types.syntax.ArrayTypeSyntax
-import io.github.dingyi222666.luaparser.semantic.types.syntax.FunctionTypeSyntax
-import io.github.dingyi222666.luaparser.semantic.types.syntax.GenericTypeSyntax
-import io.github.dingyi222666.luaparser.semantic.types.syntax.IdentifierObjectFieldNameSyntax
-import io.github.dingyi222666.luaparser.semantic.types.syntax.IndexTableTypeSyntax
-import io.github.dingyi222666.luaparser.semantic.types.syntax.IntersectionTypeSyntax
-import io.github.dingyi222666.luaparser.semantic.types.syntax.LiteralTypeSyntax
-import io.github.dingyi222666.luaparser.semantic.types.syntax.MultiReturnTypeSyntax
-import io.github.dingyi222666.luaparser.semantic.types.syntax.NamedTypeSyntax
-import io.github.dingyi222666.luaparser.semantic.types.syntax.NullableTypeSyntax
-import io.github.dingyi222666.luaparser.semantic.types.syntax.ObjectTypeSyntax
-import io.github.dingyi222666.luaparser.semantic.types.syntax.QuotedObjectFieldNameSyntax
-import io.github.dingyi222666.luaparser.semantic.types.syntax.TupleTypeSyntax
-import io.github.dingyi222666.luaparser.semantic.types.syntax.TypeSyntax
-import io.github.dingyi222666.luaparser.semantic.types.syntax.TypeSyntaxParser
-import io.github.dingyi222666.luaparser.semantic.types.syntax.indexOfTopLevelChar
-import io.github.dingyi222666.luaparser.semantic.types.syntax.splitTopLevelTypeText
-import io.github.dingyi222666.luaparser.semantic.types.syntax.UnionTypeSyntax
-import io.github.dingyi222666.luaparser.semantic.types.syntax.VarargTypeSyntax
 import io.github.dingyi222666.luaparser.semantic.workspace.ModuleExportSurface
 import io.github.dingyi222666.luaparser.semantic.workspace.VirtualPath
 import io.github.dingyi222666.luaparser.semantic.workspace.WorkspacePublicFingerprint
 import io.github.dingyi222666.luaparser.semantic.workspace.WorkspaceSnapshot
+import io.github.dingyi222666.luaparser.semantic.workspace.DocumentFactsCollector
+import io.github.dingyi222666.luaparser.semantic.workspace.LegacyModuleEnvironmentPass
+import io.github.dingyi222666.luaparser.semantic.workspace.ModuleExportCollector
+import io.github.dingyi222666.luaparser.semantic.workspace.WorkspaceSemanticFile
 import io.github.dingyi222666.luaparser.semantic.workspace.workspaceFingerprintHash
 import io.github.dingyi222666.luaparser.util.putIfAbsentCompat
 
 object BuiltinOverlayLoader {
+    // These synthetic providers use no caller-specific parser state. Lazy also
+    // prevents the foreground and background engines from constructing them twice.
+    private val frameworkProviders by lazy {
+        androidFrameworkProviderModules(catalogFor(LuaVersion.ANDROLUA_5_3).androidFrameworkResources!!)
+    }
     fun load(
         version: LuaVersion,
+        analyze: (VirtualPath, String) -> WorkspaceSnapshot.FileSnapshot
+    ): BuiltinOverlaySnapshot = loadInternal(version, true, analyze)
+
+    /** Lua/AndroLua builtins for live buffers while the framework index builds. */
+    fun loadCore(
+        version: LuaVersion,
+        analyze: (VirtualPath, String) -> WorkspaceSnapshot.FileSnapshot
+    ): BuiltinOverlaySnapshot = loadInternal(version, false, analyze)
+
+    // Compiled resource declarations have no workspace imports or classpath. Their complete
+    // parse/facts/binding/export revision belongs to the resource catalog, shared by engines.
+    private val coreRevisions = LuaVersion.entries.associateWith { version ->
+        lazy { loadCore(version) { path, source -> declarationSnapshot(version, path, source) } }
+    }
+    private val completeRevisions = LuaVersion.entries.associateWith { version ->
+        lazy {
+            val core = coreRevisions.getValue(version).value
+            if (version == LuaVersion.ANDROLUA_5_3) {
+                core.copy(providerModules = core.providerModules + frameworkProviders)
+            } else core
+        }
+    }
+
+    internal fun compiledRevision(version: LuaVersion, includeFramework: Boolean): BuiltinOverlaySnapshot =
+        (if (includeFramework) completeRevisions else coreRevisions).getValue(version).value
+
+    private fun loadInternal(
+        version: LuaVersion,
+        includeAndroidFramework: Boolean,
         analyze: (VirtualPath, String) -> WorkspaceSnapshot.FileSnapshot
     ): BuiltinOverlaySnapshot {
         val catalog = catalogFor(version)
@@ -69,7 +91,8 @@ object BuiltinOverlayLoader {
                     moduleExportSurface = documentedModuleSurface(
                         moduleName = moduleName,
                         resourceText = resourceText,
-                        analyzedSurface = snapshot.moduleExportSurface
+                        analyzedSurface = snapshot.moduleExportSurface,
+                        preparedBinder = snapshot.semanticFile?.snapshot?.binder
                     )
                 )
             }
@@ -87,7 +110,8 @@ object BuiltinOverlayLoader {
                         moduleName = moduleName,
                         resourceText = source,
                         analyzedSurface = snapshot.moduleExportSurface,
-                        syntheticSurface = resource.syntheticSurface
+                        syntheticSurface = resource.surface?.value,
+                        preparedBinder = snapshot.semanticFile?.snapshot?.binder
                     )
                 )
             }
@@ -96,8 +120,8 @@ object BuiltinOverlayLoader {
                 file = file
             )
         }
-        catalog.androidFrameworkResources?.let { resources ->
-            androidFrameworkProviderModules(resources).forEach { (path, provider) ->
+        catalog.androidFrameworkResources?.takeIf { includeAndroidFramework }?.let {
+            frameworkProviders.forEach { (path, provider) ->
                 providerModules[path] = provider
             }
         }
@@ -109,7 +133,8 @@ object BuiltinOverlayLoader {
                 moduleExportSurface = documentedGlobalsSurface(
                     resourceText = globalsSource,
                     analyzedSurface = snapshot.moduleExportSurface,
-                    providerModuleTypes = providerModuleTypes
+                    providerModuleTypes = providerModuleTypes.filterKeys { it in catalog.globalNames },
+                    preparedBinder = snapshot.semanticFile?.snapshot?.binder
                 )
             )
         }
@@ -132,13 +157,26 @@ object BuiltinOverlayLoader {
      * default-argument position on [SemanticWorkspaceContext] and [BinderPass], so a naive
      * implementation rebuilt the whole catalog on every context/evaluator construction.
      */
-    private val standaloneGlobalsByVersion: Map<LuaVersion, Lazy<BuiltinOverlaySnapshot.GlobalsSnapshot>> =
-        LuaVersion.entries.associateWith { version ->
-            lazy { load(version) { _, _ -> WorkspaceSnapshot.FileSnapshot() }.globals }
-        }
+
+    private fun declarationSnapshot(version: LuaVersion, path: VirtualPath, source: String): WorkspaceSnapshot.FileSnapshot {
+        val declaration = if (version == LuaVersion.ANDROLUA_5_3) declarationBinding(source)
+            else bindDeclaration(source, version)
+        val parsed = declaration.parsed
+        val semantic = declaration.semantic
+        val facts = DocumentFactsCollector.collect(path, parsed.chunk)
+        val environment = LegacyModuleEnvironmentPass.analyze(path, facts)
+        val surface = ModuleExportCollector.collect(parsed.chunk, facts, environment)
+        return WorkspaceSnapshot.FileSnapshot(
+            cacheKey = workspaceFingerprintHash(source), documentFacts = facts,
+            legacyModuleEnvironment = environment, moduleExportSurface = surface,
+            publicFingerprint = WorkspacePublicFingerprint.from(facts, surface),
+            semanticFile = WorkspaceSemanticFile(path, source, parsed.chunk, semantic.model,
+                semantic, parsed.recoveryDiagnostics)
+        )
+    }
 
     fun standaloneGlobals(version: LuaVersion = LuaVersion.LUA_5_3): BuiltinOverlaySnapshot.GlobalsSnapshot {
-        return standaloneGlobalsByVersion.getValue(version).value
+        return compiledRevision(version, includeFramework = false).globals
     }
 
     private fun documentedModuleSource(moduleName: String, resourceText: String): String {
@@ -159,9 +197,10 @@ object BuiltinOverlayLoader {
         moduleName: String,
         resourceText: String,
         analyzedSurface: ModuleExportSurface?,
-        syntheticSurface: ModuleExportSurface?
+        syntheticSurface: ModuleExportSurface?,
+        preparedBinder: io.github.dingyi222666.luaparser.semantic.binder.BinderPassResult? = null
     ): ModuleExportSurface {
-        val documentedSurface = documentedModuleSurface(moduleName, resourceText, analyzedSurface)
+        val documentedSurface = documentedModuleSurface(moduleName, resourceText, analyzedSurface, preparedBinder)
         return when (syntheticSurface) {
             null -> documentedSurface
             else -> mergeSyntheticSurface(
@@ -172,42 +211,21 @@ object BuiltinOverlayLoader {
         }
     }
 
-    private fun globalsSource(catalog: Catalog): String {
-        val source = BuiltinOverlayResourceAccess.readText(catalog.globalsResourcePath)
-        val compatibilitySource = catalog.compatibilityGlobalsSource.trim()
-        val declaredSource = listOf(source, compatibilitySource).filter(String::isNotBlank).joinToString("\n")
-        val missingGlobals = catalog.globalNames.filterNot { name -> globalNameDeclared(declaredSource, name) }
-        return buildString {
-            append(source.trim())
-            missingGlobals.forEach { name ->
-                append('\n')
-                append(name)
-                append(" = ")
-                append(name)
-            }
-            compatibilitySource
-                .takeIf { it.isNotEmpty() }
-                ?.let {
-                    append('\n')
-                    append(it)
-            }
-        }.trim()
-    }
-
-    private fun globalNameDeclared(source: String, name: String): Boolean {
-        val escapedName = Regex.escape(name)
-        return Regex("""^\s*(?:function\s+$escapedName\s*\(|$escapedName\s*=)""", RegexOption.MULTILINE)
-            .containsMatchIn(source)
-    }
+    private fun globalsSource(catalog: Catalog): String = buildList {
+        catalog.inheritedGlobalsResourcePath?.let { add(BuiltinOverlayResourceAccess.readText(it).trim()) }
+        add(BuiltinOverlayResourceAccess.readText(catalog.globalsResourcePath).trim())
+        catalog.compatibilityGlobalsSource.trim().takeIf(String::isNotEmpty)?.let(::add)
+    }.joinToString("\n\n")
 
     private fun documentedGlobalsSurface(
         resourceText: String,
         analyzedSurface: ModuleExportSurface?,
-        providerModuleTypes: Map<String, ModuleType?>
+        providerModuleTypes: Map<String, ModuleType?>,
+        preparedBinder: io.github.dingyi222666.luaparser.semantic.binder.BinderPassResult? = null
     ): ModuleExportSurface {
         return surfaceFromMembers(
             moduleName = "_G",
-            members = documentedGlobalMembers(resourceText, analyzedSurface, providerModuleTypes),
+            members = documentedGlobalMembers(resourceText, analyzedSurface, providerModuleTypes, preparedBinder),
             analyzedSurface = analyzedSurface
         )
     }
@@ -226,11 +244,12 @@ object BuiltinOverlayLoader {
     private fun documentedModuleSurface(
         moduleName: String,
         resourceText: String,
-        analyzedSurface: ModuleExportSurface?
+        analyzedSurface: ModuleExportSurface?,
+        preparedBinder: io.github.dingyi222666.luaparser.semantic.binder.BinderPassResult? = null
     ): ModuleExportSurface {
         return surfaceFromMembers(
             moduleName = moduleName,
-            members = documentedModuleMembers(moduleName, resourceText, analyzedSurface),
+            members = documentedModuleMembers(moduleName, resourceText, analyzedSurface, preparedBinder),
             analyzedSurface = analyzedSurface
         )
     }
@@ -315,134 +334,43 @@ object BuiltinOverlayLoader {
         return nameAliases
     }
 
-    private fun documentedMemberPaths(moduleName: String, resourceText: String): Set<List<String>> {
-        // Match full dotted names and short local aliases (socket.url + url) so synthetic
-        // method kinds can merge with documented ranges for AndroLua helper modules.
-        val nameAliases = dottedModuleNameAliases(moduleName)
-        val namePattern = nameAliases.joinToString("|") { Regex.escape(it) }
-        val functionRegex = Regex("""^\s*function\s+(?:$namePattern)[.:]([A-Za-z_][A-Za-z0-9_]*)\s*\(""")
-        val assignmentRegex = Regex("""^\s*(?:$namePattern)\.([A-Za-z_][A-Za-z0-9_]*)\s*=""")
-        val paths = linkedSetOf<List<String>>()
-        nameAliases.forEach { alias ->
-            documentedClassFieldMembers(alias, resourceText)
-                .mapTo(paths) { member -> member.exportPath }
-        }
-        val pendingDocLines = mutableListOf<String>()
-
-        resourceText.lineSequence().forEach { line ->
-            val trimmedStart = line.trimStart()
-            if (trimmedStart.startsWith("---")) {
-                pendingDocLines += trimmedStart
-                return@forEach
-            }
-
-            val memberName = functionRegex.find(line)?.groupValues?.get(1)
-                ?: assignmentRegex.find(line)?.groupValues?.get(1)
-            if (memberName != null) {
-                // Always record the member path for dotted modules (url.parse) so synthetic
-                // METHOD kinds can merge; typed docs still preferred when present.
-                if (pendingDocLines.hasTypedMemberDoc() || moduleName.contains('.')) {
-                    paths += listOf(memberName)
-                }
-                pendingDocLines.clear()
-                return@forEach
-            }
-
-            if (line.isBlank() || !trimmedStart.startsWith("--")) {
-                pendingDocLines.clear()
-            }
-        }
-
-        return paths
-    }
-
-    private fun List<String>.hasTypedMemberDoc(): Boolean = any { line ->
-        val tag = line.removePrefix("---").trimStart()
-        tag.startsWith("@generic ") ||
-            tag.startsWith("@field ") ||
-            tag.startsWith("@param ") ||
-            tag.startsWith("@return ") ||
-            tag.startsWith("@type ") ||
-            tag.startsWith("@overload ") ||
-            tag.startsWith("@method ")
-    }
-
     private fun documentedGlobalMembers(
         resourceText: String,
         analyzedSurface: ModuleExportSurface?,
-        providerModuleTypes: Map<String, ModuleType?>
+        providerModuleTypes: Map<String, ModuleType?>,
+        preparedBinder: io.github.dingyi222666.luaparser.semantic.binder.BinderPassResult?
     ): List<ModuleExportSurface.MemberExport> {
-        val functionRegex = Regex("""^\s*function\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(([^)]*)\)""")
-        val assignmentRegex = Regex("""^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$""")
+        val binder = preparedBinder ?: declarationBinding(resourceText).binder
         val analyzedByPath = analyzedSurface?.members.orEmpty().associateBy { it.exportPath }
         val membersByPath = linkedMapOf<List<String>, StandardMemberDescriptor>()
-        val pendingDocLines = mutableListOf<String>()
-        val documentedClassTypes = documentedClassTypes(resourceText)
-
-        resourceText.lineSequence().forEach { line ->
-            val trimmedStart = line.trimStart()
-            if (trimmedStart.startsWith("---")) {
-                pendingDocLines += trimmedStart
-                return@forEach
-            }
-
-            val functionMatch = functionRegex.find(line)
-            if (functionMatch != null) {
-                val name = functionMatch.groupValues[1]
-                val exportPath = listOf(name)
-                val doc = parseMemberDoc(pendingDocLines)
-                membersByPath[exportPath] = StandardMemberDescriptor(
-                    name = name,
-                    exportPath = exportPath,
-                    kind = if (name in DOCUMENTED_CALLABLE_GLOBAL_VALUE_NAMES) SymbolKind.FIELD else SymbolKind.FUNCTION,
-                    type = hydrateDocumentedType(
-                        documentedFunctionType(functionMatch.groupValues[2], doc),
-                        documentedClassTypes
-                    ),
-                    range = analyzedByPath[exportPath]?.range
-                )
-                pendingDocLines.clear()
-                return@forEach
-            }
-
-            val assignmentMatch = assignmentRegex.find(line)
-            if (assignmentMatch != null) {
-                val name = assignmentMatch.groupValues[1]
-                val exportPath = listOf(name)
-                val doc = parseMemberDoc(pendingDocLines)
-                val assignmentType = providerModuleTypes[name]
-                    ?: doc.inlineType
-                    ?: documentedAssignmentType(assignmentMatch.groupValues[2])
-                membersByPath.putIfAbsentCompat(
-                    exportPath,
-                    StandardMemberDescriptor(
-                        name = name,
-                        exportPath = exportPath,
-                        kind = SymbolKind.FIELD,
-                        type = hydrateDocumentedType(assignmentType, documentedClassTypes),
-                        range = analyzedByPath[exportPath]?.range
-                    )
-                )
-                pendingDocLines.clear()
-                return@forEach
-            }
-
-            if (line.isBlank() || !trimmedStart.startsWith("--")) {
-                pendingDocLines.clear()
-            }
+        val documentedClassTypes = documentedClassTypes(resourceText, binder)
+        val evaluator = declarationEvaluator(binder)
+        binder.declarationIndex.declarations.forEach { declaration ->
+            if (declaration.origin != io.github.dingyi222666.luaparser.semantic.binder.DeclarationOrigin.AST ||
+                declaration.kind != io.github.dingyi222666.luaparser.semantic.binder.DeclarationKind.GLOBAL) return@forEach
+            val anchor = declaration.anchorNode as? Identifier ?: return@forEach
+            val path = listOf(declaration.name)
+            val type = declaration.declaredType ?: evaluator.evaluate(anchor)
+            val kind = if (anchor.parent is io.github.dingyi222666.luaparser.parser.ast.node.FunctionDeclaration &&
+                declaration.name !in DOCUMENTED_CALLABLE_GLOBAL_VALUE_NAMES) SymbolKind.FUNCTION else SymbolKind.FIELD
+            membersByPath[path] = StandardMemberDescriptor(declaration.name, path, kind,
+                hydrateDocumentedType(type, documentedClassTypes), analyzedByPath[path]?.range)
+        }
+        analyzedSurface?.members.orEmpty().forEach { member ->
+            membersByPath.putIfAbsentCompat(member.exportPath, StandardMemberDescriptor(member.name,
+                member.exportPath, member.kind, hydrateDocumentedType(member.type, documentedClassTypes), member.range))
         }
 
-        analyzedSurface?.members.orEmpty().forEach { member ->
-            membersByPath.putIfAbsentCompat(
-                member.exportPath,
-                StandardMemberDescriptor(
-                    name = member.name,
-                    exportPath = member.exportPath,
-                    kind = member.kind,
-                    type = hydrateDocumentedType(member.type, documentedClassTypes),
-                    range = member.range
-                )
-            )
+        providerModuleTypes.forEach { (name, module) ->
+            if (module != null && name != "import") {
+                val path = listOf(name)
+                // A module registry entry and an installed free function may share a name.
+                // Keep the declared function signature; replacing it with the require()
+                // module table loses its parameter and return annotations at binding time.
+                if (membersByPath[path]?.type !is CallableType) {
+                    membersByPath[path] = StandardMemberDescriptor(name, path, SymbolKind.FIELD, module, null)
+                }
+            }
         }
 
         // AndroLua require "import" / env_import(_G) installs import-module helpers as free
@@ -456,12 +384,6 @@ object BuiltinOverlayLoader {
                 analyzedByPath = analyzedByPath
             )
         }
-
-        // Hard-lock documented pairs/ipairs generic callable metadata so completion +
-        // signature help always surface fun<K, V>/fun<V> shapes (TASK-668 / TASK-122).
-        // EmmyLua parse paths can collapse to fun(): unknown when generic return fun(...)
-        // multi-returns are not fully rehydrated into binder-visible declaredType.
-        applyDocumentedPairsIpairsHardLocks(membersByPath, analyzedByPath)
 
         return membersByPath.values
             .sortedWith(compareBy<StandardMemberDescriptor>({ symbolKindOrder(it.kind) }, { it.exportPath.joinToString(".") }))
@@ -477,68 +399,6 @@ object BuiltinOverlayLoader {
                     range = null
                 )
             }
-    }
-
-    /**
-     * Documented EmmyLua pairs/ipairs shapes for free-id completion and signature help.
-     * pairs: fun of K,V table/array to iterator returning K, V.
-     * ipairs: fun of V table/array to iterator returning number, V.
-     */
-    private fun applyDocumentedPairsIpairsHardLocks(
-        membersByPath: MutableMap<List<String>, StandardMemberDescriptor>,
-        analyzedByPath: Map<List<String>, ModuleExportSurface.MemberExport>
-    ) {
-        val pairsType = documentedPairsFunctionType()
-        val ipairsType = documentedIpairsFunctionType()
-        listOf(
-            "pairs" to pairsType,
-            "ipairs" to ipairsType
-        ).forEach { (name, type) ->
-            val exportPath = listOf(name)
-            val existing = membersByPath[exportPath]
-            membersByPath[exportPath] = StandardMemberDescriptor(
-                name = name,
-                exportPath = exportPath,
-                // Keep FIELD so BuiltinSymbolSeeder still treats these as value callables with
-                // declared FunctionType (DOCUMENTED_CALLABLE_GLOBAL_VALUE_NAMES).
-                kind = SymbolKind.FIELD,
-                type = type,
-                range = existing?.range ?: analyzedByPath[exportPath]?.range
-            )
-        }
-    }
-
-    private fun documentedPairsFunctionType(): FunctionType {
-        val key = TypeParameterType(name = "K")
-        val value = TypeParameterType(name = "V")
-        val tableKV = TableType(indexSignature = TableType.IndexSignature(key, value))
-        val paramT = unionTypeOf(tableKV, ArrayType(value))
-        val iterator = FunctionType(
-            parameters = listOf(FunctionParameter(name = "tbl", type = tableKV)),
-            returnType = MultiReturnType(listOf(key, value))
-        )
-        return FunctionType(
-            parameters = listOf(FunctionParameter(name = "t", type = paramT)),
-            returnType = iterator,
-            typeParameters = listOf(key, value)
-        )
-    }
-
-    private fun documentedIpairsFunctionType(): FunctionType {
-        val value = TypeParameterType(name = "V")
-        val tableNV = TableType(
-            indexSignature = TableType.IndexSignature(PrimitiveType.NUMBER, value)
-        )
-        val paramT = unionTypeOf(tableNV, ArrayType(value))
-        val iterator = FunctionType(
-            parameters = listOf(FunctionParameter(name = "tbl", type = tableNV)),
-            returnType = MultiReturnType(listOf(PrimitiveType.NUMBER, value))
-        )
-        return FunctionType(
-            parameters = listOf(FunctionParameter(name = "t", type = paramT)),
-            returnType = iterator,
-            typeParameters = listOf(value)
-        )
     }
 
     /**
@@ -630,36 +490,14 @@ object BuiltinOverlayLoader {
         // Free-id global `luajava` reuses the documented luajava member surface installed by
         // require "import", but brands moduleName as "import" while keeping displayName
         // "luajava" (TASK-146 / TASK-668 import.luajava surface contract).
-        val documentedLuajava = when (val field = importModuleType.fields["luajava"]) {
-            is ModuleType -> field
-            else -> null
-        }
-        val brandedLuajava = when {
-            documentedLuajava != null -> ModuleType(
-                moduleName = "import",
-                fields = documentedLuajava.fields,
-                methods = documentedLuajava.methods,
-                indexSignature = documentedLuajava.indexSignature,
-                name = "luajava"
-            )
-            else -> ModuleType(
-                moduleName = "import",
-                fields = importModuleType.fields.filterKeys { it != "luajava" && it != "__call" && it != "env_import" && it !in listOf("loadlayout", "loadbitmap", "loadmenu") }
-                    .filterValues { it !is FunctionType && it !is OverloadedFunctionType }
-                    .ifEmpty {
-                        // Fall back to import-module methods/fields that mirror luajava helpers.
-                        linkedMapOf<String, Type>().also { fields ->
-                            importModuleType.fields.forEach { (name, type) ->
-                                if (name in LUJAVA_SURFACE_FIELD_NAMES) {
-                                    fields[name] = type
-                                }
-                            }
-                        }
-                    },
-                methods = importModuleType.methods.filterKeys { it in LUJAVA_SURFACE_METHOD_NAMES },
-                name = "luajava"
-            )
-        }
+        val documentedLuajava = importModuleType.fields["luajava"] as? ModuleType ?: return
+        val brandedLuajava = ModuleType(
+            moduleName = "import",
+            fields = documentedLuajava.fields,
+            methods = documentedLuajava.methods,
+            indexSignature = documentedLuajava.indexSignature,
+            name = "luajava"
+        )
         val exportPath = listOf("luajava")
         val hydrated = hydrateDocumentedType(brandedLuajava, documentedClassTypes)
         val existing = membersByPath[exportPath]
@@ -672,350 +510,123 @@ object BuiltinOverlayLoader {
         )
     }
 
+    private fun declarationEvaluator(binder: io.github.dingyi222666.luaparser.semantic.binder.BinderPassResult) =
+        ExpressionTypeEvaluator(binder, SemanticWorkspaceContext(overlayGlobals = BuiltinOverlaySnapshot.EMPTY.globals))
+
     private fun documentedModuleMembers(
         moduleName: String,
         resourceText: String,
-        analyzedSurface: ModuleExportSurface?
+        analyzedSurface: ModuleExportSurface?,
+        preparedBinder: io.github.dingyi222666.luaparser.semantic.binder.BinderPassResult? = null
     ): List<ModuleExportSurface.MemberExport> {
-        // AndroLua dotted modules (socket.url) document methods as `function url.parse(...)`
-        // while the require module name stays dotted. Accept both the full moduleName and the
-        // short local alias so parse/build stay on the export surface as methods.
-        val nameAliases = dottedModuleNameAliases(moduleName)
-        val namePattern = nameAliases.joinToString("|") { Regex.escape(it) }
-        val functionRegex = Regex("""^\s*function\s+(?:$namePattern)([.:])([A-Za-z_][A-Za-z0-9_]*)\s*\(([^)]*)\)""")
-        val assignmentRegex = Regex("""^\s*(?:$namePattern)\.([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$""")
-        val analyzedByPath = analyzedSurface?.members.orEmpty().associateBy { it.exportPath }
-        val membersByPath = linkedMapOf<List<String>, StandardMemberDescriptor>()
-        val pendingDocLines = mutableListOf<String>()
-        val documentedClassTypes = documentedClassTypes(resourceText)
-
-        documentedClassFieldMembers(moduleName, resourceText, analyzedByPath).forEach { descriptor ->
-            membersByPath[descriptor.exportPath] = descriptor.copy(
-                type = hydrateDocumentedType(descriptor.type, documentedClassTypes)
-            )
-        }
-        // Also collect @field members under short aliases (---@class socket.url with local url).
-        nameAliases.filter { it != moduleName }.forEach { alias ->
-            documentedClassFieldMembers(alias, resourceText, analyzedByPath).forEach { descriptor ->
-                membersByPath.putIfAbsentCompat(
-                    descriptor.exportPath,
-                    descriptor.copy(type = hydrateDocumentedType(descriptor.type, documentedClassTypes))
-                )
+        val aliases = dottedModuleNameAliases(moduleName)
+        val binder = preparedBinder ?: declarationBinding(resourceText).binder
+        val members = linkedMapOf<List<String>, ModuleExportSurface.MemberExport>()
+        val ranges = analyzedSurface?.members.orEmpty().associateBy { it.exportPath }
+        val classes = documentedClassTypes(resourceText, binder)
+        aliases.forEach { alias ->
+            val cls = classes[alias] ?: return@forEach
+            cls.getAllFields().forEach { (name, type) ->
+                members[listOf(name)] = ModuleExportSurface.MemberExport(name, listOf(name), SymbolKind.FIELD,
+                    type, ranges[listOf(name)]?.range)
+            }
+            cls.getAllMethods().forEach { (name, type) ->
+                members[listOf(name)] = ModuleExportSurface.MemberExport(name, listOf(name), SymbolKind.METHOD,
+                    type, ranges[listOf(name)]?.range)
             }
         }
-
-        resourceText.lineSequence().forEach { line ->
-            val trimmedStart = line.trimStart()
-            if (trimmedStart.startsWith("---")) {
-                pendingDocLines += trimmedStart
-                return@forEach
+        val evaluator = declarationEvaluator(binder)
+        binder.declarationIndex.declarations.forEach { declaration ->
+            val anchor = declaration.anchorNode as? Identifier ?: return@forEach
+            val member = anchor.parent as? MemberExpression ?: return@forEach
+            val owner = expressionName(member.base) ?: return@forEach
+            if (owner !in aliases) return@forEach
+            val kind = when {
+                member.indexer == ":" || moduleName.contains('.') -> SymbolKind.METHOD
+                else -> SymbolKind.FIELD
             }
-
-            val functionMatch = functionRegex.find(line)
-            if (functionMatch != null) {
-                val separator = functionMatch.groupValues[1]
-                val memberName = functionMatch.groupValues[2]
-                val exportPath = listOf(memberName)
-                val doc = parseMemberDoc(pendingDocLines)
-                val type = hydrateDocumentedType(
-                    documentedFunctionType(functionMatch.groupValues[3], doc),
-                    documentedClassTypes
-                )
-                // Prefer METHOD for dotted-module helpers (url.parse) so ModuleType.methods
-                // keeps parse even when docs use field-style `function url.parse`.
-                val kind = when {
-                    separator == ":" -> SymbolKind.METHOD
-                    moduleName.contains('.') -> SymbolKind.METHOD
-                    else -> SymbolKind.FIELD
-                }
-                membersByPath[exportPath] = StandardMemberDescriptor(
-                    name = memberName,
-                    exportPath = exportPath,
-                    kind = kind,
-                    type = type,
-                    range = analyzedByPath[exportPath]?.range
-                )
-                pendingDocLines.clear()
-                return@forEach
-            }
-
-            val assignmentMatch = assignmentRegex.find(line)
-            if (assignmentMatch != null) {
-                val memberName = assignmentMatch.groupValues[1]
-                val exportPath = listOf(memberName)
-                val doc = parseMemberDoc(pendingDocLines)
-                membersByPath[exportPath] = StandardMemberDescriptor(
-                    name = memberName,
-                    exportPath = exportPath,
-                    kind = SymbolKind.FIELD,
-                    type = hydrateDocumentedType(
-                        doc.inlineType ?: documentedAssignmentType(assignmentMatch.groupValues[2]),
-                        documentedClassTypes
-                    ),
-                    range = analyzedByPath[exportPath]?.range
-                )
-                pendingDocLines.clear()
-                return@forEach
-            }
-
-            if (line.isBlank() || !trimmedStart.startsWith("--")) {
-                pendingDocLines.clear()
-            }
+            val type = declaration.declaredType ?: evaluator.evaluate(member)
+            val path = listOf(declaration.name)
+            members[path] = ModuleExportSurface.MemberExport(declaration.name, path, kind,
+                hydrateDocumentedType(type, classes), ranges[path]?.range)
         }
-
         analyzedSurface?.members.orEmpty().forEach { member ->
-            membersByPath.putIfAbsentCompat(
-                member.exportPath,
-                StandardMemberDescriptor(
-                    name = member.name,
-                    exportPath = member.exportPath,
-                    kind = member.kind,
-                    type = hydrateDocumentedType(member.type, documentedClassTypes),
-                    range = member.range
-                )
-            )
+            members.putIfAbsentCompat(member.exportPath,
+                member.copy(type = hydrateDocumentedType(member.type, classes)))
         }
-
-        return membersByPath.values
-            .sortedWith(compareBy<StandardMemberDescriptor>({ symbolKindOrder(it.kind) }, { it.exportPath.joinToString(".") }))
-            .map { descriptor ->
-                ModuleExportSurface.MemberExport(
-                    name = descriptor.name,
-                    exportPath = descriptor.exportPath,
-                    kind = descriptor.kind,
-                    type = descriptor.type,
-                    range = descriptor.range
-                )
-            }
+        return members.values.sortedWith(compareBy({ symbolKindOrder(it.kind) }, { it.exportPath.joinToString(".") }))
     }
 
-    private fun documentedClassFieldMembers(
-        moduleName: String,
+    private fun expressionName(expression: io.github.dingyi222666.luaparser.parser.ast.node.ExpressionNode): String? =
+        when (expression) {
+            is Identifier -> expression.name
+            is MemberExpression -> expressionName(expression.base)?.let { "$it.${expression.identifier.name}" }
+            else -> null
+        }
+
+    private fun documentedMemberPaths(moduleName: String, resourceText: String): Set<List<String>> =
+        documentedModuleMembers(moduleName, resourceText, null).mapTo(linkedSetOf()) { it.exportPath }
+
+    private data class DeclarationBinding(
+        val parsed: io.github.dingyi222666.luaparser.parser.LuaParseResult,
+        val semantic: io.github.dingyi222666.luaparser.semantic.SemanticPipelineSnapshot
+    ) {
+        val chunk get() = parsed.chunk
+        val binder get() = semantic.binder
+        val classes by lazy { resolvedClassTypes(binder) }
+    }
+
+    private fun bindDeclaration(source: String, version: LuaVersion = LuaVersion.ANDROLUA_5_3): DeclarationBinding {
+        val parsed = LuaParser(version).parseWorkspaceSnippetWithDiagnostics(source)
+        val semantic = SemanticPipeline().analyzeSnapshot(parsed.chunk,
+            SemanticWorkspaceContext(overlayGlobals = BuiltinOverlaySnapshot.EMPTY.globals),
+            checkDiagnostics = false)
+        return DeclarationBinding(parsed, semantic)
+    }
+
+    // Resource-owned AST/binding inputs are immutable and context-free. Signature extraction
+    // and class/member hydration consume the same binding instead of attaching comments twice.
+    private val resourceBindings by lazy {
+        val paths = androidLuaDeclarationResources.map { ANDROLUA_RESOURCE_ROOT + it + ".lua" } +
+            listOf(ANDROLUA_RESOURCE_ROOT + "import.lua", ANDROLUA_LUAJAVA_RESOURCE) +
+            lua53ProviderModuleResourcePaths().values + lua54Catalog().providerModuleResourcePaths.values
+        paths.distinct().associate { resource ->
+            val source = BuiltinOverlayResourceAccess.readText(resource).trim()
+            source to lazy { bindDeclaration(source) }
+        }
+    }
+
+    private fun declarationBinding(source: String): DeclarationBinding =
+        resourceBindings[source.trim()]?.value ?: bindDeclaration(source)
+
+    private fun documentedClassTypes(
         resourceText: String,
-        analyzedByPath: Map<List<String>, ModuleExportSurface.MemberExport> = emptyMap()
-    ): List<StandardMemberDescriptor> {
-        val members = mutableListOf<StandardMemberDescriptor>()
-        var activeModuleClass = false
-
-        resourceText.lineSequence().forEach { line ->
-            val tag = line.trimStart().takeIf { it.startsWith("---") }
-                ?.removePrefix("---")
-                ?.trimStart()
-
-            if (tag == null) {
-                if (line.isNotBlank() && !line.trimStart().startsWith("--")) {
-                    activeModuleClass = false
-                }
-                return@forEach
-            }
-
-            if (tag.startsWith("@class ")) {
-                activeModuleClass = documentedClassName(tag.removePrefix("@class").trim()) == moduleName
-                return@forEach
-            }
-
-            if (activeModuleClass && tag.startsWith("@field ")) {
-                parseDocumentedField(tag.removePrefix("@field").trim())?.let { field ->
-                    val exportPath = listOf(field.name)
-                    members += StandardMemberDescriptor(
-                        name = field.name,
-                        exportPath = exportPath,
-                        kind = SymbolKind.FIELD,
-                        type = field.type,
-                        range = analyzedByPath[exportPath]?.range
-                    )
-                }
-            }
-        }
-
-        return members
+        preparedBinder: io.github.dingyi222666.luaparser.semantic.binder.BinderPassResult? = null
+    ): Map<String, ClassType> {
+        if (!resourceText.contains("@class ")) return emptyMap()
+        if (preparedBinder == null) return declarationBinding(resourceText).classes
+        return resolvedClassTypes(preparedBinder)
     }
 
-
-    /**
-     * Build ClassType models from EmmyLua ---@class / ---@field / ---@method docs so
-     * Android-Lua globals such as activity:getLuaDir resolve member surfaces.
-     */
-    private fun documentedClassTypes(resourceText: String): Map<String, ClassType> {
-        data class ClassDraft(
-            val name: String,
-            val superTypeNames: List<String>,
-            val typeParameters: List<TypeParameterType>,
-            var javaClassName: String? = null,
-            val fields: MutableMap<String, Type> = linkedMapOf(),
-            val methods: MutableMap<String, Type> = linkedMapOf()
-        )
-
-        val drafts = linkedMapOf<String, ClassDraft>()
-        val pendingDocLines = mutableListOf<String>()
-        var activeClassName: String? = null
-
-        resourceText.lineSequence().forEach { line ->
-            val trimmedStart = line.trimStart()
-            val tag = trimmedStart.takeIf { it.startsWith("---") }
-                ?.removePrefix("---")
-                ?.trimStart()
-            if (tag == null) {
-                val methodMatch = DOCUMENTED_CLASS_METHOD_REGEX.find(line)
-                if (methodMatch != null) {
-                    val className = methodMatch.groupValues[1]
-                    val methodName = methodMatch.groupValues[2]
-                    val draft = drafts[className]
-                    if (draft != null && methodName !in draft.methods) {
-                        draft.methods[methodName] = documentedFunctionType(
-                            parameterListText = methodMatch.groupValues[3],
-                            doc = parseMemberDoc(pendingDocLines)
-                        )
-                    }
-                    pendingDocLines.clear()
-                    return@forEach
-                }
-                if (line.isNotBlank() && !trimmedStart.startsWith("--")) {
-                    pendingDocLines.clear()
-                }
-                return@forEach
-            }
-            pendingDocLines += trimmedStart
-
-            when {
-                tag.startsWith("@class ") -> {
-                    val classText = tag.removePrefix("@class").trim()
-                    val name = documentedClassName(classText)
-                    if (name.isEmpty()) {
-                        activeClassName = null
-                        return@forEach
-                    }
-                    val superTypes = classText.substringAfter(':', missingDelimiterValue = "")
-                        .trim()
-                        .takeIf(String::isNotEmpty)
-                        ?.let { splitTopLevelTypeText(it, ',') }
-                        .orEmpty()
-                        .map { documentedClassName(it.trim()) }
-                        .filter { it.isNotEmpty() && it !in ANDROID_FRAMEWORK_UNMODELED_SUPER_TYPES }
-                    drafts[name] = ClassDraft(
-                        name = name,
-                        superTypeNames = superTypes,
-                        typeParameters = documentedClassTypeParameters(classText)
-                    )
-                    activeClassName = name
-                }
-
-                tag.startsWith("@java-class ") -> {
-                    val className = activeClassName ?: return@forEach
-                    drafts[className]?.javaClassName = tag.removePrefix("@java-class").trim().ifBlank { null }
-                }
-
-                tag.startsWith("@field ") -> {
-                    val className = activeClassName ?: return@forEach
-                    val field = parseDocumentedField(tag.removePrefix("@field").trim()) ?: return@forEach
-                    val draft = drafts.getOrPut(className) {
-                        ClassDraft(name = className, superTypeNames = emptyList(), typeParameters = emptyList())
-                    }
-                    // Callable fields are modeled as methods so ClassType member resolution
-                    // (and hover SymbolKind.METHOD) matches Android-Lua context APIs like getLuaDir.
-                    if (field.type is FunctionType || field.type is OverloadedFunctionType) {
-                        draft.methods.mergeDocumentedFunction(field.name, field.type)
-                    } else {
-                        draft.fields[field.name] = field.type
-                    }
-                }
-
-                tag.startsWith("@method ") -> {
-                    val body = tag.removePrefix("@method").trim()
-                    val signatureText = body.substringBefore(' ').trim()
-                    val typeText = body.substringAfter(' ', "").trim()
-                    val methodMatch = Regex("""^([A-Za-z_][\w.]*)[:.]([A-Za-z_][A-Za-z0-9_]*)\s*(?:\(([^)]*)\))?$""")
-                        .find(signatureText)
-                    val bareMethodMatch = if (methodMatch == null) {
-                        Regex("""^([A-Za-z_][A-Za-z0-9_]*)\s*(?:\(([^)]*)\))?$""").find(signatureText)
-                    } else {
-                        null
-                    }
-                    val className: String
-                    val methodName: String
-                    val parameterList: String
-                    when {
-                        methodMatch != null -> {
-                            className = methodMatch.groupValues[1]
-                            methodName = methodMatch.groupValues[2]
-                            parameterList = methodMatch.groupValues[3]
-                        }
-                        bareMethodMatch != null && activeClassName != null -> {
-                            className = activeClassName!!
-                            methodName = bareMethodMatch.groupValues[1]
-                            parameterList = bareMethodMatch.groupValues[2]
-                        }
-                        else -> return@forEach
-                    }
-                    val returnTypeText = when {
-                        typeText.startsWith("fun") -> null
-                        typeText.startsWith(":") -> typeText.removePrefix(":").trim()
-                        typeText.isNotEmpty() && !typeText.startsWith("(") -> typeText
-                        else -> null
-                    }
-                    val functionType = when {
-                        typeText.startsWith("fun") ->
-                            (parseDocumentedType(typeText) as? FunctionType)
-                                ?: anyFunction(parseDocumentedType(returnTypeText.orEmpty()) ?: UnknownType)
-
-                        else -> {
-                            val returnType = returnTypeText
-                                ?.takeIf(String::isNotEmpty)
-                                ?.let(::parseDocumentedType)
-                                ?: UnknownType
-                            val parameters = parseFunctionParameterNames(parameterList).map { parameterName ->
-                                val optional = parameterName.endsWith("?")
-                                val normalizedName = parameterName.removeSuffix("?")
-                                val vararg = normalizedName == "..."
-                                FunctionParameter(
-                                    name = normalizedName,
-                                    type = if (vararg) VarargType(PrimitiveType.ANY) else PrimitiveType.ANY,
-                                    optional = optional,
-                                    vararg = vararg
-                                )
-                            }
-                            FunctionType(parameters = parameters, returnType = returnType)
-                        }
-                    }
-                    drafts.getOrPut(className) {
-                        ClassDraft(name = className, superTypeNames = emptyList(), typeParameters = emptyList())
-                    }.methods.mergeDocumentedFunction(methodName, functionType)
-                    activeClassName = className
-                }
-            }
+    private fun resolvedClassTypes(binder: io.github.dingyi222666.luaparser.semantic.binder.BinderPassResult): Map<String, ClassType> {
+        val classes = binder.declarationIndex.declarations.asSequence()
+            .filter { it.kind == io.github.dingyi222666.luaparser.semantic.binder.DeclarationKind.CLASS }
+            .mapNotNull { declaration ->
+                (declaration.declaredType as? ClassType)?.let { declaration.name to it }
+            }.toMap().toMutableMap()
+        val evaluator = ExpressionTypeEvaluator(binder,
+            SemanticWorkspaceContext(overlayGlobals = BuiltinOverlaySnapshot.EMPTY.globals))
+        // Class declarations own annotations; their table values also own ordinary AST
+        // methods (for example the standard file handle's file:read/file:write methods).
+        // Use the same value derivation as user code to join these two real inputs.
+        binder.declarationIndex.declarations.forEach { declaration ->
+            val declared = declaration.declaredType as? ClassType ?: return@forEach
+            if (declaration.kind.namespace != io.github.dingyi222666.luaparser.semantic.binder.DeclarationNamespace.VALUE) return@forEach
+            val anchor = declaration.anchorNode as? Identifier ?: return@forEach
+            val value = evaluator.evaluate(anchor) as? ClassType ?: return@forEach
+            classes[declared.name] = value
         }
-
-        if (drafts.isEmpty()) {
-            return emptyMap()
-        }
-
-        val cache = linkedMapOf<String, ClassType>()
-        fun build(name: String, stack: MutableSet<String>): ClassType {
-            cache[name]?.let { return it }
-            val draft = drafts[name]
-            if (draft == null) {
-                return ClassType(name = name)
-            }
-            if (!stack.add(name)) {
-                return ClassType(name = name, typeParameters = draft.typeParameters)
-            }
-            val superClasses = draft.superTypeNames.map { superName -> build(superName, stack) }
-            val classType = ClassType(
-                name = name,
-                fields = sortedTypeMap(draft.fields),
-                methods = sortedTypeMap(draft.methods),
-                superClass = superClasses.firstOrNull(),
-                superType = superClasses.drop(1).firstOrNull(),
-                typeParameters = draft.typeParameters,
-                javaClassName = draft.javaClassName
-            )
-            stack.remove(name)
-            cache[name] = classType
-            return classType
-        }
-
-        drafts.keys.sorted().forEach { name -> build(name, linkedSetOf()) }
-        return cache
+        return classes
     }
 
     private fun hydrateDocumentedType(type: Type, classTypes: Map<String, ClassType>): Type {
@@ -1058,399 +669,21 @@ object BuiltinOverlayLoader {
                 fields = type.fields.mapValues { (_, fieldType) -> hydrateDocumentedType(fieldType, classTypes) },
                 methods = type.methods.mapValues { (_, methodType) -> hydrateDocumentedType(methodType, classTypes) }
             )
-            is UnionType -> unionTypeOf(type.types.map { hydrateDocumentedType(it, classTypes) })
+            // TypeResolver already canonicalized this union. Class surface substitution is
+            // nominal: preserve the branches and do not recursively normalize the full
+            // documented class graph again for every parameter and return type.
+            is UnionType -> UnionType(type.types.mapTo(linkedSetOf()) { hydrateDocumentedType(it, classTypes) })
             is IntersectionType -> IntersectionType(type.types.map { hydrateDocumentedType(it, classTypes) }.toSet())
             else -> type
         }
     }
 
-    private fun documentedClassName(classText: String): String {
-        return classText
-            .substringBefore(':')
-            .trim()
-            .substringBefore(' ')
-            .substringBefore('<')
+    private fun symbolKindOrder(kind: SymbolKind): Int = when (kind) {
+        SymbolKind.FIELD -> 0
+        SymbolKind.FUNCTION -> 1
+        SymbolKind.METHOD -> 2
+        else -> 3
     }
-
-    private fun documentedClassTypeParameters(classText: String): List<TypeParameterType> {
-        val classHead = classText.substringBefore(':').substringBefore(' ').trim()
-        val genericStart = classHead.indexOf('<')
-        val genericEnd = classHead.lastIndexOf('>')
-        if (genericStart == -1 || genericEnd <= genericStart) {
-            return emptyList()
-        }
-        return parseGenericParameters(classHead.substring(genericStart + 1, genericEnd))
-    }
-
-    private fun parseDocumentedField(fieldText: String): DocumentedField? {
-        if (fieldText.startsWith("[")) {
-            // Index-style field (e.g. ---@field [string] AndroidView|integer). The
-            // documented class models (ClassType) have no index-signature slot, so the
-            // field is kept with a normalized "[key]" name and its key type recorded in
-            // DocumentedField.indexKeyType instead of being silently dropped. Call sites
-            // currently surface it as a regular named field; full index-signature
-            // plumbing is a known limitation.
-            val keyText = fieldText.substringAfter('[', "").substringBefore(']').trim()
-            if (keyText.isEmpty()) {
-                return null
-            }
-            val typeAndDescription = fieldText.substringAfter(']', "").trim()
-            if (typeAndDescription.isEmpty()) {
-                return null
-            }
-            val type = parseDocumentedType(typeAndDescription) ?: return null
-            return DocumentedField(
-                name = "[$keyText]",
-                type = type,
-                indexKeyType = parseDocumentedType(keyText)
-            )
-        }
-        val nameToken = fieldText.substringBefore(' ').trim()
-        val typeAndDescription = fieldText.substringAfter(' ', "").trim()
-        if (nameToken.isEmpty() || typeAndDescription.isEmpty()) {
-            return null
-        }
-        val fieldName = nameToken.removeSuffix("?")
-        val type = parseDocumentedType(typeAndDescription) ?: return null
-        return DocumentedField(
-            name = fieldName,
-            type = if (nameToken.endsWith("?")) unionTypeOf(type, PrimitiveType.NIL) else type
-        )
-    }
-
-    private fun symbolKindOrder(kind: SymbolKind): Int {
-        return when (kind) {
-            SymbolKind.FIELD -> 0
-            SymbolKind.FUNCTION -> 1
-            SymbolKind.METHOD -> 2
-            else -> 3
-        }
-    }
-
-    private fun documentedFunctionType(parameterListText: String, doc: MemberDoc): Type {
-        val parameters = parseFunctionParameterNames(parameterListText).map { parameterName ->
-            val paramDoc = doc.parameters[parameterName]
-            val vararg = parameterName == "..." || paramDoc?.vararg == true
-            val parameterType = paramDoc?.type ?: PrimitiveType.ANY
-            FunctionParameter(
-                name = parameterName,
-                type = if (vararg && parameterType !is VarargType) VarargType(parameterType) else parameterType,
-                optional = paramDoc?.optional ?: false,
-                vararg = vararg
-            )
-        }
-        val primary = FunctionType(
-            parameters = parameters,
-            returnType = doc.returnType ?: UnknownType,
-            typeParameters = doc.genericParameters
-        )
-        val signatures = listOf(primary) + doc.overloads
-        return when (signatures.size) {
-            1 -> primary
-            else -> OverloadedFunctionType(signatures)
-        }
-    }
-
-    private fun MutableMap<String, Type>.mergeDocumentedFunction(name: String, type: Type) {
-        val existing = this[name]
-        val signatures = existing?.let(::functionSignatures).orEmpty() + functionSignatures(type)
-        this[name] = when (signatures.size) {
-            0 -> type
-            1 -> signatures.single()
-            else -> OverloadedFunctionType(signatures)
-        }
-    }
-
-    private fun functionSignatures(type: Type): List<FunctionType> = when (type) {
-        is FunctionType -> listOf(type)
-        is OverloadedFunctionType -> type.callSignatures
-        else -> emptyList()
-    }
-
-    private fun parseFunctionParameterNames(parameterListText: String): List<String> =
-        parameterListText.split(',')
-            .map(String::trim)
-            .filter(String::isNotEmpty)
-
-    private fun documentedAssignmentType(valueText: String): Type {
-        val normalized = valueText.trim()
-        return when {
-            normalized == "nil" -> UnknownType
-            normalized == "true" || normalized == "false" -> LiteralType(normalized.toBooleanStrict(), PrimitiveType.BOOLEAN)
-            normalized.startsWith("\"") || normalized.startsWith("'") -> LiteralType(
-                normalized.takeWhileStringLiteral().removeSurrounding("\"").removeSurrounding("'"),
-                PrimitiveType.STRING
-            )
-            normalized.toDoubleOrNull() != null -> LiteralType(normalized.toDouble(), PrimitiveType.NUMBER)
-            normalized.startsWith("{") -> tableAny()
-            else -> UnknownType
-        }
-    }
-
-    private fun String.takeWhileStringLiteral(): String {
-        val quote = firstOrNull() ?: return this
-        if (quote != '"' && quote != '\'') {
-            return this
-        }
-        var escaped = false
-        for (index in 1 until length) {
-            val current = this[index]
-            if (escaped) {
-                escaped = false
-            } else if (current == '\\') {
-                escaped = true
-            } else if (current == quote) {
-                return substring(0, index + 1)
-            }
-        }
-        return this
-    }
-
-    private fun parseMemberDoc(lines: List<String>): MemberDoc {
-        val parameters = linkedMapOf<String, ParameterDoc>()
-        val overloads = mutableListOf<FunctionType>()
-        val genericParameters = mutableListOf<TypeParameterType>()
-        var returnType: Type? = null
-        var inlineType: Type? = null
-
-        lines.forEach { line ->
-            val tag = line.removePrefix("---").trimStart()
-            when {
-                tag.startsWith("@generic ") -> {
-                    genericParameters += parseGenericParameters(tag.removePrefix("@generic").trim())
-                }
-
-                tag.startsWith("@param ") -> {
-                    val body = tag.removePrefix("@param").trim()
-                    val nameToken = body.substringBefore(' ').trim()
-                    val typeText = body.substringAfter(' ', "").trim()
-                    val parameterName = nameToken.removeSuffix("?")
-                    val type = parseDocumentedType(typeText, genericParameters) ?: PrimitiveType.ANY
-                    parameters[parameterName] = ParameterDoc(
-                        type = type,
-                        optional = nameToken.endsWith("?"),
-                        vararg = parameterName == "..."
-                    )
-                }
-
-                tag.startsWith("@return ") -> {
-                    returnType = parseDocumentedReturnType(tag.removePrefix("@return").trim(), genericParameters)
-                }
-
-                tag.startsWith("@type ") -> {
-                    inlineType = parseDocumentedType(tag.removePrefix("@type").trim(), genericParameters)
-                }
-
-                tag.startsWith("@overload ") -> {
-                    (parseDocumentedType(tag.removePrefix("@overload").trim(), genericParameters) as? FunctionType)
-                        ?.let(overloads::add)
-                }
-            }
-        }
-
-        return MemberDoc(
-            parameters = parameters,
-            returnType = returnType,
-            inlineType = inlineType,
-            overloads = overloads,
-            genericParameters = genericParameters
-        )
-    }
-
-    private fun parseGenericParameters(typeText: String): List<TypeParameterType> {
-        return splitTopLevelTypeText(typeText, ',').mapNotNull { part ->
-            val normalized = part.trim()
-            if (normalized.isEmpty()) {
-                return@mapNotNull null
-            }
-            val colonIndex = indexOfTopLevelChar(normalized, ':')
-            val name = if (colonIndex == -1) normalized else normalized.substring(0, colonIndex).trim()
-            if (name.isEmpty()) {
-                return@mapNotNull null
-            }
-            val constraint = if (colonIndex == -1) {
-                null
-            } else {
-                parseDocumentedType(normalized.substring(colonIndex + 1).trim(), emptyList())
-            }
-            TypeParameterType(name = name, constraint = constraint)
-        }
-    }
-
-    private fun parseDocumentedReturnType(typeText: String, genericParameters: List<TypeParameterType>): Type? {
-        parseDocumentedCompleteType(typeText, genericParameters)?.let { type ->
-            return type
-        }
-        val parts = splitTopLevelTypeText(typeText, ',')
-        val returnTypes = parts.mapNotNull { parseDocumentedType(it, genericParameters) }
-        return when (returnTypes.size) {
-            0 -> null
-            1 -> returnTypes.single()
-            else -> MultiReturnType(returnTypes)
-        }
-    }
-
-    private fun parseDocumentedType(typeText: String, genericParameters: List<TypeParameterType> = emptyList()): Type? {
-        val normalized = typeText.trim()
-        if (normalized.isEmpty()) {
-            return null
-        }
-
-        // Two attempts, not four: a complete parse, then a longest-prefix parse for annotations
-        // with a trailing prose description. Both go through the one annotation grammar.
-        return parseDocumentedCompleteType(normalized, genericParameters)
-            ?: parseDocumentedTypePrefix(normalized, genericParameters)
-    }
-
-    /**
-     * Whole-text parse. Returns null only when the text is not a complete type annotation:
-     * [resolveDocumentedTypeSyntax] is total over the syntax hierarchy, so a successful parse
-     * always resolves.
-     */
-    private fun parseDocumentedCompleteType(
-        typeText: String,
-        genericParameters: List<TypeParameterType>
-    ): Type? {
-        val syntax = runCatching { TypeSyntaxParser.parse(typeText) }.getOrNull() ?: return null
-        return resolveDocumentedTypeSyntax(
-            syntax = syntax,
-            genericParameters = genericParameters.associateBy { it.name }
-        )
-    }
-
-    private fun parseDocumentedTypePrefix(
-        typeText: String,
-        genericParameters: List<TypeParameterType>
-    ): Type? {
-        val parsed = runCatching { TypeSyntaxParser.parsePrefix(typeText) }.getOrNull() ?: return null
-        if (parsed.consumedLength <= 0) {
-            return null
-        }
-        return resolveDocumentedTypeSyntax(
-            syntax = parsed.syntax,
-            genericParameters = genericParameters.associateBy { it.name }
-        )
-    }
-
-    private fun resolveDocumentedTypeSyntax(
-        syntax: TypeSyntax,
-        genericParameters: Map<String, TypeParameterType>
-    ): Type {
-        return when (syntax) {
-            is NamedTypeSyntax -> primitiveDocumentedType(syntax.name)
-                ?: genericParameters[syntax.name]
-                ?: CustomType(syntax.name)
-
-            is LiteralTypeSyntax -> literalDocumentedType(syntax.value)
-            is UnionTypeSyntax -> unionTypeOf(syntax.options.map { resolveDocumentedTypeSyntax(it, genericParameters) })
-            is IntersectionTypeSyntax -> IntersectionType(syntax.types.map { resolveDocumentedTypeSyntax(it, genericParameters) }.toSet())
-            is ArrayTypeSyntax -> ArrayType(resolveDocumentedTypeSyntax(syntax.elementType, genericParameters))
-            is GenericTypeSyntax -> resolveDocumentedGenericType(syntax, genericParameters)
-            is NullableTypeSyntax -> unionTypeOf(resolveDocumentedTypeSyntax(syntax.innerType, genericParameters), PrimitiveType.NIL)
-            is TupleTypeSyntax -> TupleType(syntax.elements.map { resolveDocumentedTypeSyntax(it, genericParameters) })
-            is MultiReturnTypeSyntax -> MultiReturnType(syntax.types.map { resolveDocumentedTypeSyntax(it, genericParameters) })
-            is VarargTypeSyntax -> VarargType(resolveDocumentedTypeSyntax(syntax.elementType, genericParameters))
-            is FunctionTypeSyntax -> resolveDocumentedFunctionType(syntax, genericParameters)
-            is ObjectTypeSyntax -> resolveDocumentedObjectType(syntax, genericParameters)
-            is IndexTableTypeSyntax -> TableType(
-                indexSignature = TableType.IndexSignature(
-                    keyType = resolveDocumentedTypeSyntax(syntax.keyType, genericParameters),
-                    valueType = resolveDocumentedTypeSyntax(syntax.valueType, genericParameters)
-                )
-            )
-        }
-    }
-
-    private fun resolveDocumentedFunctionType(
-        syntax: FunctionTypeSyntax,
-        genericParameters: Map<String, TypeParameterType>
-    ): FunctionType {
-        val inlineParameters = syntax.typeParameters.map { parameter ->
-            TypeParameterType(
-                name = parameter.name,
-                constraint = parameter.constraint?.let { resolveDocumentedTypeSyntax(it, genericParameters) }
-            )
-        }
-        val nestedGenerics = genericParameters + inlineParameters.associateBy { it.name }
-        val parameters = syntax.parameters.map { parameter ->
-            val type = resolveDocumentedTypeSyntax(parameter.type, nestedGenerics)
-            FunctionParameter(
-                name = parameter.name ?: if (parameter.vararg) "..." else "_",
-                type = if (parameter.vararg) VarargType(type) else type,
-                optional = parameter.optional,
-                vararg = parameter.vararg
-            )
-        }
-        return FunctionType(
-            parameters = parameters,
-            returnType = resolveDocumentedTypeSyntax(syntax.returnType, nestedGenerics),
-            typeParameters = inlineParameters
-        )
-    }
-
-    private fun resolveDocumentedGenericType(
-        syntax: GenericTypeSyntax,
-        genericParameters: Map<String, TypeParameterType>
-    ): Type {
-        val baseName = (syntax.baseType as? NamedTypeSyntax)?.name
-            ?: resolveDocumentedTypeSyntax(syntax.baseType, genericParameters).displayName
-        val arguments = syntax.arguments.map { resolveDocumentedTypeSyntax(it, genericParameters) }
-        return when {
-            baseName == "table" && arguments.size == 2 ->
-                TableType(indexSignature = TableType.IndexSignature(arguments[0], arguments[1]))
-            baseName == "JavaArray" && arguments.size == 1 -> JavaArrayType(arguments.single())
-            else -> AppliedType(baseName = baseName, typeArguments = arguments)
-        }
-    }
-
-    private fun resolveDocumentedObjectType(
-        syntax: ObjectTypeSyntax,
-        genericParameters: Map<String, TypeParameterType>
-    ): Type {
-        val fields = linkedMapOf<String, Type>()
-        syntax.fields.forEach { field ->
-            val name = when (val fieldName = field.name) {
-                is IdentifierObjectFieldNameSyntax -> fieldName.value
-                is QuotedObjectFieldNameSyntax -> fieldName.literal.removeSurrounding("\"").removeSurrounding("'")
-            }
-            val type = resolveDocumentedTypeSyntax(field.type, genericParameters)
-            fields[name] = if (field.optional) unionTypeOf(type, PrimitiveType.NIL) else type
-        }
-        val indexSignature = syntax.indexers.firstOrNull()?.let { indexer ->
-            TableType.IndexSignature(
-                keyType = resolveDocumentedTypeSyntax(indexer.keyType, genericParameters),
-                valueType = resolveDocumentedTypeSyntax(indexer.valueType, genericParameters)
-            )
-        }
-        return TableType(fields = fields, indexSignature = indexSignature)
-    }
-
-    private fun primitiveDocumentedType(name: String): Type? = when (name) {
-        "string" -> PrimitiveType.STRING
-        "number" -> PrimitiveType.NUMBER
-        "integer" -> DOCUMENTED_INTEGER_TYPE
-        "boolean", "bool" -> PrimitiveType.BOOLEAN
-        "nil", "void" -> PrimitiveType.NIL
-        "function" -> PrimitiveType.FUNCTION
-        "table" -> PrimitiveType.TABLE
-        "thread" -> PrimitiveType.THREAD
-        "userdata" -> PrimitiveType.USERDATA
-        "any" -> PrimitiveType.ANY
-        "unknown" -> UnknownType
-        else -> null
-    }
-
-    private fun literalDocumentedType(value: String): Type {
-        return when (value) {
-            "true" -> LiteralType(true, PrimitiveType.BOOLEAN)
-            "false" -> LiteralType(false, PrimitiveType.BOOLEAN)
-            "nil" -> LiteralType(null, PrimitiveType.NIL)
-            else -> value.toDoubleOrNull()
-                ?.let { LiteralType(it, PrimitiveType.NUMBER) }
-                ?: LiteralType(value.removeSurrounding("\"").removeSurrounding("'"), PrimitiveType.STRING)
-        }
-    }
-
 
     private data class StandardMemberDescriptor(
         val name: String,
@@ -1458,30 +691,6 @@ object BuiltinOverlayLoader {
         val kind: SymbolKind,
         val type: Type,
         val range: Range?
-    )
-
-    private data class MemberDoc(
-        val parameters: Map<String, ParameterDoc>,
-        val returnType: Type?,
-        val inlineType: Type?,
-        val overloads: List<FunctionType>,
-        val genericParameters: List<TypeParameterType>
-    )
-
-    private data class DocumentedField(
-        val name: String,
-        val type: Type,
-        // Key type of an index-style ---@field [key] value declaration, or null for
-        // plain named fields. Kept for future index-signature plumbing; ClassType
-        // currently has no index-signature slot, so such fields surface under their
-        // normalized "[key]" name.
-        val indexKeyType: Type? = null
-    )
-
-    private data class ParameterDoc(
-        val type: Type,
-        val optional: Boolean,
-        val vararg: Boolean
     )
 
     private fun overlayModulePath(versionSegment: String, moduleName: String): VirtualPath {
@@ -1544,6 +753,7 @@ object BuiltinOverlayLoader {
             normalizedVersion = LuaVersion.ANDROLUA_5_3,
             versionSegment = "androlua5.3",
             globalsResourcePath = ANDROLUA_RESOURCE_ROOT + "_G.lua",
+            inheritedGlobalsResourcePath = lua53.globalsResourcePath,
             // LuaJ (AndroLua's host) keeps the 5.2-era bit32 API available under 5.3; real
             // projects call it (bit32.band(app.applicationInfo.flags, ...)), so the AndroLua
             // flavor mounts a full bit32 provider while stock Lua 5.3 keeps the compat global.
@@ -1553,7 +763,7 @@ object BuiltinOverlayLoader {
             rawProviderModuleResources = linkedMapOf(
                 "luajava" to RawProviderModuleResource(
                     resourcePath = ANDROLUA_LUAJAVA_RESOURCE,
-                    syntheticSurface = luajavaSurface
+                    surface = lazy { luajavaSurface }
                 )
             ).also { it.putAll(androluaModules) },
             androidFrameworkResources = AndroidFrameworkResources(
@@ -1619,184 +829,89 @@ object BuiltinOverlayLoader {
         )
     }
 
-    private fun androluaLuaJavaSurface(): ModuleExportSurface {
-        val resourceText = BuiltinOverlayResourceAccess.readText(ANDROLUA_LUAJAVA_RESOURCE).trim()
-        return mergeRawModuleSurface(
-            moduleName = "luajava",
-            resourceText = resourceText,
-            analyzedSurface = null,
-            syntheticSurface = androluaLuaJavaSyntheticSurface()
-        )
+    private fun androluaLuaJavaSurface(): ModuleExportSurface = luaJavaSurface
+
+    private val luaJavaSurface by lazy {
+        compileDeclarationSurface("luajava", ANDROLUA_LUAJAVA_RESOURCE)
     }
 
-    private fun androluaLuaJavaSyntheticSurface(): ModuleExportSurface = moduleSurface(
-        moduleName = "luajava",
-        fields = linkedMapOf(
-            "loaded" to tableAny(),
-            "imported" to tableAny(),
-            "ids" to tableAny(),
-            "luadir" to PrimitiveType.STRING
-        ),
-        methods = methodMap(
-            "bindClass", "new", "newInstance", "loadLib", "createProxy", "newArray", "createArray",
-            "astable", "tostring", "instanceof", "getContext", "override"
+    // These are resource registrations, not a second table of hand-written members.
+    private fun androlua53RawProviderModuleResources(luajavaModuleType: ModuleType): Map<String, RawProviderModuleResource> {
+        val modules = linkedMapOf(
+            "import" to androidLuaResource("import.lua", androluaImportSurface(luajavaModuleType))
         )
+        androidLuaDeclarationResources.forEach { relative ->
+            val name = if (relative.startsWith("modules/socket/")) relative.removePrefix("modules/").replace('/', '.')
+                else relative.substringAfterLast('/')
+            // Managed modules take precedence over the asset-helper locations of the same name.
+            if (name !in modules) {
+                val resource = ANDROLUA_RESOURCE_ROOT + relative + ".lua"
+                modules[name] = RawProviderModuleResource(resource, lazy { declarationSurface(name, resource) })
+            }
+        }
+        return modules
+    }
+
+    private val androidLuaDeclarationResources = listOf(
+        "loadlayout", "loadbitmap", "loadmenu", "modules/autotheme", "modules/base64",
+        "modules/bin", "modules/bmob", "modules/check", "modules/console", "modules/ftp",
+        "modules/hex", "modules/http", "modules/json", "modules/logcat", "modules/ltn12",
+        "modules/mbox", "modules/mime", "modules/options", "modules/permission", "modules/smtp",
+        "modules/socket", "modules/socket/headers", "modules/socket/tp", "modules/socket/url",
+        "modules/su", "modules/test", "modules/xml", "helpers/AndLua", "helpers/Dialog",
+        "helpers/ThomeLua", "helpers/file", "helpers/loadlayout2", "helpers/loadlayout3",
+        "helpers/toast", "helpers/xml2table", "helpers/bin", "helpers/bmob"
     )
 
-    private fun androlua53RawProviderModuleResources(luajavaModuleType: ModuleType): Map<String, RawProviderModuleResource> {
-        val managedModules = linkedMapOf<String, RawProviderModuleResource>(
-            "import" to androidLuaResource("import.lua", surface = androluaImportSurface(luajavaModuleType)),
-            callableAndroidLuaResource("loadlayout.lua", "loadlayout", returnType = CustomType("AndroidView")),
-            callableAndroidLuaResource("loadbitmap.lua", "loadbitmap", returnType = CustomType("Bitmap")),
-            callableAndroidLuaResource("loadmenu.lua", "loadmenu", returnType = CustomType("AndroidMenu")),
-            callableAndroidLuaResource("modules/autotheme.lua", "autotheme", returnType = PrimitiveType.NUMBER),
-            androidLuaModule(
-                "modules/base64.lua",
-                "base64",
-                methods = listOf("encode", "decode"),
-                methodTypes = linkedMapOf(
-                    "encode" to anyFunction(PrimitiveType.STRING),
-                    "decode" to anyFunction(PrimitiveType.STRING)
-                )
-            ),
-            callableAndroidLuaResource("modules/bin.lua", "bin"),
-            androidLuaModule("modules/bmob.lua", "bmob", methods = listOf("sign", "login")),
-            androidLuaModule("modules/check.lua", "check", methods = listOf("check", "uncheck")),
-            androidLuaModule("modules/console.lua", "console", methods = listOf("build", "build_aly")),
-            androidLuaModule("modules/ftp.lua", "ftp", methods = listOf("put", "get", "command")),
-            androidLuaModule("modules/hex.lua", "hex", methods = listOf("dump", "smart_dump", "pack", "smart_pack")),
-            androidLuaModule(
-                "modules/http.lua",
-                "http",
-                fields = linkedMapOf("cookie" to PrimitiveType.STRING, "header" to tableAny(), "ua" to PrimitiveType.STRING),
-                methods = listOf("request", "get", "post", "download", "upload", "open"),
-                methodTypes = linkedMapOf(
-                    "get" to anyFunction(tableAny()),
-                    "post" to anyFunction(tableAny()),
-                    "request" to anyFunction(tableAny())
-                )
-            ),
-            androidLuaModule(
-                "modules/json.lua",
-                "json",
-                methods = listOf("encode", "decode", "null", "encodeString", "isArray", "isEncodable"),
-                methodTypes = linkedMapOf(
-                    "encode" to anyFunction(PrimitiveType.STRING),
-                    "decode" to anyFunction(PrimitiveType.ANY),
-                    "encodeString" to anyFunction(PrimitiveType.STRING)
-                )
-            ),
-            androidLuaModule("modules/logcat.lua", "logcat", methods = listOf("readlog", "clearlog", "show")),
-            androidLuaModule(
-                "modules/ltn12.lua",
-                "ltn12",
-                fields = linkedMapOf("filter" to tableAny(), "source" to tableAny(), "sink" to tableAny(), "pump" to tableAny())
-            ),
-            androidLuaModule("modules/mbox.lua", "mbox", methods = listOf("parse", "parse_message")),
-            androidLuaModule("modules/mime.lua", "mime", methods = listOf("normalize", "stuff", "wrap", "encode", "decode")),
-            androidLuaModule("modules/options.lua", "options"),
-            androidLuaModule(
-                "modules/permission.lua",
-                "permission",
-                fields = linkedMapOf("permission" to tableAny(), "permission_info" to tableAny())
-            ),
-            androidLuaModule("modules/smtp.lua", "smtp", methods = listOf("message", "send")),
-            androidLuaModule(
-                "modules/socket.lua",
-                "socket",
-                fields = linkedMapOf("BLOCKSIZE" to PrimitiveType.NUMBER, "sourcet" to tableAny(), "sinkt" to tableAny()),
-                methods = listOf("connect", "connect4", "connect6", "bind", "choose", "newtry", "try", "protect", "skip", "sink", "source")
-            ),
-            androidLuaModule("modules/socket/headers.lua", "socket.headers", fields = linkedMapOf("canonic" to tableAny())),
-            androidLuaModule("modules/socket/tp.lua", "socket.tp", fields = linkedMapOf("TIMEOUT" to PrimitiveType.NUMBER), methods = listOf("connect")),
-            androidLuaModule(
-                "modules/socket/url.lua",
-                "socket.url",
-                fields = linkedMapOf("_VERSION" to PrimitiveType.STRING),
-                methods = listOf("parse", "build", "escape", "unescape", "absolute", "parse_path", "build_path"),
-                methodTypes = linkedMapOf(
-                    "parse" to anyFunction(
-                        TableType(
-                            fields = linkedMapOf(
-                                "scheme" to PrimitiveType.STRING,
-                                "host" to PrimitiveType.STRING,
-                                "path" to PrimitiveType.STRING,
-                                "port" to PrimitiveType.STRING,
-                                "query" to PrimitiveType.STRING
-                            )
-                        )
-                    ),
-                    "build" to anyFunction(PrimitiveType.STRING),
-                    "escape" to anyFunction(PrimitiveType.STRING),
-                    "unescape" to anyFunction(PrimitiveType.STRING),
-                    "absolute" to anyFunction(PrimitiveType.STRING)
-                )
-            ),
-            callableAndroidLuaResource("modules/su.lua", "su", returnType = PrimitiveType.STRING),
-            androidLuaModule("modules/test.lua", "test"),
-            androidLuaModule("modules/xml.lua", "xml", methods = listOf("new", "tag", "append", "str", "save", "find"))
-        )
-        val assetHelpers = linkedMapOf<String, RawProviderModuleResource>(
-            androidLuaModule(
-                "helpers/AndLua.lua",
-                "AndLua",
-                methods = listOf(
-                    "MD\u63d0\u793a", "\u7a97\u53e3\u6807\u9898", "\u8f7d\u5165\u754c\u9762", "\u63d0\u793a",
-                    "\u968f\u673a\u6570", "\u5199\u5165\u6587\u4ef6", "\u6587\u4ef6\u662f\u5426\u5b58\u5728",
-                    "setTitle", "setContentView", "toast", "roundCorner", "getDeviceId", "getScreenWidth",
-                    "getScreenHeight", "isAppInstalled", "fileExists", "createFile", "createDirectory", "writeFile",
-                    "shareText", "setClipboard", "getClipboard"
-                )
-            ),
-            // Callable factory + MyBottomSheetDialog method; reserved simple name keeps this
-            // ahead of android.app.Dialog (see ANDROLUA_RESERVED_SIMPLE_MODULE_NAMES).
-            androidLuaModule(
-                "helpers/Dialog.lua",
-                "Dialog",
-                fields = linkedMapOf("__call" to anyFunction(CustomType("MyBottomSheetDialog"))),
-                methods = listOf("MyBottomSheetDialog"),
-                methodTypes = linkedMapOf(
-                    "MyBottomSheetDialog" to anyFunction(CustomType("MyBottomSheetDialog"))
-                )
-            ),
-            androidLuaModule("helpers/ThomeLua.lua", "ThomeLua", methods = listOf("byteEquals")),
-            androidLuaModule(
-                "helpers/file.lua",
-                "file",
-                methods = listOf("exists", "isDirectory", "isFile", "createFile", "createDirectory", "deleteFile", "getFileList", "loadbitmap", "getExtension", "attrdir"),
-                methodTypes = linkedMapOf(
-                    "exists" to anyFunction(PrimitiveType.BOOLEAN),
-                    "isDirectory" to anyFunction(PrimitiveType.BOOLEAN),
-                    "isFile" to anyFunction(PrimitiveType.BOOLEAN),
-                    // TASK-680: file.loadbitmap(path) returns Bitmap-like (not bare JavaObject).
-                    "loadbitmap" to anyFunction(CustomType("Bitmap"))
-                )
-            ),
-            callableAndroidLuaResource("helpers/loadlayout2.lua", "loadlayout2"),
-            callableAndroidLuaResource("helpers/loadlayout3.lua", "loadlayout3"),
-            androidLuaModule("helpers/toast.lua", "toast", methods = listOf("print", "show")),
-            androidLuaModule("helpers/xml2table.lua", "xml2table", methods = listOf("xml2table", "show", "editlayout")),
-            callableAndroidLuaResource("helpers/bin.lua", "bin"),
-            androidLuaModule("helpers/bmob.lua", "bmob", methods = listOf("sign", "login"))
-        )
-        return managedModules.withAndroidLuaAssetHelperFallbacks(assetHelpers)
+    private val declarationSurfaces by lazy {
+        (androidLuaDeclarationResources + "import").associate { relative ->
+            val name = if (relative.startsWith("modules/socket/")) relative.removePrefix("modules/").replace('/', '.')
+                else relative.substringAfterLast('/')
+            val resource = ANDROLUA_RESOURCE_ROOT + relative + ".lua"
+            resource to lazy { compileDeclarationSurface(name, resource) }
+        }
     }
 
-    private fun Map<String, RawProviderModuleResource>.withAndroidLuaAssetHelperFallbacks(
-        assetHelpers: Map<String, RawProviderModuleResource>
-    ): Map<String, RawProviderModuleResource> = linkedMapOf<String, RawProviderModuleResource>()
-        .also { merged ->
-            merged.putAll(this)
-            assetHelpers.forEach { (moduleName, resource) ->
-                if (moduleName in merged) {
-                    require(moduleName in ANDROLUA_MANAGED_MODULE_PRECEDENCE_NAMES) {
-                        "Android-Lua asset helper '$moduleName' duplicates a managed module without explicit precedence."
-                    }
-                } else {
-                    merged[moduleName] = resource
+    private fun declarationSurface(moduleName: String, resource: String): ModuleExportSurface =
+        declarationSurfaces.getValue(resource).value.also { require(it.moduleType.moduleName == moduleName) }
+
+    /** Run the complete declaration source through the canonical comment/binder/type pipeline. */
+    private fun compileDeclarationSurface(moduleName: String, resource: String): ModuleExportSurface {
+        val declaration = declarationBinding(BuiltinOverlayResourceAccess.readText(resource))
+        val chunk = declaration.chunk
+        val binder = declaration.binder
+        val context = SemanticWorkspaceContext(overlayGlobals = BuiltinOverlaySnapshot.EMPTY.globals)
+        val evaluator = ExpressionTypeEvaluator(binder, context)
+        val returned = chunk.body.returnStatement?.arguments?.singleOrNull()
+        val type = returned?.let(evaluator::evaluate) ?: UnknownType
+        val fields = when (type) {
+            is ModuleType -> type.fields
+            is TableType -> type.fields
+            is ClassType -> type.getAllFields()
+            is CallableType -> mapOf("__call" to type)
+            else -> emptyMap()
+        }.toMutableMap()
+        val methods = when (type) {
+            is ModuleType -> type.methods
+            is TableType -> type.methods
+            is ClassType -> type.getAllMethods()
+            else -> emptyMap()
+        }.toMutableMap()
+        // import.lua's returned installer publishes its declared M namespace into _G.
+        if (moduleName == "import") {
+            binder.declarationIndex.declarations.forEach { declaration ->
+                val member = declaration.anchorNode?.parent as? MemberExpression ?: return@forEach
+                if ((member.base as? Identifier)?.name == "M") {
+                    declaration.declaredType?.let { fields[declaration.name] = it }
                 }
             }
         }
+        fields.entries.filter { it.key != "__call" && it.value is CallableType }.forEach { (name, value) ->
+            methods[name] = value
+        }
+        methods.keys.forEach(fields::remove)
+        return moduleSurface(moduleName, fields, methods)
+    }
 
     private fun androluaImportSurface(luajavaModuleType: ModuleType): ModuleExportSurface {
         // Runtime import.lua returns env_import and installs helpers onto _G. Model both the
@@ -1806,14 +921,14 @@ object BuiltinOverlayLoader {
             "__call" to envImportType,
             "env_import" to envImportType,
             "luajava" to luajavaModuleType,
-            "loadlayout" to ModuleType("loadlayout", fields = linkedMapOf("__call" to anyFunction(CustomType("AndroidView")))),
-            "loadbitmap" to ModuleType("loadbitmap", fields = linkedMapOf("__call" to anyFunction(CustomType("Bitmap")))),
-            "loadmenu" to ModuleType("loadmenu", fields = linkedMapOf("__call" to anyFunction(CustomType("AndroidMenu"))))
+            "loadlayout" to declarationSurface("loadlayout", ANDROLUA_RESOURCE_ROOT + "loadlayout.lua").moduleType,
+            "loadbitmap" to declarationSurface("loadbitmap", ANDROLUA_RESOURCE_ROOT + "loadbitmap.lua").moduleType,
+            "loadmenu" to declarationSurface("loadmenu", ANDROLUA_RESOURCE_ROOT + "loadmenu.lua").moduleType
         )
         fields.putAll(luajavaModuleType.fields)
 
-        val methods = methodMap("import", "compile", "enum", "each", "dump", "printstack", "getids", "thread", "task", "timer")
-            .toMutableMap()
+        val declared = declarationSurface("import", ANDROLUA_RESOURCE_ROOT + "import.lua")
+        val methods = declared.moduleType.methods.toMutableMap()
         // Keep env_import discoverable as a modeled callable on the import module surface as well
         // as via free-identifier globals after require "import".
         methods["env_import"] = envImportType
@@ -1826,67 +941,16 @@ object BuiltinOverlayLoader {
         )
     }
 
-    /**
-     * AndroLua runtime `env_import(env?)` installs import helpers and returns either the target
-     * environment table or a lazily resolved JavaClass when called with a class name string.
-     */
-    private fun androluaEnvImportFunctionType(): FunctionType {
-        val envOrClassName = unionTypeOf(PrimitiveType.TABLE, PrimitiveType.STRING)
-        val returnType = unionTypeOf(
-            PrimitiveType.TABLE,
-            AppliedType(baseName = "JavaClass", typeArguments = listOf(PrimitiveType.ANY))
-        )
-        return FunctionType(
-            parameters = listOf(
-                FunctionParameter(
-                    name = "env",
-                    type = envOrClassName,
-                    optional = true
-                )
-            ),
-            returnType = returnType
-        )
-    }
-
-    private fun androidLuaModule(
-        relativePath: String,
-        moduleName: String,
-        fields: Map<String, Type> = emptyMap(),
-        methods: List<String> = emptyList(),
-        methodTypes: Map<String, Type> = emptyMap()
-    ): Pair<String, RawProviderModuleResource> {
-        val resolvedMethods = methodMap(*methods.toTypedArray()).toMutableMap()
-        methodTypes.forEach { (name, type) -> resolvedMethods[name] = type }
-        return moduleName to androidLuaResource(
-            relativePath,
-            surface = moduleSurface(
-                moduleName = moduleName,
-                fields = fields,
-                methods = resolvedMethods
-            )
-        )
-    }
-
-    private fun callableAndroidLuaResource(
-        relativePath: String,
-        moduleName: String,
-        returnType: Type = PrimitiveType.ANY,
-        methods: List<String> = emptyList()
-    ): Pair<String, RawProviderModuleResource> = moduleName to androidLuaResource(
-        relativePath,
-        surface = moduleSurface(
-            moduleName = moduleName,
-            fields = linkedMapOf("__call" to anyFunction(returnType)),
-            methods = methodMap(*methods.toTypedArray())
-        )
-    )
+    private fun androluaEnvImportFunctionType(): FunctionType =
+        declarationSurface("import", ANDROLUA_RESOURCE_ROOT + "import.lua")
+            .moduleType.fields.getValue("__call") as FunctionType
 
     private fun androidLuaResource(
         relativePath: String,
         surface: ModuleExportSurface
     ): RawProviderModuleResource = RawProviderModuleResource(
         resourcePath = ANDROLUA_RESOURCE_ROOT + relativePath,
-        syntheticSurface = surface
+        surface = lazy { surface }
     )
 
     private fun androidFrameworkProviderModules(
@@ -1917,7 +981,9 @@ object BuiltinOverlayLoader {
         }
 
         val providerModuleNames = androidFrameworkClassProviderModuleNames(classModels.keys)
-        val classTypes = androidFrameworkClassTypes(classModels)
+        val immediateInnerClasses = androidFrameworkImmediateInnerClassIndex(classModels.keys)
+        val classTypes = androidFrameworkClassTypes(classModels, immediateInnerClasses)
+        val moduleTypes = linkedMapOf<String, ModuleType>()
         val providers = linkedMapOf<VirtualPath, BuiltinOverlaySnapshot.ProviderModuleSnapshot>()
         classModels.values.sortedBy { it.binaryName }.forEach { classModel ->
             val moduleType = androidFrameworkClassModuleType(
@@ -1925,6 +991,8 @@ object BuiltinOverlayLoader {
                 classModels = classModels,
                 providerModuleNames = providerModuleNames,
                 classTypes = classTypes,
+                immediateInnerClasses = immediateInnerClasses,
+                moduleTypes = moduleTypes,
                 moduleName = androidFrameworkSimpleAlias(classModel.binaryName)
             )
             val path = androidFrameworkClassProviderPath(classModel.binaryName)
@@ -1957,7 +1025,7 @@ object BuiltinOverlayLoader {
                 }
         }
         androidFrameworkPackageNames(classModels.keys).forEach { packageName ->
-            val moduleType = androidFrameworkPackageModuleType(packageName, classModels, providerModuleNames, classTypes)
+            val moduleType = androidFrameworkPackageModuleType(packageName, classModels, providerModuleNames, classTypes, immediateInnerClasses, moduleTypes)
             val path = androidFrameworkPackageProviderPath(packageName)
             providers[path] = BuiltinOverlaySnapshot.ProviderModuleSnapshot(
                 moduleName = packageName,
@@ -2016,26 +1084,37 @@ object BuiltinOverlayLoader {
         classModels: Map<String, AndroidFrameworkClassModel>,
         providerModuleNames: Map<String, String>,
         classTypes: Map<String, JavaClassType>,
+        immediateInnerClasses: Map<String, List<String>>,
+        moduleTypes: MutableMap<String, ModuleType>,
         moduleName: String = providerModuleNames.getValue(classModel.binaryName)
     ): ModuleType {
+        val cacheKey = "${classModel.binaryName}|$moduleName"
+        moduleTypes[cacheKey]?.let { return it }
         val classType = classTypes.getValue(classModel.binaryName)
         val fields = linkedMapOf<String, Type>("__class" to JavaInstanceType(classType))
-        return ModuleType(
+        val result = ModuleType(
             moduleName = moduleName,
             fields = fields.also { fields ->
-                androidFrameworkImmediateInnerClassNames(classModel.binaryName, classModels.keys).forEach { innerClass ->
+                immediateInnerClasses[classModel.binaryName].orEmpty().forEach { innerClass ->
                     fields[androidFrameworkSimpleAlias(innerClass)] = androidFrameworkClassModuleType(
                         classModel = classModels.getValue(innerClass),
                         classModels = classModels,
                         providerModuleNames = providerModuleNames,
-                        classTypes = classTypes
+                        classTypes = classTypes,
+                        immediateInnerClasses = immediateInnerClasses,
+                        moduleTypes = moduleTypes
                     )
                 }
             }
         )
+        moduleTypes[cacheKey] = result
+        return result
     }
 
-    private fun androidFrameworkClassTypes(classModels: Map<String, AndroidFrameworkClassModel>): Map<String, JavaClassType> {
+    private fun androidFrameworkClassTypes(
+        classModels: Map<String, AndroidFrameworkClassModel>,
+        immediateInnerClasses: Map<String, List<String>>
+    ): Map<String, JavaClassType> {
         val cache = linkedMapOf<String, JavaClassType>()
 
         fun build(className: String, stack: MutableSet<String>): JavaClassType {
@@ -2047,7 +1126,7 @@ object BuiltinOverlayLoader {
             }
             val classType = JavaClassType(
                 javaName = javaName,
-                innerClasses = androidFrameworkImmediateInnerClassNames(classModel.binaryName, classModels.keys)
+                innerClasses = immediateInnerClasses[classModel.binaryName].orEmpty()
                     .associate { innerClass -> androidFrameworkSimpleAlias(innerClass) to build(innerClass, stack) }
             )
             stack.remove(className)
@@ -2059,11 +1138,14 @@ object BuiltinOverlayLoader {
         return cache
     }
 
+
     private fun androidFrameworkPackageModuleType(
         packageName: String,
         classModels: Map<String, AndroidFrameworkClassModel>,
         providerModuleNames: Map<String, String>,
-        classTypes: Map<String, JavaClassType>
+        classTypes: Map<String, JavaClassType>,
+        immediateInnerClasses: Map<String, List<String>>,
+        moduleTypes: MutableMap<String, ModuleType>
     ): ModuleType {
         val fields = classModels.keys
             .asSequence()
@@ -2075,7 +1157,9 @@ object BuiltinOverlayLoader {
                     classModel = classModels.getValue(className),
                     classModels = classModels,
                     providerModuleNames = providerModuleNames,
-                    classTypes = classTypes
+                    classTypes = classTypes,
+                    immediateInnerClasses = immediateInnerClasses,
+                    moduleTypes = moduleTypes
                 )
             }
         return ModuleType(
@@ -2100,14 +1184,13 @@ object BuiltinOverlayLoader {
         return className.substringAfterLast('.').substringAfterLast('$')
     }
 
-    private fun androidFrameworkImmediateInnerClassNames(
-        className: String,
-        allClassNames: Set<String>
-    ): List<String> {
-        val prefix = "$className$"
-        return allClassNames
-            .filter { candidate -> candidate.startsWith(prefix) && '$' !in candidate.removePrefix(prefix) }
-            .sortedBy(::androidFrameworkSimpleAlias)
+    private fun androidFrameworkImmediateInnerClassIndex(classNames: Set<String>): Map<String, List<String>> {
+        val result = classNames.associateWith { mutableListOf<String>() }.toMutableMap()
+        classNames.forEach { candidate ->
+            val parent = candidate.substringBeforeLast('$', "")
+            if (parent.isNotEmpty() && parent in result) result.getValue(parent).add(candidate)
+        }
+        return result.mapValues { (_, children) -> children.sortedBy(::androidFrameworkSimpleAlias) }
     }
 
     private fun androidFrameworkJavaTypeName(className: String): JavaTypeName {
@@ -2224,11 +1307,6 @@ object BuiltinOverlayLoader {
             ?: classPart.replace('_', '$')
     }
 
-    private fun sortedTypeMap(types: Map<String, Type>): Map<String, Type> {
-        return types.entries
-            .sortedBy { it.key }
-            .associateTo(linkedMapOf()) { it.key to it.value }
-    }
 
     private fun readRequiredText(resourcePath: String): String {
         return runCatching { BuiltinOverlayResourceAccess.readText(resourcePath) }
@@ -2254,17 +1332,6 @@ object BuiltinOverlayLoader {
             }
         )
     }
-
-    private fun methodMap(vararg names: String): Map<String, Type> = names.associateWithTo(linkedMapOf()) { anyFunction() }
-
-    private fun anyFunction(returnType: Type = PrimitiveType.ANY): FunctionType = FunctionType(
-        parameters = listOf(FunctionParameter(name = "...", type = VarargType(PrimitiveType.ANY), vararg = true)),
-        returnType = returnType
-    )
-
-    private fun tableAny(): TableType = TableType(
-        indexSignature = TableType.IndexSignature(PrimitiveType.STRING, PrimitiveType.ANY)
-    )
 
     private fun lua54Catalog() = Catalog(
         normalizedVersion = LuaVersion.LUA_5_4,
@@ -2320,6 +1387,7 @@ object BuiltinOverlayLoader {
         val normalizedVersion: LuaVersion,
         val versionSegment: String,
         val globalsResourcePath: String,
+        val inheritedGlobalsResourcePath: String? = null,
         val providerModuleResourcePaths: Map<String, String>,
         val rawProviderModuleResources: Map<String, RawProviderModuleResource> = emptyMap(),
         val androidFrameworkResources: AndroidFrameworkResources? = null,
@@ -2330,7 +1398,7 @@ object BuiltinOverlayLoader {
 
     private data class RawProviderModuleResource(
         val resourcePath: String,
-        val syntheticSurface: ModuleExportSurface? = null
+        val surface: Lazy<ModuleExportSurface>? = null
     )
 
     private data class AndroidFrameworkResources(
@@ -2360,7 +1428,6 @@ object BuiltinOverlayLoader {
         "/io/github/dingyi222666/luaparser/semantic/workspace/android-framework/manifest.index"
     private const val ANDROID_FRAMEWORK_SUPPORTING_PACKAGE = "android.supporting"
     private val ANDROID_FRAMEWORK_UNMODELED_SUPER_TYPES = setOf("JavaObject", "any")
-    private val ANDROLUA_MANAGED_MODULE_PRECEDENCE_NAMES = setOf("bin", "bmob")
     /**
      * Simple module names owned by Android-Lua overlay helpers/managed modules.
      * Framework class providers must not claim these simple aliases, or require("Dialog")
@@ -2416,12 +1483,4 @@ object BuiltinOverlayLoader {
         "utf8"
     )
     private val DOCUMENTED_CALLABLE_GLOBAL_VALUE_NAMES = setOf("ipairs", "pairs")
-    private val LUJAVA_SURFACE_FIELD_NAMES = setOf("loaded", "imported", "ids", "luadir")
-    private val LUJAVA_SURFACE_METHOD_NAMES = setOf(
-        "bindClass", "new", "newInstance", "loadLib", "createProxy", "newArray", "createArray",
-        "astable", "tostring", "instanceof", "getContext", "override"
-    )
-    private val DOCUMENTED_INTEGER_TYPE = PrimitiveType("integer", PrimitiveType.Kind.NUMBER)
-    private val DOCUMENTED_CLASS_METHOD_REGEX =
-        Regex("""^\s*function\s+([A-Za-z_][A-Za-z0-9_.]*):([A-Za-z_][A-Za-z0-9_]*)\s*\(([^)]*)\)""")
 }

@@ -365,7 +365,7 @@ class LuaWorkspaceQueryFacadeTest {
             "main.lua" to "local OnClickListener = require(\"OnClickListener\")\nreturn OnClickListener",
             metadata = mapOf(
                 JvmClassModuleProvider.IMPORTS_METADATA_KEY to "OnClickListener",
-                JvmWorkspaceConfiguration.ANDROID_JAR_METADATA_KEY to "G:/Android/Sdk/platforms/android-35/android.jar",
+                JvmWorkspaceConfiguration.ANDROID_JAR_METADATA_KEY to requireNotNull(io.github.dingyi222666.luaparser.interop.jvm.JvmWorkspaceConfiguration.discoverReflectiveAndroidJarPath()) { "Android SDK fixture is required" },
                 JvmWorkspaceConfiguration.IMPORT_PREFIXES_METADATA_KEY to "android.view.View"
             ),
             engine = JvmWorkspaceEngine()

@@ -18,7 +18,7 @@ import kotlin.test.assertTrue
 
 /**
  * Monaco android_sample.lua lock for incomplete `button.` after
- * `import "android.widget.*"` + Button() construction.
+ * `import "android.widget.*"` + Button(activity) construction.
  */
 class MonacoAndroidButtonDotTddTest {
     private val androidJar: File? = resolveAndroidJar()
@@ -158,7 +158,7 @@ class MonacoAndroidButtonDotTddTest {
             import "android.widget.Button"
             import "android.widget.TextView"
             local function build()
-                local button = Button()
+                local button = Button(activity)
                 button.
                 return button
             end
@@ -193,7 +193,7 @@ class MonacoAndroidButtonDotTddTest {
             require "import"
             import "android.widget.*"
             local function build()
-                local button = Button()
+                local button = Button(activity)
                 button:setText("x")
                 return button
             end
@@ -229,8 +229,8 @@ class MonacoAndroidButtonDotTddTest {
             import "android.widget.*"
 
             local function build()
-                local tv = TextView()
-                local button = Button()
+                local tv = TextView(activity)
+                local button = Button(activity)
                 button.
                 -- Member completion / hover when android.jar is configured
                 return tv

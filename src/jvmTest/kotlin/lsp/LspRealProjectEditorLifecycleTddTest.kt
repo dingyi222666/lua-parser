@@ -60,7 +60,7 @@ class LspRealProjectEditorLifecycleTddTest {
     fun initialize_advertises_full_sync_for_editor_buffer_model() {
         val service = LuaLanguageService()
         val caps = service.initialize(InitializeParams()).capabilities
-        assertEquals(TextDocumentSyncKind.Full, caps.textDocumentSync.left)
+        assertEquals(TextDocumentSyncKind.Incremental, caps.textDocumentSync.left)
     }
 
     @Test

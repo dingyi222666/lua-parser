@@ -243,6 +243,7 @@ class TableFieldUnionWidenTddTest {
     }
 
     private fun kindName(type: PrimitiveType): String = when (type.kind) {
+        PrimitiveType.Kind.VOID -> "void"
         PrimitiveType.Kind.NIL -> "nil"
         PrimitiveType.Kind.BOOLEAN -> "boolean"
         PrimitiveType.Kind.NUMBER -> "number"

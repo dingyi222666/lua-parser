@@ -19,6 +19,7 @@ import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.test.assertSame
 
 /**
  * Hand-built [DexClass] fixtures (D1 model: `commonMain/.../interop/dex/`)
@@ -29,6 +30,63 @@ import kotlin.test.assertTrue
  * normalizes them to reflection-style dotted names in the type model.
  */
 class DexClassModelAdapterTest {
+    @Test
+    fun module_and_class_queries_share_the_same_full_class_surface_per_dex_revision() {
+        val cls = dexClass(binaryName = "fixture/Shared", fields = listOf(
+            DexField("value", "I", accPublic)))
+        val classes = listOf(cls)
+        val queried = DexClassModelAdapter.toJavaClassType(cls, classes)
+        val module = DexClassModelAdapter.toModuleType(cls, classes)
+        assertSame(queried, assertIs<JavaInstanceType>(module.fields["__class"]).classType)
+        assertSame(module, DexClassModelAdapter.toModuleType(cls, classes))
+
+        val changed = cls.copy(fields = listOf(DexField("updated", "I", accPublic)))
+        val updated = DexClassModelAdapter.toJavaClassType(changed, listOf(changed))
+        assertTrue("updated" in updated.instanceMembers)
+        assertFalse("value" in updated.instanceMembers)
+        assertTrue("value" in queried.instanceMembers, "Published metadata revisions stay immutable")
+    }
+
+    @Test
+    fun direct_references_share_members_and_keep_deeper_references_shallow() {
+        val leaf = dexClass("example/Leaf", fields = listOf(DexField("leafValue", "I", accPublic)))
+        val child = dexClass("example/Child", fields = listOf(
+            DexField("value", "I", accPublic), DexField("leaf", "Lexample/Leaf;", accPublic)
+        ))
+        val first = dexClass("example/First", fields = listOf(DexField("child", "Lexample/Child;", accPublic)))
+        val second = dexClass("example/Second", fields = listOf(DexField("child", "Lexample/Child;", accPublic)))
+        val classes = listOf(first, second, child, leaf)
+        val firstChild = assertIs<JavaInstanceType>(
+            DexClassModelAdapter.toJavaClassType(first, classes).instanceMembers.getValue("child").valueType
+        ).classType
+        val secondChild = assertIs<JavaInstanceType>(
+            DexClassModelAdapter.toJavaClassType(second, classes).instanceMembers.getValue("child").valueType
+        ).classType
+        assertSame(firstChild, secondChild)
+        assertEquals(PrimitiveType.NUMBER, firstChild.instanceMembers.getValue("value").valueType)
+        assertTrue(assertIs<JavaInstanceType>(firstChild.instanceMembers.getValue("leaf").valueType)
+            .classType.instanceMembers.isEmpty())
+    }
+
+    @Test
+    fun same_named_classes_from_distinct_inputs_do_not_share_cached_members() {
+        val first = dexClass(binaryName = "example/Changed", fields = listOf(
+            DexField(name = "first", typeDescriptor = "I", accessFlags = accPublic)
+        ))
+        val second = dexClass(binaryName = "example/Changed", fields = listOf(
+            DexField(name = "second", typeDescriptor = "I", accessFlags = accPublic)
+        ))
+        assertTrue("first" in DexClassModelAdapter.toJavaClassType(first).instanceMembers)
+        val changed = DexClassModelAdapter.toJavaClassType(second)
+        assertTrue("second" in changed.instanceMembers)
+        assertFalse("first" in changed.instanceMembers)
+        assertTrue("first" in assertIs<JavaInstanceType>(
+            DexClassModelAdapter.toModuleType(first).fields["__class"]
+        ).classType.instanceMembers)
+        assertTrue("second" in assertIs<JavaInstanceType>(
+            DexClassModelAdapter.toModuleType(second).fields["__class"]
+        ).classType.instanceMembers)
+    }
 
     // Dex access flags, documented independently of the adapter's private constants.
     private val accPublic = 0x0001
@@ -70,7 +128,7 @@ class DexClassModelAdapterTest {
         assertEquals(PrimitiveType.NUMBER, DexClassModelAdapter.descriptorToType("B"))
         assertEquals(PrimitiveType.BOOLEAN, DexClassModelAdapter.descriptorToType("Z"))
         assertEquals(PrimitiveType.STRING, DexClassModelAdapter.descriptorToType("C"))
-        assertEquals(PrimitiveType.NIL, DexClassModelAdapter.descriptorToType("V"))
+        assertEquals(PrimitiveType.VOID, DexClassModelAdapter.descriptorToType("V"))
     }
 
     @Test

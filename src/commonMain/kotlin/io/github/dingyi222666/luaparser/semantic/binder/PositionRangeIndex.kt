@@ -34,35 +34,41 @@ class PositionRangeIndex<T>(entries: List<Entry<T>>) {
                 .thenBy { it.range.end.column }
         )
 
-    private val prefixMaxEnds: List<Position> = buildList(entries.size) {
-        var currentMax: Position? = null
-        for (entry in this@PositionRangeIndex.entries) {
-            currentMax = when {
-                currentMax == null -> entry.range.end
-                comparePositions(entry.range.end, currentMax!!) > 0 -> entry.range.end
-                else -> currentMax
+    // A long enclosing range must not keep every preceding short range alive.
+    // Each midpoint stores only its balanced subtree's greatest end, so expired
+    // sibling subtrees can be skipped even when the root scope covers the file.
+    private val subtreeMaxEnds: List<Position?> = MutableList<Position?>(this.entries.size) { null }.also { ends ->
+        fun build(from: Int, until: Int): Position? {
+            if (from >= until) return null
+            val middle = (from + until) ushr 1
+            var maximum = this.entries[middle].range.end
+            for (end in listOfNotNull(build(from, middle), build(middle + 1, until))) {
+                if (comparePositions(end, maximum) > 0) maximum = end
             }
-            add(currentMax!!)
+            ends[middle] = maximum
+            return maximum
         }
+        build(0, this.entries.size)
     }
 
-    fun query(position: Position): List<T> = queryEntries(position).map { it.payload }
+    fun query(position: Position): List<T> = matchingEntries(position).map { it.payload }
 
-    fun queryEntries(position: Position): List<Entry<T>> {
-        val lastCandidateIndex = findLastCandidateIndex(position)
-        if (lastCandidateIndex < 0) {
-            return emptyList()
-        }
+    fun queryEntries(position: Position): List<Entry<T>> = matchingEntries(position).map { entry ->
+        Entry(range = entry.range, payload = entry.payload, stableOrder = entry.stableOrder)
+    }
 
+    private fun matchingEntries(position: Position): List<IndexedEntry<T>> {
         val matches = mutableListOf<IndexedEntry<T>>()
-        var index = lastCandidateIndex
-        while (index >= 0 && comparePositions(prefixMaxEnds[index], position) > 0) {
-            val entry = entries[index]
-            if (rangeContains(entry.range, position)) {
-                matches += entry
-            }
-            index--
+        fun collect(from: Int, until: Int) {
+            if (from >= until || comparePositions(entries[from].range.start, position) > 0) return
+            val middle = (from + until) ushr 1
+            if (comparePositions(subtreeMaxEnds[middle]!!, position) <= 0) return
+            collect(from, middle)
+            val entry = entries[middle]
+            if (rangeContains(entry.range, position)) matches += entry
+            if (comparePositions(entry.range.start, position) <= 0) collect(middle + 1, until)
         }
+        collect(0, entries.size)
 
         return matches
             .sortedWith { a, b ->
@@ -73,26 +79,5 @@ class PositionRangeIndex<T>(entries: List<Entry<T>>) {
                     a.stableOrder.compareTo(b.stableOrder)
                 }
             }
-            .map { entry ->
-                Entry(range = entry.range, payload = entry.payload, stableOrder = entry.stableOrder)
-            }
-    }
-
-    private fun findLastCandidateIndex(position: Position): Int {
-        var low = 0
-        var high = entries.lastIndex
-        var result = -1
-
-        while (low <= high) {
-            val mid = (low + high) ushr 1
-            if (comparePositions(entries[mid].range.start, position) <= 0) {
-                result = mid
-                low = mid + 1
-            } else {
-                high = mid - 1
-            }
-        }
-
-        return result
     }
 }

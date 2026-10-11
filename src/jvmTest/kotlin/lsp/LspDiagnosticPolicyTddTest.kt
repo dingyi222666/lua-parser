@@ -15,8 +15,7 @@ import kotlin.test.assertTrue
  *
  * 1. `checker.local.unused` publishes as LSP Information instead of being dropped, but
  *    only while the analyzed snapshot matches the open buffer. Documents with parse
- *    recovery errors still hard-lock to Error-only publishes (unused-local Information
- *    stays suppressed there).
+ *    recovery errors and valid semantic findings coexist in the current revision.
  * 2. `checker.luajava.target.unresolved` publishes as Warning: hosts without the target
  *    class on the classpath (no android.jar etc.) still run valid code on-device, so a
  *    hard Error would flag valid `luajava.bindClass` programs. The same Warning policy
@@ -27,8 +26,7 @@ import kotlin.test.assertTrue
  * 4. Publish payloads cap at 300 diagnostics; truncation is announced with ONE trailing
  *    sentinel diagnostic (HINT, code `diagnostics.truncated`, "N more diagnostics
  *    truncated") instead of silently dropping the tail. Under-cap publishes stay
- *    sentinel-free. On hard-locked publishes (parse recovery errors present) the
- *    sentinel joins the Error-only invariant and emits as Error.
+ *    sentinel-free. The sentinel stays a Hint even when syntax errors are present.
  *
  * Test-only; exercises the publish policy, not the semantic model internals.
  */
@@ -72,7 +70,7 @@ class LspDiagnosticPolicyTddTest {
     }
 
     @Test
-    fun parse_error_document_hard_locks_publish_to_error_only() {
+    fun parse_error_document_preserves_valid_semantic_findings() {
         val service = initializedService()
 
         val published = service.didOpen(
@@ -84,21 +82,21 @@ class LspDiagnosticPolicyTddTest {
             "invalid Lua should still publish parse diagnostics"
         )
         assertTrue(
-            published.diagnostics.all { it.severity == DiagnosticSeverity.Error },
-            "invalid sources must hard-lock to Error-only; actual: ${describe(published.diagnostics)}."
+            published.diagnostics.any { it.code?.left == "lua-parse" && it.severity == DiagnosticSeverity.Error },
+            "Syntax errors must retain Error severity: ${describe(published.diagnostics)}."
         )
         assertTrue(
-            published.diagnostics.none { it.code?.left == "checker.local.unused" },
-            "unused-local Information must stay suppressed while parse errors publish."
+            published.diagnostics.any { it.code?.left == "checker.local.unused" && it.message.contains("unusedValue") },
+            "A syntax error elsewhere must not hide the unused-local finding."
         )
     }
 
     @Test
-    fun hard_locked_publish_over_cap_truncates_with_error_sentinel() {
+    fun parse_errors_over_cap_truncate_with_informational_sentinel() {
         val service = initializedService()
         // 400 parse-broken statements: each `local =` line emits its own recovery
-        // diagnostics (missing name / missing expression), so the Error-only hard-locked
-        // payload exceeds the 300-diagnostic publish cap without needing any semantic
+        // diagnostics (missing name / missing expression), so this payload exceeds
+        // the 300-diagnostic publish cap without needing any semantic
         // diagnostic surface.
         val source = (1..400).joinToString("\n") { "local =" }
 
@@ -109,20 +107,20 @@ class LspDiagnosticPolicyTddTest {
         // Cap math: exactly 300 real diagnostics + exactly one trailing sentinel.
         assertEquals(301, published.diagnostics.size)
         assertTrue(
-            published.diagnostics.all { it.severity == DiagnosticSeverity.Error },
-            "hard-locked publishes stay Error-only INCLUDING the truncation sentinel; " +
+            published.diagnostics.dropLast(1).all { it.severity == DiagnosticSeverity.Error },
+            "Actual parse errors keep Error severity; " +
                 "actual: ${describe(published.diagnostics.takeLast(3))}."
         )
         assertTrue(
             published.diagnostics.none { it.code?.left == "checker.local.unused" },
-            "unused-local Information must stay suppressed on hard-locked publishes."
+            "Parser-created blank local names must not produce unused-local findings."
         )
         val sentinel = published.diagnostics.last()
         assertEquals("diagnostics.truncated", sentinel.code?.left)
         assertEquals(
-            DiagnosticSeverity.Error,
+            DiagnosticSeverity.Hint,
             sentinel.severity,
-            "the sentinel must join the Error-only hard-lock instead of publishing a Hint."
+            "A payload notice must never pretend to be a source error."
         )
         assertTrue(
             sentinel.message.matches(Regex("\\d+ more diagnostics truncated")),

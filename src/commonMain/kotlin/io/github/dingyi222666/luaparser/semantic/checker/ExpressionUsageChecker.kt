@@ -63,9 +63,9 @@ import io.github.dingyi222666.luaparser.semantic.types.resolve.TypeExpansion
  */
 internal class ExpressionUsageChecker(
     private val binder: BinderPassResult,
-    private val workspaceContext: SemanticWorkspaceContext
+    private val workspaceContext: SemanticWorkspaceContext,
+    private val evaluator: ExpressionTypeEvaluator = ExpressionTypeEvaluator(binder, workspaceContext)
 ) : ASTVisitor<MutableList<Diagnostic>> {
-    private val evaluator = ExpressionTypeEvaluator(binder, workspaceContext)
     private val memberResolver = MemberResolver(binder)
     private val seenDiagnostics = linkedSetOf<String>()
     private val readLocalDeclarationIds = linkedSetOf<DeclarationId>()

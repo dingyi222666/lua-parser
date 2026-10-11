@@ -17,6 +17,7 @@ import io.github.dingyi222666.luaparser.semantic.binder.DeclarationKind
 import io.github.dingyi222666.luaparser.semantic.checker.ExpressionTypeEvaluator
 import io.github.dingyi222666.luaparser.semantic.comments.CommentAttachPass
 import io.github.dingyi222666.luaparser.semantic.types.model.FunctionType
+import io.github.dingyi222666.luaparser.semantic.types.model.OverloadedFunctionType
 import io.github.dingyi222666.luaparser.semantic.types.model.ModuleType
 import io.github.dingyi222666.luaparser.semantic.types.model.LiteralType
 import io.github.dingyi222666.luaparser.semantic.types.model.MultiReturnType
@@ -29,10 +30,119 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertSame
+import kotlin.test.assertTrue
 
 class ExpressionTypeEvaluatorTest {
 
     private val parser = LuaParser()
+
+    @Test
+    fun method_inference_preserves_optional_parameters_declared_returns_and_overloads() {
+        val harness = harness("""
+            local API = {}
+            ---@param value? string
+            ---@return number
+            ---@overload fun(value: number): string
+            function API.convert(value) end
+            local method = API.convert
+        """.trimIndent())
+        val type = assertIs<OverloadedFunctionType>(harness.evaluator.evaluate(localInitializer(harness.chunk, "method")))
+        assertEquals(2, type.callSignatures.size)
+        assertTrue(type.callSignatures.first().parameters.single().optional)
+        assertEquals(PrimitiveType.NUMBER, type.callSignatures.first().returnType)
+        assertEquals(PrimitiveType.STRING, type.callSignatures.last().returnType)
+    }
+
+    @Test
+    fun named_lookup_preserves_shadowing_initializer_visibility_and_exclusions() {
+        val harness = harness("""
+            local value = 'outer'
+            do
+                local value = value
+                local inherited = value
+                local value = 7
+                local current = value
+            end
+            local outside = value
+        """.trimIndent())
+        val block = harness.chunk.body.statements.filterIsInstance<DoStatement>().single().body
+        val locals = block.statements.filterIsInstance<LocalStatement>()
+        val inherited = locals[1].variables.single()
+        val current = locals[3].variables.single()
+        assertEquals("\"outer\"", harness.evaluator.evaluate(inherited).displayName)
+        assertEquals("7", harness.evaluator.evaluate(current).displayName)
+        assertEquals("\"outer\"", harness.evaluator.evaluate(localInitializer(harness.chunk, "outside")).displayName)
+        val shadow = harness.binder.declarationIndex.getDeclarations(locals[2].init.single()).single {
+            it.kind == DeclarationKind.LOCAL
+        }
+        val context = ExpressionTypeEvaluator.Context(harness.scopeId(current), excludedDeclarations = setOf(shadow.id))
+        assertEquals("\"outer\"", harness.evaluator.evaluate(current, context).displayName)
+    }
+
+    @Test
+    fun unknown_call_chain_does_not_repeat_import_resolution_exponentially() {
+        var lookups = 0
+        val chainLength = 16
+        val harness = harness(
+            "local value = root()" + ".step()".repeat(chainLength),
+            SemanticWorkspaceContext(resolveImportedSymbol = { lookups++; null })
+        )
+        assertSame(UnknownType, harness.evaluator.evaluate(localInitializer(harness.chunk, "value")))
+        assertTrue(lookups <= chainLength * 4, "chain resolved imports $lookups times")
+    }
+
+    @Test
+    fun expression_cache_keeps_distinct_local_override_contexts() {
+        val harness = harness("local result = value")
+        val node = localInitializer(harness.chunk, "result")
+        val scope = harness.scopeId(node)
+        assertSame(PrimitiveType.STRING, harness.evaluator.evaluate(node,
+            ExpressionTypeEvaluator.Context(scope, localOverrides = mapOf("value" to PrimitiveType.STRING))))
+        assertSame(PrimitiveType.NUMBER, harness.evaluator.evaluate(node,
+            ExpressionTypeEvaluator.Context(scope, localOverrides = mapOf("value" to PrimitiveType.NUMBER))))
+    }
+
+    @Test
+    fun declaration_cache_keeps_overrides_and_initializer_exclusions_separate() {
+        val harness = harness("local source = input\nlocal first = source\nlocal second = source")
+        val first = localInitializer(harness.chunk, "first")
+        val second = localInitializer(harness.chunk, "second")
+        val context = ExpressionTypeEvaluator.Context(harness.scopeId(first),
+            localOverrides = mapOf("input" to PrimitiveType.STRING))
+        assertSame(PrimitiveType.STRING, harness.evaluator.evaluate(first, context))
+        assertSame(PrimitiveType.STRING, harness.evaluator.evaluate(second, context))
+        assertSame(PrimitiveType.NUMBER, harness.evaluator.evaluate(second,
+            context.copy(localOverrides = mapOf("input" to PrimitiveType.NUMBER))))
+        val source = harness.binder.declarationIndex.declarations.single {
+            it.name == "source" && it.kind == DeclarationKind.LOCAL
+        }
+        assertSame(UnknownType, harness.evaluator.evaluate(first,
+            context.copy(excludedDeclarations = setOf(source.id))))
+        assertSame(PrimitiveType.STRING, harness.evaluator.evaluate(first, context))
+    }
+
+    @Test
+    fun repeated_reads_of_typed_objects_reuse_member_inference_in_the_same_context() {
+        var memberLookups = 0
+        val harness = harness("""
+            ---@type table
+            local holder = {}
+            function holder.member() return expensiveLookup() end
+            local first = holder
+            local second = holder
+        """.trimIndent(), SemanticWorkspaceContext(resolveImportedSymbol = {
+            if (it == "expensiveLookup") memberLookups++
+            null
+        }))
+        val first = localInitializer(harness.chunk, "first")
+        val context = ExpressionTypeEvaluator.Context(harness.scopeId(first),
+            localOverrides = mapOf("unrelatedParameter" to PrimitiveType.STRING))
+        harness.evaluator.evaluate(first, context)
+        val firstLookups = memberLookups
+        assertTrue(firstLookups > 0, "member inference must resolve the function body")
+        harness.evaluator.evaluate(localInitializer(harness.chunk, "second"), context)
+        assertEquals(firstLookups, memberLookups, "a second read must not infer all members again")
+    }
 
     @Test
     fun resolvesLocalIdentifierFromInitializer() {
@@ -141,7 +251,7 @@ class ExpressionTypeEvaluatorTest {
         val functionType = assertIs<FunctionType>(type)
         assertEquals("value", functionType.parameters.single().name)
         assertEquals("string", functionType.parameters.single().type.displayName)
-        assertEquals("1, 2", functionType.returnType.displayName)
+        assertEquals("(1, 2)", functionType.returnType.displayName)
     }
 
     @Test
@@ -344,6 +454,7 @@ class ExpressionTypeEvaluatorTest {
         val builderModule = ModuleType(
             moduleName = "StringBuilder",
             fields = mapOf(
+                "__call" to FunctionType(),
                 "__class" to TableType(
                     fields = mapOf("length" to PrimitiveType.NUMBER),
                     methods = mapOf("append" to FunctionType(returnType = PrimitiveType.STRING))
@@ -379,6 +490,7 @@ class ExpressionTypeEvaluatorTest {
         val stringModule = ModuleType(
             moduleName = "String",
             fields = mapOf(
+                "__call" to FunctionType(),
                 "__class" to TableType(fields = mapOf("length" to PrimitiveType.NUMBER))
             )
         )
@@ -525,6 +637,7 @@ class ExpressionTypeEvaluatorTest {
         val builderModule = ModuleType(
             moduleName = "StringBuilder",
             fields = mapOf(
+                "__call" to FunctionType(),
                 "__class" to TableType(
                     fields = mapOf("length" to PrimitiveType.NUMBER),
                     methods = mapOf("append" to FunctionType(returnType = PrimitiveType.STRING))

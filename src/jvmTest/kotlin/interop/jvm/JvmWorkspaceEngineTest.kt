@@ -54,7 +54,7 @@ class JvmWorkspaceEngineTest {
         val harness = WorkspaceSemanticHarness.build(
             "main.lua" to "import \"android.widget.*\"\nlocal current = TextView.BufferType\nreturn current",
             metadata = mapOf(
-                JvmWorkspaceConfiguration.ANDROID_JAR_METADATA_KEY to "G:/Android/Sdk/platforms/android-35/android.jar"
+                JvmWorkspaceConfiguration.ANDROID_JAR_METADATA_KEY to requireNotNull(io.github.dingyi222666.luaparser.interop.jvm.JvmWorkspaceConfiguration.discoverReflectiveAndroidJarPath()) { "Android SDK fixture is required" }
             ),
             engine = JvmWorkspaceEngine()
         )
@@ -72,7 +72,7 @@ class JvmWorkspaceEngineTest {
         val harness = WorkspaceSemanticHarness.build(
             "main.lua" to "local import = require(\"import\")\nlocal widget = import(\"android.widget.*\")\nlocal current = widget.TextView.BufferType\nreturn current",
             metadata = mapOf(
-                JvmWorkspaceConfiguration.ANDROID_JAR_METADATA_KEY to "G:/Android/Sdk/platforms/android-35/android.jar"
+                JvmWorkspaceConfiguration.ANDROID_JAR_METADATA_KEY to requireNotNull(io.github.dingyi222666.luaparser.interop.jvm.JvmWorkspaceConfiguration.discoverReflectiveAndroidJarPath()) { "Android SDK fixture is required" }
             ),
             engine = JvmWorkspaceEngine()
         )
@@ -91,7 +91,7 @@ class JvmWorkspaceEngineTest {
         val harness = WorkspaceSemanticHarness.build(
             "main.lua" to "local import = require(\"import\")\nlocal widget = import(\"android.widget.*\")\nlocal current = widget.TextView\nreturn widget.TextView",
             metadata = mapOf(
-                JvmWorkspaceConfiguration.ANDROID_JAR_METADATA_KEY to "G:/Android/Sdk/platforms/android-35/android.jar"
+                JvmWorkspaceConfiguration.ANDROID_JAR_METADATA_KEY to requireNotNull(io.github.dingyi222666.luaparser.interop.jvm.JvmWorkspaceConfiguration.discoverReflectiveAndroidJarPath()) { "Android SDK fixture is required" }
             ),
             engine = JvmWorkspaceEngine()
         )

@@ -1,6 +1,8 @@
 package semantic.workspace
 
 import io.github.dingyi222666.luaparser.parser.LuaVersion
+import io.github.dingyi222666.luaparser.parser.ast.node.Position
+import io.github.dingyi222666.luaparser.parser.ast.node.Range
 import io.github.dingyi222666.luaparser.semantic.api.SymbolKind
 import io.github.dingyi222666.luaparser.semantic.types.model.ArrayType
 import io.github.dingyi222666.luaparser.semantic.types.model.FunctionType
@@ -8,8 +10,10 @@ import io.github.dingyi222666.luaparser.semantic.types.model.JavaInstanceType
 import io.github.dingyi222666.luaparser.semantic.types.model.ModuleType
 import io.github.dingyi222666.luaparser.semantic.types.model.OverloadedFunctionType
 import io.github.dingyi222666.luaparser.semantic.types.model.TableType
+import io.github.dingyi222666.luaparser.semantic.types.model.PrimitiveType
 import io.github.dingyi222666.luaparser.semantic.types.model.VarargType
 import io.github.dingyi222666.luaparser.semantic.workspace.LuaWorkspaceEngine
+import io.github.dingyi222666.luaparser.semantic.workspace.ModuleExportSurface
 import io.github.dingyi222666.luaparser.semantic.workspace.LuaWorkspaceInput
 import io.github.dingyi222666.luaparser.semantic.workspace.VirtualPath
 import io.github.dingyi222666.luaparser.semantic.workspace.WorkspaceSnapshot
@@ -22,8 +26,74 @@ import kotlin.test.assertIs
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
+import kotlin.test.assertSame
 
 class BuiltinOverlayLoaderTest {
+    @Test
+    fun standalone_globals_keep_real_revision_and_native_function_signatures() {
+        val globals = BuiltinOverlayLoader.standaloneGlobals(LuaVersion.ANDROLUA_5_3)
+        val semantic = assertNotNull(globals.file.semanticFile)
+        val facts = assertNotNull(globals.file.documentFacts)
+        assertEquals(globals.path, semantic.path)
+        assertEquals(globals.path, facts.path)
+        assertTrue(semantic.source.contains("function loadbitmap(path)"))
+        val bitmap = assertIs<FunctionType>(globals.file.moduleExportSurface!!.members
+            .single { it.exportPath == listOf("loadbitmap") }.type)
+        assertEquals("path", bitmap.parameters.single().name)
+        assertEquals(PrimitiveType.STRING, bitmap.parameters.single().type)
+        assertEquals("Bitmap", bitmap.returnType.displayName)
+        val menu = assertIs<FunctionType>(globals.file.moduleExportSurface!!.members
+            .single { it.exportPath == listOf("loadmenu") }.type)
+        assertEquals(4, menu.parameters.size)
+        assertEquals("AndroidMenu", menu.returnType.displayName)
+    }
+
+    @Test
+    fun shared_documented_types_preserve_each_analysis_ranges_and_extra_exports() {
+        fun analyze(line: Int) = BuiltinOverlayLoader.loadCore(LuaVersion.LUA_5_3) { path, _ ->
+            if (!path.value.endsWith("/math.lua")) WorkspaceSnapshot.FileSnapshot()
+            else WorkspaceSnapshot.FileSnapshot(moduleExportSurface = ModuleExportSurface(
+                ModuleType("math"), ModuleExportSurface.SourceForm.RETURN_IDENTIFIER,
+                hasSeeAllFallback = true,
+                members = listOf(
+                    ModuleExportSurface.MemberExport("abs", listOf("abs"), SymbolKind.FIELD,
+                        PrimitiveType.STRING, Range(Position(line, 1), Position(line, 8))),
+                    ModuleExportSurface.MemberExport("extra", listOf("extra"), SymbolKind.FIELD,
+                        PrimitiveType.STRING, Range(Position(line + 1, 1), Position(line + 1, 8))),
+                    ModuleExportSurface.MemberExport("extra", listOf("extra"), SymbolKind.FIELD,
+                        PrimitiveType.NUMBER, null)
+                )
+            ))
+        }.providerModules.values.single { it.moduleName == "math" }.file.moduleExportSurface!!
+        val first = analyze(21)
+        val second = analyze(41)
+        assertEquals(21, first.members.single { it.name == "abs" }.range!!.start.line)
+        assertEquals(41, second.members.single { it.name == "abs" }.range!!.start.line)
+        assertEquals("fun(x: number): number", first.members.single { it.name == "abs" }.type.displayName)
+        assertEquals(PrimitiveType.STRING, second.members.single { it.name == "extra" }.type)
+        assertTrue(first.hasSeeAllFallback && second.hasSeeAllFallback)
+    }
+
+    @Test
+    fun live_buffer_overlay_preserves_lua_builtins_without_framework_providers() {
+        val full = load(LuaVersion.ANDROLUA_5_3)
+        val core = BuiltinOverlayLoader.loadCore(LuaVersion.ANDROLUA_5_3) { _, _ -> WorkspaceSnapshot.FileSnapshot() }
+        assertEquals(full.globals.globalNames, core.globals.globalNames)
+        assertEquals(full.globals.moduleFieldNames, core.globals.moduleFieldNames)
+        assertFalse(core.providerModules.keys.any { it.value.startsWith("__jvm__/") })
+        val table = core.providerModules.values.first { it.moduleName == "table" }.file.moduleExportSurface!!
+        assertTrue("insert" in table.moduleType.fields)
+        assertTrue(core.providerModules.values.any { it.moduleName == "import" })
+    }
+
+    @Test
+    fun framework_providers_are_shared_without_reusing_caller_analyzed_files() {
+        val first = load(LuaVersion.ANDROLUA_5_3)
+        val second = load(LuaVersion.ANDROLUA_5_3)
+        val path = VirtualPath.of("__jvm__/classes/android/widget/TextView.lua")
+        assertSame(first.providerModules.getValue(path), second.providerModules.getValue(path))
+    }
+
     @Test
     fun lua53_overlay_preserves_emmylua_math_module_resource_details() {
         val lua53 = load(LuaVersion.LUA_5_3)
@@ -55,7 +125,7 @@ class BuiltinOverlayLoaderTest {
 
         val random = assertNotNull(surface.members.singleOrNull { it.name == "random" })
         assertContains(random.type.displayName, "fun(m: number, n: number): number")
-        assertContains(random.type.displayName, "fun(): number")
+        assertTrue(assertIs<OverloadedFunctionType>(random.type).callSignatures.any { it.displayName == "fun(): number" })
     }
 
     @Test
@@ -102,14 +172,14 @@ class BuiltinOverlayLoaderTest {
         val model = assertNotNull(result.snapshot.files.getValue(path).semanticFile).model
 
         val pairsCompletion = assertNotNull(model.getCompletionsAt(positionOf(source, "item")).singleOrNull { it.label == "pairs" })
-        assertContains(assertNotNull(pairsCompletion.detail), "fun<K, V>(t: { [K]: V } | V[]): fun(tbl: { [K]: V }): K, V")
+        assertContains(assertNotNull(pairsCompletion.detail), "fun<K, V>(t: { [K]: V } | V[]): (fun(tbl: { [K]: V }): K, V)")
 
         val pairsSignature = assertNotNull(model.getSignatureHelpAt(positionOf(source, "xs)"))).signatures.single()
-        assertContains(pairsSignature.label, "fun<K, V>(t: { [K]: V } | V[]): fun(tbl: { [K]: V }): K, V")
+        assertContains(pairsSignature.label, "fun<K, V>(t: { [K]: V } | V[]): (fun(tbl: { [K]: V }): K, V)")
         assertEquals(listOf("t: { [K]: V } | V[]"), pairsSignature.parameters.map { it.label })
 
         val ipairsSignature = assertNotNull(model.getSignatureHelpAt(positionOf(source, "1, 2"))).signatures.single()
-        assertContains(ipairsSignature.label, "fun<V>(t: { [number]: V } | V[]): fun(tbl: { [number]: V }): number, V")
+        assertContains(ipairsSignature.label, "fun<V>(t: { [number]: V } | V[]): (fun(tbl: { [number]: V }): number, V)")
     }
 
     @Test
@@ -177,17 +247,22 @@ class BuiltinOverlayLoaderTest {
 
         val login = assertNotNull(bmobSurface.members.singleOrNull { it.name == "login" })
         assertEquals(SymbolKind.METHOD, login.kind)
-        assertEquals("fun(any...): any", login.type.displayName)
-        assertEquals("fun(any...): any", bmobSurface.moduleType.methods.getValue("login").displayName)
+        val loginSignature = assertIs<FunctionType>(login.type)
+        assertEquals(listOf("self", "username", "password", "callback"), loginSignature.parameters.map { it.name })
+        assertEquals("string", loginSignature.parameters[1].type.displayName)
+        assertTrue(loginSignature.parameters.last().optional)
+        assertEquals(login.type, bmobSurface.moduleType.methods.getValue("login"))
         val sign = assertNotNull(bmobSurface.members.singleOrNull { it.name == "sign" })
         assertEquals(SymbolKind.METHOD, sign.kind)
-        assertEquals("fun(any...): any", sign.type.displayName)
-        assertEquals("fun(any...): any", bmobSurface.moduleType.methods.getValue("sign").displayName)
+        val signSignature = assertIs<FunctionType>(sign.type)
+        assertEquals(listOf("self", "username", "password", "email", "callback"), signSignature.parameters.map { it.name })
+        assertTrue(signSignature.parameters[3].optional)
+        assertEquals(sign.type, bmobSurface.moduleType.methods.getValue("sign"))
 
         val call = assertNotNull(binSurface.members.singleOrNull { it.name == "__call" })
         assertEquals(SymbolKind.FIELD, call.kind)
-        assertEquals("fun(any...): any", call.type.displayName)
-        assertEquals("fun(any...): any", binSurface.moduleType.fields.getValue("__call").displayName)
+        assertEquals("fun(path: string): any", call.type.displayName)
+        assertEquals(call.type, binSurface.moduleType.fields.getValue("__call"))
     }
 
     @Test
@@ -216,7 +291,9 @@ class BuiltinOverlayLoaderTest {
         val createProxy = assertNotNull(surface.members.singleOrNull { it.name == "createProxy" })
         assertEquals(SymbolKind.METHOD, createProxy.kind)
         assertContains(createProxy.type.displayName, "fun(interfaceNames: string, callbacks: { [string]: function }): JavaProxy")
-        assertContains(createProxy.type.displayName, "fun(interfaceName1: string, interfaceName2: string, callbacks: { [string]: function }): JavaProxy")
+        assertTrue(assertIs<OverloadedFunctionType>(createProxy.type).callSignatures.any {
+            it.displayName == "fun(interfaceName1: string, interfaceName2: string, callbacks: { [string]: function }): JavaProxy"
+        })
 
         val getContext = assertNotNull(surface.members.singleOrNull { it.name == "getContext" })
         assertEquals(SymbolKind.METHOD, getContext.kind)

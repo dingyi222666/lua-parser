@@ -27,7 +27,6 @@ import io.github.dingyi222666.luaparser.parser.ast.node.UnaryExpression
 import io.github.dingyi222666.luaparser.parser.ast.node.WhenStatement
 import io.github.dingyi222666.luaparser.parser.ast.node.WhileStatement
 import io.github.dingyi222666.luaparser.semantic.api.SymbolKind
-import io.github.dingyi222666.luaparser.semantic.types.model.CustomType
 import io.github.dingyi222666.luaparser.semantic.types.model.FunctionParameter
 import io.github.dingyi222666.luaparser.semantic.types.model.FunctionType
 import io.github.dingyi222666.luaparser.semantic.types.model.LiteralType
@@ -151,18 +150,6 @@ object ModuleExportCollector {
             )
         }
 
-        // Free-form Android-Lua `.aly` layout modules must always expose a require()-able export
-        // surface (LuaLayoutSpec) so resolveRequire keeps the workspace provider path.
-        if (isAlyLayoutModule) {
-            return alyLayoutExportSurface(
-                moduleName = alyModuleName,
-                fields = emptyMap(),
-                methods = emptyMap(),
-                members = emptyList(),
-                sourceForm = ModuleExportSurface.SourceForm.RETURN_IDENTIFIER
-            )
-        }
-
         return null
     }
 
@@ -181,52 +168,11 @@ object ModuleExportCollector {
         hasSeeAllFallback: Boolean = false,
         moduleEnvironmentMode: ModuleEnvironmentMode? = null
     ): ModuleExportSurface {
-        // Prefer an explicit LuaLayoutSpec shell so require bindings surface as LuaLayoutSpec
-        // rather than the long dotted path module name. Preserve collected fields as layout
-        // children when present (table/layout hydration for loadlayout / goto / completion).
-        val layoutFields = linkedMapOf<String, Type>()
-        layoutFields.putAll(fields)
-        // Tag the surface as a layout table so soft type probes also match "table"/"Layout".
-        if ("__layout" !in layoutFields) {
-            layoutFields["__layout"] = CustomType(LUA_LAYOUT_SPEC_NAME)
-        }
-        // Keep path-derived module identity discoverable for graph/export recovery without
-        // replacing the LuaLayoutSpec display name.
-        if (moduleName.isNotBlank() && moduleName != LUA_LAYOUT_SPEC_NAME && "__module" !in layoutFields) {
-            layoutFields["__module"] = LiteralType(moduleName, PrimitiveType.STRING)
-        }
-        val baseMembers = members.ifEmpty {
-            listOf(
-                ModuleExportSurface.MemberExport(
-                    name = "__layout",
-                    exportPath = listOf("__layout"),
-                    kind = SymbolKind.FIELD,
-                    type = CustomType(LUA_LAYOUT_SPEC_NAME),
-                    range = null
-                )
-            )
-        }
-        val moduleMember = if (
-            moduleName.isNotBlank() &&
-                moduleName != LUA_LAYOUT_SPEC_NAME &&
-                baseMembers.none { it.name == "__module" }
-        ) {
-            listOf(
-                ModuleExportSurface.MemberExport(
-                    name = "__module",
-                    exportPath = listOf("__module"),
-                    kind = SymbolKind.FIELD,
-                    type = LiteralType(moduleName, PrimitiveType.STRING),
-                    range = null
-                )
-            )
-        } else {
-            emptyList()
-        }
+        // Module identity and display metadata never become fabricated Lua fields.
         return ModuleExportSurface(
             moduleType = ModuleType(
-                moduleName = LUA_LAYOUT_SPEC_NAME,
-                fields = layoutFields,
+                moduleName = moduleName,
+                fields = fields,
                 methods = methods,
                 // Display name is LuaLayoutSpec so hover/type probes match AndroLua contracts.
                 name = LUA_LAYOUT_SPEC_NAME
@@ -234,7 +180,7 @@ object ModuleExportCollector {
             sourceForm = sourceForm,
             hasSeeAllFallback = hasSeeAllFallback,
             moduleEnvironmentMode = moduleEnvironmentMode,
-            members = baseMembers + moduleMember
+            members = members
         )
     }
 
@@ -551,6 +497,7 @@ object ModuleExportCollector {
             body ?: return null
             val returns = mutableListOf<Type>()
             collectStructuralReturns(body, returns)
+            if (returns.isEmpty()) return PrimitiveType.VOID
             val concrete = returns.filter { it != UnknownType }
             return when {
                 concrete.isEmpty() -> null
@@ -585,7 +532,8 @@ object ModuleExportCollector {
                 }
             }
             block.returnStatement?.let { ret ->
-                out += structuralExpressionType(ret.arguments.firstOrNull())
+                out += if (ret.arguments.isEmpty()) PrimitiveType.VOID
+                    else structuralExpressionType(ret.arguments.first())
             }
         }
 

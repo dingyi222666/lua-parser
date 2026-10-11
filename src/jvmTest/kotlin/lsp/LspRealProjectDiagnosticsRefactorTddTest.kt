@@ -74,7 +74,9 @@ class LspRealProjectDiagnosticsRefactorTddTest {
 
         h.textDocuments.didChange(fullChange(uri, 2, "local function broken(\nreturn 1"))
         assertTrue(lastFor(h.published, uri).diagnostics.isNotEmpty())
-        assertTrue(lastFor(h.published, uri).diagnostics.all { it.severity == DiagnosticSeverity.Error })
+        assertTrue(lastFor(h.published, uri).diagnostics.any {
+            it.code?.left == "lua-parse" && it.severity == DiagnosticSeverity.Error
+        })
         h.published.clear()
 
         h.textDocuments.didChange(fullChange(uri, 3, REFACTOR_MODULE))

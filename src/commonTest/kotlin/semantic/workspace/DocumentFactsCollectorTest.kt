@@ -11,6 +11,33 @@ import kotlin.test.assertNotEquals
 
 class DocumentFactsCollectorTest {
     @Test
+    fun read_names_exclude_bindings_bare_writes_and_member_names() {
+        val facts = collectFacts("main.lua", """
+            local BindingOnly = SourceFactory()
+            WriteOnly = OtherSource
+            Host.Member = BindingOnly
+            local function LocalFunction(ParameterOnly)
+                return Input.Value
+            end
+            for LoopOnly = BeginValue, EndValue do print(BodyValue) end
+            return Result
+        """.trimIndent())
+        assertEquals(setOf("SourceFactory", "OtherSource", "Host", "BindingOnly", "Input",
+            "BeginValue", "EndValue", "print", "BodyValue", "Result"), facts.referencedNames)
+    }
+
+    @Test
+    fun read_names_and_imports_come_from_the_same_fact_revision() {
+        val facts = collectFacts("main.lua", """
+            local load = import
+            load { "java.util.Locale", ignored = "missing.Type" }
+            print(Locale.ROOT)
+        """.trimIndent())
+        assertEquals(listOf("java.util.Locale"), facts.sourceImports.map { it.target })
+        assertEquals(setOf("import", "load", "print", "Locale"), facts.referencedNames)
+    }
+
+    @Test
     fun tracks_static_requires_separately_from_dynamic_require_sites() {
         val facts = collectFacts(
             path = "pkg/runtime.lua",

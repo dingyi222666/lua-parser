@@ -33,10 +33,37 @@ import io.github.dingyi222666.luaparser.semantic.types.resolve.overloadedFunctio
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlin.test.assertSame
+import io.github.dingyi222666.luaparser.semantic.types.model.JavaInstanceMemberType
+import io.github.dingyi222666.luaparser.semantic.types.model.JavaMemberKind
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class TypeRelationsTest {
+
+    @Test
+    fun nominal_java_graph_is_shared_while_selected_signatures_and_arguments_normalize() {
+        var cls = JavaClassType(JavaTypeName(simpleNames = listOf("Leaf")))
+        repeat(18) { depth ->
+            val owner = JavaTypeName(simpleNames = listOf("Layer$depth"))
+            val referenced = JavaInstanceType(cls)
+            cls = JavaClassType(owner, instanceMembers = mapOf(
+                "left" to JavaInstanceMemberType(owner, "left", referenced, JavaMemberKind.FIELD),
+                "right" to JavaInstanceMemberType(owner, "right", referenced, JavaMemberKind.FIELD)
+            ))
+        }
+        val alias = AliasType("Text", PrimitiveType.STRING)
+        val instance = JavaInstanceType(cls, typeArguments = listOf(alias))
+        val normalized = assertIs<JavaInstanceType>(TypeNormalizer.normalize(instance))
+        assertSame(cls, normalized.classType, "A nominal definition keeps its complete provider-owned graph")
+        assertSame(cls.instanceMembers["left"], normalized.classType.instanceMembers["left"])
+        assertEquals(listOf(PrimitiveType.STRING), normalized.typeArguments)
+        val selected = assertIs<FunctionType>(TypeNormalizer.normalize(FunctionType(
+            parameters = listOf(FunctionParameter("text", alias)), returnType = instance
+        )))
+        assertEquals(PrimitiveType.STRING, selected.parameters.single().type)
+        assertSame(cls, assertIs<JavaInstanceType>(selected.returnType).classType)
+    }
 
     @Test
     fun handlesPrimitiveAndLiteralAssignability() {

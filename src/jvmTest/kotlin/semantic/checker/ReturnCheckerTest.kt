@@ -1,6 +1,7 @@
 package semantic.checker
 
 import io.github.dingyi222666.luaparser.parser.LuaParser
+import io.github.dingyi222666.luaparser.semantic.SemanticWorkspaceContext
 import io.github.dingyi222666.luaparser.semantic.binder.BinderDeclaration
 import io.github.dingyi222666.luaparser.semantic.binder.BinderPass
 import io.github.dingyi222666.luaparser.semantic.binder.DeclarationKind
@@ -10,6 +11,7 @@ import io.github.dingyi222666.luaparser.semantic.types.model.FunctionParameter
 import io.github.dingyi222666.luaparser.semantic.types.model.FunctionType
 import io.github.dingyi222666.luaparser.semantic.types.model.PrimitiveType
 import io.github.dingyi222666.luaparser.semantic.types.model.VarargType
+import io.github.dingyi222666.luaparser.semantic.types.model.UnknownType
 import io.github.dingyi222666.luaparser.semantic.types.resolve.TypeResolver
 import kotlin.test.Test
 import kotlin.test.assertContains
@@ -19,6 +21,18 @@ import kotlin.test.assertTrue
 class ReturnCheckerTest {
 
     private val parser = LuaParser()
+
+    @Test
+    fun unconstrained_returns_do_not_resolve_return_expressions() {
+        val harness = harness("local function read() return expensiveJavaLookup(), 42 end")
+        val declaration = harness.function("read").copy(
+            declaredType = FunctionType(parameters = emptyList(), returnType = UnknownType)
+        )
+        val checker = ReturnChecker(harness.declarations, SemanticWorkspaceContext(
+            analysisCheckpoint = { error("unconstrained return checking must not infer expression types") }
+        ))
+        assertTrue(checker.checkDeclaration(declaration).isEmpty())
+    }
 
     @Test
     fun acceptsMatchingSingleReturnType() {

@@ -30,21 +30,21 @@ class SemanticModelBuilder {
         // that depend on it are only needed for documents that actually get queried.
         val nodePositionIndex = lazy { NodePositionIndex(chunk) }
 
+        val signatureHelp = lazy { SignatureHelpProvider(binder, nodePositionIndex.value, evaluator, context) }
+
         return DefaultSemanticModel(
             binder = binder,
             adapters = adapters,
             referenceQueries = referenceQueries,
-            nodePositionIndex = nodePositionIndex,
+            nodePositionIndexLazy = nodePositionIndex,
             nodeTypeIndex = NodeTypeIndex(binder, evaluator, adapters),
-            completionProvider = lazy {
-                CompletionProvider(nodePositionIndex.value, referenceQueries, adapters)
+            completionProviderLazy = lazy {
+                CompletionProvider(nodePositionIndex.value, referenceQueries, adapters, evaluator, signatureHelp.value)
             },
-            luaLayoutCompletionProvider = lazy {
+            luaLayoutCompletionProviderLazy = lazy {
                 LuaLayoutCompletionProvider(nodePositionIndex.value, evaluator)
             },
-            signatureHelpProvider = lazy {
-                SignatureHelpProvider(binder, nodePositionIndex.value, evaluator)
-            },
+            signatureHelpProviderLazy = signatureHelp,
             diagnostics = diagnostics
         )
     }

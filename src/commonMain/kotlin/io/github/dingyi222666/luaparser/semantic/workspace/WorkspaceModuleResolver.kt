@@ -10,6 +10,8 @@ import io.github.dingyi222666.luaparser.semantic.mergeWorkspaceGlobalExtension
 import io.github.dingyi222666.luaparser.semantic.api.SymbolKind
 import io.github.dingyi222666.luaparser.semantic.binder.DeclarationKind
 import io.github.dingyi222666.luaparser.semantic.binder.DeclarationOrigin
+import io.github.dingyi222666.luaparser.semantic.binder.BinderDeclaration
+import io.github.dingyi222666.luaparser.semantic.binder.BinderPassResult
 import io.github.dingyi222666.luaparser.semantic.binder.rangeContains
 import io.github.dingyi222666.luaparser.semantic.checker.ExpressionTypeEvaluator
 import io.github.dingyi222666.luaparser.semantic.types.model.CallableType
@@ -23,9 +25,11 @@ import io.github.dingyi222666.luaparser.semantic.types.model.TableType
 import io.github.dingyi222666.luaparser.semantic.types.model.Type
 import io.github.dingyi222666.luaparser.semantic.types.model.UnknownType
 import io.github.dingyi222666.luaparser.semantic.types.model.VarargType
+import io.github.dingyi222666.luaparser.util.putIfAbsentCompat
 
 internal class WorkspaceModuleResolver(
     private val snapshot: WorkspaceSnapshot,
+    private val deferDependencyGlobals: Boolean = false,
     /**
      * Parse-cache fallback for files whose full semantic state was never attached
      * (non-queried documents keep `semanticFile = null`, but their chunk is parsed and
@@ -42,10 +46,43 @@ internal class WorkspaceModuleResolver(
     // Lazy alias index over snapshot.extraProviders (the mounted android.jar catalog is
     // thousands of entries): alias/simple-name -> provider, classes-entries preferred.
     private var extraProviderAliasIndex: Pair<Map<String, WorkspaceModuleGraph.ModuleProvider>, Map<String, WorkspaceModuleGraph.ModuleProvider>>? = null
-    private val importedSymbolsCache = mutableMapOf<VirtualPath, Map<String, WorkspaceImportedSymbol>>()
-    private val providerGlobalSymbolsCache = mutableMapOf<VirtualPath, List<WorkspaceImportedSymbol>>()
-    private val sharedGlobalSymbolsCache = mutableMapOf<String, List<WorkspaceImportedSymbol>>()
+    private val importedSymbolsCache = mutableMapOf<Pair<VirtualPath, Boolean>, Map<String, WorkspaceImportedSymbol>>()
+    private val sharedGlobalSymbolsCache = mutableMapOf<Pair<VirtualPath, String>, List<WorkspaceImportedSymbol>>()
     private val sharedGlobalInFlight = mutableSetOf<String>()
+
+    // Index candidates, rather than evaluated types: the resolver may also serve
+    // a workspace while its dependency-order analysis is still attaching files.
+    // A replacement binding must never inherit candidates from the old source.
+    private class ProviderGlobalDeclarations(
+        val binder: BinderPassResult,
+        val context: io.github.dingyi222666.luaparser.semantic.SemanticWorkspaceContext
+    ) {
+        val symbols = mutableMapOf<String?, List<WorkspaceImportedSymbol>>()
+        // One provider revision owns derived expression types for every requested global.
+        // Prevent shared-global recursion without discarding the other import configuration.
+        val evaluator by lazy { ExpressionTypeEvaluator(binder, context.copy(resolveImportedSymbol = null)) }
+        val globals = binder.declarationIndex.declarations.filter {
+            it.kind == DeclarationKind.GLOBAL && it.origin == DeclarationOrigin.AST
+        }
+        val globalsByName = globals.groupBy { it.name }
+        val extensionsByRoot = binder.declarationIndex.declarations.mapNotNull { declaration ->
+            if (declaration.origin != DeclarationOrigin.AST ||
+                (declaration.kind != DeclarationKind.FIELD && declaration.kind != DeclarationKind.METHOD)) {
+                return@mapNotNull null
+            }
+            val member = declaration.anchorNode?.parent as? MemberExpression ?: return@mapNotNull null
+            val root = member.base as? Identifier ?: return@mapNotNull null
+            Triple(root, member, declaration)
+        }.groupBy { (root) -> root.name }
+    }
+
+    private val providerGlobalDeclarations = mutableMapOf<VirtualPath, ProviderGlobalDeclarations>()
+
+    private fun globalDeclarations(path: VirtualPath, binder: BinderPassResult): ProviderGlobalDeclarations {
+        val context = checkNotNull(snapshot.files[path]?.semanticFile?.snapshot?.workspaceContext)
+        providerGlobalDeclarations[path]?.takeIf { it.binder === binder && it.context === context }?.let { return it }
+        return ProviderGlobalDeclarations(binder, context).also { providerGlobalDeclarations[path] = it }
+    }
 
     /**
      * Real workspace module names for require / import string-literal completions: user
@@ -146,7 +183,7 @@ internal class WorkspaceModuleResolver(
 
     private val layoutChunkCache = mutableMapOf<String, ChunkNode?>()
 
-    fun resolveRequire(consumerPath: VirtualPath, moduleName: String): ResolvedRequire? {
+    fun resolveRequire(consumerPath: VirtualPath, moduleName: String, resolutionPath: Set<VirtualPath> = emptySet()): ResolvedRequire? {
         val dependency = snapshot.graph.resolvedDependencies[consumerPath]
             .orEmpty()
             .firstOrNull { it.moduleName == moduleName }
@@ -155,7 +192,7 @@ internal class WorkspaceModuleResolver(
             // when export collection was partial (`exportSurface(...) ?: return null`).
             // exportSurface already falls back to syntheticAlyLayoutSurface internally.
             val surface = exportSurface(dependency.provider) ?: return null
-            return resolvedRequire(moduleName, dependency.provider, surface)
+            return resolvedRequire(moduleName, dependency.provider, surface, resolutionPath)
         }
 
         if (moduleName == "import") {
@@ -166,13 +203,13 @@ internal class WorkspaceModuleResolver(
                 .firstOrNull { it.source == WorkspaceModuleGraph.ProviderSource.STANDARD_LIBRARY_OVERLAY }
             val overlaySurface = overlayProvider?.let(::exportSurface)
             if (overlayProvider != null && overlaySurface != null) {
-                return resolvedRequire(moduleName, overlayProvider, overlaySurface)
+                return resolvedRequire(moduleName, overlayProvider, overlaySurface, resolutionPath)
             }
 
             val provider = activeProvider(moduleName)
             val surface = provider?.let(::exportSurface)
             if (provider != null && surface != null) {
-                return resolvedRequire(moduleName, provider, surface)
+                return resolvedRequire(moduleName, provider, surface, resolutionPath)
             }
         }
 
@@ -184,7 +221,8 @@ internal class WorkspaceModuleResolver(
                     path = snapshot.builtinOverlay.globals.path,
                     source = WorkspaceModuleGraph.ProviderSource.STANDARD_LIBRARY_OVERLAY
                 ),
-                surface = syntheticImportSurface()
+                surface = syntheticImportSurface(),
+                resolutionPath = resolutionPath
             )
         }
 
@@ -193,7 +231,7 @@ internal class WorkspaceModuleResolver(
         // dependency edge returned null even when the .aly file was present in the workspace.
         val provider = activeProvider(moduleName) ?: return null
         val surface = exportSurface(provider) ?: return null
-        return resolvedRequire(moduleName, provider, surface)
+        return resolvedRequire(moduleName, provider, surface, resolutionPath)
     }
 
     fun exportedMember(providerPath: VirtualPath, memberName: String): ResolvedExportMember? {
@@ -221,25 +259,27 @@ internal class WorkspaceModuleResolver(
     private fun resolvedRequire(
         moduleName: String,
         provider: WorkspaceModuleGraph.ModuleProvider,
-        surface: ModuleExportSurface
+        surface: ModuleExportSurface,
+        resolutionPath: Set<VirtualPath>
     ): ResolvedRequire {
         return ResolvedRequire(
             moduleName = moduleName,
             provider = provider,
             surface = surface,
-            moduleType = resolvedModuleType(provider.path, surface)
+            moduleType = resolvedModuleType(provider.path, surface, resolutionPath)
         )
     }
 
-    private fun resolvedModuleType(providerPath: VirtualPath, surface: ModuleExportSurface): ModuleType {
+    private fun resolvedModuleType(
+        providerPath: VirtualPath,
+        surface: ModuleExportSurface,
+        resolutionPath: Set<VirtualPath> = emptySet()
+    ): ModuleType {
         val file = fileSnapshot(providerPath) ?: return surface.moduleType
         val resolvedTypes = surface.members.mapNotNull { member ->
             resolvedMemberType(file, member)?.let { member.exportPath to it }
         }.toMap()
-        if (resolvedTypes.isEmpty()) {
-            return surface.moduleType
-        }
-        return surface.moduleType.copy(
+        val declaredModule = if (resolvedTypes.isEmpty()) surface.moduleType else surface.moduleType.copy(
             fields = surface.moduleType.fields.mapValues { (name, type) ->
                 resolvedExportType(type, listOf(name), resolvedTypes)
             },
@@ -247,6 +287,42 @@ internal class WorkspaceModuleResolver(
                 resolvedExportType(type, listOf(name), resolvedTypes)
             }
         )
+        if (surface.members.none { it.type === UnknownType }) return declaredModule
+        val semantic = file.semanticFile ?: return declaredModule
+        val returned = semantic.chunk.body.returnStatement?.arguments?.singleOrNull() ?: return declaredModule
+        if (providerPath in resolutionPath) return declaredModule
+        val providerContext = semantic.snapshot.workspaceContext.copy(
+            moduleResolutionPath = resolutionPath + providerPath
+        )
+        val inferred = ExpressionTypeEvaluator(semantic.snapshot.binder, providerContext)
+            .evaluate(returned) as? TableType ?: return declaredModule
+        // Structural exports retain identity, ranges and explicitly declared types.
+        // Resolve only their unknown values against the provider's own import context.
+        return declaredModule.copy(
+            fields = declaredModule.fields.mapValues { (name, type) ->
+                enrichUnknownExportType(type, inferred.fields[name] ?: inferred.methods[name])
+            },
+            methods = declaredModule.methods.mapValues { (name, type) ->
+                enrichUnknownExportType(type, inferred.methods[name] ?: inferred.fields[name])
+            }
+        )
+    }
+
+    private fun enrichUnknownExportType(structural: Type, inferred: Type?): Type {
+        if (inferred == null) return structural
+        if (structural === UnknownType) return inferred
+        if (structural is TableType && inferred is TableType) {
+            return TableType(
+                fields = structural.fields.mapValues { (name, type) ->
+                    enrichUnknownExportType(type, inferred.fields[name] ?: inferred.methods[name])
+                },
+                methods = structural.methods.mapValues { (name, type) ->
+                    enrichUnknownExportType(type, inferred.methods[name] ?: inferred.fields[name])
+                },
+                indexSignature = structural.indexSignature
+            )
+        }
+        return structural
     }
 
     private fun resolvedExportType(
@@ -330,8 +406,12 @@ internal class WorkspaceModuleResolver(
         return exportedMember(path, member.exportPath)
     }
 
-    fun importedSymbolsFor(path: VirtualPath): Map<String, WorkspaceImportedSymbol> {
-        importedSymbolsCache[path]?.let { return it }
+    fun importedSymbolsFor(path: VirtualPath, includeDependencyGlobals: Boolean = !deferDependencyGlobals,
+        nameFilter: ((String) -> Boolean)? = null): Map<String, WorkspaceImportedSymbol> {
+        val key = path to includeDependencyGlobals
+        importedSymbolsCache[key]?.let { values ->
+            return if (nameFilter == null) values else values.filterKeys(nameFilter)
+        }
         val facts = snapshot.files[path]?.documentFacts ?: return emptyMap()
         val imported = linkedMapOf<String, WorkspaceImportedSymbol>()
         activeImportTargets(facts).forEach { target ->
@@ -358,7 +438,7 @@ internal class WorkspaceModuleResolver(
                 }
             }
         }
-        dependencyGlobalSymbolsFor(path).forEach { symbol ->
+        (if (includeDependencyGlobals) dependencyGlobalSymbolsFor(path, nameFilter = nameFilter) else emptyList()).forEach { symbol ->
             val existing = imported[symbol.alias]
             imported[symbol.alias] = if (symbol.extendsExistingGlobal && existing?.extendsExistingGlobal == true) {
                 symbol.copy(valueType = mergeWorkspaceGlobalExtension(existing.valueType, symbol.valueType))
@@ -366,10 +446,11 @@ internal class WorkspaceModuleResolver(
                 symbol
             }
         }
-        return imported.toMap().also { importedSymbolsCache[path] = it }
+        return if (nameFilter == null) imported.toMap().also { importedSymbolsCache[key] = it }
+            else imported.filterKeys(nameFilter)
     }
 
-    private fun dependencyGlobalSymbolsFor(path: VirtualPath): List<WorkspaceImportedSymbol> {
+    private fun dependencyGlobalProvidersFor(path: VirtualPath): List<WorkspaceModuleGraph.ModuleProvider> {
         val facts = snapshot.files[path]?.documentFacts ?: return emptyList()
         val activeModules = buildSet {
             facts.sourceImports.forEach { sourceImport ->
@@ -386,28 +467,60 @@ internal class WorkspaceModuleResolver(
         return snapshot.graph.resolvedDependencies[path]
             .orEmpty()
             .filter { dependency -> normalizeImportTarget(dependency.moduleName) in activeModules }
-            .flatMap { dependency -> providerGlobalSymbols(dependency.provider) }
+            .map { dependency -> dependency.provider }
+    }
+
+    private fun dependencyGlobalSymbolsFor(path: VirtualPath, alias: String? = null,
+        nameFilter: ((String) -> Boolean)? = null): List<WorkspaceImportedSymbol> =
+        dependencyGlobalProvidersFor(path).flatMap { providerGlobalSymbols(it, alias, nameFilter) }
+
+    fun deferredDependencyGlobalNamesFor(path: VirtualPath): Set<String> {
+        if (!deferDependencyGlobals) return emptySet()
+        return dependencyGlobalProvidersFor(path).flatMapTo(linkedSetOf()) { provider ->
+            val semantic = snapshot.files[provider.path]?.semanticFile?.snapshot ?: return@flatMapTo emptyList()
+            val candidates = globalDeclarations(provider.path, semantic.binder)
+            val ownNames = candidates.globalsByName.keys
+            ownNames + candidates.extensionsByRoot.keys.filter {
+                it in ownNames || it in semantic.workspaceContext.overlayGlobals.globalNames
+            }
+        }
     }
 
     private fun providerGlobalSymbols(
-        provider: WorkspaceModuleGraph.ModuleProvider
+        provider: WorkspaceModuleGraph.ModuleProvider,
+        alias: String? = null,
+        nameFilter: ((String) -> Boolean)? = null
     ): List<WorkspaceImportedSymbol> {
-        providerGlobalSymbolsCache[provider.path]?.let { return it }
         val file = snapshot.files[provider.path] ?: return emptyList()
         val semanticSnapshot = file.semanticFile?.snapshot ?: return emptyList()
-        val binder = semanticSnapshot.binder
-        // Strip the shared-global fallback lambda from the evaluation context: evaluating
-        // one provider's global anchors must not re-enter sharedGlobalSymbol for the same
-        // alias via another file (order-dependent ping-pong / overflow). Deterministic.
-        val evaluationContext = semanticSnapshot.workspaceContext.copy(resolveImportedSymbol = null)
-        val evaluator = ExpressionTypeEvaluator(binder, evaluationContext)
+        val candidates = globalDeclarations(provider.path, semanticSnapshot.binder)
+        candidates.symbols[alias]?.let { values ->
+            return if (nameFilter == null) values else values.filter { nameFilter(it.alias) }
+        }
+        if (alias == null && nameFilter != null) {
+            // Names come from the binding index; only matching candidates need value typing.
+            // Reuse the same per-alias resolver/cache as an ordinary named query.
+            return (candidates.globalsByName.keys + candidates.extensionsByRoot.keys)
+                .filter(nameFilter).flatMap { providerGlobalSymbols(provider, it) }
+        }
+        if (alias != null) {
+            candidates.symbols[null]?.let { symbols -> return symbols.filter { it.alias == alias } }
+        }
+        val globalsToEvaluate = if (alias == null) candidates.globals else candidates.globalsByName[alias].orEmpty()
+        val extensionsToEvaluate = if (alias == null) candidates.extensionsByRoot else
+            candidates.extensionsByRoot[alias]?.let { mapOf(alias to it) }.orEmpty()
+        val allowedExtensions = extensionsToEvaluate.filterKeys {
+            it in candidates.globalsByName || it in semanticSnapshot.workspaceContext.overlayGlobals.globalNames
+        }
+        if (globalsToEvaluate.isEmpty() && allowedExtensions.isEmpty()) {
+            candidates.symbols[alias] = emptyList()
+            return emptyList()
+        }
+        val evaluator = candidates.evaluator
         val providerModuleType = file.moduleExportSurface?.moduleType ?: ModuleType(provider.moduleName)
-        val globals = binder.declarationIndex.declarations
+        val globals = globalsToEvaluate
             .asReversed()
             .asSequence()
-            .filter { declaration ->
-                declaration.kind == DeclarationKind.GLOBAL && declaration.origin == DeclarationOrigin.AST
-            }
             .distinctBy { it.name }
             .mapNotNull { declaration ->
                 val anchor = declaration.anchorNode as? ExpressionNode ?: return@mapNotNull null
@@ -433,38 +546,17 @@ internal class WorkspaceModuleResolver(
             provider = provider,
             providerModuleType = providerModuleType,
             evaluator = evaluator,
-            declarations = binder.declarationIndex.declarations,
-            // Overlay globals a module extends (activity.newTask = ...) PLUS the module's
-            // own chunk globals: `FileUtil = {}` + `FileUtil.saveBitmap = function` in the
-            // defining file must ride on the exported global's surface, not just overlays.
-            globalNames = semanticSnapshot.workspaceContext.overlayGlobals.globalNames +
-                globals.map { symbol -> symbol.alias }.toSet()
+            extensionsByRoot = allowedExtensions
         )
-        return (globals + extendedGlobals).also { providerGlobalSymbolsCache[provider.path] = it }
+        return (globals + extendedGlobals).also { candidates.symbols[alias] = it }
     }
 
     private fun providerGlobalObjectExtensions(
         provider: WorkspaceModuleGraph.ModuleProvider,
         providerModuleType: ModuleType,
         evaluator: ExpressionTypeEvaluator,
-        declarations: List<io.github.dingyi222666.luaparser.semantic.binder.BinderDeclaration>,
-        globalNames: Set<String>
+        extensionsByRoot: Map<String, List<Triple<Identifier, MemberExpression, BinderDeclaration>>>
     ): List<WorkspaceImportedSymbol> {
-        val extensionsByRoot = declarations.asSequence()
-            .filter { declaration ->
-                declaration.origin == DeclarationOrigin.AST &&
-                    declaration.kind in setOf(DeclarationKind.FIELD, DeclarationKind.METHOD)
-            }
-            .mapNotNull { declaration ->
-                val member = declaration.anchorNode?.parent as? MemberExpression ?: return@mapNotNull null
-                val root = member.base as? Identifier ?: return@mapNotNull null
-                if (root.name !in globalNames) {
-                    return@mapNotNull null
-                }
-                Triple(root, member, declaration)
-            }
-            .groupBy { (root) -> root.name }
-
         return extensionsByRoot.mapNotNull { (rootName, entries) ->
             val baseType = evaluator.evaluate(entries.first().first)
             val fields = linkedMapOf<String, Type>()
@@ -522,6 +614,16 @@ internal class WorkspaceModuleResolver(
     }
 
     private fun resolveImportedSymbolFor(path: VirtualPath, alias: String): WorkspaceImportedSymbol? {
+        if (deferDependencyGlobals) {
+            val globals = dependencyGlobalSymbolsFor(path, alias)
+            if (globals.isNotEmpty()) {
+                return globals.reduce { previous, next ->
+                    if (previous.extendsExistingGlobal && next.extendsExistingGlobal) {
+                        next.copy(valueType = mergeWorkspaceGlobalExtension(previous.valueType, next.valueType))
+                    } else next
+                }
+            }
+        }
         importedSymbolsFor(path)[alias]?.let { return it }
         // Path-scoped bare-name recovery: only when this file actively imported a matching target.
         val facts = snapshot.files[path]?.documentFacts ?: return null
@@ -541,7 +643,7 @@ internal class WorkspaceModuleResolver(
      * environment), deduped by alias, sorted by defining path. Used by completion
      * enumeration so cross-file globals are offered without an import edge.
      */
-    fun allSharedGlobalSymbols(consumerPath: VirtualPath): List<WorkspaceImportedSymbol> {
+    fun allSharedGlobalSymbols(consumerPath: VirtualPath, nameFilter: ((String) -> Boolean)? = null): List<WorkspaceImportedSymbol> {
         val result = linkedMapOf<String, WorkspaceImportedSymbol>()
         snapshot.graph.providersByModuleName.values.asSequence()
             .flatten()
@@ -550,10 +652,11 @@ internal class WorkspaceModuleResolver(
                     (provider.path.value.endsWith(".lua") || provider.path.value.endsWith(".aly"))
             }
             .distinctBy { it.path }
+            .filter { provider -> declaresSharedGlobal(provider) }
             .sortedBy { it.path.value }
             .forEach { provider ->
-                providerGlobalSymbols(provider).forEach { symbol ->
-                    result.putIfAbsent(symbol.alias, symbol)
+                providerGlobalSymbols(provider, nameFilter = nameFilter).forEach { symbol ->
+                    if (!symbol.extendsExistingGlobal) result.putIfAbsentCompat(symbol.alias, symbol)
                 }
             }
         return result.values.toList()
@@ -578,26 +681,36 @@ internal class WorkspaceModuleResolver(
         }
         sharedGlobalInFlight += alias
         try {
-            return computeSharedGlobalSymbol(alias)
+            return computeSharedGlobalSymbol(consumerPath, alias)
         } finally {
             sharedGlobalInFlight -= alias
         }
     }
 
-    private fun computeSharedGlobalSymbol(alias: String): WorkspaceImportedSymbol? {
+    private fun declaresSharedGlobal(provider: WorkspaceModuleGraph.ModuleProvider, alias: String? = null): Boolean {
+        val binder = snapshot.files[provider.path]?.semanticFile?.snapshot?.binder ?: return false
+        val candidates = globalDeclarations(provider.path, binder)
+        return if (alias == null) candidates.globals.isNotEmpty() else alias in candidates.globalsByName
+    }
+
+    private fun computeSharedGlobalSymbol(consumerPath: VirtualPath, alias: String): WorkspaceImportedSymbol? {
         // Blank / in-flight guarding is owned by [sharedGlobalSymbol]; this scan only has to
         // keep pathological anchor evaluation from poisoning the completion pipeline.
         return try {
-            val candidates = sharedGlobalSymbolsCache.getOrPut(alias) {
+            val candidates = sharedGlobalSymbolsCache.getOrPut(consumerPath to alias) {
                 snapshot.graph.providersByModuleName.values.asSequence()
                     .flatten()
                     .filter { provider ->
-                        provider.path.value.endsWith(".lua") || provider.path.value.endsWith(".aly")
+                        provider.path != consumerPath &&
+                            (provider.path.value.endsWith(".lua") || provider.path.value.endsWith(".aly"))
                     }
                     .distinctBy { it.path }
+                    .filter { provider -> declaresSharedGlobal(provider, alias) }
                     .sortedBy { it.path.value }
                     .mapNotNull { provider ->
-                        providerGlobalSymbols(provider).firstOrNull { symbol -> symbol.alias == alias }
+                        providerGlobalSymbols(provider, alias).firstOrNull { symbol ->
+                            symbol.alias == alias && !symbol.extendsExistingGlobal
+                        }
                     }
                     .toList()
             }
@@ -605,6 +718,7 @@ internal class WorkspaceModuleResolver(
                 merged.copy(valueType = mergeWorkspaceGlobalExtension(merged.valueType, next.valueType))
             }
         } catch (error: Throwable) {
+            if (error is kotlin.coroutines.cancellation.CancellationException) throw error
             // Deep or pathological anchor evaluation degrades this alias to "unresolved"
             // for this query instead of crashing the query surface.
             null
@@ -815,7 +929,7 @@ internal class WorkspaceModuleResolver(
                 if (key.isBlank()) {
                     return
                 }
-                index.putIfAbsent(key, provider)
+                index.putIfAbsentCompat(key, provider)
             }
             snapshot.extraProviders.forEach { (path, file) ->
                 val value = path.value

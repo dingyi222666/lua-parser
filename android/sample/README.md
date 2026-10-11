@@ -9,9 +9,9 @@ sora's `editor-lsp` module — the same shape as sora-editor 0.23.6's own
 1. the server is **ours** (`io.github.dingyi222666.luaparser.lsp` from the
    `:android` AAR), served over an abstract `android.net.LocalServerSocket`
    ("lua-lsp") instead of a TCP loopback `java.net.ServerSocket`, and
-2. the JVM interop configuration (`jvm.androidJar`, optionally `jvm.classpath`)
-   is pushed to the server via `workspace/didChangeConfiguration` after the
-   connection is up.
+2. the JVM/Dex interop configuration (`jvm.androidDex`, optionally `jvm.classpath`)
+   is supplied before initialize, so the background workspace index is built
+   once with the correct dex settings.
 
 Pinned sora-editor version: **0.23.6** (all APIs used here were verified
 against that tag; see the "sora API notes" section at the bottom).
@@ -24,7 +24,7 @@ android/sample/
 └── src/main/
     ├── AndroidManifest.xml               MainActivity (launcher) + LspServerService (exported=false)
     ├── java/io/github/dingyi222666/luaparser/sample/
-    │   ├── MainActivity.kt               sora-pattern activity: TextMate theme/grammar,
+    │   ├── MainActivity.kt               Lua highlighting, cached document buffers,
     │   │                                 LspProject/LspEditor attach, connect, jvm config, dispose
     │   ├── ProjectBootstrapper.kt        assets/project -> filesDir/project copy driven by
     │   │                                 manifest.txt + a SHA-256 version marker in filesDir
@@ -43,37 +43,48 @@ android/sample/
 
 ## Build and run
 
-Prerequisites: JDK 17, Android SDK platform 34. From the repository root:
+Builds and tests run only on `dingyi@10.1.1.14`. The configured remote workspace
+is `/home/dingyi/projects/lua-parser-android-e2e`, with JDK 17 and Android SDK 35.
+Run the orchestration script from the repository root:
 
 ```bash
-./gradlew :android:sample:assembleDebug
-adb install -r android/sample/build/outputs/apk/debug/sample-debug.apk
+bash tools/android-e2e-remote.sh
 ```
 
-or open the project in Android Studio and run the `android.sample`
-configuration on a device/emulator with API 26+.
+The script syncs source, executes Gradle over SSH, boots the remote
+`lua-parser-e2e28` AVD if needed, installs the release APK and instrumentation
+APK, and runs Android E2E. No local Gradle process is started. Logs are saved
+under `build/android-e2e` **on the remote host**. A failed instrumentation test
+returns a nonzero script status, even when `am instrument` returns zero.
 
-## Provide android.jar (optional but recommended)
+`ANDROID_E2E_BUILD_TYPE=debug` selects a diagnostic debug APK.
+`ANDROID_READY_BUDGET_MS` controls the E2E wait budget; increasing it is for
+investigation and does not demonstrate the startup performance target.
+Release uses R8 and includes a Baseline Profile. This sample is signed with the
+debug key for installation on the test emulator; it is not a store signing setup.
 
-The JVM interop surface (completion/hover for `luajava.bindClass("java.lang.String")`
-and friends) needs a platform `android.jar` reachable by the server. On Android
-there is no SDK directory to auto-discover, so the app expects it as an asset:
+The remote host has no KVM/nested virtualization, so this AVD uses software
+emulation. Emulator boot time is excluded from app startup measurements.
 
-1. copy `<$ANDROID_HOME>/platforms/android-34/android.jar` to
-   `android/sample/src/main/assets/android.jar` (about 50 MB — not committed);
-2. install and launch the app.
+## Package the Android framework DEX
 
-On first run `MainActivity` copies `assets/android.jar` to
-`filesDir/android.jar` and advertises that **absolute path** to the server as
+The device-side JVM/Dex interop surface needs framework class metadata. The APK carries
+`android.dex`, generated on the remote build host from its installed Android platform with D8:
+
+1. use `<$ANDROID_HOME>/platforms/android-35/android.jar` as D8 input;
+2. write the output as `android/sample/src/main/assets/android.dex`;
+3. build and install the APK.
+
+On first run `MainActivity` copies `assets/android.dex` to
+`filesDir/android.dex` and advertises that **absolute path** to the server as
 flat workspace configuration:
 
 ```json
-{ "jvm.androidJar": "/data/user/0/io.github.dingyi222666.luaparser.sample/files/android.jar" }
+{ "jvm.androidDex": "/data/user/0/io.github.dingyi222666.luaparser.sample/files/android.dex" }
 ```
 
 (`LuaWorkspaceService.parseWorkspaceMetadata` in `:android` accepts the flat
-`jvm.androidJar` key or a nested `jvm { "androidJar": ... }` section; without
-the asset the key is simply omitted and everything else keeps working.)
+`jvm.androidDex` key or a nested `jvm { "androidDex": ... }` section.)
 
 **dex note:** the bundled demo corpus ships `project/libs/classes.dex`, which
 the bootstrapper copies to `filesDir/project/libs/classes.dex` and the app
@@ -91,12 +102,48 @@ accepted entries, including `path:Class` prefixed imports).
   `main.lua`) is registered as a workspace folder, so cross-file references —
   `require("mods.util")`, `adapter.MyLuaAdapter`, `views.*`, `layout/*.aly`,
   `model.AppListStream` — resolve across files.
-* **JVM interop** — with `assets/android.jar` provided, `luajava.bindClass`
+* **JVM/Dex interop** — with `assets/android.dex` provided, `luajava.bindClass`
   targets and `import "android.foo.Bar"` resolve with full member hover and
   completion.
-* **Syntax highlighting** — TextMate (`source.lua` grammar, dark theme) as the
-  wrapper language; LSP semantic tokens and diagnostics are layered on top by
-  sora's `LspEditor`.
+* **Runtime DEX imports** — a library copied into the project's `libs` directory
+  after connection can be imported from Lua. Android E2E covers an independent
+  D8-generated library absent from both APK classpaths: static methods, Java
+  factory results stored in Lua tables, and partial colon completion through the
+  visible editor popup. This does not yet prove every library replacement or
+  relative-path import scenario.
+* **Syntax highlighting** — the parser's `LuaLexer` drives the editor analyzer.
+  It resumes before the edited token, handles long strings/comments and CRLF,
+  and retains keyword/literal/comment colors, bracket pairs and indentation.
+* **Document switching** — bridges and unsaved buffers are retained for the
+  Activity. Only the active document subscribes to editor changes; diagnostics
+  from inactive documents do not overwrite the visible editor. E2E verifies that
+  editing an open dependency without saving replaces the consumer's completion
+  members after switching back, while the disk file retains its original text.
+* **Startup analysis** — a small typed builtin overlay serves live-buffer
+  queries while full workspace/framework/dex analysis proceeds in the background.
+  Full builds parallelize independent parsing and binding with isolated worker
+  state, while dependency-sensitive resolution and publication stay ordered.
+  The first document is editable before the bundled workspace copy completes.
+  Live-buffer queries are published before checker diagnostics, which are sent
+  separately for the same document revision. Closed connections cancel indexing.
+  Wildcard packages, explicit imports and implicit class names use a name index
+  until a class is queried. Completed diagnostics are reused for unchanged
+  bindings and invalidated for affected documents. An unrelated edit does not
+  interrupt a checker already running on an unchanged binding. Superseded
+  analyses stop at cooperative checkpoints; publication still checks the revision.
+  The full index also publishes resolved bindings before checker work; open
+  documents are checked afterward. Opening an unchanged indexed document or
+  reopening it still produces current diagnostics.
+* **Incremental edits** — changes from one UI turn are batched in order, using
+  correct zero-width insertion ranges. File switches flush pending edits before
+  detaching the old document. Formatting and saving wait for those notifications.
+
+Functional E2E success does not imply performance acceptance. On the remote
+software emulator, first custom completion and completion after editing are
+still slower than the HTML baseline. Timing logs distinguish text visibility,
+connection readiness, first/warm completion, the actual completion popup,
+semantic diagnostics, and document switching.
+Current measurements and verification limits are recorded in [PERFORMANCE.md](PERFORMANCE.md).
 
 ## Troubleshooting
 
@@ -114,8 +161,7 @@ accepted entries, including `path:Class` prefixed imports).
 
 `android-verify` currently builds **`:android` only** — this sample is not
 compiled by CI yet. Follow-up: add `:android:sample:assembleDebug` to the
-workflow once the sample has been built once locally and stabilized (that is
-deliberately deferred here: no local builds were run while authoring it).
+workflow after the remote sample/E2E performance checks are settled.
 
 ## sora API notes (version-sensitive bits)
 
@@ -128,10 +174,9 @@ deliberately deferred here: no local builds were run while authoring it).
   implementation) fills the gap on top of `CustomConnectProvider.StreamProvider`.
 * `LspEditor.connectWithTimeout()` is `suspend` at 0.23.6 (called from
   `lifecycleScope.launch` like the sora sample); `requestManager` is nullable.
-* `GrammarRegistry.loadGrammars(languages { ... })` reads grammar files through
-  `FileProviderRegistry`, which must have the `AssetsFileResolver` registered
-  first (`ensureTextmateTheme()` does this before any load).
-* tm4e (`org.eclipse.tm4e.core.registry.IThemeSource`, `ThemeModel`,
-  `ThemeRegistry`, `TextMateColorScheme`, `TextMateLanguage`) is vendored
-  inside the sora `language-textmate` artifact at 0.23.6, so no extra
-  dependency is needed.
+* `WorkspaceCodeEditor` keeps UI analyzer replacement separate from transport
+  disposal. It unsubscribes Sora document/selection receivers before switching
+  the buffer. Activity destruction disposes bridges sequentially before the
+  project, avoiding Sora 0.23.6's map mutation during `closeAllEditors`.
+* The LocalSocket output adapter uses unbuffered writes without the platform's
+  queue-draining `flush`, avoiding a sender/handler wait during document events.

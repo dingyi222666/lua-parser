@@ -279,6 +279,14 @@ class BuiltinOverlayLoaderTddTest {
             ).singleOrNull { it.label == "addView" }
         )
         assertContains(addViewCompletion.detail.orEmpty(), "android.view.View")
-        assertContains(addViewCompletion.detail.orEmpty(), "android.view.ViewGroup.LayoutParams")
+        assertContains(addViewCompletion.detail.orEmpty(), "overloads")
+        val source = harness.snapshot.files.getValue(harness.path("main.lua")).semanticFile!!.source
+        val callSource = source.substringBefore("local addView") + "ViewGroup.__class.addView(nil, nil)"
+        val calls = WorkspaceSemanticHarness.build("main.lua" to callSource,
+            standardLibraryOverlayVersion = LuaVersion.ANDROLUA_5_3,
+            engine = JvmWorkspaceEngine(configuration = JvmWorkspaceConfiguration(androidJar = androidJar.path)))
+        val help = assertNotNull(calls.queries.signatureHelp(calls.path("main.lua"),
+            calls.positionOf("main.lua", "nil", occurrence = 2)))
+        assertTrue(help.signatures.any { it.label.contains("android.view.ViewGroup.LayoutParams") })
     }
 }

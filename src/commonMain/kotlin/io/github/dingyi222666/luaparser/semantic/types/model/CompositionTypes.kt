@@ -17,7 +17,7 @@ data class TupleType(
 
 data class MultiReturnType(
     val types: List<Type>,
-    override val name: String = types.joinToString(", ") { it.displayName }
+    override val name: String = types.joinToString(", ", prefix = "(", postfix = ")") { it.displayName }
 ) : Type
 
 data class VarargType(

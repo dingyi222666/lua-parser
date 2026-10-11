@@ -101,6 +101,7 @@ fun LegacyType.toModelType(): Type = when (this) {
 }
 
 private fun LegacyPrimitiveType.Kind.toModelKind(): PrimitiveType.Kind = when (this) {
+    LegacyPrimitiveType.Kind.VOID -> PrimitiveType.Kind.VOID
     LegacyPrimitiveType.Kind.NIL -> PrimitiveType.Kind.NIL
     LegacyPrimitiveType.Kind.NUMBER -> PrimitiveType.Kind.NUMBER
     LegacyPrimitiveType.Kind.STRING -> PrimitiveType.Kind.STRING

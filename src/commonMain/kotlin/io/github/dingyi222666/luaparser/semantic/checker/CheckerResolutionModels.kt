@@ -20,6 +20,9 @@ import io.github.dingyi222666.luaparser.semantic.binder.DeclarationKind
 import io.github.dingyi222666.luaparser.semantic.binder.DeclarationOwner
 import io.github.dingyi222666.luaparser.semantic.types.model.CallableType
 import io.github.dingyi222666.luaparser.semantic.types.model.FunctionType
+import io.github.dingyi222666.luaparser.semantic.types.model.FunctionParameter
+import io.github.dingyi222666.luaparser.semantic.types.model.OverloadedFunctionType
+import io.github.dingyi222666.luaparser.semantic.types.model.UnknownType
 import io.github.dingyi222666.luaparser.semantic.types.model.Type
 
 enum class MemberAccessKind {
@@ -66,7 +69,8 @@ data class CallResolution(
     val callableResolution: CallableResolution? = null,
     val selectedSignature: FunctionType? = null,
     val failureReason: CallFailureReason? = null,
-    val ambiguous: Boolean = false
+    val ambiguous: Boolean = false,
+    val selectedSignatureIndex: Int? = null
 ) {
     val isSuccess: Boolean
         get() = returnType != null
@@ -216,4 +220,64 @@ private fun collectFunctionDeclarations(node: BlockNode, output: MutableList<Fun
             }
         }
     }
+}
+
+/**
+ * Fills in the implicit `self` parameter of colon-method signatures, shared by
+ * expression inference and editor signature queries.
+ */
+internal fun enrichMethodCallableType(
+    binder: BinderPassResult,
+    declaration: BinderDeclaration,
+    declared: CallableType
+): CallableType {
+    if (declaration.kind != DeclarationKind.METHOD) {
+        return declared
+    }
+
+    if (!isColonMethodDeclaration(binder, declaration)) {
+        return declared
+    }
+
+    val selfType = declaration.documentation?.resolvedParameterTypes?.get("self") ?: UnknownType
+    val enrichedSignatures = declared.callSignatures.map { signature ->
+        val parameters = if (signature.parameters.firstOrNull()?.name == "self") {
+            signature.parameters.mapIndexed { index, parameter ->
+                if (index == 0 && parameter.type == UnknownType && selfType != UnknownType) {
+                    parameter.copy(type = selfType)
+                } else {
+                    parameter
+                }
+            }
+        } else {
+            listOf(FunctionParameter(name = "self", type = selfType)) + signature.parameters
+        }
+        signature.copy(
+            parameters = parameters,
+            name = FunctionType(
+                parameters = parameters,
+                returnType = signature.returnType,
+                typeParameters = signature.typeParameters
+            ).name
+        )
+    }
+    return when (enrichedSignatures.size) {
+        0 -> declared
+        1 -> enrichedSignatures.single()
+        else -> OverloadedFunctionType(enrichedSignatures)
+    }
+}
+
+/**
+ * Shared lexical owner lookup for type inference and editor signature queries.
+ */
+internal fun isDeclaredInLexicalOwnerChain(declaration: BinderDeclaration, lexicalOwner: BaseASTNode): Boolean {
+    var current: BaseASTNode? = lexicalOwner
+    while (current != null) {
+        if (declaration.owner == DeclarationOwner.Lexical(current)) {
+            return true
+        }
+        current = runCatching { current.parent }.getOrNull()
+    }
+    return false
 }

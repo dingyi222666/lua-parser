@@ -8,6 +8,11 @@ import io.github.dingyi222666.luaparser.semantic.types.syntax.splitTopLevelToken
 import io.github.dingyi222666.luaparser.semantic.types.syntax.splitTopLevelTypeText
 import io.github.dingyi222666.luaparser.semantic.types.syntax.TypeSyntaxParser
 
+internal data class ParsedDocComment(
+    val syntax: DocCommentSyntax?,
+    val inlineTypeText: String?
+)
+
 class DocCommentSyntaxParser(
 ) {
 
@@ -16,14 +21,17 @@ class DocCommentSyntaxParser(
         const val RECOVERY_CANDIDATE_LIMIT = 8
     }
 
-    fun parse(comments: List<CommentStatement>): DocCommentSyntax? {
+    fun parse(comments: List<CommentStatement>): DocCommentSyntax? = parseWithInlineType(comments).syntax
+
+    internal fun parseWithInlineType(comments: List<CommentStatement>): ParsedDocComment {
         if (comments.isEmpty()) {
-            return null
+            return ParsedDocComment(null, null)
         }
 
         val description = mutableListOf<String>()
         val tags = mutableListOf<DocTagSyntax>()
         var currentTagIndex = -1
+        var inlineTypeText: String? = null
 
         comments.forEach { comment ->
             val rawLines = comment.comment.lines()
@@ -37,6 +45,11 @@ class DocCommentSyntaxParser(
                     parseTag(lineInfo)?.let {
                         tags.add(it)
                         currentTagIndex = tags.lastIndex
+                        if (it is TypeTagSyntax &&
+                            lineInfo.normalizedLine.removePrefix("@type").trim().isNotBlank()
+                        ) {
+                            inlineTypeText = it.typeText
+                        }
                     }
                 } else if (line.isNotBlank()) {
                     if (currentTagIndex >= 0) {
@@ -48,28 +61,17 @@ class DocCommentSyntaxParser(
             }
         }
 
-        return DocCommentSyntax(
-            description = description.joinToString("\n").trim(),
-            tags = tags
+        return ParsedDocComment(
+            syntax = DocCommentSyntax(
+                description = description.joinToString("\n").trim(),
+                tags = tags
+            ),
+            inlineTypeText = inlineTypeText
         )
     }
 
-    fun findInlineTypeText(comments: List<CommentStatement>): String? {
-        return comments.asReversed().firstNotNullOfOrNull { comment ->
-            normalizeDocLines(comment.comment).asReversed().firstNotNullOfOrNull { line ->
-                if (!line.startsWith("@type")) {
-                    return@firstNotNullOfOrNull null
-                }
-
-                val content = line.removePrefix("@type").trim()
-                if (content.isBlank()) {
-                    return@firstNotNullOfOrNull null
-                }
-
-                parseTypePrefix(content)?.typeText ?: content
-            }
-        }
-    }
+    fun findInlineTypeText(comments: List<CommentStatement>): String? =
+        parseWithInlineType(comments).inlineTypeText
 
     private fun parseTag(lineInfo: DocLineInfo): DocTagSyntax? {
         val line = lineInfo.normalizedLine

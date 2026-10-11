@@ -307,7 +307,7 @@ class LuaLexer @JvmOverloads constructor(
             }
 
             '\n' -> {
-                tokenLength += 2
+                tokenLength += if (nextOffset + 1 < bufferLen && source[nextOffset + 1] == '\r') 3 else 2
                 true
             }
 
@@ -349,7 +349,8 @@ class LuaLexer @JvmOverloads constructor(
                     tokenLength++
                     digits++
                 }
-                true
+                val value = source.substring(nextOffset, nextOffset + digits).toIntOrNull()
+                value != null && value <= 0xFF
             }
 
             else -> {
@@ -378,7 +379,8 @@ class LuaLexer @JvmOverloads constructor(
         }
 
         tokenLength = cursor + 1 - offset
-        return true
+        val value = source.substring(firstDigit, cursor).toLongOrNull(16)
+        return value != null && value <= 0x10FFFF
     }
 
 

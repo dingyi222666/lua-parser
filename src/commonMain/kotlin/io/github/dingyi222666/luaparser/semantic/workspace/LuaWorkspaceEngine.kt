@@ -10,7 +10,9 @@ import io.github.dingyi222666.luaparser.parser.ast.node.Position
 import io.github.dingyi222666.luaparser.parser.ast.node.Range
 import io.github.dingyi222666.luaparser.semantic.SemanticPipeline
 import io.github.dingyi222666.luaparser.semantic.SemanticWorkspaceContext
+import io.github.dingyi222666.luaparser.semantic.comments.CommentAttachPass
 import io.github.dingyi222666.luaparser.semantic.binder.BinderDeclaration
+import io.github.dingyi222666.luaparser.semantic.binder.BinderPassResult
 import io.github.dingyi222666.luaparser.semantic.binder.DeclarationKind
 import io.github.dingyi222666.luaparser.semantic.binder.DeclarationOrigin
 import io.github.dingyi222666.luaparser.semantic.checker.ExpressionTypeEvaluator
@@ -20,7 +22,8 @@ import io.github.dingyi222666.luaparser.semantic.workspace.std.BuiltinOverlaySna
 open class LuaWorkspaceEngine(
     private val parserFactory: (LuaVersion) -> LuaParser = { version -> LuaParser(version) }
 ) {
-    private val semanticPipeline = SemanticPipeline()
+    private val commentAttachPass = CommentAttachPass()
+    private val semanticPipeline = SemanticPipeline(commentAttachPass = commentAttachPass)
 
     /**
      * Grammar dialect currently in force.
@@ -40,30 +43,34 @@ open class LuaWorkspaceEngine(
         parserVersion = version
         // Everything memoized below was produced by the previous dialect.
         activeParser = null
-        parsedChunks.clear()
-        documentFactsCache.clear()
+        documentRevisions.clear()
     }
 
-    /**
-     * Overlay sources are compiled-in resources and [analyzeFile] is deterministic, so the
-     * snapshot for a given version never changes over an engine's lifetime. Re-analyzing the
-     * ~65 stdlib/AndroLua overlay modules on every build/update dominated edit latency.
-     */
-    private val builtinOverlays = mutableMapOf<LuaVersion, BuiltinOverlaySnapshot>()
+    protected open val includeAndroidFramework: Boolean = true
+    protected open val checkDiagnostics: Boolean = true
 
-    private fun builtinOverlay(version: LuaVersion): BuiltinOverlaySnapshot {
-        return builtinOverlays.getOrPut(version) { BuiltinOverlayLoader.load(version, ::analyzeFile) }
-    }
+    /** Independent front-end work only; workspace-dependent resolution stays ordered. */
+    protected open fun <T> mapIndependentDocuments(
+        paths: List<VirtualPath>,
+        action: (VirtualPath) -> T
+    ): List<T> = paths.map(action)
+
+    /** One hook for measuring the real passes without changing their ownership. */
+    protected open fun <T> analysisStage(stage: String, path: VirtualPath? = null, action: () -> T): T = action()
+
+    private fun builtinOverlay(version: LuaVersion): BuiltinOverlaySnapshot =
+        BuiltinOverlayLoader.compiledRevision(version, includeAndroidFramework)
 
     open fun build(
         input: LuaWorkspaceInput,
         reporter: ProgressReporter = ProgressReporter.NONE
     ): WorkspaceUpdateResult {
         useParserVersion(input.standardLibraryOverlayVersion)
+        analysisStage("parse") { prepareDocumentParses(input.files) }
         val sortedFiles = input.files.keys.sortedBy { it.value }
         val baseSnapshots = linkedMapOf<VirtualPath, WorkspaceSnapshot.FileSnapshot>()
-        val builtinOverlay = builtinOverlay(input.standardLibraryOverlayVersion)
-        val extraProviders = extraProviders(input)
+        val builtinOverlay = analysisStage("builtins") { builtinOverlay(input.standardLibraryOverlayVersion) }
+        val extraProviders = analysisStage("providers") { extraProviders(input) }
         val totalFiles = sortedFiles.size * 2
 
         sortedFiles.forEachIndexed { index, path ->
@@ -91,17 +98,18 @@ open class LuaWorkspaceEngine(
             metadata = input.metadata,
             extraProviders = extraProviders,
             builtinOverlay = builtinOverlay,
-            graph = WorkspaceModuleGraphBuilder.build(baseSnapshots, builtinOverlay, extraProviders)
+            graph = analysisStage("graph") { WorkspaceModuleGraphBuilder.build(baseSnapshots, builtinOverlay, extraProviders) }
         )
         val snapshot = attachSemanticState(
             baseSnapshot = baseSnapshot,
             sources = input.files,
             pathsToAnalyze = sortedFiles.toSet(),
-            previous = null
+            previous = null,
+            reportBinding = bindingReporter(sortedFiles.size, totalFiles, reporter),
+            preparedBindings = prepareBindings(sortedFiles, input.files, builtinOverlay)
         )
         val affectedDocuments = sortedFiles.toSet()
         retainCachedDocuments(input.files.keys)
-        reportBindingProgress(sortedFiles, sortedFiles.size, totalFiles, reporter)
         reporter.report(AnalysisProgress(AnalysisProgress.Phase.COMPLETE, completedFiles = totalFiles, totalFiles = totalFiles))
 
         return WorkspaceUpdateResult(
@@ -121,9 +129,9 @@ open class LuaWorkspaceEngine(
         standardLibraryOverlayVersion: LuaVersion = previous.builtinOverlay.version,
         reporter: ProgressReporter = ProgressReporter.NONE
     ): WorkspaceUpdateResult {
-        val perfU0 = if (System.getenv("LUA_PARSER_PERF") != null) System.nanoTime() else 0L
         useParserVersion(standardLibraryOverlayVersion)
-        val builtinOverlay = builtinOverlay(standardLibraryOverlayVersion)
+        analysisStage("parse") { prepareDocumentParses(delta.upserts) }
+        val builtinOverlay = analysisStage("builtins") { builtinOverlay(standardLibraryOverlayVersion) }
         val nextMetadata = delta.metadata ?: previous.metadata
 
         // Merge previous snapshot sources with the delta so extraProviders and dirty
@@ -140,13 +148,13 @@ open class LuaWorkspaceEngine(
         }
         nextSources.putAll(delta.upserts)
 
-        val extraProviders = extraProviders(
+        val extraProviders = analysisStage("providers") { extraProviders(
             LuaWorkspaceInput(
                 files = nextSources,
                 metadata = nextMetadata,
                 standardLibraryOverlayVersion = standardLibraryOverlayVersion
             )
-        )
+        ) }
 
         // No-op guard: no source upserts/removals and metadata either absent (delta carries no
         // metadata, so nextMetadata fell back to previous.metadata) or content-identical to the
@@ -171,9 +179,6 @@ open class LuaWorkspaceEngine(
             )
         }
 
-        if (perfU0 != 0L) {
-            println("PERF entry-segment (merge+analyzeFile upserts)=${(System.nanoTime() - perfU0) / 1_000_000}ms")
-        }
         val parsingTargets = delta.upserts.keys.sortedBy { it.value }
         val nextFiles = previous.files.toMutableMap()
         delta.removals.forEach(nextFiles::remove)
@@ -208,7 +213,7 @@ open class LuaWorkspaceEngine(
         ) {
             previous.graph
         } else {
-            WorkspaceModuleGraphBuilder.build(nextFiles, builtinOverlay, extraProviders)
+            analysisStage("graph") { WorkspaceModuleGraphBuilder.build(nextFiles, builtinOverlay, extraProviders) }
         }
 
         val baseSnapshot = WorkspaceSnapshot(
@@ -226,38 +231,22 @@ open class LuaWorkspaceEngine(
         // global-surface values for the edited files instead of the empty "not yet analyzed"
         // default. attachSemanticState re-analyzes the upserts in dependency order against the
         // final workspace view and re-attaches the authoritative value — the extra per-upsert
-        // analysis is the bounded price of making global-surface changes visible to the planner
-        // within the same update that produced them.
+        // binding is reused in the authoritative pass after planning.
+        val preparedBindings = prepareBindings(parsingTargets, nextSources, builtinOverlay)
         if (parsingTargets.isNotEmpty()) {
             // LIGHT pre-plan pass: the planner only needs each upsert's global-symbols
             // fingerprint, so run bind+resolve WITHOUT the checker/model (the two dominant
-            // analysis costs) instead of a full analyzePathInto. attachSemanticState
-            // re-runs the full pipeline for the authoritative snapshot right after.
+            // analysis costs) instead of a full analyzePathInto.
             parsingTargets.forEach { path ->
                 val fileSnapshot = nextFiles[path] ?: return@forEach
-                val carriedOver = previous.files[path]?.semanticFile ?: fileSnapshot.semanticFile
-                val parsed = nextSources[path]?.let { source -> parseWorkspaceResult(path, source) }
-                val chunk = parsed?.chunk ?: carriedOver?.chunk ?: return@forEach
-                val provisionalContext = workspaceContext(
-                    LuaWorkspaceInput(
-                        files = nextSources,
-                        metadata = nextMetadata,
-                        standardLibraryOverlayVersion = baseSnapshot.builtinOverlay.version
-                    ),
-                    path,
-                    baseSnapshot
-                )
-                val (resolvedBinder, effectiveContext) = semanticPipeline.bindForGlobalFingerprint(
-                    chunk,
-                    provisionalContext
-                )
-                nextFiles[path] = fileSnapshot.withGlobalSymbolsFingerprint(
-                    resolvedBinder.declarationIndex.declarations
+                val resolvedBinder = preparedBindings[path] ?: return@forEach
+                nextFiles[path] = fileSnapshot.withGlobalSymbolsFingerprint(path,
+                    resolvedBinder
                 )
             }
         }
 
-        val dirtyPlan = WorkspaceDirtySetPlanner.plan(previous, baseSnapshot)
+        val dirtyPlan = analysisStage("invalidation") { WorkspaceDirtySetPlanner.plan(previous, baseSnapshot) }
         val pathsToAnalyze = if (metadataChanged) {
             dirtyPlan.affectedDocuments + nextSources.keys
         } else {
@@ -281,10 +270,11 @@ open class LuaWorkspaceEngine(
             sources = nextSources,
             pathsToAnalyze = pathsToAnalyze,
             previous = previous,
-            upserts = delta.upserts.keys
+            upserts = delta.upserts.keys,
+            reportBinding = bindingReporter(parsingTargets.size, totalFiles, reporter),
+            preparedBindings = preparedBindings
         )
         retainCachedDocuments(nextSources.keys)
-        reportBindingProgress(pathsToAnalyze.sortedBy { it.value }, parsingTargets.size, totalFiles, reporter)
         reporter.report(AnalysisProgress(AnalysisProgress.Phase.COMPLETE, completedFiles = totalFiles, totalFiles = totalFiles))
 
         return WorkspaceUpdateResult(
@@ -300,6 +290,9 @@ open class LuaWorkspaceEngine(
 
     protected open fun extraProviders(input: LuaWorkspaceInput): Map<VirtualPath, WorkspaceSnapshot.FileSnapshot> = emptyMap()
 
+    internal open fun createWorkspaceResolver(snapshot: WorkspaceSnapshot): WorkspaceModuleResolver =
+        WorkspaceModuleResolver(snapshot) { candidate -> cachedChunkFor(snapshot.files, candidate) }
+
     internal open fun workspaceContext(
         input: LuaWorkspaceInput,
         path: VirtualPath,
@@ -307,9 +300,7 @@ open class LuaWorkspaceEngine(
     ): SemanticWorkspaceContext {
         return SemanticWorkspaceContext(
             currentPath = path,
-            workspaceResolver = WorkspaceModuleResolver(snapshot) { candidate ->
-                cachedChunkFor(snapshot.files, candidate)
-            },
+            workspaceResolver = createWorkspaceResolver(snapshot),
             overlayGlobals = snapshot.builtinOverlay.globals,
             layoutPropertyExtensions = LuaLayoutPropertiesMetadata.parse(snapshot.metadata)
         )
@@ -320,7 +311,9 @@ open class LuaWorkspaceEngine(
         sources: Map<VirtualPath, String>,
         pathsToAnalyze: Set<VirtualPath>,
         previous: WorkspaceSnapshot?,
-        upserts: Set<VirtualPath> = pathsToAnalyze
+        upserts: Set<VirtualPath> = pathsToAnalyze,
+        reportBinding: ((VirtualPath, Int) -> Unit)? = null,
+        preparedBindings: Map<VirtualPath, BinderPassResult> = emptyMap()
     ): WorkspaceSnapshot {
         val files = linkedMapOf<VirtualPath, WorkspaceSnapshot.FileSnapshot>()
         baseSnapshot.files.forEach { (path, fileSnapshot) ->
@@ -347,8 +340,10 @@ open class LuaWorkspaceEngine(
         )
 
         val analysisOrder = semanticAnalysisOrder(pathsToAnalyze, baseSnapshot.graph)
-        analysisOrder.forEach { path ->
-            analyzePathInto(files, path, sources, previous, analysisInput, analysisSnapshot)
+        analysisOrder.forEachIndexed { index, path ->
+            reportBinding?.invoke(path, index)
+            analyzePathInto(files, path, sources, previous, analysisInput, analysisSnapshot, preparedBindings[path])
+            reportBinding?.invoke(path, index + 1)
         }
 
         // Cycle re-analysis pass. Members of a multi-member strongly connected component are
@@ -394,6 +389,7 @@ open class LuaWorkspaceEngine(
             var sweep = 0
             while (sweep < MAX_CYCLE_REANALYSIS_PASSES) {
                 cycleReAnalysis.forEach { path ->
+                    reportBinding?.invoke(path, analysisOrder.size)
                     analyzePathInto(files, path, sources, previous, analysisInput, analysisSnapshot)
                 }
                 sweep++
@@ -405,29 +401,12 @@ open class LuaWorkspaceEngine(
                 }
             }
         }
-        // SPEC C: re-point every stored workspace context at ONE resolver over the final
-        // snapshot. Invariant: after this pass, every stored context's resolver sees the FINAL
-        // workspace state, never a mid-update map. Analysis builds one resolver per analyzed
-        // document over the in-progress analysis snapshot; left as-is, a session accumulates a
-        // resolver (plus its cold caches) per file per update, each pinning that update's
-        // intermediate view. Re-pointing is O(N) per update — every context is rebuilt once —
-        // but bounded by workspace size.
-        //
-        // The resolver itself reads documentFacts, export surfaces and binders, none of which
-        // re-pointing touches, so a resolver built over the pre-re-point assembly derives
-        // exactly what one built over the returned snapshot does. withWorkspaceImportEffects
-        // re-derives the active import set and falls back through baseResolve* — the
-        // resolver-independent engine lambdas captured when the context was first composed — so
-        // engine-level fallbacks survive the re-point: JvmWorkspaceEngine's resolveImportTarget
-        // captures classModuleProvider/configuration (never the resolver), and its
-        // resolveImportedSymbol captures the configured/source import map, so stripping the
-        // composed lambdas (which DO capture the stale per-document resolver) and recomposing
-        // against the final resolver loses nothing.
+        // Published models and checkers must read the same finalized dependency view.
+        // Only dirty documents receive new query state; unaffected immutable revisions
+        // retain their warmed model because the planner proved their inputs unchanged.
         val assembledSnapshot = baseSnapshot.copy(files = files.toMap())
-        val finalResolver = WorkspaceModuleResolver(assembledSnapshot) { candidate ->
-            cachedChunkFor(assembledSnapshot.files, candidate)
-        }
-        val repointedFiles = assembledSnapshot.files.mapValues { (_, fileSnapshot) ->
+        val finalResolver = createWorkspaceResolver(assembledSnapshot)
+        val repointedFiles = assembledSnapshot.files.mapValues { (path, fileSnapshot) ->
             val semanticFile = fileSnapshot.semanticFile ?: return@mapValues fileSnapshot
             val storedContext = semanticFile.snapshot.workspaceContext
             // withWorkspaceImportEffects early-returns without recomposing when currentPath is
@@ -443,13 +422,16 @@ open class LuaWorkspaceEngine(
                 resolveImportedSymbol = null,
                 resolveImportTarget = null
             ).withWorkspaceImportEffects()
+            val repointed = if (path in pathsToAnalyze) {
+                semanticPipeline.withWorkspaceContext(semanticFile.snapshot, repointedContext)
+            } else semanticFile.snapshot.copy(workspaceContext = repointedContext)
             fileSnapshot.copy(
                 semanticFile = WorkspaceSemanticFile(
                     path = semanticFile.path,
                     source = semanticFile.source,
                     chunk = semanticFile.chunk,
-                    model = semanticFile.model,
-                    snapshot = semanticFile.snapshot.copy(workspaceContext = repointedContext),
+                    model = repointed.model,
+                    snapshot = repointed,
                     recoveryDiagnostics = semanticFile.recoveryDiagnostics
                 )
             )
@@ -457,18 +439,7 @@ open class LuaWorkspaceEngine(
         return assembledSnapshot.copy(files = repointedFiles)
     }
 
-    /**
-     * Cheap, deterministic convergence fingerprint for the cycle re-analysis pass: per
-     * re-analyzed path, the semantic model's diagnostics count plus the evaluated value-type
-     * display names of the path's own global declarations. Those evaluated types are exactly
-     * what peers and consumers read through the module resolver, so the loop stops precisely
-     * when another sweep would re-derive the same semantic state. Built per call (never
-     * cached) so it always reflects the live [files] state. Declaration count and field
-     * length are capped — mirroring the provider fingerprint's (globalSymbolsFingerprint)
-     * pathological-file guards — so a >512-global SCC member cannot turn every convergence
-     * check into a full evaluation sweep; the caps only ever merge the tail of huge global
-     * surfaces, never the head, so the fixpoint comparison stays deterministic.
-     */
+    /** Complete evaluated global display state for the bounded SCC fixpoint sweeps. */
     private fun cycleReAnalysisFingerprint(
         paths: List<VirtualPath>,
         files: Map<VirtualPath, WorkspaceSnapshot.FileSnapshot>
@@ -486,13 +457,12 @@ open class LuaWorkspaceEngine(
                         .asSequence()
                         .filter { it.kind == DeclarationKind.GLOBAL && it.origin == DeclarationOrigin.AST }
                         .distinctBy { it.name }
-                        .take(CYCLE_REANALYSIS_DECLARATION_LIMIT)
                         .forEach { declaration ->
                             val anchor = declaration.anchorNode as? ExpressionNode ?: return@forEach
                             append('|')
-                            append(declaration.name.take(CYCLE_REANALYSIS_FIELD_LIMIT))
+                            append(declaration.name)
                             append('=')
-                            append(evaluator.evaluate(anchor).displayName.take(CYCLE_REANALYSIS_FIELD_LIMIT))
+                            append(evaluator.evaluate(anchor).displayName)
                         }
                 }
             }
@@ -510,7 +480,8 @@ open class LuaWorkspaceEngine(
         sources: Map<VirtualPath, String>,
         previous: WorkspaceSnapshot?,
         analysisInput: LuaWorkspaceInput,
-        analysisSnapshot: WorkspaceSnapshot
+        analysisSnapshot: WorkspaceSnapshot,
+        preparedBinder: BinderPassResult? = null
     ) {
         val fileSnapshot = files[path] ?: return
         val carriedOver = previous?.files?.get(path)?.semanticFile ?: fileSnapshot.semanticFile
@@ -518,10 +489,11 @@ open class LuaWorkspaceEngine(
         // the path; only fall back to an empty parse when there is nothing at all.
         val parsed = sources[path]?.let { source -> parseWorkspaceResult(path, source) }
         val chunk = parsed?.chunk ?: carriedOver?.chunk ?: parseWorkspaceSource("")
-        val semanticSnapshot = semanticPipeline.analyzeSnapshot(
-            chunk,
-            workspaceContext(analysisInput, path, analysisSnapshot)
-        )
+        val context = analysisStage("context", path) { workspaceContext(analysisInput, path, analysisSnapshot) }
+        val comments = documentRevisions.comments(path) { commentAttachPass.attach(chunk) }
+        val semanticSnapshot = analysisStage("semantic", path) {
+            semanticPipeline.analyzeSnapshot(chunk, context, checkDiagnostics, preparedBinder, comments)
+        }
         val semanticFile = WorkspaceSemanticFile(
             path = path,
             source = sources[path] ?: carriedOver?.source ?: "",
@@ -536,10 +508,9 @@ open class LuaWorkspaceEngine(
         // publicFingerprint copy here rather than in analyzeFile; the cycle re-analysis pass and
         // the update() pre-plan upsert pass both run through this same store, so every stored
         // snapshot ends up with the authoritative value for its final semantic state. The
-        // evaluator is the same expression evaluator the module resolver uses for provider
-        // globals, so the fingerprint tracks exactly what consumers re-bind through it.
+        // token range index captures complete source writes without invoking the evaluator.
         files[path] = fileSnapshot
-            .withGlobalSymbolsFingerprint(semanticSnapshot.binder.declarationIndex.declarations)
+            .withGlobalSymbolsFingerprint(path, semanticSnapshot.binder)
             .copy(semanticFile = semanticFile)
     }
 
@@ -550,11 +521,13 @@ open class LuaWorkspaceEngine(
      * and the update() pre-plan upsert pass so both join the value identically.
      */
     private fun WorkspaceSnapshot.FileSnapshot.withGlobalSymbolsFingerprint(
-        declarations: List<BinderDeclaration>
+        path: VirtualPath,
+        binder: BinderPassResult
     ): WorkspaceSnapshot.FileSnapshot = copy(
         publicFingerprint = (publicFingerprint
             ?: WorkspacePublicFingerprint.from(documentFacts, moduleExportSurface))
-            .copy(globalSymbolsFingerprint = globalSymbolsFingerprint(declarations))
+            .copy(globalSymbolsFingerprint = globalSymbolsFingerprint(binder.scopeGraph.globalWrites, documentRevisions.require(path).tokenFingerprint),
+                globalWriteNames = binder.scopeGraph.globalWriteNames)
     )
 
     private fun semanticAnalysisOrder(
@@ -613,30 +586,29 @@ open class LuaWorkspaceEngine(
      * one pass (`analyzeFile` here, provider discovery in the JVM engine). Memoizing them keeps
      * that to a single AST walk per document revision instead of one walk per consumer.
      */
-    private val documentFactsCache = mutableMapOf<VirtualPath, Pair<String, DocumentFacts>>()
-
     protected fun documentFacts(path: VirtualPath, source: String): DocumentFacts {
-        documentFactsCache[path]?.let { (cachedSource, facts) ->
-            if (cachedSource == source) {
-                return facts
-            }
+        val parsed = parseWorkspaceResult(path, source)
+        val revision = documentRevisions.require(path)
+        revision.facts?.let { return it }
+        val facts = analysisStage("facts", path) {
+            DocumentFactsCollector.collect(path, parsed.chunk)
         }
-        val facts = DocumentFactsCollector.collect(path, parseWorkspaceSource(path, source))
-        documentFactsCache[path] = source to facts
+        revision.facts = facts
         return facts
     }
 
     /** Drops per-path caches for documents that left the workspace. */
     private fun retainCachedDocuments(paths: Set<VirtualPath>) {
-        parsedChunks.keys.retainAll(paths)
-        documentFactsCache.keys.retainAll(paths)
+        documentRevisions.retain(paths)
     }
 
     private fun analyzeFile(path: VirtualPath, source: String): WorkspaceSnapshot.FileSnapshot {
         val chunk = parseWorkspaceSource(path, source)
         val facts = documentFacts(path, source)
         val legacyEnvironment = LegacyModuleEnvironmentPass.analyze(path, facts)
-        val exportSurface = ModuleExportCollector.collect(chunk, facts, legacyEnvironment)
+        val exportSurface = analysisStage("exports", path) {
+            ModuleExportCollector.collect(chunk, facts, legacyEnvironment)
+        }
         val publicTypeAnnotations = source.lineSequence()
             .map(String::trim)
             .filter { it.startsWith("---@") }
@@ -644,7 +616,7 @@ open class LuaWorkspaceEngine(
         val publicFingerprint = WorkspacePublicFingerprint.from(facts, exportSurface, publicTypeAnnotations)
 
         return WorkspaceSnapshot.FileSnapshot(
-            cacheKey = workspaceFingerprintHash(source),
+            cacheKey = documentRevisions.require(path).fingerprint,
             documentFacts = facts,
             factsSignature = graphReuseRangeSignature(facts),
             legacyModuleEnvironment = legacyEnvironment,
@@ -695,7 +667,42 @@ open class LuaWorkspaceEngine(
      * Keyed by path rather than by source text: AST nodes carry mutable `parent`/`range`, so
      * two distinct documents that happen to hold identical text must never share a chunk.
      */
-    private val parsedChunks = mutableMapOf<VirtualPath, Pair<String, LuaParseResult>>()
+    private val documentRevisions = DocumentRevisionStore()
+
+    private fun prepareDocumentParses(sources: Map<VirtualPath, String>) {
+        val missing = sources.keys.filterNot { documentRevisions.matches(it, sources.getValue(it)) }.sortedBy { it.value }
+        if (missing.size < 2) {
+            missing.forEach { parseWorkspaceResult(it, sources.getValue(it)) }
+            return
+        }
+        val parsed = mapIndependentDocuments(missing) { path ->
+            analysisStage("parse-file", path) {
+                parseWorkspaceResult(sources.getValue(path), parserFactory(parserVersion))
+            }
+        }
+        // Only the engine owner mutates the cache; workers own their parser and AST.
+        missing.zip(parsed).forEach { (path, result) -> documentRevisions.put(path, sources.getValue(path), result) }
+    }
+
+    private fun prepareBindings(
+        paths: List<VirtualPath>,
+        sources: Map<VirtualPath, String>,
+        overlay: BuiltinOverlaySnapshot
+    ): Map<VirtualPath, BinderPassResult> {
+        val chunks = paths.associateWith { parseWorkspaceResult(it, sources.getValue(it)).chunk }
+        return paths.zip(mapIndependentDocuments(paths) { path ->
+            // TypeResolver has mutable per-pass state; never share it between workers.
+            analysisStage("binding", path) {
+                val comments = documentRevisions.comments(path) {
+                    commentAttachPass.attach(chunks.getValue(path))
+                }
+                // TypeResolver owns mutable per-pass expansion state. Keep the revision inputs
+                // shared, but give each bounded worker its own pipeline instance.
+                SemanticPipeline(commentAttachPass = commentAttachPass)
+                    .bindForGlobalFingerprint(chunks.getValue(path), overlay.globals, comments)
+            }
+        }).toMap()
+    }
 
     protected fun parseWorkspaceSource(path: VirtualPath, source: String): ChunkNode =
         parseWorkspaceResult(path, source).chunk
@@ -708,20 +715,19 @@ open class LuaWorkspaceEngine(
      */
     protected fun cachedChunkFor(files: Map<VirtualPath, WorkspaceSnapshot.FileSnapshot>, path: VirtualPath): ChunkNode? {
         val fileSnapshot = files[path] ?: return null
-        val cached = parsedChunks[path] ?: return null
-        val (source, result) = cached
-        return if (workspaceFingerprintHash(source) == fileSnapshot.cacheKey) result.chunk else null
+        val cached = documentRevisions[path] ?: return null
+        return if (cached.fingerprint == fileSnapshot.cacheKey) cached.parsed.chunk else null
     }
 
     /** Cached parse for [path], including the recovery diagnostics the chunk was produced with. */
     private fun parseWorkspaceResult(path: VirtualPath, source: String): LuaParseResult {
-        parsedChunks[path]?.let { (cachedSource, result) ->
-            if (cachedSource == source) {
-                return result
+        documentRevisions[path]?.let { revision ->
+            if (revision.source == source) {
+                return revision.parsed
             }
         }
-        val result = parseWorkspaceResult(source)
-        parsedChunks[path] = source to result
+        val result = analysisStage("parse-file", path) { parseWorkspaceResult(source) }
+        documentRevisions.put(path, source, result)
         return result
     }
 
@@ -736,8 +742,7 @@ open class LuaWorkspaceEngine(
     private fun activeParser(): LuaParser =
         activeParser ?: parserFactory(parserVersion).also { activeParser = it }
 
-    private fun parseWorkspaceResult(source: String): LuaParseResult {
-        val parser = activeParser()
+    private fun parseWorkspaceResult(source: String, parser: LuaParser = activeParser()): LuaParseResult {
         return try {
             parser.parseWorkspaceSnippetWithDiagnostics(source)
         } catch (error: IllegalStateException) {
@@ -782,27 +787,20 @@ open class LuaWorkspaceEngine(
          */
         const val MAX_CYCLE_REANALYSIS_PASSES = 3
 
-        /**
-         * Caps for the cycle re-analysis fingerprint ([cycleReAnalysisFingerprint]), mirroring
-         * the provider fingerprint's caps (GLOBAL_FINGERPRINT_DECLARATION_LIMIT /
-         * GLOBAL_FINGERPRINT_FIELD_LIMIT in WorkspacePublicFingerprint).
-         */
-        const val CYCLE_REANALYSIS_DECLARATION_LIMIT = 512
-        const val CYCLE_REANALYSIS_FIELD_LIMIT = 256
     }
 
-    private fun reportBindingProgress(
-        affectedDocuments: List<VirtualPath>,
+    private fun bindingReporter(
         changedFileCount: Int,
         totalFiles: Int,
         reporter: ProgressReporter
-    ) {
-        affectedDocuments.forEachIndexed { index, path ->
+    ): ((VirtualPath, Int) -> Unit)? {
+        if (reporter === ProgressReporter.NONE) return null
+        return { path, completed ->
             reporter.report(
                 AnalysisProgress(
                     phase = AnalysisProgress.Phase.BINDING,
                     currentFile = path,
-                    completedFiles = changedFileCount + index + 1,
+                    completedFiles = changedFileCount + completed,
                     totalFiles = totalFiles
                 )
             )

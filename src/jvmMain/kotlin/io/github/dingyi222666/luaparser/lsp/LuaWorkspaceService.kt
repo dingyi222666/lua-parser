@@ -36,8 +36,6 @@ class LuaWorkspaceService(
             }
             workspaceMetadata = metadata.toMap()
             languageService.setWorkspaceMetadata(workspaceMetadata)
-            // Mounted Android surfaces depend on configuration; shared caches rebuild warm.
-            io.github.dingyi222666.luaparser.semantic.checker.invalidateSharedSurfaceCaches()
         }
         onConfigurationChanged()
     }

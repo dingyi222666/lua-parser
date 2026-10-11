@@ -36,7 +36,7 @@ import io.github.dingyi222666.luaparser.semantic.types.model.UnknownType
  *   descriptors (B/S/I/J/F/D) and boxed numeric wrappers map to
  *   [PrimitiveType.NUMBER], Z/[Boolean] to [PrimitiveType.BOOLEAN],
  *   C plus String/CharSequence-family object types to [PrimitiveType.STRING],
- *   V to [PrimitiveType.NIL]; every other `L...;` descriptor becomes a
+ *   V to [PrimitiveType.VOID]; every other `L...;` descriptor becomes a
  *   [JavaInstanceType] over a name-only [JavaClassType] shell.
  * - [JvmClassModuleProvider.shallowJavaClassTypeFor] super/interface policy:
  *   superclasses and interfaces are always shallow, name-only type references.
@@ -57,6 +57,36 @@ import io.github.dingyi222666.luaparser.semantic.types.model.UnknownType
  * [toJavaClassType]'s `dexClasses` parameter) — everything else stays a shell.
  */
 object DexClassModelAdapter {
+    private fun <K, V> boundedCache(limit: Int): MutableMap<K, V> = java.util.Collections.synchronizedMap(
+        object : LinkedHashMap<K, V>(16, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<K, V>?): Boolean = size > limit
+        }
+    )
+
+    private class DexSetKey(val classes: Collection<DexClass>) {
+        override fun equals(other: Any?): Boolean = other is DexSetKey && classes === other.classes
+        override fun hashCode(): Int = System.identityHashCode(classes)
+    }
+
+    private class ClassIdentity(val cls: DexClass) {
+        override fun equals(other: Any?): Boolean = other is ClassIdentity && cls === other.cls
+        override fun hashCode(): Int = System.identityHashCode(cls)
+    }
+
+    private class DexIndex(classes: Collection<DexClass>) : Map<String, DexClass> by classes.associateBy(DexClass::binaryName) {
+        // Index the complete nesting relation once per metadata revision. Each class lookup
+        // then visits its actual direct children, not the entire framework catalog.
+        val directChildren = classes.filter { '$' in it.binaryName }
+            .groupBy { it.binaryName.substringBeforeLast('$') }
+        val referenceTypes = java.util.concurrent.ConcurrentHashMap<String, JavaClassType>()
+        val classTypes = boundedCache<ClassIdentity, JavaClassType>(128)
+        val moduleTypes = boundedCache<Pair<ClassIdentity, Boolean>, ModuleType>(128)
+    }
+
+    private val dexIndexes = boundedCache<DexSetKey, DexIndex>(8)
+
+    private fun dexIndex(classes: Collection<DexClass>): DexIndex =
+        dexIndexes.computeIfAbsent(DexSetKey(classes)) { DexIndex(classes) }
     // dalvik/dex access flags (cf. java.lang.reflect.Modifier values they mirror).
     private const val ACC_PUBLIC = 0x0001
     private const val ACC_PROTECTED = 0x0004
@@ -65,9 +95,6 @@ object DexClassModelAdapter {
     private const val ACC_VARARGS = 0x0080
     private const val ACC_SYNTHETIC = 0x1000
     private const val ACC_CONSTRUCTOR = 0x10000
-
-    /** Mirrors [JvmClassModuleProvider] `MAX_REFLECTED_INNER_CLASS_DEPTH`. */
-    private const val MAX_INNER_CLASS_DEPTH = 1
 
     /**
      * Lua std module names a nested-class simple name must never claim bare
@@ -83,49 +110,22 @@ object DexClassModelAdapter {
      * With an empty [dexClasses] every `L...;` member reference is a
      * name-only shell. With a dex set, `L...;` references whose binary name
      * is present in [dexClasses] hydrate member-carrying surfaces
-     * transitively over the same-dex reference graph; cyclic references
-     * degrade to shells at the repeated key (resolving-stack cycle guard).
+     * for direct references; deeper and cyclic references remain shells.
      * Super/interface edges stay name-only references in both modes.
      */
-    private val javaClassTypeMemo = java.util.concurrent.ConcurrentHashMap<String, JavaClassType>()
+    fun toJavaClassType(cls: DexClass, dexClasses: Collection<DexClass> = emptyList()): JavaClassType =
+        fullClassType(cls, dexIndex(dexClasses))
 
-    fun toJavaClassType(cls: DexClass, dexClasses: Collection<DexClass> = emptyList()): JavaClassType {
-        // Memoize per (class, dex-set identity): surface building walks the dex
-        // parent chain and costs seconds on-device for framework classes.
-        val key = cls.binaryName + "#" + System.identityHashCode(dexClasses)
-        return javaClassTypeMemo.computeIfAbsent(key) {
-            javaClassTypeFor(
-                cls = cls,
-                dexByName = dexClasses.associateBy(DexClass::binaryName),
-                resolving = emptySet(),
-                referenceDepth = 0
-            )
+    private fun fullClassType(cls: DexClass, index: DexIndex): JavaClassType =
+        index.classTypes.computeIfAbsent(ClassIdentity(cls)) {
+            javaClassTypeFor(cls, index, resolving = emptySet(), referenceDepth = 0)
         }
-    }
 
-    /**
-     * Per-class ModuleType memo: building a framework class surface (hundreds of
-     * reflected-style members from the dex) costs seconds on a phone; every
-     * completion/hover over a dex-typed value re-requests the same class. Keyed
-     * by binary name; surfaces are immutable so sharing is safe.
-     */
     fun cachedModuleType(cls: DexClass, dexClasses: Collection<DexClass>): ModuleType =
         toModuleType(cls, dexClasses)
 
-    /**
-     * Adapt one dex class into the provider-shaped module table:
-     * `__class` (instance shell), `__call` (when constructors exist), public
-     * static field values, static method overloads, and direct inner classes
-     * from [dexClasses] keyed by simple name (depth-1 policy).
-     */
-    private val moduleTypeMemo = java.util.concurrent.ConcurrentHashMap<String, ModuleType>()
-
-    fun toModuleType(cls: DexClass, dexClasses: Collection<DexClass> = emptyList()): ModuleType {
-        val key = cls.binaryName + "#" + System.identityHashCode(dexClasses)
-        return moduleTypeMemo.computeIfAbsent(key) {
-            toModuleType(cls, dexClasses.associateBy(DexClass::binaryName), innerClassDepth = 0)
-        }
-    }
+    fun toModuleType(cls: DexClass, dexClasses: Collection<DexClass> = emptyList()): ModuleType =
+        toModuleType(cls, dexIndex(dexClasses), includeInnerModules = true)
 
     /**
      * Translate a single field/method descriptor into the parser type model.
@@ -136,6 +136,12 @@ object DexClassModelAdapter {
     fun descriptorToType(descriptor: String): Type {
         return descriptorToType(descriptor, emptyMap(), emptySet(), referenceDepth = 0)
     }
+
+    /** Name catalog entry; member queries resolve the complete provider on demand. */
+    internal fun shellModuleType(cls: DexClass): ModuleType = ModuleType(
+        moduleName = moduleSimpleNameFor(cls),
+        fields = mapOf("__class" to JavaInstanceType(typeReferenceForBinaryName(cls.binaryName)))
+    )
 
     /**
      * Build the [JavaTypeName] for a raw dex binary name, splitting `$`-joined
@@ -193,7 +199,7 @@ object DexClassModelAdapter {
         val memberResolving = resolving + clsKey
         // Bounded surface: the requested class gets full members; member TYPES
         // resolve one level deeper only (dex hydration of every transitively
-        // referenced class cost minutes on-device). Depth >= 1 in-set
+        // referenced class cost minutes on-device). Depth > 1 in-set
         // references become name-only shells.
         val memberDepth = referenceDepth + 1
         val constructors = JavaOverloadSet(constructorTypesFor(cls, javaName, dexByName, memberResolving, memberDepth))
@@ -278,20 +284,9 @@ object DexClassModelAdapter {
      * policy: grandchildren (`Outer$Inner$Deep`) never appear.
      */
     private fun innerClassTypeReferencesFor(cls: DexClass, dexByName: Map<String, DexClass>): Map<String, JavaClassType> {
-        val prefix = cls.binaryName + "$"
-        val innerClasses = linkedMapOf<String, JavaClassType>()
-        dexByName.forEach { (binaryName, inner) ->
-            if (!binaryName.startsWith(prefix)) {
-                return@forEach
-            }
-            val relativeName = binaryName.removePrefix(prefix)
-            // Direct children only: the remaining segment must not nest further.
-            if ('$' in relativeName || relativeName.isBlank()) {
-                return@forEach
-            }
-            innerClasses[relativeName] = typeReferenceForBinaryName(binaryName)
-        }
-        return innerClasses.toSortedMap()
+        return (dexByName as DexIndex).directChildren[cls.binaryName].orEmpty()
+            .associate { child -> child.binaryName.substringAfterLast('$') to typeReferenceForBinaryName(child.binaryName) }
+            .toSortedMap()
     }
 
     private fun constructorTypesFor(
@@ -327,47 +322,29 @@ object DexClassModelAdapter {
         }
     }
 
-    private fun toModuleType(
-        cls: DexClass,
-        dexByName: Map<String, DexClass>,
-        innerClassDepth: Int
-    ): ModuleType {
-        val classType = javaClassTypeFor(cls, dexByName, resolving = emptySet(), referenceDepth = 0)
+    private fun toModuleType(cls: DexClass, index: DexIndex, includeInnerModules: Boolean): ModuleType {
+        val key = ClassIdentity(cls) to includeInnerModules
+        index.moduleTypes[key]?.let { return it }
+        val classType = fullClassType(cls, index)
         val fields = linkedMapOf<String, Type>("__class" to JavaInstanceType(classType))
         val methods = linkedMapOf<String, Type>()
-
-        if (classType.constructors.isNotEmpty) {
-            fields["__call"] = classType
-        }
-
-        // Public/protected static field values as raw module fields (File.separator,
-        // TextView.VISIBLE shape), static method overloads as module methods —
-        // the classModuleTypeFor layout.
+        if (classType.constructors.isNotEmpty) fields["__call"] = classType
         classType.staticMembers.forEach { (name, member) ->
             when (member.memberKind) {
                 JavaMemberKind.FIELD -> fields[name] = member.valueType
                 JavaMemberKind.METHOD -> methods[name] = member.valueType
             }
         }
-
-        if (innerClassDepth < MAX_INNER_CLASS_DEPTH) {
-            dexByName.forEach { (binaryName, _) ->
-                if (!binaryName.startsWith(cls.binaryName + "$")) {
-                    return@forEach
-                }
-                val relativeName = binaryName.removePrefix(cls.binaryName + "$")
-                if ('$' in relativeName || relativeName.isBlank()) {
-                    return@forEach
-                }
-                fields[relativeName] = toModuleType(dexByName.getValue(binaryName), dexByName, innerClassDepth + 1)
+        if (includeInnerModules) {
+            index.directChildren[cls.binaryName].orEmpty().forEach { child ->
+                fields[child.binaryName.substringAfterLast('$')] =
+                    toModuleType(child, index, includeInnerModules = false)
             }
         }
-
-        return ModuleType(
-            moduleName = moduleSimpleNameFor(cls),
-            fields = fields,
-            methods = methods
-        )
+        val module = ModuleType(moduleName = moduleSimpleNameFor(cls), fields = fields, methods = methods)
+        // Build child wrappers before publishing. The revision's bounded cache retains
+        // one winner under concurrent queries without a recursive map computation.
+        return index.moduleTypes.putIfAbsent(key, module) ?: module
     }
 
     /**
@@ -472,7 +449,7 @@ object DexClassModelAdapter {
      * Primitive descriptors mirror [JvmClassModuleProvider] `javaClassToType`:
      * B/S/I/J/F/D (and boxed numeric wrappers on the `L` branch) map to
      * [PrimitiveType.NUMBER], Z to [PrimitiveType.BOOLEAN], C to
-     * [PrimitiveType.STRING], V to [PrimitiveType.NIL]; String and the
+     * [PrimitiveType.STRING], V to [PrimitiveType.VOID]; String and the
      * CharSequence family stay [PrimitiveType.STRING] on the `L` branch so dex
      * strings behave exactly like reflected android.jar strings. Every other
      * `L<binary>;` becomes [JavaInstanceType] over a name-only shell — or, when
@@ -485,7 +462,7 @@ object DexClassModelAdapter {
      * (normalized via [binaryNameKey]): a descriptor whose key is already on
      * the stack degrades to a shell, so self-referential and
      * mutually-referential dex classes terminate. Hydration is bounded:
-     * depth 0 carries full members; depth >= 1 dex-class references are
+     * the requested class and its direct references carry members; deeper references are
      * member-less shells (transitive hydration cost minutes on-device).
      */
     private fun descriptorToType(
@@ -501,7 +478,7 @@ object DexClassModelAdapter {
             'B', 'S', 'I', 'J', 'F', 'D' -> PrimitiveType.NUMBER
             'Z' -> PrimitiveType.BOOLEAN
             'C' -> PrimitiveType.STRING
-            'V' -> PrimitiveType.NIL
+            'V' -> PrimitiveType.VOID
             'L' -> {
                 if (!descriptor.endsWith(";")) {
                     return UnknownType
@@ -562,21 +539,26 @@ object DexClassModelAdapter {
             ?: dexByName[binaryNameKey(binaryName)]
             ?: dexByName[binaryName.replace('.', '/')]
             ?: return JavaInstanceType(shell)
-        // Same-dex-set references carry their member surface, but only at
-        // depth 0 (the directly-requested class). Deeper references get
+        // Direct same-dex-set references carry their member surface. Deeper references get
         // name-only shells: transitive hydration walked the entire 929-class
         // reference graph on-device (minutes per cold build) and the memo
         // makes repeated requests cheap anyway. Cycle guard still applies.
-        if (referenceDepth > 0) {
+        if (referenceDepth > 1) {
             return JavaInstanceType(shell)
         }
-        return JavaInstanceType(
+        val referenceType = if (dexByName is DexIndex) {
+            dexByName.referenceTypes.computeIfAbsent(binaryNameKey(binaryName)) {
+                javaClassTypeFor(cls = dexClass, dexByName = dexByName,
+                    resolving = emptySet(), referenceDepth = 1)
+            }
+        } else {
             javaClassTypeFor(
                 cls = dexClass,
                 dexByName = dexByName,
                 resolving = resolving,
                 referenceDepth = 1
             )
-        )
+        }
+        return JavaInstanceType(referenceType)
     }
 }

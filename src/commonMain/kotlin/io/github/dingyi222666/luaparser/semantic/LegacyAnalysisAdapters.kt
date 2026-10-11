@@ -322,7 +322,8 @@ private fun resolveAssignmentDeclaredType(
 
 private fun resolveSimpleInlineType(snapshot: SemanticPipelineSnapshot, text: String): ModelType? {
     return when (text) {
-        "nil", "void" -> io.github.dingyi222666.luaparser.semantic.types.model.PrimitiveType.NIL
+        "void" -> io.github.dingyi222666.luaparser.semantic.types.model.PrimitiveType.VOID
+        "nil" -> io.github.dingyi222666.luaparser.semantic.types.model.PrimitiveType.NIL
         "boolean", "bool" -> io.github.dingyi222666.luaparser.semantic.types.model.PrimitiveType.BOOLEAN
         "number", "integer" -> io.github.dingyi222666.luaparser.semantic.types.model.PrimitiveType.NUMBER
         "string" -> io.github.dingyi222666.luaparser.semantic.types.model.PrimitiveType.STRING

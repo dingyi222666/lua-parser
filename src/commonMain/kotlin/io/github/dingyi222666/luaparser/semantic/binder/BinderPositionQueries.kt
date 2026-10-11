@@ -11,12 +11,27 @@ class BinderPositionQueries(
     private val declarationIndex: DeclarationIndex
 ) {
 
-    private val scopeDepths: Map<ScopeId, Int> = buildScopeDepths(scopeGraph)
-    private val declarationOrders: Map<DeclarationId, Int> = declarationIndex.declarations
-        .mapIndexed { index, declaration -> declaration.id to index }
-        .toMap()
+    // Build a scope's name index on first use. Eagerly grouping every declaration
+    // made the first Android completion walk the entire builtin/binder surface.
+    private val valuesByScopeAndName = scopeGraph.scopes.associate { scope ->
+        scope.id to lazy {
+            scope.declarationIds.asReversed().asSequence()
+                .mapNotNull(declarationIndex::getDeclaration)
+                .filter { it.kind.namespace == DeclarationNamespace.VALUE }
+                .groupBy(BinderDeclaration::name)
+        }
+    }
 
-    private val scopeIndex = PositionRangeIndex(
+    internal fun valueDeclarationsInScope(scopeId: ScopeId, name: String): List<BinderDeclaration> {
+        return valuesByScopeAndName[scopeId]?.value?.get(name).orEmpty()
+    }
+
+    private val scopeDepths by lazy { buildScopeDepths(scopeGraph) }
+    private val declarationOrders by lazy {
+        declarationIndex.declarations.mapIndexed { index, declaration -> declaration.id to index }.toMap()
+    }
+
+    private val scopeIndex by lazy { PositionRangeIndex(
         scopeGraph.scopes.mapIndexed { index, scope ->
             PositionRangeIndex.Entry(
                 range = scope.range,
@@ -24,9 +39,9 @@ class BinderPositionQueries(
                 stableOrder = index
             )
         }
-    )
+    ) }
 
-    private val declarationIndexByPosition = PositionRangeIndex(
+    private val declarationIndexByPosition by lazy { PositionRangeIndex(
         declarationIndex.declarations.mapIndexed { index, declaration ->
             PositionRangeIndex.Entry(
                 range = declaration.range,
@@ -34,12 +49,11 @@ class BinderPositionQueries(
                 stableOrder = index
             )
         }
-    )
+    ) }
 
     fun getScopeAt(position: Position): Scope? {
         return scopeIndex.query(position)
-            .sortedWith(::compareScopesAtPosition)
-            .firstOrNull()
+            .minWithOrNull(::compareScopesAtPosition)
     }
 
     /**

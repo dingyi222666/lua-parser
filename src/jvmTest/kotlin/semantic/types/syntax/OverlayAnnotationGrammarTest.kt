@@ -57,12 +57,9 @@ class OverlayAnnotationGrammarTest {
     }
 
     @Test
-    fun `no-return function type defaults to nil`() {
+    fun `no-return function type defaults to void`() {
         val parsed = assertIs<FunctionTypeSyntax>(TypeSyntaxParser.parse("fun(message: any)"))
-        // Matches what the deleted legacy parser produced for an omitted return annotation.
-        // Note the explicit `: nil` spelling parses as LiteralTypeSyntax instead; that asymmetry
-        // predates this merge and both resolve to a nil-typed return.
-        assertEquals(NamedTypeSyntax("nil"), parsed.returnType)
+        assertEquals(NamedTypeSyntax("void"), parsed.returnType)
         assertEquals(1, parsed.parameters.size)
     }
 

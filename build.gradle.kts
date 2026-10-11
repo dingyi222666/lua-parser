@@ -216,7 +216,10 @@ tasks.named("mingwX64Test") {
 
 // Parallel JVM tests: soft maxParallelForks=5; Windows CI hard-caps CPU via affinity script
 tasks.withType<Test>().configureEach {
-    maxParallelForks = 5
+    maxParallelForks = providers.gradleProperty("jvmTestForks")
+        .map(String::toInt).orElse(5).get().coerceAtLeast(1)
+    forkEvery = providers.gradleProperty("jvmTestForkEvery")
+        .map(String::toLong).orElse(0L).get()
     // Avoid one hung suite blocking the whole fork forever without bound
     // (individual tests still use JUnit defaults unless annotated)
     // Android.jar interop suites mount real class hierarchies per service instance

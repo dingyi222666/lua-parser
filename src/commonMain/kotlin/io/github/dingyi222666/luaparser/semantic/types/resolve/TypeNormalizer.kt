@@ -15,7 +15,6 @@ import io.github.dingyi222666.luaparser.semantic.types.model.JavaInstanceMemberT
 import io.github.dingyi222666.luaparser.semantic.types.model.JavaSignatureMetadata
 import io.github.dingyi222666.luaparser.semantic.types.model.JavaInstanceType
 import io.github.dingyi222666.luaparser.semantic.types.model.JavaMemberType
-import io.github.dingyi222666.luaparser.semantic.types.model.JavaOverloadSet
 import io.github.dingyi222666.luaparser.semantic.types.model.JavaOverloadType
 import io.github.dingyi222666.luaparser.semantic.types.model.JavaPrimitiveType
 import io.github.dingyi222666.luaparser.semantic.types.model.JavaStaticMemberType
@@ -105,9 +104,12 @@ object TypeNormalizer {
         is MultiReturnType -> MultiReturnType(type.types.map { normalize(it, aliasStack) })
         is VarargType -> VarargType(normalize(type.elementType, aliasStack))
         is ArrayType -> ArrayType(normalize(type.elementType, aliasStack))
-        is JavaClassType -> normalizeJavaClass(type, aliasStack)
+        // A Java class is a nominal provider-owned definition, not a structural Lua type.
+        // Normalize the selected member signature at its use site; walking every method's
+        // referenced classes here repeatedly expands the entire shared framework graph.
+        is JavaClassType -> type
         is JavaInstanceType -> JavaInstanceType(
-            classType = normalize(type.classType, aliasStack) as JavaClassType,
+            classType = type.classType,
             typeArguments = type.typeArguments.map { normalize(it, aliasStack) },
             javaName = type.javaName
         )
@@ -184,21 +186,6 @@ object TypeNormalizer {
         return earlier.zip(later).all { (earlierParameter, laterParameter) ->
             TypeRelations.isAssignableForOverloadSubsumption(earlierParameter.type, laterParameter.type)
         }
-    }
-
-    private fun normalizeJavaClass(type: JavaClassType, aliasStack: MutableList<AliasType>): JavaClassType {
-        return JavaClassType(
-            javaName = type.javaName,
-            constructors = JavaOverloadSet(
-                type.constructors.overloads.map { normalize(it, aliasStack) as JavaConstructorType }
-            ),
-            staticMembers = type.staticMembers.mapValues { (_, member) -> normalize(member, aliasStack) as JavaStaticMemberType },
-            instanceMembers = type.instanceMembers.mapValues { (_, member) -> normalize(member, aliasStack) as JavaInstanceMemberType },
-            innerClasses = type.innerClasses.mapValues { (_, innerClass) -> normalize(innerClass, aliasStack) as JavaClassType },
-            superClass = type.superClass?.let { normalize(it, aliasStack) as JavaClassType },
-            interfaces = type.interfaces.map { normalize(it, aliasStack) as JavaClassType },
-            typeParameters = type.typeParameters.map { normalizeTypeParameter(it, aliasStack) }
-        )
     }
 
     private fun normalizeAlias(type: AliasType, aliasStack: MutableList<AliasType>): Type {
@@ -404,6 +391,7 @@ object TypeNormalizer {
     }
 
     private fun canonicalizePrimitive(type: PrimitiveType): Type = when (type.kind) {
+        PrimitiveType.Kind.VOID -> PrimitiveType.VOID
         PrimitiveType.Kind.NIL -> PrimitiveType.NIL
         PrimitiveType.Kind.BOOLEAN -> PrimitiveType.BOOLEAN
         PrimitiveType.Kind.NUMBER -> PrimitiveType.NUMBER
@@ -419,6 +407,7 @@ object TypeNormalizer {
     }
 
     private fun canonicalizeLiteralBaseType(type: PrimitiveType): PrimitiveType = when (type.kind) {
+        PrimitiveType.Kind.VOID -> PrimitiveType.VOID
         PrimitiveType.Kind.NIL -> PrimitiveType.NIL
         PrimitiveType.Kind.BOOLEAN -> PrimitiveType.BOOLEAN
         PrimitiveType.Kind.NUMBER -> PrimitiveType.NUMBER

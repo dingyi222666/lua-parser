@@ -45,47 +45,25 @@ data class JavaClassType(
     override val callSignatures: List<FunctionType>
         get() = constructors.overloads.map { constructor ->
             constructor.signature.withReturnType(JavaInstanceType(this))
-        }.ifEmpty {
-            listOf(FunctionType(returnType = JavaInstanceType(this)))
         }
 
     override val displayName: String
         get() = javaName.canonicalName
 
-    private companion object {
-        // Flattened hierarchy maps are deterministic per instance identity of the member
-        // maps: copies made by with*Surface/copy() share the same member map references
-        // and therefore the same cache entry, so re-flattening the whole hierarchy per
-        // evaluation (hundreds of members x hundreds of lookups) disappears.
-        private val flattenCache = HashMap<String, Any>()
-    }
-
-    private fun <T> flattenCached(kind: String, compute: () -> T): T {
-        val key = javaName.binaryName + '#' + kind +
-            '#' + System.identityHashCode(instanceMembers) +
-            '#' + System.identityHashCode(staticMembers) +
-            '#' + System.identityHashCode(innerClasses) +
-            '#' + System.identityHashCode(superClass) +
-            '#' + System.identityHashCode(interfaces) +
-            '#' + typeParameters.hashCode()
-        @Suppress("UNCHECKED_CAST")
-        val cached = flattenCache[key] as? T
-        if (cached != null) {
-            return cached
-        }
-        val computed = compute()
-        flattenCache[key] = computed as Any
-        return computed
-    }
+    // These maps belong to this immutable type. A process-wide cache retained
+    // obsolete workspace graphs indefinitely and collided on identity hashes.
+    private val flattenedStatics by lazy { collectStaticMembers(linkedSetOf()) }
+    private val flattenedInstances by lazy { collectInstanceMembers(linkedSetOf()) }
+    private val flattenedInnerClasses by lazy { collectInnerClasses(linkedSetOf()) }
 
     fun allStaticMembers(): Map<String, JavaStaticMemberType> =
-        flattenCached("S") { collectStaticMembers(linkedSetOf()) }
+        flattenedStatics
 
     fun allInstanceMembers(): Map<String, JavaInstanceMemberType> =
-        flattenCached("I") { collectInstanceMembers(linkedSetOf()) }
+        flattenedInstances
 
     fun allInnerClasses(): Map<String, JavaClassType> =
-        flattenCached("C") { collectInnerClasses(linkedSetOf()) }
+        flattenedInnerClasses
 
     private fun collectStaticMembers(visited: MutableSet<String>): Map<String, JavaStaticMemberType> {
         if (!visited.add(javaName.binaryName)) {
@@ -259,7 +237,7 @@ data class JavaOverloadType(
     override val name: String = "${javaName.canonicalName}.$overloadName"
 ) : JavaInteropType, CallableType {
     override val displayName: String
-        get() = callSignatures.joinToString(" & ") { it.displayName }
+        get() = callableSummary(callSignatures)
 }
 
 data class JavaPrimitiveType(

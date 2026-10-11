@@ -1,5 +1,8 @@
 package io.github.dingyi222666.luaparser.semantic.model
 
+import io.github.dingyi222666.luaparser.parser.compactCallBase
+import io.github.dingyi222666.luaparser.parser.compactCallArguments
+
 import io.github.dingyi222666.luaparser.parser.ast.node.AssignmentStatement
 import io.github.dingyi222666.luaparser.parser.ast.node.BaseASTNode
 import io.github.dingyi222666.luaparser.parser.ast.node.BlockNode
@@ -17,49 +20,37 @@ import io.github.dingyi222666.luaparser.parser.ast.node.StringCallExpression
 import io.github.dingyi222666.luaparser.semantic.api.ParameterInformation
 import io.github.dingyi222666.luaparser.semantic.api.SignatureHelp
 import io.github.dingyi222666.luaparser.semantic.api.SignatureInformation
+import io.github.dingyi222666.luaparser.semantic.SemanticWorkspaceContext
 import io.github.dingyi222666.luaparser.semantic.binder.BinderDeclaration
 import io.github.dingyi222666.luaparser.semantic.binder.BinderPassResult
-import io.github.dingyi222666.luaparser.semantic.binder.DeclarationKind
-import io.github.dingyi222666.luaparser.semantic.binder.DeclarationNamespace
-import io.github.dingyi222666.luaparser.semantic.binder.DeclarationOrigin
-import io.github.dingyi222666.luaparser.semantic.binder.DeclarationOwner
 import io.github.dingyi222666.luaparser.semantic.binder.ScopeId
 import io.github.dingyi222666.luaparser.semantic.binder.comparePositions
-import io.github.dingyi222666.luaparser.semantic.binder.isChunkGlobalFunctionDeclaration
 import io.github.dingyi222666.luaparser.semantic.binder.rangeContains
 import io.github.dingyi222666.luaparser.semantic.checker.CallChecker
 import io.github.dingyi222666.luaparser.semantic.checker.CallResolution
 import io.github.dingyi222666.luaparser.semantic.checker.ExpressionTypeEvaluator
-import io.github.dingyi222666.luaparser.semantic.checker.MemberResolver
-import io.github.dingyi222666.luaparser.semantic.checker.ValueSequence
-import io.github.dingyi222666.luaparser.semantic.checker.isColonMethodDeclaration
-import io.github.dingyi222666.luaparser.semantic.checker.resolveOwningFunctionDeclaration
-import io.github.dingyi222666.luaparser.semantic.comments.GenericTagSyntax
-import io.github.dingyi222666.luaparser.semantic.comments.ParamTagSyntax
+import io.github.dingyi222666.luaparser.semantic.checker.hydrateJavaProviderType
+import io.github.dingyi222666.luaparser.semantic.types.model.AliasType
+import io.github.dingyi222666.luaparser.semantic.types.model.IntersectionType
+import io.github.dingyi222666.luaparser.semantic.types.model.UnionType
+import io.github.dingyi222666.luaparser.semantic.types.model.ModuleType
+import io.github.dingyi222666.luaparser.semantic.types.model.AppliedType
+import io.github.dingyi222666.luaparser.semantic.types.model.TypeParameterType
 import io.github.dingyi222666.luaparser.semantic.types.model.CallableType
-import io.github.dingyi222666.luaparser.semantic.types.model.CustomType
 import io.github.dingyi222666.luaparser.semantic.types.model.FunctionParameter
 import io.github.dingyi222666.luaparser.semantic.types.model.FunctionType
-import io.github.dingyi222666.luaparser.semantic.types.model.MultiReturnType
 import io.github.dingyi222666.luaparser.semantic.types.model.OverloadedFunctionType
-import io.github.dingyi222666.luaparser.semantic.types.model.PrimitiveType
-import io.github.dingyi222666.luaparser.semantic.types.model.TableType
 import io.github.dingyi222666.luaparser.semantic.types.model.Type
-import io.github.dingyi222666.luaparser.semantic.types.model.TypeParameterType
-import io.github.dingyi222666.luaparser.semantic.types.model.UnknownType
 import io.github.dingyi222666.luaparser.semantic.types.model.VarargType
-import io.github.dingyi222666.luaparser.semantic.types.resolve.unionTypeOf
-import io.github.dingyi222666.luaparser.util.putIfAbsentCompat
+import io.github.dingyi222666.luaparser.semantic.types.model.callableSummary
 
 internal class SignatureHelpProvider(
     private val binder: BinderPassResult,
     private val nodePositionIndex: NodePositionIndex,
-    private val evaluator: ExpressionTypeEvaluator
+    private val evaluator: ExpressionTypeEvaluator,
+    private val workspaceContext: SemanticWorkspaceContext = SemanticWorkspaceContext()
 ) {
     private val callChecker = CallChecker(binder)
-    private val memberResolver = MemberResolver(binder)
-
-    private val hoverParentWalkLimit = 64
 
     fun getSignatureHelpAt(position: Position): SignatureHelp? {
         val call = enclosingCallExpression(position) ?: return null
@@ -68,150 +59,93 @@ internal class SignatureHelpProvider(
         }
         val lexicalScopeId = binder.positionQueries.getScopeAt(call.range.start)?.id ?: binder.scopeGraph.rootScope.id
         val callableBase = callableBase(call)
-        val declaration = callableDeclaration(callableBase)
-        val inferredCallableType = evaluateCallableType(callableBase, lexicalScopeId, declaration)
-        // TASK-394: product wire for luajava.createProxy SignatureHelp. Prefer documented
-        // interfaceNames/callbacks/JavaProxy overloads when the call is a recognized helper
-        // (direct member or local alias). Null remains acceptable when the call is not createProxy.
-        // No runtime proxy validation is invented here — labels only.
-        val documentedCreateProxy = documentedCreateProxyCallableType(callableBase, declaration)
-        val callableType = when {
-            documentedCreateProxy != null && shouldPreferDocumentedCreateProxy(inferredCallableType) ->
-                documentedCreateProxy
-            inferredCallableType != null -> inferredCallableType
-            documentedCreateProxy != null -> documentedCreateProxy
-            else -> return null
-        }
+        val declaration = evaluator.callableDeclarationAt(callableBase)
+        val callableType = evaluateCallableType(callableBase, lexicalScopeId, declaration) ?: return null
         // Rank with CallChecker first so activeSignature uses the same signature list
         // the checker scored (primary + @overload / OverloadedFunctionType), not a second
         // resolve pass that could drift.
         val argumentTypes = argumentTypesForResolution(call, lexicalScopeId)
-        val callResolution = callChecker.checkCall(callableType, argumentTypes, lexicalScopeId, declaration)
-        val resolutionSignatures = callResolution.callableResolution?.signatures
-            ?.takeIf { it.isNotEmpty() }
-            ?: callChecker.resolveCallable(callableType, lexicalScopeId, declaration)
-                .takeIf { it.isSuccess }
-                ?.signatures
-                .orEmpty()
+        val callResolution = resolveCallForPresentation(callableType, argumentTypes, lexicalScopeId, declaration)
+        val resolutionSignatures = callResolution.callableResolution?.signatures.orEmpty()
         if (resolutionSignatures.isEmpty()) {
             return null
         }
 
-        // Reflected Java static/instance members often surface generic callables as
-        // fun<T>(...): R. That form does not contain the literal "fun(" substring and also
-        // omits the Java method name, so LSP hard-locks for Arrays.asList / similar static
-        // members fail. Prefer labels that include the call-site member name when present.
-        //
-        // TASK-670: body inference / CallChecker ranking may still surface FunctionType values
-        // whose typeParameters list is empty (or whose cached name omitted fun<T>) even when
-        // the binder/doc still owns @generic labels. Re-attach and rebuild labels here so
-        // workspace signature help stays fun<T>(value: T): T, not fun(value: T): T.
         val methodName = callableMethodName(callableBase, declaration)
-        val labelTypeParameters = recoverTypeParameters(
-            declaration = declaration,
-            callableType = callableType,
-            signatures = resolutionSignatures +
-                (callableType as? CallableType)?.callSignatures.orEmpty() +
-                (declaration?.declaredType as? CallableType)?.callSignatures.orEmpty()
-        )
-        val labeledSignatures = resolutionSignatures.map { signature ->
-            ensureGenericTypeParameterLabels(signature, labelTypeParameters)
-        }
-        val signatures = labeledSignatures.map { toSignatureInformation(it, methodName) }
+        val signatures = resolutionSignatures.map { toSignatureInformation(it, methodName) }
         val activeParameter = activeParameterIndex(call, position)
-        val activeSignature = selectActiveSignatureIndex(labeledSignatures, callResolution)
+        val activeSignature = selectActiveSignatureIndex(resolutionSignatures, callResolution)
             .coerceIn(0, signatures.lastIndex)
         return SignatureHelp(
             signatures = signatures,
             activeSignature = activeSignature,
-            activeParameter = clampActiveParameter(labeledSignatures.getOrNull(activeSignature), activeParameter)
+            activeParameter = clampActiveParameter(resolutionSignatures.getOrNull(activeSignature), activeParameter)
         )
     }
 
     fun getCallableHoverAt(position: Position): CallableHoverInfo? {
-        val member = nodePositionIndex.findEnclosing(position)
-            .filterIsInstance<MemberExpression>()
+        val enclosing = nodePositionIndex.findEnclosing(position)
+        val expression = enclosing.filterIsInstance<MemberExpression>()
             .firstOrNull { contains(it.identifier.range, position) }
+            ?: enclosing.filterIsInstance<Identifier>().firstOrNull()
             ?: return null
-        val lexicalScopeId = binder.positionQueries.getScopeAt(member.range.start)?.id
-            ?: binder.scopeGraph.rootScope.id
-        val declaration = callableDeclaration(member)
-        val callableType = evaluateCallableType(member, lexicalScopeId, declaration)
-            ?: return null
-        val callableResolution = callChecker.resolveCallable(
-            callableType,
-            lexicalScopeId,
-            declaration
-        ).takeIf { it.isSuccess } ?: return null
-        val signatures = callableResolution.signatures
-        if (signatures.isEmpty()) {
-            return null
-        }
-
-        val selected = enclosingCallForMember(member)?.let { call ->
-            callChecker.checkCall(
-                callableType,
-                argumentTypesForResolution(call, lexicalScopeId),
-                lexicalScopeId,
-                declaration
-            )
-        }?.takeIf { it.isSuccess && !it.ambiguous }
-            ?.selectedSignature
-
-        return CallableHoverInfo(
-            displayName = selected?.displayName ?: compactOverloadDisplay(signatures)
-        )
+        val scope = binder.positionQueries.getScopeAt(expression.range.start)?.id ?: binder.scopeGraph.rootScope.id
+        val declaration = evaluator.callableDeclarationAt(expression)
+        val type = evaluateCallableType(expression, scope, declaration) ?: return null
+        return CallableHoverInfo(callableDetail(type, expression, position, declaration))
     }
 
-    private fun enclosingCallForMember(member: MemberExpression): CallExpression? {
-        var current: BaseASTNode = member
-        var hops = 0
-        while (hops < hoverParentWalkLimit) {
-            hops++
-            val parent = runCatching { current.parent }.getOrNull() ?: return null
-            if (parent is CallExpression) {
-                return parent.takeIf { callableBase(it) === member }
-            }
-            if (parent !is MemberExpression) {
-                return null
-            }
-            current = parent
+    fun callableDetail(
+        type: Type,
+        expression: ExpressionNode?,
+        position: Position,
+        declaration: BinderDeclaration? = null
+    ): String {
+        // Other rows need no callable expansion, normalization, or argument analysis.
+        if (type !is CallableType && type !is AliasType && type !is IntersectionType &&
+            type !is UnionType && type !is AppliedType && type !is TypeParameterType && type !is ModuleType) return type.displayName
+        if (type is CallableType && expression == null && declaration == null) {
+            return callableSummary(type.callSignatures)
         }
-        return null
+        val call = expression?.let { node ->
+            (runCatching { node.parent }.getOrNull() as? CallExpression)
+                ?.takeIf { callableBase(it) === node }
+        }
+        // Completion rows at `receiver.` / `receiver:prefix` are not calls yet. Do not
+        // resolve every overload for every row; signature help performs the contextual
+        // selection once the call actually exists.
+        if (expression != null && call == null) {
+            // Function declarations keep @overload tags separately from the primary type.
+            // Include that metadata for the idle preview as well as at actual call sites.
+            val overloads = declaration?.documentation?.resolvedOverloadTypes.orEmpty()
+            return (type as? CallableType)?.let {
+                callableSummary((it.callSignatures + overloads).distinct())
+            } ?: type.displayName
+        }
+        val scope = binder.positionQueries.getScopeAt(position)?.id ?: binder.scopeGraph.rootScope.id
+        val resolved = callChecker.resolveCallable(type, scope, declaration)
+        if (!resolved.isSuccess) {
+            return (type as? CallableType)?.let { callableSummary(it.callSignatures) }
+                ?: type.displayName
+        }
+        // The checker ranks complete and partial calls deterministically. Even tied candidates
+        // have a best preview; show that signature rather than resetting to the entire set.
+        val selection = call?.let {
+            resolveCallForPresentation(type, argumentTypesForResolution(it, scope), scope, declaration)
+        }
+        return selection?.selectedSignature?.let { FunctionType(it.parameters, it.returnType, it.typeParameters).displayName }
+            ?: callableSummary(resolved.signatures)
     }
 
-    private fun compactOverloadDisplay(signatures: List<FunctionType>): String {
-        val distinct = signatures.distinctBy(FunctionType::displayName)
-        if (distinct.size <= 1) {
-            return distinct.firstOrNull()?.displayName.orEmpty()
-        }
-        val first = distinct.first()
-        val sameShape = distinct.all { signature ->
-            signature.parameters.size == first.parameters.size &&
-                signature.returnType.displayName == first.returnType.displayName &&
-                signature.parameters.zip(first.parameters).all { (parameter, expected) ->
-                    parameter.name == expected.name &&
-                        parameter.optional == expected.optional &&
-                        parameter.vararg == expected.vararg
-                }
-        }
-        if (sameShape) {
-            val differingParameters = first.parameters.indices.filter { index ->
-                distinct.map { it.parameters[index].type.displayName }.distinct().size > 1
-            }
-            // Independently unioning several varying slots would invent correlated combinations.
-            if (differingParameters.size <= 1) {
-                val mergedParameters = first.parameters.mapIndexed { index, parameter ->
-                    parameter.copy(type = unionTypeOf(distinct.map { it.parameters[index].type }))
-                }
-                return FunctionType(
-                    parameters = mergedParameters,
-                    returnType = first.returnType,
-                    typeParameters = first.typeParameters
-                ).displayName
-            }
-        }
-        return distinct.joinToString("\n", transform = FunctionType::displayName)
+    private fun resolveCallForPresentation(
+        type: Type,
+        arguments: List<Type>,
+        scope: ScopeId,
+        declaration: BinderDeclaration?
+    ): CallResolution {
+        val checked = callChecker.checkCall(type, arguments, scope, declaration)
+        return if (checked.selectedSignature != null) checked else
+            callChecker.checkCall(type, arguments, scope, declaration, allowIncomplete = true)
     }
 
     /**
@@ -226,6 +160,7 @@ internal class SignatureHelpProvider(
         if (signatures.isEmpty()) {
             return 0
         }
+        callResolution.selectedSignatureIndex?.takeIf { it in signatures.indices }?.let { return it }
         val selected = callResolution.selectedSignature ?: return 0
         val exact = signatures.indexOf(selected)
         if (exact >= 0) {
@@ -278,51 +213,10 @@ internal class SignatureHelpProvider(
         )
     }
 
-    /**
-     * Build the LSP signature label for one overload.
-     *
-     * Plain Lua/function surfaces already use fun(...): R and must keep that exact form
-     * for existing exact-label asserts (do not invent a method-name prefix there).
-     *
-     * Generic surfaces render as fun<T>(...): R (type parameters sit between fun and
-     * '('), so they match neither the literal fun( hard-lock nor a Java member name.
-     * For call-site member bases such as Arrays.asList, prefix the member name so labels
-     * stay discoverable while keeping the generic form for TASK-670.
-     *
-     * Bare Lua @generic helpers (Identifier call base such as identity) must keep the
-     * exact fun<T>(...): R form. Do not prefix the local/function name onto the label.
-     */
+    /** Render canonical type parameters and the call-site member name. */
     private fun signatureHelpLabel(signature: FunctionType, methodName: String?): String {
-        // Prefer a freshly built generic label when typeParameters are present. FunctionType.copy
-        // can leave a stale name like fun(...) even after typeParameters were restored.
-        // Also recover free type-parameter names from the parameter/return surface when the
-        // typeParameters list was dropped after type resolution (TASK-670).
-        val typeParameters = signature.typeParameters.ifEmpty {
-            typeParametersFromSignatureSurface(signature)
-        }
-        val display = if (typeParameters.isNotEmpty()) {
-            FunctionType(
-                parameters = signature.parameters,
-                returnType = signature.returnType,
-                typeParameters = typeParameters
-            ).displayName
-        } else {
-            signature.displayName
-        }
-        // Plain non-generic callable labels already satisfy fun( hard-locks and exact Lua
-        // label asserts. Do not rewrite them.
-        if (display.contains("fun(")) {
-            return display
-        }
-        val trimmedName = methodName?.trim().orEmpty()
-        // Only MemberExpression call bases (Java static/instance members) get a method-name
-        // prefix. Generic fun<T>(...) alone fails LspJavaAndroidFeature asList|fun( hard-lock,
-        // so Arrays.asList becomes "asList fun<T>(...)" while still preserving type params.
-        // Identifier Lua locals must stay bare fun<T>(value: T): T (TASK-670 exact label).
-        if (trimmedName.isNotEmpty() && !display.contains(trimmedName)) {
-            return "$trimmedName $display"
-        }
-        return display
+        val display = FunctionType(signature.parameters, signature.returnType, signature.typeParameters).displayName
+        return if (signature.typeParameters.isNotEmpty() && !methodName.isNullOrBlank()) "$methodName $display" else display
     }
 
     private fun callableMethodName(
@@ -356,15 +250,7 @@ internal class SignatureHelpProvider(
         }
     }
 
-    private fun callArguments(call: CallExpression): List<ExpressionNode> {
-        val stringCall = call.base as? StringCallExpression
-        return buildList {
-            if (stringCall != null) {
-                addAll(stringCall.arguments)
-            }
-            addAll(call.arguments)
-        }
-    }
+    private fun callArguments(call: CallExpression): List<ExpressionNode> = call.compactCallArguments()
 
     private fun activeParameterIndex(call: CallExpression, position: Position): Int {
         val arguments = callArguments(call)
@@ -394,724 +280,20 @@ internal class SignatureHelpProvider(
     }
 
     private fun receiverOffset(call: CallExpression): Int {
-        return if (call.base is MemberExpression && (call.base as MemberExpression).indexer == ":") 1 else 0
+        return if ((callableBase(call) as? MemberExpression)?.indexer == ":") 1 else 0
     }
 
-    private fun argumentTypesForResolution(call: CallExpression, lexicalScopeId: ScopeId): List<Type> {
-        val context = ExpressionTypeEvaluator.Context(lexicalScopeId = lexicalScopeId)
-        val arguments = callArguments(call)
-        val argumentTypes = mutableListOf<Type>()
-        if (call.base is MemberExpression && (call.base as MemberExpression).indexer == ":") {
-            argumentTypes += ValueSequence.of(evaluator.evaluate((call.base as MemberExpression).base, context)).collapseToSingle().fixed
-        }
-        arguments.forEachIndexed { index, argument ->
-            val sequence = ValueSequence.of(evaluator.evaluate(argument, context))
-            val effective = if (index == arguments.lastIndex) sequence else sequence.collapseToSingle()
-            effective.appendToCallArguments(argumentTypes)
-        }
-        return argumentTypes
+    private fun argumentTypesForResolution(call: CallExpression, lexicalScopeId: ScopeId): List<Type> = buildList {
+        evaluator.callArgumentValues(call, lexicalScopeId).forEach { it.appendToCallArguments(this) }
     }
 
     private fun evaluateCallableType(node: ExpressionNode, lexicalScopeId: ScopeId, declaration: BinderDeclaration?): Type? {
-        val context = ExpressionTypeEvaluator.Context(lexicalScopeId = lexicalScopeId)
-        val inferredType = evaluator.evaluate(node, context)
-        val declarationCallableType = declaration?.let(::callableTypeForDeclaration)
-
-        // Prefer documented/declared generic callables before body-inference surfaces that often
-        // drop typeParameters (TASK-670: fun<T> must survive workspace signature help).
-        if (declarationCallableType != null && shouldPreferDeclarationCallableType(inferredType, declarationCallableType)) {
-            return preserveGenericTypeParameterLabels(declarationCallableType, declarationCallableType, declaration)
-        }
-
-        val resolved = callChecker.resolveCallable(inferredType, lexicalScopeId, declaration)
-        if (inferredType is CallableType || resolved.isSuccess) {
-            // Body inference / merge often drops @generic type-parameter labels even when the
-            // declaration still carries fun<T>(...): R. Restore those labels for signature help.
-            return preserveGenericTypeParameterLabels(inferredType, declarationCallableType, declaration)
-        }
-
-        if (declarationCallableType != null) {
-            return preserveGenericTypeParameterLabels(declarationCallableType, declarationCallableType, declaration)
-        }
-
-        return inferredType.takeIf { it is CallableType }
+        val type = evaluator.evaluate(node, ExpressionTypeEvaluator.Context(lexicalScopeId))
+            .hydrateJavaProviderType(workspaceContext.resolveImportTarget)
+        return type.takeIf { callChecker.resolveCallable(it, lexicalScopeId, declaration).isSuccess }
     }
 
-    private fun shouldPreferDeclarationCallableType(type: Type, declared: CallableType?): Boolean {
-        if (declared == null) {
-            return false
-        }
-        val callable = type as? CallableType ?: return true
-        if (callable.callSignatures.all { it.returnType == UnknownType }) {
-            return true
-        }
-        // Prefer the documented generic form when inference produced a non-generic callable with
-        // otherwise comparable parameter/return surfaces (TASK-670).
-        if (hasGenericTypeParameterLabels(declared) && !hasGenericTypeParameterLabels(callable)) {
-            return true
-        }
-        // Prefer declared when its labels already include fun<T> but inferred display lost them.
-        val declaredHasGenericLabel = declared.callSignatures.any { signature ->
-            signature.displayName.contains("fun<") || signature.typeParameters.isNotEmpty()
-        }
-        val inferredHasGenericLabel = callable.callSignatures.any { signature ->
-            signature.displayName.contains("fun<") || signature.typeParameters.isNotEmpty()
-        }
-        return declaredHasGenericLabel && !inferredHasGenericLabel
-    }
-
-    /**
-     * Keep signature-help labels like `fun<T>(value: T): T` after type resolution.
-     * Expression evaluation may rebuild FunctionType without typeParameters even though the
-     * binder/TypeResolver declaration still owns @generic TYPE_PARAMETER children.
-     */
-    private fun preserveGenericTypeParameterLabels(
-        type: Type,
-        declared: CallableType?,
-        declaration: BinderDeclaration? = null
-    ): Type {
-        if (type !is CallableType) {
-            return type
-        }
-        if (hasGenericTypeParameterLabels(type)) {
-            return rebuildCallableDisplayNames(type)
-        }
-        val recovered = recoverTypeParameters(declaration, declared, type.callSignatures)
-        if (recovered.isEmpty()) {
-            return type
-        }
-        return enrichCallableWithTypeParameters(type, recovered)
-    }
-
-    private fun hasGenericTypeParameterLabels(callable: CallableType): Boolean {
-        return callable.callSignatures.any { it.typeParameters.isNotEmpty() }
-    }
-
-    private fun enrichCallableWithTypeParameters(
-        inferred: CallableType,
-        typeParameters: List<TypeParameterType>
-    ): CallableType {
-        if (typeParameters.isEmpty()) {
-            return inferred
-        }
-        val enriched = inferred.callSignatures.map { signature ->
-            ensureGenericTypeParameterLabels(signature, typeParameters)
-        }
-        return when (enriched.size) {
-            0 -> inferred
-            1 -> enriched.single()
-            else -> OverloadedFunctionType(enriched)
-        }
-    }
-
-    private fun rebuildCallableDisplayNames(callable: CallableType): CallableType {
-        val rebuilt = callable.callSignatures.map { signature ->
-            ensureGenericTypeParameterLabels(signature, signature.typeParameters)
-        }
-        return when (rebuilt.size) {
-            0 -> callable
-            1 -> rebuilt.single()
-            else -> OverloadedFunctionType(rebuilt)
-        }
-    }
-
-    private fun ensureGenericTypeParameterLabels(
-        signature: FunctionType,
-        fallbackTypeParameters: List<TypeParameterType>
-    ): FunctionType {
-        val typeParameters = signature.typeParameters
-            .ifEmpty { fallbackTypeParameters }
-            .ifEmpty { typeParametersFromSignatureSurface(signature) }
-            .mapNotNull { parameter ->
-                parameter.name.trim().takeIf { it.isNotEmpty() }?.let { name ->
-                    if (parameter.name == name) parameter else TypeParameterType(name = name, constraint = parameter.constraint)
-                }
-            }
-            .distinctBy { it.name }
-        if (typeParameters.isEmpty()) {
-            // Last chance: if the stale name already embeds fun<T>, keep the signature as-is.
-            return signature
-        }
-        // Always rebuild so stale FunctionType.name cannot suppress fun<T> labels.
-        return FunctionType(
-            parameters = signature.parameters,
-            returnType = signature.returnType,
-            typeParameters = typeParameters
-        )
-    }
-
-    /**
-     * Recover @generic type-parameter labels from declaration declaredType, owned
-     * TYPE_PARAMETER children, doc tags, signature surfaces, or any already-generic signature.
-     */
-    private fun recoverTypeParameters(
-        declaration: BinderDeclaration?,
-        callableType: Type? = null,
-        signatures: List<FunctionType> = emptyList()
-    ): List<TypeParameterType> {
-        signatures.firstOrNull { it.typeParameters.isNotEmpty() }?.typeParameters
-            ?.let { return normalizeTypeParameters(it) }
-
-        val fromCallable = (callableType as? CallableType)
-            ?.callSignatures
-            ?.firstOrNull { it.typeParameters.isNotEmpty() }
-            ?.typeParameters
-            .orEmpty()
-        if (fromCallable.isNotEmpty()) {
-            return normalizeTypeParameters(fromCallable)
-        }
-
-        // Free type-parameter names still appear on parameters/return even after the
-        // typeParameters list is dropped (e.g. fun(value: T): T).
-        signatures.firstNotNullOfOrNull { typeParametersFromSignatureSurface(it).takeIf(List<*>::isNotEmpty) }
-            ?.let { return it }
-        (callableType as? CallableType)?.callSignatures
-            ?.firstNotNullOfOrNull { typeParametersFromSignatureSurface(it).takeIf(List<*>::isNotEmpty) }
-            ?.let { return it }
-
-        if (declaration == null) {
-            return emptyList()
-        }
-
-        val fromDeclared = (declaration.declaredType as? CallableType)
-            ?.callSignatures
-            ?.firstOrNull { it.typeParameters.isNotEmpty() }
-            ?.typeParameters
-            .orEmpty()
-        if (fromDeclared.isNotEmpty()) {
-            return normalizeTypeParameters(fromDeclared)
-        }
-
-        (declaration.declaredType as? CallableType)?.callSignatures
-            ?.firstNotNullOfOrNull { typeParametersFromSignatureSurface(it).takeIf(List<*>::isNotEmpty) }
-            ?.let { return it }
-
-        val owned = ownedTypeParametersForDeclaration(declaration)
-        if (owned.isNotEmpty()) {
-            return normalizeTypeParameters(owned)
-        }
-
-        val fromDocs = documentationGenericTypeParameters(declaration)
-        if (fromDocs.isNotEmpty()) {
-            return fromDocs
-        }
-
-        // Parse fun<T,...> out of any already-rendered displayName on the declaration.
-        return typeParametersFromDisplayName(declaration.declaredType?.displayName)
-    }
-
-    private fun documentationGenericTypeParameters(declaration: BinderDeclaration): List<TypeParameterType> {
-        return declaration.documentation?.docComment?.tags
-            .orEmpty()
-            .filterIsInstance<GenericTagSyntax>()
-            .flatMap { tag -> tag.parameters }
-            .mapNotNull { parameter ->
-                parameter.name.trim().takeIf { it.isNotEmpty() }?.let { TypeParameterType(name = it) }
-            }
-            .distinctBy { it.name }
-    }
-
-    private fun normalizeTypeParameters(typeParameters: List<TypeParameterType>): List<TypeParameterType> {
-        return typeParameters
-            .mapNotNull { parameter ->
-                parameter.name.trim().takeIf { it.isNotEmpty() }?.let { name ->
-                    if (parameter.name == name) parameter else TypeParameterType(name = name, constraint = parameter.constraint)
-                }
-            }
-            .distinctBy { it.name }
-    }
-
-    /**
-     * Collect free TypeParameterType names from a signature's parameter/return surface.
-     * Used when type resolution kept `T` in the body but dropped the typeParameters list.
-     */
-    private fun typeParametersFromSignatureSurface(signature: FunctionType): List<TypeParameterType> {
-        val collected = linkedMapOf<String, TypeParameterType>()
-        signature.parameters.forEach { parameter ->
-            collectTypeParameters(parameter.type, collected)
-        }
-        collectTypeParameters(signature.returnType, collected)
-        if (collected.isNotEmpty()) {
-            return collected.values.toList()
-        }
-        return typeParametersFromDisplayName(signature.displayName)
-    }
-
-    private fun collectTypeParameters(type: Type, into: MutableMap<String, TypeParameterType>) {
-        when (type) {
-            is TypeParameterType -> {
-                val name = type.name.trim()
-                if (name.isNotEmpty()) {
-                    into.putIfAbsentCompat(name, type)
-                }
-            }
-            is FunctionType -> {
-                type.typeParameters.forEach { parameter ->
-                    val name = parameter.name.trim()
-                    if (name.isNotEmpty()) {
-                        into.putIfAbsentCompat(name, parameter)
-                    }
-                }
-                type.parameters.forEach { collectTypeParameters(it.type, into) }
-                collectTypeParameters(type.returnType, into)
-            }
-            is OverloadedFunctionType -> type.callSignatures.forEach { collectTypeParameters(it, into) }
-            is MultiReturnType -> type.types.forEach { collectTypeParameters(it, into) }
-            is VarargType -> collectTypeParameters(type.elementType, into)
-            is TableType -> {
-                type.fields.values.forEach { collectTypeParameters(it, into) }
-                type.methods.values.forEach { collectTypeParameters(it, into) }
-                type.indexSignature?.let { index ->
-                    collectTypeParameters(index.keyType, into)
-                    collectTypeParameters(index.valueType, into)
-                }
-            }
-            else -> Unit
-        }
-    }
-
-    private fun typeParametersFromDisplayName(displayName: String?): List<TypeParameterType> {
-        if (displayName.isNullOrBlank()) {
-            return emptyList()
-        }
-        // Match fun<T>, fun<T: string>, fun<K, V>, fun<T, U: number>.
-        val match = Regex("""fun<([^>]+)>""").find(displayName) ?: return emptyList()
-        return match.groupValues[1]
-            .split(',')
-            .mapNotNull { part ->
-                val name = part.substringBefore(':').trim()
-                name.takeIf { it.isNotEmpty() }?.let { TypeParameterType(name = it) }
-            }
-            .distinctBy { it.name }
-    }
-
-    /**
-     * Documented Android-Lua / LuaJava createProxy overload surface (labels only).
-     * Matches builtin overlay / luajava.lua:
-     * - fun(interfaceNames: string, callbacks: { [string]: function }): JavaProxy
-     * - fun(interfaceName1: string, interfaceName2: string, callbacks: { [string]: function }): JavaProxy
-     * - fun(interfaceName: string, callbacks: { [string]: function }): JavaProxy
-     *
-     * Does not invent runtime proxy construction or callback-table validation.
-     */
-    private fun documentedCreateProxyCallableType(
-        callableBase: ExpressionNode,
-        declaration: BinderDeclaration?
-    ): CallableType? {
-        if (!isCreateProxyHelperCallBase(callableBase, declaration)) {
-            return null
-        }
-        return documentedCreateProxyOverloads()
-    }
-
-    private fun shouldPreferDocumentedCreateProxy(type: Type?): Boolean {
-        if (type == null) {
-            return true
-        }
-        if (type !is CallableType) {
-            return true
-        }
-        if (looksLikeDocumentedCreateProxyCallable(type)) {
-            return false
-        }
-        // Prefer documented labels over incomplete/unknown/generic callable surfaces.
-        return type.callSignatures.isEmpty() ||
-            type.callSignatures.all { signature ->
-                signature.returnType == UnknownType ||
-                    signature.parameters.isEmpty() ||
-                    !looksLikeDocumentedCreateProxyLabel(signature.displayName)
-            }
-    }
-
-    private fun looksLikeDocumentedCreateProxyCallable(type: CallableType): Boolean {
-        return type.callSignatures.any { looksLikeDocumentedCreateProxyLabel(it.displayName) } ||
-            looksLikeDocumentedCreateProxyLabel(type.displayName)
-    }
-
-    private fun looksLikeDocumentedCreateProxyLabel(label: String): Boolean {
-        if (label.isBlank()) {
-            return false
-        }
-        val hasInterface =
-            label.contains("interfaceNames", ignoreCase = true) ||
-                label.contains("interfaceName", ignoreCase = true)
-        val hasCallbacks = label.contains("callbacks", ignoreCase = true)
-        val hasProxy = label.contains("JavaProxy", ignoreCase = true)
-        return (hasInterface && hasCallbacks) ||
-            (hasInterface && hasProxy) ||
-            (hasCallbacks && hasProxy)
-    }
-
-    private fun documentedCreateProxyOverloads(): CallableType {
-        val callbacksType = TableType(
-            indexSignature = TableType.IndexSignature(
-                keyType = PrimitiveType.STRING,
-                valueType = PrimitiveType.FUNCTION
-            )
-        )
-        val javaProxy = CustomType("JavaProxy")
-        val singleInterfaceCommaList = FunctionType(
-            parameters = listOf(
-                FunctionParameter(name = "interfaceNames", type = PrimitiveType.STRING),
-                FunctionParameter(name = "callbacks", type = callbacksType)
-            ),
-            returnType = javaProxy
-        )
-        val twoInterfaceNames = FunctionType(
-            parameters = listOf(
-                FunctionParameter(name = "interfaceName1", type = PrimitiveType.STRING),
-                FunctionParameter(name = "interfaceName2", type = PrimitiveType.STRING),
-                FunctionParameter(name = "callbacks", type = callbacksType)
-            ),
-            returnType = javaProxy
-        )
-        val singleInterfaceName = FunctionType(
-            parameters = listOf(
-                FunctionParameter(name = "interfaceName", type = PrimitiveType.STRING),
-                FunctionParameter(name = "callbacks", type = callbacksType)
-            ),
-            returnType = javaProxy
-        )
-        return OverloadedFunctionType(
-            callSignatures = listOf(singleInterfaceCommaList, twoInterfaceNames, singleInterfaceName)
-        )
-    }
-
-    private fun isCreateProxyHelperCallBase(
-        callableBase: ExpressionNode,
-        declaration: BinderDeclaration?
-    ): Boolean {
-        return when (callableBase) {
-            is MemberExpression -> isLuaJavaCreateProxyMember(callableBase)
-            is Identifier -> {
-                // Prefer declaration chain for aliases; fall back to name-based lookup.
-                val resolved = declaration ?: findVisibleValueDeclaration(callableBase.name, callableBase.range.start)
-                resolved != null && declarationResolvesToLuaJavaCreateProxy(resolved, linkedSetOf())
-            }
-            else -> false
-        }
-    }
-
-    private fun isLuaJavaCreateProxyMember(member: MemberExpression): Boolean {
-        val owner = member.base as? Identifier ?: return false
-        if (member.indexer != "." || member.identifier.name != "createProxy" || owner.name != "luajava") {
-            return false
-        }
-        // Unshadowed / builtin `luajava` is the helper owner; local non-builtin bindings shadow it.
-        val ownerDeclaration = findVisibleValueDeclaration(owner.name, owner.range.start)
-        return ownerDeclaration == null || ownerDeclaration.origin == DeclarationOrigin.BUILTIN
-    }
-
-    private fun declarationResolvesToLuaJavaCreateProxy(
-        declaration: BinderDeclaration,
-        visited: MutableSet<io.github.dingyi222666.luaparser.semantic.binder.DeclarationId>
-    ): Boolean {
-        if (declaration.kind != DeclarationKind.LOCAL || !visited.add(declaration.id)) {
-            return false
-        }
-        return when (val initializer = localDeclarationInitializer(declaration)) {
-            is MemberExpression -> isLuaJavaCreateProxyMember(initializer)
-            is Identifier -> {
-                val next = findVisibleValueDeclaration(initializer.name, initializer.range.start) ?: return false
-                // Same-statement locals should not be treated as earlier aliases.
-                if (next.id == declaration.id) {
-                    return false
-                }
-                declarationResolvesToLuaJavaCreateProxy(next, visited)
-            }
-            else -> false
-        }
-    }
-
-    private fun callableTypeForDeclaration(declaration: BinderDeclaration): CallableType? {
-        val declared = declaration.declaredType as? CallableType
-        if (declared != null && declared.callSignatures.any { it.returnType != UnknownType }) {
-            // Prefer declared shape, but re-attach @generic labels when resolution dropped them.
-            return preserveGenericTypeParameterLabels(declared, declared, declaration) as? CallableType
-                ?: declared
-        }
-        return inferFunctionCallableType(declaration) ?: declared?.let {
-            preserveGenericTypeParameterLabels(it, it, declaration) as? CallableType ?: it
-        }
-    }
-
-    private fun inferFunctionCallableType(declaration: BinderDeclaration): CallableType? {
-        declaration.declaredType?.let { declared ->
-            if (declared is CallableType && declared.callSignatures.any { it.returnType != UnknownType }) {
-                val withGenerics = preserveGenericTypeParameterLabels(declared, declared, declaration)
-                return enrichMethodCallableType(binder, declaration, withGenerics as? CallableType ?: declared)
-            }
-        }
-
-        val functionNode = functionNodeForDeclaration(declaration) ?: return null
-        val body = functionNode.body ?: return null
-        val functionScopeId = functionNode.body?.let(binder.scopeGraph::getScope)?.id
-            ?: binder.positionQueries.getScopeAt(functionNode.range.start)?.id
-            ?: binder.scopeGraph.rootScope.id
-        val parameterDeclarations = binder.declarationIndex
-            .getOwnedDeclarations(DeclarationOwner.Declaration(declaration.id))
-            .filter { it.kind == DeclarationKind.PARAMETER }
-        val parameterDeclarationsByName = parameterDeclarations.associateBy { it.name }
-        val parameterTags = declaration.documentation?.docComment?.tags.orEmpty().filterIsInstance<ParamTagSyntax>()
-        val declaredSignature = (declaration.declaredType as? CallableType)?.callSignatures?.firstOrNull()
-        val declaredParametersByName = declaredSignature?.parameters.orEmpty().associateBy { it.name }
-
-        val parameters = buildList {
-            if (isColonMethodDeclaration(binder, declaration)) {
-                val selfType = parameterDeclarations.firstOrNull { it.name == "self" }?.declaredType
-                    ?: declaration.documentation?.resolvedParameterTypes?.get("self")
-                    ?: parameterTags.firstOrNull { it.name == "self" }?.typeText?.let { declaration.documentation?.resolvedParameterTypes?.get("self") }
-                    ?: UnknownType
-                add(FunctionParameter(name = "self", type = selfType, vararg = false))
-            }
-            addAll(functionNode.params.mapIndexed { index, parameterNode ->
-                val parameterType = firstKnownType(
-                    parameterDeclarationsByName[parameterNode.name]?.declaredType,
-                    parameterDeclarations.getOrNull(index)?.declaredType,
-                    declaredParametersByName[parameterNode.name]?.type,
-                    declaredSignature?.parameters?.getOrNull(index)?.type,
-                    declaration.documentation?.resolvedParameterTypes?.get(parameterNode.name)
-                )
-                FunctionParameter(
-                    name = parameterNode.name,
-                    type = parameterType,
-                    vararg = parameterNode.name == "..." || parameterType is VarargType
-                )
-            })
-        }
-        val varargType = parameters.lastOrNull { it.vararg }?.type ?: VarargType(UnknownType)
-        val context = evaluator.buildFunctionBodyContext(functionNode, parameters, functionScopeId, varargType)
-        val returnSites = evaluator.collectReturnSites(body, context)
-        val inferredReturnType = inferReturnType(returnSites.map { it.values })
-        val returnType = if (inferredReturnType == UnknownType) {
-            inferReturnedParameterType(declaration, returnSites, parameters.associate { it.name to it.type }) ?: inferredReturnType
-        } else {
-            inferredReturnType
-        }
-        val typeParameters = ownedTypeParametersForDeclaration(declaration)
-            .ifEmpty { declaredSignature?.typeParameters.orEmpty() }
-            .ifEmpty { documentationGenericTypeParameters(declaration) }
-        return FunctionType(
-            parameters = parameters,
-            returnType = returnType,
-            typeParameters = typeParameters
-        )
-    }
-
-    private fun ownedTypeParametersForDeclaration(declaration: BinderDeclaration): List<TypeParameterType> {
-        return binder.declarationIndex
-            .getOwnedDeclarations(DeclarationOwner.Declaration(declaration.id))
-            .filter { it.kind == DeclarationKind.TYPE_PARAMETER }
-            .map { parameterDeclaration ->
-                (parameterDeclaration.declaredType as? TypeParameterType)
-                    ?: TypeParameterType(name = parameterDeclaration.name)
-            }
-    }
-
-    private fun inferReturnedParameterType(
-        declaration: BinderDeclaration,
-        returnSites: List<ExpressionTypeEvaluator.ReturnSite>,
-        parameterTypesByName: Map<String, Type>
-    ): Type? {
-        if (returnSites.isEmpty()) {
-            return null
-        }
-
-        val returnedTypes = mutableListOf<Type>()
-        for (returnSite in returnSites) {
-            val returnedIdentifier = returnSite.statement?.arguments?.singleOrNull() as? Identifier ?: return null
-            val returnedDeclaration = findVisibleValueDeclaration(returnedIdentifier.name, returnedIdentifier.range.start)
-            if (returnedDeclaration?.kind != DeclarationKind.PARAMETER || returnedDeclaration.owner != DeclarationOwner.Declaration(declaration.id)) {
-                return null
-            }
-            val returnedType = parameterTypesByName[returnedIdentifier.name]
-                ?.takeIf { it != UnknownType }
-                ?: return null
-            returnedTypes += returnedType
-        }
-        return unionTypeOf(returnedTypes)
-    }
-
-    private fun firstKnownType(vararg types: Type?): Type {
-        return types.firstOrNull { it != null && it != UnknownType } ?: UnknownType
-    }
-
-    private fun functionNodeForDeclaration(declaration: BinderDeclaration): FunctionDeclaration? {
-        return resolveOwningFunctionDeclaration(binder, declaration)
-            ?: declaration.anchorNode?.parent as? FunctionDeclaration
-    }
-
-
-    private fun inferReturnType(returnSequences: List<ValueSequence>): Type {
-        if (returnSequences.isEmpty()) {
-            return PrimitiveType.NIL
-        }
-
-        val openTailTypes = returnSequences.mapNotNull(ValueSequence::variadicTail)
-        val maxFixedArity = returnSequences.maxOf { it.fixed.size }
-        val totalArity = if (openTailTypes.isEmpty()) maxFixedArity else maxOf(maxFixedArity, 1)
-
-        if (totalArity <= 1 && openTailTypes.isEmpty()) {
-            return unionTypeOf(returnSequences.map { it.typeAt(0) })
-        }
-
-        val slots = (0 until maxFixedArity)
-            .map { index -> unionTypeOf(returnSequences.map { it.typeAt(index) }) }
-            .toMutableList()
-        if (openTailTypes.isNotEmpty()) {
-            slots += VarargType(unionTypeOf(openTailTypes))
-        }
-
-        return if (slots.size == 1 && slots.single() is VarargType) {
-            slots.single()
-        } else {
-            MultiReturnType(slots)
-        }
-    }
-
-    private fun callableDeclaration(node: ExpressionNode): BinderDeclaration? {
-        return when (node) {
-            is MemberExpression -> memberCallableDeclaration(node)
-            else -> {
-                val identifier = effectiveCallBase(node) as? Identifier ?: return null
-                findVisibleValueDeclaration(identifier.name, identifier.range.start)
-            }
-        }
-    }
-
-    private fun memberCallableDeclaration(node: MemberExpression): BinderDeclaration? {
-        val lexicalScopeId = binder.positionQueries.getScopeAt(node.range.start)?.id ?: binder.scopeGraph.rootScope.id
-        val visibleDeclaration = findVisibleValueDeclaration(node.identifier.name, node.identifier.range.start)
-        if (visibleDeclaration != null) {
-            return visibleDeclaration
-        }
-
-        val astMethodDeclaration = findVisibleAstMethodDeclaration(node, lexicalScopeId)
-        if (astMethodDeclaration != null) {
-            return astMethodDeclaration
-        }
-
-        val baseType = evaluator.evaluate(node.base, ExpressionTypeEvaluator.Context(lexicalScopeId = lexicalScopeId))
-        val resolution = memberResolver.resolveMember(baseType, node.identifier.name, node.indexer == ":", lexicalScopeId)
-        if (!resolution.isSuccess) {
-            return null
-        }
-
-        return findBackingMemberDeclaration(
-            baseType,
-            node.identifier.name,
-            resolution.accessKind == io.github.dingyi222666.luaparser.semantic.checker.MemberAccessKind.METHOD,
-            lexicalScopeId
-        )
-    }
-
-    private fun findVisibleAstMethodDeclaration(node: MemberExpression, lexicalScopeId: ScopeId): BinderDeclaration? {
-        val baseIdentifier = node.base as? Identifier ?: return null
-        var scope = binder.scopeGraph.getScope(lexicalScopeId)
-        while (scope != null) {
-            val lexicalOwner = scope.ownerNode
-            val declaration = binder.declarationIndex.declarations.firstOrNull { candidate ->
-                candidate.kind == DeclarationKind.METHOD &&
-                    lexicalOwner != null &&
-                    isDeclaredInLexicalOwnerChain(candidate, lexicalOwner) &&
-                    isMethodBoundToBaseIdentifier(binder, candidate, baseIdentifier.name) &&
-                    isVisibleAt(candidate, node.identifier.range.start)
-            }
-            if (declaration != null) {
-                return declaration
-            }
-            scope = scope.parentId?.let(binder.scopeGraph::getScope)
-        }
-        return binder.declarationIndex.declarations.firstOrNull { candidate ->
-            candidate.kind == DeclarationKind.METHOD &&
-                isMethodBoundToBaseIdentifier(binder, candidate, baseIdentifier.name) &&
-                isVisibleAt(candidate, node.identifier.range.start)
-        }
-    }
-
-    private fun findVisibleValueDeclaration(name: String, position: Position): BinderDeclaration? {
-        var scope = binder.positionQueries.getScopeAt(position) ?: return null
-        while (true) {
-            val declaration = scope.declarationIds
-                .asReversed()
-                .mapNotNull(binder.declarationIndex::getDeclaration)
-                .firstOrNull { candidate ->
-                    candidate.kind.namespace == DeclarationNamespace.VALUE &&
-                        candidate.name == name &&
-                        isVisibleAt(candidate, position)
-                }
-            if (declaration != null) {
-                return declaration
-            }
-            scope = scope.parentId?.let(binder.scopeGraph::getScope) ?: return null
-        }
-    }
-
-    private fun isVisibleAt(declaration: BinderDeclaration, position: Position): Boolean {
-        if (binder.isChunkGlobalFunctionDeclaration(declaration)) {
-            return true
-        }
-        // AST-invented chunk globals are position-independent (environment-table semantics):
-        // a bare-name write later in the file resolves reads above it. DOC_COMMENT /
-        // SYNTHETIC / BUILTIN origins keep their existing gating.
-        if (
-            declaration.kind == DeclarationKind.GLOBAL &&
-            declaration.origin == DeclarationOrigin.AST
-        ) {
-            return true
-        }
-        val range = declaration.range ?: return true
-        if (comparePositions(range.start, position) <= 0 && comparePositions(position, range.end) < 0) {
-            return true
-        }
-        // Locals become visible after their whole LocalStatement (`visibleFrom`), so the
-        // initializer of `local x = x + 1` still resolves to the outer x.
-        val visibleFrom = declaration.visibleFrom ?: range.start
-        return comparePositions(visibleFrom, position) <= 0
-    }
-
-    private fun findBackingMemberDeclaration(
-        baseType: Type,
-        memberName: String,
-        preferMethod: Boolean,
-        lexicalScopeId: ScopeId
-    ): BinderDeclaration? {
-        val ownerName = memberOwnerName(baseType, lexicalScopeId) ?: return null
-        // Filter the owner's MEMBER declarations once; the preferMethod pass and the
-        // fallback previously re-filtered the full declaration index with the identical
-        // predicate twice.
-        val ownerMembers = binder.declarationIndex.declarations.filter { declaration ->
-            declaration.name == memberName &&
-                declaration.kind.namespace == DeclarationNamespace.MEMBER &&
-                declaration.owner == io.github.dingyi222666.luaparser.semantic.binder.DeclarationOwner.Declaration(ownerName.id)
-        }
-        return ownerMembers.firstOrNull { declaration ->
-            if (preferMethod) declaration.kind == DeclarationKind.METHOD else true
-        } ?: ownerMembers.firstOrNull()
-    }
-
-    private fun memberOwnerName(baseType: Type, lexicalScopeId: ScopeId): BinderDeclaration? {
-        val normalized = io.github.dingyi222666.luaparser.semantic.types.resolve.TypeExpansion.expandForSurface(baseType, lexicalScopeId, binder)
-        val displayName = normalized.displayName.substringBefore('<')
-        return binder.declarationIndex.declarations.firstOrNull { declaration ->
-            declaration.kind == DeclarationKind.CLASS && declaration.name == displayName
-        }
-    }
-
-    private fun callableBase(call: CallExpression): ExpressionNode {
-        return when (val base = call.base) {
-            is StringCallExpression -> effectiveCallBase(base.base)
-            else -> effectiveCallBase(base)
-        }
-    }
-
-    private fun effectiveCallBase(node: ExpressionNode): ExpressionNode {
-        return when (node) {
-            is MemberExpression -> node
-            is CallExpression -> effectiveCallBase(node.base)
-            else -> node
-        }
-    }
+    private fun callableBase(call: CallExpression): ExpressionNode = call.compactCallBase()
 
     private fun enclosingCallExpression(position: Position): CallExpression? {
         // Prefer the most-specific enclosing call from the half-open node index.
@@ -1142,84 +324,10 @@ internal class SignatureHelpProvider(
                 .firstOrNull { isWithinCallArguments(it, argumentPosition) }
     }
 
-    private fun findCallCoveringFromEnclosingContext(position: Position): CallExpression? {
-        val seeds = nodePositionIndex.findEnclosing(position)
-        if (seeds.isEmpty()) {
-            return null
-        }
-        val candidates = LinkedHashSet<CallExpression>()
-        for (seed in seeds) {
-            collectCallExpressions(seed, candidates)
-            var current: BaseASTNode = seed
-            while (true) {
-                val parent = runCatching { current.parent }.getOrNull() ?: break
-                if (parent is BlockNode) {
-                    val statements = parent.statements
-                    val idx = statements.indexOf(current)
-                    if (idx > 0) {
-                        // Walk nearest preceding statements first (typical next-token inflation).
-                        for (i in (idx - 1) downTo 0) {
-                            collectCallExpressions(statements[i], candidates)
-                        }
-                    }
-                    if (parent.returnStatement === current) {
-                        for (statement in statements) {
-                            collectCallExpressions(statement, candidates)
-                        }
-                    }
-                }
-                collectCallExpressions(parent, candidates)
-                current = parent
-            }
-        }
-        return candidates
+    private fun findCallCoveringFromEnclosingContext(position: Position): CallExpression? =
+        binder.scopeGraph.calls.asSequence()
             .filter { isWithinCallArguments(it, position) }
             .minWithOrNull(compareBy({ argumentRegionSpan(it) }, { it.range.start.line }, { it.range.start.column }))
-    }
-
-    private fun collectCallExpressions(node: BaseASTNode, out: MutableSet<CallExpression>) {
-        when (node) {
-            is CallExpression -> {
-                out += node
-                collectCallExpressions(node.base, out)
-                for (argument in node.arguments) {
-                    collectCallExpressions(argument, out)
-                }
-            }
-            is LocalStatement -> {
-                for (value in node.variables) {
-                    collectCallExpressions(value, out)
-                }
-            }
-            is AssignmentStatement -> {
-                // AssignmentStatement: init = LHS, variables = RHS.
-                for (value in node.variables) {
-                    collectCallExpressions(value, out)
-                }
-                for (target in node.init) {
-                    collectCallExpressions(target, out)
-                }
-            }
-            is ReturnStatement -> {
-                for (argument in node.arguments) {
-                    collectCallExpressions(argument, out)
-                }
-            }
-            is CallStatement -> {
-                runCatching { node.expression }.getOrNull()?.let { collectCallExpressions(it, out) }
-            }
-            is MemberExpression -> {
-                collectCallExpressions(node.base, out)
-            }
-            is BlockNode -> {
-                for (statement in node.statements) {
-                    collectCallExpressions(statement, out)
-                }
-                node.returnStatement?.let { collectCallExpressions(it, out) }
-            }
-            else -> Unit
-        }
-    }
 
     private fun argumentRegionSpan(call: CallExpression): Int {
         val start = call.base.range.end

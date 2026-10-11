@@ -81,12 +81,19 @@ class LuaTextDocumentService(
     private val stateLock = Any()
     private val openDocuments = linkedMapOf<String, OpenDocument>()
 
+    init {
+        languageService.onDocumentDiagnostics = { diagnostics ->
+            if (acceptsNotifications()) diagnostics.forEach(publishDiagnostics)
+        }
+    }
+
     override fun didOpen(params: DidOpenTextDocumentParams) {
         if (!acceptsNotifications()) {
             return
         }
         val document = params.textDocument
         val uri = document.uri
+        System.err.println("LSP-DEVICE: didOpen uri=$uri len=${document.text.length} v=${document.version}")
         val diagnostics = synchronized(stateLock) {
             openDocuments[uri] = OpenDocument(uri, document.text, document.version)
             languageService.didOpen(params)
@@ -100,6 +107,7 @@ class LuaTextDocumentService(
         }
         val document = params.textDocument
         val uri = document.uri
+        System.err.println("LSP-DEVICE: didChange uri=$uri changes=${params.contentChanges.size} v=${document.version}")
         val diagnostics = synchronized(stateLock) {
             val openDocument = openDocuments[uri] ?: return@synchronized null
             val incomingVersion = document.version
@@ -166,12 +174,11 @@ class LuaTextDocumentService(
             // so Monaco/file:// carets resolved to an absolute FS path that missed the
             // open-document snapshot keyed as a workspace-relative VirtualPath — empty
             // require-alias member completions (`utils.` → items[0]).
-            val completionList = languageService.completion(
+            languageService.completionAsync(
                 params.textDocument.uri,
                 params.position.line,
                 params.position.character
-            )
-            CompletableFuture.completedFuture(Either.forRight(completionList))
+            ).thenApply { Either.forRight<MutableList<CompletionItem>, CompletionList>(it) }
         }
     }
 

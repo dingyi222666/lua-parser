@@ -2,6 +2,7 @@ package io.github.dingyi222666.luaparser.semantic.binder
 
 import io.github.dingyi222666.luaparser.parser.ast.node.BaseASTNode
 import io.github.dingyi222666.luaparser.parser.ast.node.Range
+import io.github.dingyi222666.luaparser.parser.ast.node.CallExpression
 
 internal class SymbolTableBuilder {
     private data class MutableScope(
@@ -12,7 +13,8 @@ internal class SymbolTableBuilder {
         val ownerDeclarationId: DeclarationId?,
         val parentId: ScopeId?,
         val childIds: MutableList<ScopeId> = mutableListOf(),
-        val declarationIds: MutableList<DeclarationId> = mutableListOf()
+        val declarationIds: MutableList<DeclarationId> = mutableListOf(),
+        val valuesByName: MutableMap<String, BinderDeclaration> = mutableMapOf()
     )
 
     private var nextScopeId = 1
@@ -23,7 +25,17 @@ internal class SymbolTableBuilder {
     private val scopeStack = mutableListOf<ScopeId>()
     private val declarations = mutableListOf<BinderDeclaration>()
     private val symbols = mutableListOf<BinderSymbol>()
+    private val symbolIndices = mutableMapOf<SymbolId, Int>()
     private val nodeToScope = linkedMapOf<BaseASTNode, ScopeId>()
+    private val calls = linkedSetOf<CallExpression>()
+    private val globalWrites = linkedSetOf<BaseASTNode>()
+    private val globalWriteNames = linkedSetOf<String>()
+
+    fun recordCall(call: CallExpression) { calls += call }
+    fun recordGlobalWrite(write: BaseASTNode, name: String) {
+        globalWrites += write
+        globalWriteNames += name
+    }
 
     val currentScopeId: ScopeId
         get() = scopeStack.last()
@@ -79,7 +91,7 @@ internal class SymbolTableBuilder {
         val declarationWithSymbol = declaration.copy(symbolId = symbol.id)
         declarations += declarationWithSymbol
         if (scopeId != null) {
-            scopes.getValue(scopeId).declarationIds += declarationWithSymbol.id
+            indexDeclaration(scopeId, declarationWithSymbol)
         }
         return declarationWithSymbol
     }
@@ -93,8 +105,7 @@ internal class SymbolTableBuilder {
         symbolId: SymbolId,
         scopeId: ScopeId? = currentScopeId
     ): BinderDeclaration {
-        val symbolIndex = symbols.indexOfFirst { it.id == symbolId }
-        require(symbolIndex >= 0) { "Unknown symbol id $symbolId." }
+        val symbolIndex = requireNotNull(symbolIndices[symbolId]) { "Unknown symbol id $symbolId." }
         val existing = symbols[symbolIndex]
         require(declaration.kind.namespace == existing.namespace) {
             "Declaration namespace ${declaration.kind.namespace} does not match symbol namespace ${existing.namespace}."
@@ -106,7 +117,7 @@ internal class SymbolTableBuilder {
             declarationIds = existing.declarationIds + declarationWithSymbol.id
         )
         if (scopeId != null) {
-            scopes.getValue(scopeId).declarationIds += declarationWithSymbol.id
+            indexDeclaration(scopeId, declarationWithSymbol)
         }
         return declarationWithSymbol
     }
@@ -123,20 +134,19 @@ internal class SymbolTableBuilder {
         var scopeId: ScopeId? = fromScopeId
         while (scopeId != null) {
             val scope = scopes.getValue(scopeId)
-            val match = scope.declarationIds
-                .asReversed()
-                .asSequence()
-                .mapNotNull { declarationId -> declarations.firstOrNull { it.id == declarationId } }
-                .firstOrNull { declaration ->
-                    declaration.name == name &&
-                        declaration.kind.namespace == DeclarationNamespace.VALUE
-                }
+            val match = scope.valuesByName[name]
             if (match != null) {
                 return match
             }
             scopeId = scope.parentId
         }
         return null
+    }
+
+    private fun indexDeclaration(scopeId: ScopeId, declaration: BinderDeclaration) {
+        val scope = scopes.getValue(scopeId)
+        scope.declarationIds += declaration.id
+        if (declaration.kind.namespace == DeclarationNamespace.VALUE) scope.valuesByName[declaration.name] = declaration
     }
 
     fun createSymbolFor(declaration: BinderDeclaration): BinderSymbol {
@@ -147,6 +157,7 @@ internal class SymbolTableBuilder {
             declarationIds = listOf(declaration.id),
             primaryDeclarationId = declaration.id
         )
+        symbolIndices[symbol.id] = symbols.size
         symbols += symbol
         return symbol
     }
@@ -156,7 +167,10 @@ internal class SymbolTableBuilder {
         return ScopeGraph(
             scopes = immutableScopes,
             rootScopeId = immutableScopes.first().id,
-            nodeToScopeId = nodeToScope
+            nodeToScopeId = nodeToScope,
+            calls = calls,
+            globalWrites = globalWrites,
+            globalWriteNames = globalWriteNames
         )
     }
 

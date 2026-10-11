@@ -14,7 +14,11 @@ data class DocumentFacts(
     val jvmClassLoads: List<JvmClassLoadFact> = emptyList(),
     val returnHint: ReturnExportShapeHint = ReturnExportShapeHint.none(),
     val environmentSegments: List<EnvironmentSegment> = emptyList(),
-    val exportWriteAnchors: List<ExportWriteAnchor> = emptyList()
+    val exportWriteAnchors: List<ExportWriteAnchor> = emptyList(),
+    /** Read roots only; excludes binding names, bare writes and member names. */
+    val referencedNames: Set<String> = emptySet(),
+    /** UpperCamel roots used as Java/DEX class candidates in member/call positions. */
+    val classLikeNames: Set<String> = emptySet()
 ) {
     data class ModuleNameCandidate(
         val moduleName: String,

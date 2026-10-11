@@ -76,14 +76,15 @@ class CommentCollector(
                 end = comments.last().range.end
             )
 
+            val parsedDocComment = docCommentSyntaxParser.parseWithInlineType(docComments)
             val block = CollectedCommentBlock(
                 comments = comments,
                 range = range,
                 startLine = range.start.line,
                 endLine = range.end.line,
                 visibleEndLine = comments.last().visibleEndLine(),
-                docComment = docCommentSyntaxParser.parse(docComments),
-                inlineTypeText = docCommentSyntaxParser.findInlineTypeText(docComments)
+                docComment = parsedDocComment.syntax,
+                inlineTypeText = parsedDocComment.inlineTypeText
             )
             blocks.add(block)
             return block

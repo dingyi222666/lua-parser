@@ -31,16 +31,14 @@ import io.github.dingyi222666.luaparser.semantic.types.model.ClassType
 import io.github.dingyi222666.luaparser.semantic.types.model.ModuleType
 import io.github.dingyi222666.luaparser.semantic.types.model.TableType
 import io.github.dingyi222666.luaparser.semantic.types.model.Type
+import io.github.dingyi222666.luaparser.semantic.model.isCompletionSite
 import io.github.dingyi222666.luaparser.semantic.model.localDeclarationInitializer
 import io.github.dingyi222666.luaparser.semantic.model.toSymbolHandle
 
 class LuaWorkspaceQueryFacade(
     private val snapshot: WorkspaceSnapshot
 ) {
-    private val resolver = WorkspaceModuleResolver(snapshot)
-
-    private val moduleCallBeforeQuote = Regex("\\b(?:require|import)\\s*\\(?$")
-    private val tableKeyBeforeQuote = Regex("(?:^|[,{])\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*=\\s*$")
+    private val resolver by lazy { WorkspaceModuleResolver(snapshot) }
 
     fun diagnostics(path: VirtualPath): List<Diagnostic> {
         return snapshot.files[path]?.semanticFile?.model?.getDiagnostics().orEmpty()
@@ -78,12 +76,19 @@ class LuaWorkspaceQueryFacade(
         return requireBackedModuleNameAtPosition(path, position)?.let { workspaceModuleLookup(path, it) }
     }
 
-    fun completions(path: VirtualPath, position: Position): List<CompletionItem> {
+    fun completions(path: VirtualPath, position: Position): List<CompletionItem> =
+        completionsMatching(path, position, null)
+
+    internal fun completionsMatching(path: VirtualPath, position: Position,
+        nameFilter: ((String) -> Boolean)?): List<CompletionItem> {
         val semanticFile = snapshot.files[path]?.semanticFile
         if (semanticFile != null) {
             unterminatedStringCompletions(semanticFile, position)?.let { return it }
         }
-        val baseCompletions = semanticFile?.model?.getCompletionsAt(position).orEmpty()
+        val model = semanticFile?.model
+        val baseCompletions = if (model is io.github.dingyi222666.luaparser.semantic.model.DefaultSemanticModel)
+            model.getCompletionsMatching(position, nameFilter)
+            else model?.getCompletionsAt(position).orEmpty().filter { nameFilter?.invoke(it.label) != false }
         if (semanticFile == null) {
             return baseCompletions
         }
@@ -92,13 +97,18 @@ class LuaWorkspaceQueryFacade(
             // Member-context completions must not merge lexical/import free-identifier
             // candidates (Monaco demo: greeter. flooded with locals + builtins). Prefer
             // require-backed export members when available; otherwise keep model member surface.
-            val workspaceMembers = workspaceMemberCompletions(path, semanticFile, memberExpression)
+            val workspaceMembers = workspaceMemberCompletions(path, semanticFile, memberExpression, nameFilter)
             if (workspaceMembers.isNotEmpty()) {
-                return workspaceMembers
+                val callableDetails = baseCompletions.filter {
+                    it.kind == CompletionItemKind.FUNCTION || it.kind == CompletionItemKind.METHOD
+                }.associateBy(CompletionItem::label)
+                return workspaceMembers.map { item ->
+                    callableDetails[item.label]?.detail?.let { item.copy(detail = it) } ?: item
+                }
             }
             return baseCompletions
         }
-        return mergeCompletions(baseCompletions, importCompletions(path, position, semanticFile))
+        return mergeCompletions(baseCompletions, importCompletions(path, position, semanticFile, nameFilter))
     }
 
     fun signatureHelp(path: VirtualPath, position: Position): SignatureHelp? {
@@ -1659,7 +1669,8 @@ class LuaWorkspaceQueryFacade(
     private fun workspaceMemberCompletions(
         path: VirtualPath,
         semanticFile: WorkspaceSemanticFile,
-        memberExpression: MemberExpression
+        memberExpression: MemberExpression,
+        nameFilter: ((String) -> Boolean)? = null
     ): List<CompletionItem> {
         // Prefix under the require-backed root: greeter. → []; cfg.ui. → ["ui"].
         val prefixPath = requireBackedExportPath(semanticFile, path, memberExpression.base)
@@ -1675,7 +1686,7 @@ class LuaWorkspaceQueryFacade(
             .filter { member ->
                 member.exportPath.size == expectedDepth &&
                     member.exportPath.take(prefixPath.size) == prefixPath &&
-                    isUserFacingExportName(member.name)
+                    isUserFacingExportName(member.name) && nameFilter?.invoke(member.name) != false
             }
             .distinctBy { it.name }
             .map { member ->
@@ -2303,6 +2314,9 @@ class LuaWorkspaceQueryFacade(
     }
 
     private companion object {
+        val moduleCallBeforeQuote by lazy { Regex("\\b(?:require|import)\\s*\\(?$") }
+        val tableKeyBeforeQuote by lazy { Regex("(?:^|[,{])\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*=\\s*$") }
+
         /**
          * Workspace/symbol result cap (workspace-symbol audit, wave M). Applied after the
          * deterministic (name, path, line, column) sort so every query — blank included —
@@ -2320,104 +2334,11 @@ class LuaWorkspaceQueryFacade(
         )
     }
 
-    private fun memberExpressionAt(
-        semanticFile: WorkspaceSemanticFile,
-        position: Position
-    ): MemberExpression? {
-        val node = semanticFile.nodeAt(position)
-        // Only treat completed member names (and incomplete blank members) as member sites.
-        // Caret still on the receiver of `messageText:setText` must stay free-id / lexical so
-        // layout-id locals (`messageText`, `submitButton`) surface alongside imports (TASK-683).
-        memberAccessAt(node, position)?.let { return it }
-        if (node is Identifier) {
-            val parent = runCatching { node.parent }.getOrNull() as? MemberExpression
-            // Incomplete `base.|` / `base:` where caret is on the base and the member name is blank.
-            if (
-                parent != null &&
-                parent.base === node &&
-                parent.identifier.name.isBlank() &&
-                isMemberCompletionSite(parent, position)
-            ) {
-                return parent
-            }
-            // Incomplete `base.|` often lands the caret past blank member Identifier.
-            if (
-                parent != null &&
-                parent.identifier === node &&
-                parent.identifier.name.isBlank() &&
-                isMemberCompletionSite(parent, position)
-            ) {
-                return parent
-            }
-            return null
-        }
-        // Prefer the most specific (longest) member expression covering the caret, and
-        // when tied prefer incomplete trailing-dot forms (`cfg.ui.|`) over completed
-        // intermediate segments (`cfg.ui`) so nested export completions use the full prefix.
-        // Skip receivers of completed accesses so free-id completions keep layout-id locals.
-        val candidates = semanticFile.memberExpressions.filter {
-            isMemberCompletionSite(it, position) &&
-                (
-                    memberCompletionRangeContains(it.range, position) ||
-                        rangeContains(it.identifier.range, position)
-                    )
-        }
-        if (candidates.isEmpty()) {
-            return null
-        }
-        return candidates.maxWithOrNull(
-            compareBy<MemberExpression> { spanLength(it.range) }
-                .thenBy { if (it.identifier.name.isBlank()) 1 else 0 }
-                .thenBy { it.range.end.line }
-                .thenBy { it.range.end.column }
-        )
-    }
+    private fun memberExpressionAt(semanticFile: WorkspaceSemanticFile, position: Position): MemberExpression? =
+        semanticFile.nodeIndex.completionMemberAt(position)
 
-    private fun spanLength(range: Range): Int {
-        if (range.start.line == range.end.line) {
-            return range.end.column - range.start.column
-        }
-        return (range.end.line - range.start.line) * 10_000 +
-            range.end.column + (1_000 - range.start.column)
-    }
-
-    private fun memberCompletionRangeContains(range: Range, position: Position): Boolean {
-        if (rangeContains(range, position)) {
-            return true
-        }
-        // Half-open AST ranges end at the caret for trailing-dot completions (`table.|`).
-        // Accept caret at end or one column past end.
-        if (position.line != range.end.line) {
-            return false
-        }
-        return position.column == range.end.column || position.column == range.end.column + 1
-    }
-
-    /**
-     * Member completions apply when the caret is on the member name / after the indexer
-     * (`base.|`, `base:set|`), not when the caret is still on the receiver identifier of a
-     * completed access (`mess|ageText:setText` must stay lexical for layout-id locals).
-     */
-    private fun isMemberCompletionSite(expression: MemberExpression, position: Position): Boolean {
-        val baseEnd = expression.base.range.end
-        val afterBase =
-            position.line > baseEnd.line ||
-                (position.line == baseEnd.line && position.column > baseEnd.column)
-        if (expression.identifier.name.isBlank()) {
-            // Incomplete `base.` / `base:` — member surface once past the base, or on the blank
-            // member identifier itself (trailing-dot caret often sits at range end).
-            if (afterBase || position.line == baseEnd.line && position.column == baseEnd.column) {
-                return memberCompletionRangeContains(expression.range, position) ||
-                    rangeContains(expression.identifier.range, position)
-            }
-            return false
-        }
-        if (!afterBase) {
-            return false
-        }
-        return memberCompletionRangeContains(expression.range, position) ||
-            rangeContains(expression.identifier.range, position)
-    }
+    private fun isMemberCompletionSite(expression: MemberExpression, position: Position): Boolean =
+        expression.isCompletionSite(position)
 
     /**
      * Mid-typing string literals (`import "mo`, `orientation = "verti`) are unterminated, so
@@ -2523,10 +2444,11 @@ class LuaWorkspaceQueryFacade(
     private fun importCompletions(
         path: VirtualPath,
         position: Position,
-        semanticFile: WorkspaceSemanticFile
+        semanticFile: WorkspaceSemanticFile,
+        nameFilter: ((String) -> Boolean)? = null
     ): List<CompletionItem> {
         val localNames = visibleLocalValueNames(semanticFile, position)
-        return resolver.importedSymbolsFor(path)
+        return resolver.importedSymbolsFor(path, nameFilter = nameFilter)
             .values
             .asSequence()
             .filter { it.alias !in localNames }
@@ -2705,7 +2627,7 @@ class LuaWorkspaceQueryFacade(
     // order); the private copies that mirrored them byte-for-byte were removed. Note the
     // binder's rangeContains is END-EXCLUSIVE while this facade's is END-INCLUSIVE on
     // purpose: hover/definition membership here treats a caret exactly at range.end as
-    // inside (see memberCompletionRangeContains for the same +1 tolerance).
+    // inside; completionMemberAt independently permits the trailing caret.
 
     private fun syntheticModuleRange(moduleName: String): Range {
         return Range(

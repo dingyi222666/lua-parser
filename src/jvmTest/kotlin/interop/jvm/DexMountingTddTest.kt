@@ -9,6 +9,8 @@ import io.github.dingyi222666.luaparser.interop.jvm.PrefixedImportUnsupportedRea
 import io.github.dingyi222666.luaparser.parser.LuaVersion
 import io.github.dingyi222666.luaparser.semantic.types.model.JavaInstanceType
 import io.github.dingyi222666.luaparser.semantic.types.model.PrimitiveType
+import io.github.dingyi222666.luaparser.semantic.types.model.ModuleType
+import io.github.dingyi222666.luaparser.semantic.checker.hydrateJavaProviderType
 import io.github.dingyi222666.luaparser.semantic.workspace.LuaWorkspaceInput
 import io.github.dingyi222666.luaparser.semantic.workspace.VirtualPath
 import java.io.File
@@ -46,6 +48,65 @@ import kotlin.test.assertTrue
  * workers do not run Gradle.
  */
 class DexMountingTddTest {
+    @Test
+    fun canonical_nested_lookup_covers_deep_packages_and_preserves_exact_name_priority() {
+        fun metadata(binaryName: String) = DexClass(binaryName, binaryName.substringAfterLast('/'),
+            1, null, emptyList(), emptyList(), emptyList())
+        val packageName = List(20) { "segment$it" }.joinToString("/")
+        val deep = metadata("$packageName/Outer\$Middle\$Inner")
+        val first = metadata("example/Outer\$Inner")
+        val second = metadata("example/Outer/Inner")
+        val library = io.github.dingyi222666.luaparser.interop.jvm.DexLibraryMounter.DexLibrary(
+            File("lookup.dex"), "lookup-revision", listOf(deep, first, second))
+        kotlin.test.assertSame(deep, library.classForTarget(deep.binaryName.replace('/', '.').replace('$', '.')))
+        kotlin.test.assertSame(deep, library.classForTarget(deep.binaryName.replace('/', '.').replace('$', '_')))
+        // The exact binary name takes precedence over a canonical nested alias.
+        kotlin.test.assertSame(second, library.classForTarget("example.Outer.Inner"))
+        assertNull(library.classForTarget("$packageName.Outer.Middle.Missing"))
+    }
+
+    @Test
+    fun simultaneous_library_mounts_share_the_same_parsed_revision() {
+        val library = Files.createTempDirectory("parallel-dex-").resolve("classes.dex").toFile()
+        library.writeBytes(buildGreeterDexBytes())
+        val start = java.util.concurrent.CountDownLatch(1)
+        val pool = java.util.concurrent.Executors.newFixedThreadPool(6)
+        try {
+            val results = List(6) {
+                pool.submit(java.util.concurrent.Callable {
+                    start.await()
+                    assertNotNull(io.github.dingyi222666.luaparser.interop.jvm.DexLibraryMounter.libraryFor(library))
+                })
+            }
+            start.countDown()
+            val mounted = results.map { it.get(10, java.util.concurrent.TimeUnit.SECONDS) }
+            mounted.forEach { kotlin.test.assertSame(mounted.first(), it) }
+            assertNotNull(mounted.first().classForTarget("com.example.Greeter"))
+        } finally {
+            pool.shutdownNow()
+            library.parentFile.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun newly_created_dex_invalidates_a_cached_missing_import_activation() {
+        val library = Files.createTempDirectory("late-dex-import-").resolve("classes.dex").toFile()
+        val path = VirtualPath.of("main.lua")
+        val source = "import '${library.path}'\nlocal Class=luajava.bindClass('com.example.Greeter')\nClass."
+        val engine = JvmWorkspaceEngine()
+        var activations = 0
+        engine.onImportActivation = { activations++ }
+        val first = engine.build(LuaWorkspaceInput(mapOf(path to source))).snapshot
+        val misses = activations
+        library.writeBytes(buildGreeterDexBytes())
+        val next = engine.update(first, io.github.dingyi222666.luaparser.semantic.workspace.WorkspaceDelta(
+            upserts = mapOf(path to "$source\n-- changed revision"))).snapshot
+        assertTrue(activations > misses, "Creation of an explicitly imported file changes activation identity.")
+        val labels = io.github.dingyi222666.luaparser.semantic.workspace.LuaWorkspaceQueryFacade(next)
+            .completions(path, io.github.dingyi222666.luaparser.parser.ast.node.Position(3, 7)).map { it.label }
+        assertTrue("greet" in labels, labels.toString())
+    }
+
 
     // ------------------------------------------------------------ fixture dex
 
@@ -222,10 +283,8 @@ class DexMountingTddTest {
         w.uleb(1) // direct method diff 1 -> <init>
         w.uleb(0x1) // ACC_PUBLIC
         w.uleb(codeItemOffset)
-        // The method_idx_diff chain accumulates CONTINUOUSLY across the direct and
-        // virtual lists (matching dx/ART output and the parser), so hello (idx 2)
-        // encodes 2 - lastDirect(1) = 1.
-        w.uleb(1) // virtual method diff 1 -> hello
+        // The first virtual entry starts a separate delta chain at zero.
+        w.uleb(2) // virtual method index 2 -> hello
         w.uleb(0x1) // ACC_PUBLIC
         w.uleb(codeItemOffset)
 
@@ -408,6 +467,37 @@ class DexMountingTddTest {
     }
 
     // ------------------------------------------------------------ bare import
+
+    @Test
+    fun deferred_dex_class_resolves_members_and_constructors_when_requested() {
+        val provider = JvmClassModuleProvider()
+        val config = configuration(dexFile.path).copy(classes = setOf("com.example.Greeter"))
+        val path = VirtualPath.of("__jvm__/classes/com/example/Greeter.lua")
+        val shell = provider.providersFor(config, deferMembers = true).getValue(path)
+            .moduleExportSurface!!.moduleType
+        val shellClass = (shell.fields.getValue("__class") as JavaInstanceType).classType
+        assertTrue(shellClass.instanceMembers.isEmpty())
+        assertTrue(shellClass.constructors.isEmpty)
+        val hydrated = assertNotNull(provider.importedSymbolForTarget("com.example.Greeter", config)).moduleType
+        assertTrue("greet" in hydrated.methods)
+        assertTrue("__call" in hydrated.fields)
+        assertTrue("hello" in (hydrated.fields.getValue("__class") as JavaInstanceType).allInstanceMembers())
+        assertTrue("hello" in (shell.fields.getValue("__class") as JavaInstanceType)
+            .hydrateJavaProviderType { target -> provider.importedSymbolForTarget(target, config) }
+            .let { it as JavaInstanceType }.allInstanceMembers())
+    }
+
+    @Test
+    fun deferred_dex_library_catalog_keeps_aliases_and_hydrates_selected_class() {
+        val provider = JvmClassModuleProvider()
+        val config = JvmWorkspaceConfiguration(androluaImports = listOf(dexFile.path))
+        val catalog = assertNotNull(provider.importedSymbolForTarget(dexFile.path, config, deferMembers = true)).moduleType
+        val entry = catalog.fields.getValue("Greeter") as ModuleType
+        assertTrue(entry.methods.isEmpty())
+        val hydrated = entry.hydrateJavaProviderType { target -> provider.importedSymbolForTarget(target, config) } as ModuleType
+        assertTrue("greet" in hydrated.methods)
+        assertTrue("hello" in (hydrated.fields.getValue("__class") as JavaInstanceType).allInstanceMembers())
+    }
 
     @Test
     fun bare_dex_path_import_mounts_library_module_and_class_providers() {

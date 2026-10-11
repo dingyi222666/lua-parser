@@ -49,9 +49,6 @@ object DexLibraryMounter {
         "bit32", "coroutine", "debug", "io", "math", "os", "package", "string", "table", "utf8"
     )
 
-    /** Hard bound on dot→`$` nested-candidate enumeration for pathological inputs. */
-    private const val MAX_NESTED_CANDIDATE_SEGMENTS = 12
-
     /** Process-wide parse cache bound (libraries are MB-scale; a handful suffices). */
     private const val MAX_CACHED_LIBRARIES = 8
 
@@ -68,6 +65,8 @@ object DexLibraryMounter {
                 return size > MAX_CACHED_LIBRARIES
             }
         })
+
+    private val mounting = java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.CompletableFuture<DexLibrary?>>()
 
     /** True when [file] is an existing, readable dex/apk library this mounter can load. */
     fun isMountableDexLibrary(file: File): Boolean {
@@ -89,13 +88,21 @@ object DexLibraryMounter {
         }
         val identity = cacheIdentity(file)
         libraryCache[identity]?.let { return it }
-        val classes = readClasses(file)
-        if (classes.isEmpty()) {
-            return null
+        val pending = java.util.concurrent.CompletableFuture<DexLibrary?>()
+        mounting.putIfAbsent(identity, pending)?.let { return it.join() }
+        try {
+            libraryCache[identity]?.let { pending.complete(it); return it }
+            val classes = readClasses(file)
+            val library = if (classes.isEmpty()) null else DexLibrary(file, identity, classes)
+            if (library != null) libraryCache[identity] = library
+            pending.complete(library)
+            return library
+        } catch (failure: Throwable) {
+            pending.completeExceptionally(failure)
+            throw failure
+        } finally {
+            mounting.remove(identity, pending)
         }
-        val library = DexLibrary(file, identity, classes)
-        libraryCache[identity] = library
-        return library
     }
 
     private fun cacheIdentity(file: File): String {
@@ -133,6 +140,9 @@ object DexLibraryMounter {
         val classes: List<DexClass>
     ) {
         private val bySlashBinaryName: Map<String, DexClass> = classes.associateBy(DexClass::binaryName)
+        // A nested Java class has exactly one canonical spelling: package.Outer.Inner.
+        // Index it once instead of trying all subsets of the target's separators.
+        private val byCanonicalName = classes.groupBy { it.binaryName.replace('/', '.').replace('$', '.') }
         private val bySimpleAlias: Map<String, List<DexClass>> = classes.groupBy(::simpleAliasOf)
         private val moduleTypeCache: MutableMap<String, ModuleType> =
             Collections.synchronizedMap(LinkedHashMap())
@@ -158,23 +168,7 @@ object DexLibraryMounter {
             if ('_' in trimmed) {
                 bySlashBinaryName[trimmed.replace('_', '$').replace('.', '/')]?.let { return it }
             }
-            // Dotted-nested subset enumeration: replace each dot with '$' to find
-            // `Outer.Inner` → `Outer$Inner` style binary names.
-            val separatorIndexes = trimmed.indices.filter { trimmed[it] == '.' }
-            if (separatorIndexes.isEmpty() || separatorIndexes.size > MAX_NESTED_CANDIDATE_SEGMENTS) {
-                return null
-            }
-            val combinations = 1 shl separatorIndexes.size
-            for (mask in 1 until combinations) {
-                val chars = trimmed.toCharArray()
-                separatorIndexes.forEachIndexed { index, separator ->
-                    if ((mask and (1 shl index)) != 0) {
-                        chars[separator] = '$'
-                    }
-                }
-                bySlashBinaryName[String(chars).replace('.', '/')]?.let { return it }
-            }
-            return null
+            return byCanonicalName[trimmed.replace('/', '.')]?.singleOrNull()
         }
 
         /**

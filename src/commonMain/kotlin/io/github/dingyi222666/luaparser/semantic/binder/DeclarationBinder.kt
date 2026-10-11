@@ -24,6 +24,7 @@ import io.github.dingyi222666.luaparser.parser.ast.node.MemberExpression
 import io.github.dingyi222666.luaparser.parser.ast.node.Range
 import io.github.dingyi222666.luaparser.parser.ast.node.RepeatStatement
 import io.github.dingyi222666.luaparser.parser.ast.node.StatementNode
+import io.github.dingyi222666.luaparser.parser.ast.node.TableConstructorExpression
 import io.github.dingyi222666.luaparser.parser.ast.node.SwitchStatement
 import io.github.dingyi222666.luaparser.parser.ast.node.WhenStatement
 import io.github.dingyi222666.luaparser.parser.ast.node.WhileStatement
@@ -41,6 +42,7 @@ import io.github.dingyi222666.luaparser.semantic.comments.MethodTagSyntax
 import io.github.dingyi222666.luaparser.semantic.comments.OverloadTagSyntax
 import io.github.dingyi222666.luaparser.semantic.types.model.PrimitiveType
 import io.github.dingyi222666.luaparser.semantic.types.syntax.TypeSyntax
+import io.github.dingyi222666.luaparser.semantic.types.syntax.NamedTypeSyntax
 import io.github.dingyi222666.luaparser.semantic.types.syntax.TypeSyntaxParser
 import io.github.dingyi222666.luaparser.semantic.types.syntax.splitTopLevelTypeText
 
@@ -52,6 +54,11 @@ internal class DeclarationBinder(
     fun bind(chunk: ChunkNode) {
         bindOrphanTypeDeclarations()
         visitChunkNode(chunk, Unit)
+    }
+
+    override fun visitExpressionNode(node: ExpressionNode, value: Unit) {
+        if (node is io.github.dingyi222666.luaparser.parser.ast.node.CallExpression) builder.recordCall(node)
+        super<ASTVisitor>.visitExpressionNode(node, value)
     }
 
     override fun visitStatementNode(node: StatementNode, value: Unit) {
@@ -74,6 +81,14 @@ internal class DeclarationBinder(
             inlineTypeText = attachment?.inlineTypeText
         )
 
+        // A same-named class/table definition links its value and type namespaces. An
+        // unrelated attached @class declares a type only; @type is required to type an alias.
+        val classValueType = if (node.init.size == 1 && node.variables.singleOrNull() is TableConstructorExpression) {
+            attachment?.docComment?.tags?.filterIsInstance<ClassTagSyntax>()?.singleOrNull()
+                ?.takeIf { it.name.substringAfterLast('.') == node.init.single().name }
+                ?.let { NamedTypeSyntax(it.name) }
+        } else null
+
         node.init.forEachIndexed { index, identifier ->
             builder.addDeclarationWithSymbol(
                 localDeclaration(
@@ -82,7 +97,7 @@ internal class DeclarationBinder(
                     owner = DeclarationOwner.Lexical(currentLexicalOwnerNode()),
                     anchorNode = identifier,
                     documentation = documentation,
-                    declaredTypeSyntax = declaredTypeSyntaxes.getOrNull(index)
+                    declaredTypeSyntax = declaredTypeSyntaxes.getOrNull(index) ?: classValueType
                 ).copy(
                     // Anchor at the end of the initializer expression: the new local is
                     // offered from there onward, while the initializer itself (`local x = 1`
@@ -150,8 +165,9 @@ internal class DeclarationBinder(
             null
         }
         node.init.forEachIndexed { index, target ->
+            recordGlobalWrite(target, node)
             when (target) {
-                is Identifier -> bindBareGlobalAssignmentTarget(target)
+                is Identifier -> bindBareGlobalAssignmentTarget(target, documentation, declaredTypeSyntax)
                 is MemberExpression -> {
                     visitExpressionNode(target.base, value)
                     val assignedValue = node.variables.getOrNull(index)
@@ -185,6 +201,7 @@ internal class DeclarationBinder(
     }
 
     override fun visitFunctionDeclaration(node: FunctionDeclaration, value: Unit) {
+        if (!node.isLocal) node.identifier?.let { recordGlobalWrite(it, node) }
         val attachment = comments.getAttachment(node)
         val documentation = attachment?.toDeclarationDocumentation()
         val functionDeclaration = createFunctionDeclaration(node, documentation)
@@ -364,7 +381,27 @@ internal class DeclarationBinder(
      * prior VALUE decls (including builtins and prior free-global invents) suppress
      * inventing a peer declaration at later write sites.
      */
-    private fun bindBareGlobalAssignmentTarget(identifier: Identifier) {
+    private fun recordGlobalWrite(target: ExpressionNode, write: BaseASTNode) {
+        var root = target
+        while (true) {
+            root = when (root) {
+                is MemberExpression -> root.base
+                is io.github.dingyi222666.luaparser.parser.ast.node.IndexExpression -> root.base
+                else -> break
+            }
+        }
+        val name = (root as? Identifier)?.name ?: return
+        val existing = builder.findVisibleValueDeclaration(name)
+        if (existing == null || existing.kind == DeclarationKind.GLOBAL || existing.origin == DeclarationOrigin.BUILTIN) {
+            builder.recordGlobalWrite(write, name)
+        }
+    }
+
+    private fun bindBareGlobalAssignmentTarget(
+        identifier: Identifier,
+        documentation: DeclarationDocumentation?,
+        declaredTypeSyntax: io.github.dingyi222666.luaparser.semantic.types.syntax.TypeSyntax?
+    ) {
         val existing = builder.findVisibleValueDeclaration(identifier.name)
         if (existing != null) {
             // Local introducers win shadowing; existing GLOBAL/FUNCTION/builtin VALUE
@@ -379,7 +416,9 @@ internal class DeclarationBinder(
                 origin = DeclarationOrigin.AST,
                 owner = DeclarationOwner.Root,
                 anchorNode = identifier,
-                range = identifier.range
+                range = identifier.range,
+                documentation = documentation,
+                declaredTypeSyntax = declaredTypeSyntax
             ),
             scopeId = builder.rootScopeId
         )

@@ -142,7 +142,7 @@ class SemanticModelFacadeTest {
         val render = harness.model.getSymbolAt(harness.positionOf("render"))
 
         assertEquals("fun(value: string): number", harness.model.getDeclaredType(assertNotNull(render))?.displayName)
-        assertEquals("fun(value: string): 1, 2", harness.model.getInferredType(assertNotNull(render))?.displayName)
+        assertEquals("fun(value: string): (1, 2)", harness.model.getInferredType(assertNotNull(render))?.displayName)
     }
 
     @Test

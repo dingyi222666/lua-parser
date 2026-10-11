@@ -45,22 +45,22 @@ local Bitmap = {}
 ---@field luaPath string
 ---@field Width integer
 ---@field Height integer
----@field getContext fun(): any
----@field getLuaDir fun(): string
----@field getLuaPath fun(): string
----@field getLuaExtDir fun(): string
----@field getLuaExtPath fun(...: any): string
----@field getClassLoaders fun(): table
----@field getLibrarys fun(): table<string, string>
----@field loadDex fun(name: string): JavaObject
----@field sendMsg fun(message: any)
----@field sendError fun(title: string, error: any)
----@field newActivity fun(path: string, arg?: table)
----@field newTask fun(src: string|function, callback?: function): JavaObject
----@field newThread fun(src: string|function): JavaObject
----@field setContentView fun(view: AndroidView|LuaLayoutSpec|any)
----@field getMenu fun(): AndroidMenu
----@field getSystemService fun(name: string): any
+---@method AndroidLuaContext.getContext fun(): any
+---@method AndroidLuaContext.getLuaDir fun(): string
+---@method AndroidLuaContext.getLuaPath fun(): string
+---@method AndroidLuaContext.getLuaExtDir fun(): string
+---@method AndroidLuaContext.getLuaExtPath fun(...: any): string
+---@method AndroidLuaContext.getClassLoaders fun(): table
+---@method AndroidLuaContext.getLibrarys fun(): table<string, string>
+---@method AndroidLuaContext.loadDex fun(name: string): JavaObject
+---@method AndroidLuaContext.sendMsg fun(message: any)
+---@method AndroidLuaContext.sendError fun(title: string, error: any)
+---@method AndroidLuaContext.newActivity fun(path: string, arg?: table)
+---@method AndroidLuaContext.newTask fun(src: string|function, callback?: function): JavaObject
+---@method AndroidLuaContext.newThread fun(src: string|function): JavaObject
+---@method AndroidLuaContext.setContentView fun(view: AndroidView|LuaLayoutSpec|any)
+---@method AndroidLuaContext.getMenu fun(): AndroidMenu
+---@method AndroidLuaContext.getSystemService fun(name: string): any
 local AndroidLuaContext = {}
 
 ---@class android.content.Context
@@ -104,7 +104,7 @@ LuaMultiAdapter = LuaMultiAdapter
 ---@java-class com.androlua.LuaActivity
 --- Reads the Lua global `name` from the activity Lua state
 --- (runtime LuaActivity.get; `activity.get("_taskFinlshFunction")(data)` idiom).
----@field get fun(name: string): any
+---@method LuaActivity.get fun(name: string): any
 local LuaActivity = {}
 
 ---@class LuaService: AndroidLuaContext|android.app.Service

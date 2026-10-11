@@ -126,11 +126,29 @@ object WorkspaceDirtySetPlanner {
         val seedFiles = linkedSetOf<VirtualPath>()
         seedFiles += filesWithRequireResolutionChanged.filter { it in current.files }
         seedFiles += seeAllFallbackDocuments
+        val globalReaders = buildMap<String, MutableSet<VirtualPath>> {
+            current.files.forEach { (path, file) ->
+                file.documentFacts?.referencedNames.orEmpty().forEach { name ->
+                    getOrPut(name) { linkedSetOf() } += path
+                }
+            }
+        }
+        fun sharedGlobalDependents(path: VirtualPath): Set<VirtualPath> = buildSet {
+            val names = previous.files[path]?.publicFingerprint?.globalWriteNames.orEmpty() +
+                current.files[path]?.publicFingerprint?.globalWriteNames.orEmpty()
+            names.forEach { name -> addAll(globalReaders[name].orEmpty()) }
+            remove(path)
+        }
 
         publicSurfaceChangedFiles.forEach { path ->
             seedFiles += reverseDependentsOf(path, previous.graph)
             seedFiles += reverseDependentsOf(path, current.graph)
             seedFiles += currentExtraProviderConsumers(path, current)
+            val before = previous.files[path]?.publicFingerprint
+            val after = current.files[path]?.publicFingerprint
+            if (before?.globalSymbolsFingerprint != after?.globalSymbolsFingerprint || before?.value != after?.value) {
+                seedFiles += sharedGlobalDependents(path)
+            }
         }
 
         activeProviderChangedModuleNames.forEach { moduleName ->
@@ -139,8 +157,10 @@ object WorkspaceDirtySetPlanner {
         }
 
         val reverseEdges = linkedMapOf<VirtualPath, Set<VirtualPath>>()
-        (previous.graph.reverseDependencies.keys + current.graph.reverseDependencies.keys).forEach { path ->
-            reverseEdges[path] = reverseDependentsOf(path, previous.graph) + reverseDependentsOf(path, current.graph)
+        (previous.graph.reverseDependencies.keys + current.graph.reverseDependencies.keys +
+            previous.files.keys + current.files.keys).forEach { path ->
+            reverseEdges[path] = reverseDependentsOf(path, previous.graph) + reverseDependentsOf(path, current.graph) +
+                sharedGlobalDependents(path)
         }
 
         val queue = ArrayDeque(seedFiles)

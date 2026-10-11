@@ -418,8 +418,8 @@ private class DexClassData(val fields: List<DexField>, val methods: List<DexMeth
  * Parses a class_data_item: four uleb128 counts followed by diff-encoded
  * encoded_field (field_idx_diff + access_flags) and encoded_method
  * (method_idx_diff + access_flags + code_off) lists. `code_off` is consumed
- * but never followed. Static fields and instance fields form one continuous
- * field-index delta chain, as do direct and virtual methods.
+ * but never followed. Each field/method list starts its own index-delta chain
+ * at zero, as specified by the DEX encoded_field/encoded_method formats.
  *
  * Returns null (with a diagnostic) when the item is truncated; the whole class is skipped.
  */
@@ -445,6 +445,7 @@ private fun parseClassData(
     val fields = ArrayList<DexField>(staticFieldCount + instanceFieldCount)
     var fieldIndex = 0
     for (i in 0 until staticFieldCount + instanceFieldCount) {
+        if (i == staticFieldCount) fieldIndex = 0
         val idxDiff = reader.readUleb128()
         val accessFlags = reader.readUleb128()
         if (reader.failed) {
@@ -463,6 +464,7 @@ private fun parseClassData(
     val methods = ArrayList<DexMethod>(directMethodCount + virtualMethodCount)
     var methodIndex = 0
     for (i in 0 until directMethodCount + virtualMethodCount) {
+        if (i == directMethodCount) methodIndex = 0
         val idxDiff = reader.readUleb128()
         val accessFlags = reader.readUleb128()
         reader.readUleb128() // code_off: consumed, not followed

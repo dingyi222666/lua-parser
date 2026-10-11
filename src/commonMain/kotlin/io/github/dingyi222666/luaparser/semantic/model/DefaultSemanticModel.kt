@@ -22,17 +22,22 @@ internal class DefaultSemanticModel(
     private val binder: BinderPassResult,
     private val adapters: ApiAdapters,
     private val referenceQueries: ReferenceQueries,
-    nodePositionIndex: Lazy<NodePositionIndex>,
+    private val nodePositionIndexLazy: Lazy<NodePositionIndex>,
     private val nodeTypeIndex: NodeTypeIndex,
-    completionProvider: Lazy<CompletionProvider>,
-    luaLayoutCompletionProvider: Lazy<LuaLayoutCompletionProvider>,
-    signatureHelpProvider: Lazy<SignatureHelpProvider>,
+    private val completionProviderLazy: Lazy<CompletionProvider>,
+    private val luaLayoutCompletionProviderLazy: Lazy<LuaLayoutCompletionProvider>,
+    private val signatureHelpProviderLazy: Lazy<SignatureHelpProvider>,
     private val diagnostics: List<Diagnostic>
 ) : SemanticModel {
-    val nodePositionIndex by nodePositionIndex
-    private val completionProvider by completionProvider
-    private val luaLayoutCompletionProvider by luaLayoutCompletionProvider
-    private val signatureHelpProvider by signatureHelpProvider
+    val nodePositionIndex by nodePositionIndexLazy
+    private val completionProvider by completionProviderLazy
+    private val luaLayoutCompletionProvider by luaLayoutCompletionProviderLazy
+    private val signatureHelpProvider by signatureHelpProviderLazy
+
+    internal fun withDiagnostics(diagnostics: List<Diagnostic>) = DefaultSemanticModel(
+        binder, adapters, referenceQueries, nodePositionIndexLazy, nodeTypeIndex,
+        completionProviderLazy, luaLayoutCompletionProviderLazy, signatureHelpProviderLazy, diagnostics
+    )
 
     override fun getSymbolAt(position: Position): Symbol? {
         return referenceQueries.getSymbolAt(position, nodePositionIndex.findInnermost(position))
@@ -61,11 +66,16 @@ internal class DefaultSemanticModel(
         return referenceQueries.getMembers(internalType)
     }
 
-    override fun getCompletionsAt(position: Position): List<CompletionItem> {
+    override fun getCompletionsAt(position: Position): List<CompletionItem> =
+        getCompletionsMatching(position, null)
+
+    internal fun getCompletionsMatching(position: Position, nameFilter: ((String) -> Boolean)?): List<CompletionItem> {
         // Layout-table key contexts replace lexical completions with the enclosing view
         // class's Lua property keys (loadlayout `k -> setCap(k)` semantics).
-        luaLayoutCompletionProvider.getCompletionsAt(position)?.let { return it }
-        return completionProvider.getCompletionsAt(position)
+        luaLayoutCompletionProvider.getCompletionsAt(position)?.let { items ->
+            return items.filter { nameFilter?.invoke(it.label) != false }
+        }
+        return completionProvider.getCompletionsAt(position, nameFilter)
     }
 
     override fun getSignatureHelpAt(position: Position): SignatureHelp? {

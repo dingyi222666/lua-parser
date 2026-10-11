@@ -46,6 +46,7 @@ data class ValueSequence(
     companion object {
         fun of(type: Type): ValueSequence {
             return when (val normalized = type.unwrapAliases()) {
+                PrimitiveType.VOID -> ValueSequence()
                 is MultiReturnType -> fromTypes(normalized.types)
                 is VarargType -> ValueSequence(variadicTail = normalized.elementType)
                 else -> ValueSequence(fixed = listOf(type))
@@ -54,7 +55,7 @@ data class ValueSequence(
 
         fun fromTypes(types: List<Type>): ValueSequence {
             if (types.isEmpty()) {
-                return ValueSequence(fixed = listOf(PrimitiveType.NIL))
+                return ValueSequence()
             }
 
             val fixed = mutableListOf<Type>()
@@ -72,7 +73,7 @@ data class ValueSequence(
 
         fun fromExpressionResults(results: List<Type>): ValueSequence {
             if (results.isEmpty()) {
-                return ValueSequence(fixed = listOf(PrimitiveType.NIL))
+                return ValueSequence()
             }
 
             val fixed = mutableListOf<Type>()

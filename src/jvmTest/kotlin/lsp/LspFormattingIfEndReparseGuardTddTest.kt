@@ -31,9 +31,8 @@ import kotlin.test.assertTrue
  *    the `if` was absorbed into its body on reparse.
  * 2. **Guard rail** — `LuaLanguageService.formatSourceText` re-parses the exact text it is
  *    about to return. When the printer surface does not parse back cleanly (any recovery
- *    diagnostic or parser throw) it falls back to the safe indent/newline normalization of
- *    the original text, so the editor only ever receives text that the parser accepts.
- *    [formatting_falls_back_to_safe_normalization_when_printer_surface_does_not_reparse]
+ *    diagnostic or parser throw) it returns no edit, preserving the exact original text.
+ *    [formatting_preserves_source_when_printer_surface_does_not_reparse]
  *    exercises that path with a construct the printer still cannot reproduce (a
  *    parenthesized string receiver `("x"):rep(3)`; the printer drops the parens and the
  *    result no longer parses).
@@ -169,7 +168,7 @@ class LspFormattingIfEndReparseGuardTddTest {
     }
 
     @Test
-    fun formatting_falls_back_to_safe_normalization_when_printer_surface_does_not_reparse() {
+    fun formatting_preserves_source_when_printer_surface_does_not_reparse() {
         val source = "local padded = (\"x\"):rep(3)\nreturn padded"
 
         // Precondition: the raw printer surface for this chunk must NOT parse back cleanly,
@@ -190,7 +189,9 @@ class LspFormattingIfEndReparseGuardTddTest {
         val edits = service.formatting(
             DocumentFormattingParams(TextDocumentIdentifier(uri), FormattingOptions(4, true))
         )
+        assertTrue(edits.isEmpty(), "A corrupt printer result must not trigger guessed formatting")
         val formatted = applyEdits(source, edits)
+        assertEquals(source, formatted)
 
         // The guard must reject the corrupt printer surface: whatever is returned parses
         // cleanly and still carries the parenthesized receiver.

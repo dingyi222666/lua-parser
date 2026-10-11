@@ -70,24 +70,32 @@ internal data class JavaBeanPropertySurface(
 )
 
 internal fun Type.isJavaListenerAssignableFrom(source: Type): Boolean {
-    val listenerSignature = javaListenerSignature() ?: return false
+    val methods = javaListenerMethods() ?: return false
     return when (source) {
-        is CallableType -> listenerSignature.callableType.isAssignableFrom(source)
-        is TableType -> {
-            val methodType = source.methods[listenerSignature.name]
-                ?: source.fields[listenerSignature.name]
-                ?: return false
-            listenerSignature.callableType.isAssignableFrom(methodType)
-        }
-        is ModuleType -> {
-            val methodType = source.methods[listenerSignature.name]
-                ?: source.fields[listenerSignature.name]
-                ?: return false
-            listenerSignature.callableType.isAssignableFrom(methodType)
-        }
+        is CallableType -> methods.values.any { listenerCallbackAssignable(it, source) }
+        is TableType -> listenerTableAssignable(methods, source.fields + source.methods)
+        is ModuleType -> listenerTableAssignable(methods, source.fields + source.methods)
         else -> false
     }
 }
+
+private fun listenerTableAssignable(methods: Map<String, CallableType>, callbacks: Map<String, Type>): Boolean =
+    callbacks.all { (name, callback) ->
+        val method = methods[name] ?: return@all false
+        val callable = callback as? CallableType ?: return@all false
+        listenerCallbackAssignable(method, callable)
+    }
+
+/** Lua functions may ignore trailing callback arguments; declared arguments remain checked. */
+private fun listenerCallbackAssignable(method: CallableType, callback: CallableType): Boolean =
+    callback.callSignatures.all { signature ->
+        method.callSignatures.any { expected ->
+            signature.parameters.size <= expected.parameters.size &&
+                signature.parameters.zip(expected.parameters).all { (accepted, provided) ->
+                    accepted.type.isAssignableFrom(provided.type)
+                } && (expected.returnType == PrimitiveType.VOID || expected.returnType.isAssignableFrom(signature.returnType))
+        }
+    }
 
 /**
  * Conservatively accepts Lua table / array argument shapes for Java array, List, and Map
@@ -127,6 +135,16 @@ internal fun JavaInstanceType.allReadableInstanceJavaBeanProperties(): List<Java
 internal fun Type.hydrateJavaProviderType(resolveImportTarget: JavaImportResolver): Type {
 
     return when (this) {
+        is ModuleType -> {
+            val classType = javaClassSurface()
+            if (classType != null && fields.size == 1 && methods.isEmpty()) {
+                val imported = resolveImportTarget?.invoke(classType.javaName.canonicalName)
+                    ?: resolveImportTarget?.invoke(classType.javaName.binaryName)
+                imported?.moduleType ?: this
+            } else {
+                this
+            }
+        }
         is AppliedType -> hydrateAppliedJavaProviderType(resolveImportTarget)
         is ClassType -> hydrateJavaClassType(resolveImportTarget)
         is CustomType -> hydrateCustomJavaProviderType(resolveImportTarget)
@@ -215,14 +233,20 @@ internal fun Type.withJavaCallableSurface(
 }
 
 private fun allReadableJavaBeanProperties(members: Collection<JavaMemberType>): List<JavaBeanPropertySurface> {
-    val candidateNames = linkedSetOf<String>()
+    val getters = linkedMapOf<String, MutableList<JavaMemberType>>()
+    val setters = linkedMapOf<String, MutableList<JavaMemberType>>()
     members.forEach { member ->
         if (member.memberKind == JavaMemberKind.METHOD) {
-            javaBeanGetterPropertyName(member.memberName)?.let { candidateNames += it }
+            javaBeanGetterPropertyName(member.memberName)?.let { name ->
+                getters.getOrPut(name) { mutableListOf() }.add(member)
+            }
+            javaBeanSetterPropertyName(member.memberName)?.let { name ->
+                setters.getOrPut(name) { mutableListOf() }.add(member)
+            }
         }
     }
-    return candidateNames.mapNotNull { propertyName ->
-        resolveJavaBeanProperty(propertyName, members)
+    return getters.mapNotNull { (propertyName, candidates) ->
+        resolveJavaBeanCandidates(propertyName, candidates, setters[propertyName].orEmpty())
     }
 }
 
@@ -249,6 +273,14 @@ private fun resolveJavaBeanProperty(
     if (getterCandidates.isEmpty()) {
         return null
     }
+    return resolveJavaBeanCandidates(propertyName, getterCandidates, members)
+}
+
+private fun resolveJavaBeanCandidates(
+    propertyName: String,
+    getterCandidates: List<JavaMemberType>,
+    setterCandidates: Collection<JavaMemberType>
+): JavaBeanPropertySurface? {
     val getters = getterCandidates.mapNotNull { member ->
         val returnType = javaBeanGetterReturnType(member) ?: return@mapNotNull null
         member to returnType
@@ -270,7 +302,7 @@ private fun resolveJavaBeanProperty(
         else -> return null
     }
     val valueType = getterTypes.single()
-    val setter = javaBeanSetterFor(propertyName, valueType, members)
+    val setter = javaBeanSetterFor(propertyName, valueType, setterCandidates)
     return JavaBeanPropertySurface(
         name = propertyName,
         valueType = valueType,
@@ -347,6 +379,7 @@ private fun javaBeanGetterReturnType(member: JavaMemberType): Type? {
         return null
     }
     if (
+        signature.returnType == PrimitiveType.VOID ||
         signature.returnType == PrimitiveType.NIL ||
         signature.returnType == PrimitiveType.UNKNOWN ||
         signature.returnType == UnknownType
@@ -382,43 +415,29 @@ private fun javaBeanSetterParameterType(member: JavaMemberType): Type? {
         return null
     }
     val signature = signatures.single()
-    if (signature.returnType != PrimitiveType.NIL || signature.parameters.size != 1) {
+    if (signature.returnType !in setOf(PrimitiveType.VOID, PrimitiveType.NIL) || signature.parameters.size != 1) {
         return null
     }
     val parameter = signature.parameters.single()
     return parameter.type.takeUnless { parameter.vararg }
 }
 
-private fun Type.javaListenerSignature(): JavaListenerSignature? {
+private fun Type.javaListenerMethods(): Map<String, CallableType>? {
     val instanceType = this as? JavaInstanceType ?: return null
     val classType = instanceType.classType
-    if (classType.constructors.isNotEmpty || classType.superClass != null) {
-        return null
-    }
+    if (classType.constructors.isNotEmpty || classType.superClass != null) return null
     if (!classType.javaName.simpleName.endsWith("Listener") && !classType.javaName.simpleName.endsWith("Callback")) {
         return null
     }
-    val methods = classType.allInstanceMembers().values
-        .filter { member ->
-            member.memberKind == JavaMemberKind.METHOD &&
-                member.owner.binaryName != "java.lang.Object" &&
-                member.memberName !in objectMethodNames
-        }
-    if (methods.size != 1) {
-        return null
+    val methods = classType.allInstanceMembers().values.filter { member ->
+        member.memberKind == JavaMemberKind.METHOD &&
+            member.owner.binaryName != "java.lang.Object" && member.memberName !in objectMethodNames
     }
-    val method = methods.single()
-    val signature = (method.valueType as? CallableType)?.callSignatures?.singleOrNull() ?: return null
-    if (signature.parameters.any { it.vararg || it.optional }) {
-        return null
+    if (methods.isEmpty()) return null
+    return methods.associate { member ->
+        val callable = member.valueType as? CallableType ?: return null
+        member.memberName to callable
     }
-    return JavaListenerSignature(
-        name = method.memberName,
-        callableType = FunctionType(
-            parameters = signature.parameters,
-            returnType = signature.returnType
-        )
-    )
 }
 
 private val objectMethodNames = setOf(
@@ -431,18 +450,17 @@ private val objectMethodNames = setOf(
     "wait"
 )
 
-private data class JavaListenerSignature(
-    val name: String,
-    val callableType: FunctionType
-)
-
 private fun ClassType.hydrateJavaClassType(resolveImportTarget: JavaImportResolver): Type {
     val targetName = javaClassName ?: name.takeIf { it.contains('.') || it.contains('$') } ?: return this
-    val reflected = resolveImportTarget?.invoke(targetName)
+    val reflected = (resolveImportTarget?.invoke(targetName)
         ?.moduleType
         ?.javaInstanceSurface()
         ?.hydrateJavaProviderType(resolveImportTarget)
-        as? JavaInstanceType
+        as? JavaInstanceType)
+        // The AndroLua runtime jar is not loadable as dex on an Android host.
+        // Keep the declared framework parent instead of dropping its members.
+        ?: superType?.reflectedJavaParent(resolveImportTarget)
+        ?: superClass?.reflectedJavaParent(resolveImportTarget)
         ?: return this
     val owner = reflected.classType.javaName
     val declaredMembers = buildMap {
@@ -479,6 +497,12 @@ private fun ClassType.hydrateJavaClassType(resolveImportTarget: JavaImportResolv
             reflected.javaName
         }
     )
+}
+
+private fun Type.reflectedJavaParent(resolveImportTarget: JavaImportResolver): JavaInstanceType? = when (this) {
+    is UnionType -> types.firstNotNullOfOrNull { it.reflectedJavaParent(resolveImportTarget) }
+    is IntersectionType -> types.firstNotNullOfOrNull { it.reflectedJavaParent(resolveImportTarget) }
+    else -> hydrateJavaProviderType(resolveImportTarget) as? JavaInstanceType
 }
 
 private fun CustomType.hydrateCustomJavaProviderType(resolveImportTarget: JavaImportResolver): Type {
@@ -640,7 +664,8 @@ private fun splitJavaMetadataTypeArguments(typeArguments: String): List<String> 
 
 private fun primitiveJavaMetadataType(typeName: String): Type? {
     return when (typeName) {
-        "void", "java.lang.Void" -> PrimitiveType.NIL
+        "void" -> PrimitiveType.VOID
+        "java.lang.Void" -> PrimitiveType.NIL
         "boolean", "java.lang.Boolean" -> PrimitiveType.BOOLEAN
         "byte", "short", "int", "long", "float", "double",
         "java.lang.Byte", "java.lang.Short", "java.lang.Integer", "java.lang.Long",

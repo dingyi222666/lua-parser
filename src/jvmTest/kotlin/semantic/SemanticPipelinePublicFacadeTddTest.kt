@@ -56,8 +56,10 @@ class SemanticPipelinePublicFacadeTddTest {
 
         assertEquals("a", first.model.getSymbolAt(Position(1, 7))?.name)
         assertEquals("b", second.model.getSymbolAt(Position(1, 7))?.name)
-        assertEquals(0, first.summary.diagnosticCount)
-        assertEquals(0, second.summary.diagnosticCount)
+        assertEquals(listOf("checker.local.unused"), first.model.getDiagnostics().map { it.code })
+        assertEquals(listOf("checker.local.unused"), second.model.getDiagnostics().map { it.code })
+        assertEquals(1, first.summary.diagnosticCount)
+        assertEquals(1, second.summary.diagnosticCount)
     }
 
     @Test

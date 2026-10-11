@@ -3,7 +3,7 @@
      as the dirty indicator (MainActivity tints its icon while the buffer has
      unsaved edits). -->
 <menu xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:app="http://schemas.android.com/apk/res/auto">
+    xmlns:app="http://schemas.android.com/apk/res-auto">
 
     <item
         android:id="@+id/action_open_file"

@@ -3,6 +3,7 @@ package semantic.workspace
 import io.github.dingyi222666.luaparser.parser.LuaParser
 import io.github.dingyi222666.luaparser.semantic.types.model.FunctionType
 import io.github.dingyi222666.luaparser.semantic.types.model.LiteralType
+import io.github.dingyi222666.luaparser.semantic.types.model.PrimitiveType
 import io.github.dingyi222666.luaparser.semantic.types.model.TableType
 import io.github.dingyi222666.luaparser.semantic.workspace.DocumentFactsCollector
 import io.github.dingyi222666.luaparser.semantic.workspace.LegacyModuleEnvironmentPass
@@ -16,6 +17,35 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 class ModuleExportCollectorTest {
+    @Test
+    fun exported_functions_distinguish_zero_values_from_explicit_nil_before_semantic_analysis() {
+        val surface = collect("returns.lua", """
+            return {
+                idle = function() end,
+                stop = function() return end,
+                explicit = function() return nil end,
+                nested = function() if flag then return end end,
+                outer = function() local child = function() return nil end end,
+            }
+        """.trimIndent())
+        for (name in listOf("idle", "stop", "nested", "outer")) {
+            assertEquals(PrimitiveType.VOID,
+                assertIs<FunctionType>(surface.moduleType.fields.getValue(name)).returnType, name)
+        }
+        val nilType = assertIs<LiteralType>(
+            assertIs<FunctionType>(surface.moduleType.fields.getValue("explicit")).returnType)
+        assertEquals(PrimitiveType.NIL, nilType.baseType)
+    }
+
+    @Test
+    fun layout_exports_keep_real_fields_and_module_identity() {
+        val surface = collect("ui/main.aly", "return {title = 'hello'}")
+        assertEquals("ui.main", surface.moduleType.moduleName)
+        assertEquals("LuaLayoutSpec", surface.moduleType.displayName)
+        assertEquals(setOf("title"), surface.moduleType.fields.keys)
+        assertEquals(listOf("title"), surface.members.map { it.name })
+    }
+
     @Test
     fun legacy_module_mode_exports_bare_assignment_and_function() {
         val surface = collect(

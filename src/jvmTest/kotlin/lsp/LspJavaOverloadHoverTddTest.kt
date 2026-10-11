@@ -16,7 +16,7 @@ import kotlin.test.assertTrue
 
 class LspJavaOverloadHoverTddTest {
     @Test
-    fun unresolved_overload_merges_one_varying_parameter() {
+    fun unresolved_overload_previews_one_signature_and_reports_alternatives() {
         val document = service().open(
             "workspace/java-overload-hover-unresolved.lua",
             """
@@ -28,9 +28,8 @@ class LspJavaOverloadHoverTddTest {
 
         val text = hoverText(document.service, document, "pick")
 
-        assertTrue(text.contains("number"), text)
-        assertTrue(text.contains("string"), text)
-        assertTrue(text.contains(" | "), text)
+        assertTrue(text.contains("overloads"), text)
+        assertFalse(text.contains(" | "), text)
         assertFalse(text.contains(" & fun"), text)
     }
 

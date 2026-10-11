@@ -169,6 +169,7 @@ private fun JavaArrayType.toLegacyArrayType(): LegacyType {
 private object PrimitiveTypeBridge {
     fun toLegacy(type: PrimitiveType): LegacyType {
         return when (type.kind) {
+            PrimitiveType.Kind.VOID -> LegacyPrimitiveType.VOID
             PrimitiveType.Kind.NIL -> LegacyPrimitiveType.NIL
             PrimitiveType.Kind.BOOLEAN -> LegacyPrimitiveType.BOOLEAN
             PrimitiveType.Kind.NUMBER -> LegacyPrimitiveType.NUMBER
@@ -186,6 +187,7 @@ private object PrimitiveTypeBridge {
 
     fun toLegacyPrimitive(type: PrimitiveType): LegacyPrimitiveType {
         return when (type.kind) {
+            PrimitiveType.Kind.VOID -> LegacyPrimitiveType.VOID
             PrimitiveType.Kind.NIL -> LegacyPrimitiveType.NIL
             PrimitiveType.Kind.BOOLEAN -> LegacyPrimitiveType.BOOLEAN
             PrimitiveType.Kind.NUMBER -> LegacyPrimitiveType.NUMBER
@@ -213,7 +215,7 @@ private object JavaPrimitiveTypeBridge {
             JavaPrimitiveType.Kind.LONG,
             JavaPrimitiveType.Kind.FLOAT,
             JavaPrimitiveType.Kind.DOUBLE -> LegacyPrimitiveType.NUMBER
-            JavaPrimitiveType.Kind.VOID -> LegacyPrimitiveType.NIL
+            JavaPrimitiveType.Kind.VOID -> LegacyPrimitiveType.VOID
         }
     }
 }

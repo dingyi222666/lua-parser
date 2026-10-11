@@ -54,7 +54,7 @@ class TypeResolverTest {
         )
 
         assertSame(PrimitiveType.NUMBER, alias(result, "Int").target)
-        assertSame(PrimitiveType.NIL, alias(result, "Void").target)
+        assertSame(PrimitiveType.VOID, alias(result, "Void").target)
         assertSame(UnknownType, alias(result, "Mystery").target)
         assertSame(NeverType, alias(result, "Stop").target)
         assertIs<CustomType>(alias(result, "MissingRef").target)

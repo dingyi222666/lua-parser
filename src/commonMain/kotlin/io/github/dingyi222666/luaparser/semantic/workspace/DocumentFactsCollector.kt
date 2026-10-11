@@ -68,7 +68,9 @@ object DocumentFactsCollector {
             jvmClassLoads = state.jvmClassLoads.toList(),
             returnHint = returnHint,
             environmentSegments = segments,
-            exportWriteAnchors = state.exportWriteAnchors.toList()
+            exportWriteAnchors = state.exportWriteAnchors.toList(),
+            referencedNames = state.referencedNames.toSet(),
+            classLikeNames = state.classLikeNames.toSet()
         )
     }
 
@@ -79,6 +81,8 @@ object DocumentFactsCollector {
         val sourceImports = mutableListOf<DocumentFacts.SourceImportFact>()
         val jvmClassLoads = mutableListOf<DocumentFacts.JvmClassLoadFact>()
         val exportWriteAnchors = mutableListOf<DocumentFacts.ExportWriteAnchor>()
+        val referencedNames = linkedSetOf<String>()
+        val classLikeNames = linkedSetOf<String>()
         private val moduleNameCandidates = linkedMapOf<ModuleNameCandidateKey, DocumentFacts.ModuleNameCandidate>()
         private val topLevelSegmentTriggers = mutableListOf<DocumentFacts.LegacyModuleCallFact>()
         private val aliasScopes = mutableListOf(mutableMapOf<String, DocumentFacts.JvmClassLoadKind?>())
@@ -189,7 +193,7 @@ object DocumentFactsCollector {
                             collectAssignmentAnchor(target)
                         }
                     }
-                    statement.init.forEach { visitExpression(it, functionDepth) }
+                    statement.init.filterNot { it is Identifier }.forEach { visitExpression(it, functionDepth) }
                     statement.variables.forEach { visitExpression(it, functionDepth) }
                     collectAssignmentAliases(statement)
                 }
@@ -203,7 +207,9 @@ object DocumentFactsCollector {
                         collectFunctionAnchor(statement)
                     }
                     collectFunctionAliasShadow(statement)
-                    statement.identifier?.let { visitExpression(it, functionDepth) }
+                    statement.identifier?.let {
+                        if (!(statement.isLocal && it is Identifier)) visitExpression(it, functionDepth)
+                    }
                     statement.body?.let { body ->
                         withAliasScope(isFunctionBoundary = true) {
                             statement.params.forEach { declareLocalAlias(it.name, null) }
@@ -282,6 +288,7 @@ object DocumentFactsCollector {
             isTopLevelStatementCall: Boolean = false
         ) {
             when (expression) {
+                is Identifier -> referencedNames += expression.name
                 is StringCallExpression, is TableCallExpression -> {
                     // Compact short-call nodes are CallExpression subclasses. Collect once using the
                     // specialized node, then walk only the semantic base/arguments.
@@ -291,6 +298,9 @@ object DocumentFactsCollector {
                 }
 
                 is CallExpression -> {
+                    (effectiveCallBase(expression) as? Identifier)?.name
+                        ?.takeIf(::isUpperCamelClassCandidate)
+                        ?.let(classLikeNames::add)
                     collectCallFacts(expression, isTopLevel = isTopLevelStatementCall)
                     val compactBase = expression.base
                     if (compactBase is StringCallExpression || compactBase is TableCallExpression) {
@@ -305,7 +315,12 @@ object DocumentFactsCollector {
                     }
                 }
 
-                is MemberExpression -> visitExpression(expression.base, functionDepth)
+                is MemberExpression -> {
+                    rootIdentifier(expression.base)
+                        ?.takeIf(::isUpperCamelClassCandidate)
+                        ?.let(classLikeNames::add)
+                    visitExpression(expression.base, functionDepth)
+                }
                 is IndexExpression -> {
                     visitExpression(expression.base, functionDepth)
                     visitExpression(expression.index, functionDepth)
@@ -333,8 +348,16 @@ object DocumentFactsCollector {
         }
 
         private fun visitTableKey(field: TableKey, functionDepth: Int) {
-            visitExpression(field.key, functionDepth)
+            if (field !is TableKeyString) visitExpression(field.key, functionDepth)
             visitExpression(field.value, functionDepth)
+        }
+
+        private fun rootIdentifier(expression: ExpressionNode): String? {
+            return when (expression) {
+                is Identifier -> expression.name
+                is MemberExpression -> rootIdentifier(expression.base)
+                else -> null
+            }
         }
 
         private fun collectCallFacts(call: CallExpression, isTopLevel: Boolean) {
@@ -738,6 +761,11 @@ object DocumentFactsCollector {
 
     private fun identifierName(expression: ExpressionNode): String? =
         (expression as? Identifier)?.name
+
+    private fun isUpperCamelClassCandidate(name: String): Boolean {
+        return name.isNotEmpty() && name.first().isUpperCase() &&
+            name.first().isLetter() && name.all { it.isLetterOrDigit() || it == '_' }
+    }
 
     private fun calleeName(expression: ExpressionNode): String? {
         return when (expression) {

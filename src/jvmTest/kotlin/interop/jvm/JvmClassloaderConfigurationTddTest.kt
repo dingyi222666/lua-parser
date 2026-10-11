@@ -28,6 +28,18 @@ import org.junit.Assume
 import semantic.support.WorkspaceSemanticHarness
 
 class JvmClassloaderConfigurationTddTest {
+    @Test
+    fun configuration_overlay_preserves_android_dex_and_accepts_explicit_replacement() {
+        val base = JvmWorkspaceConfiguration(androidDex = "/framework/base.dex")
+        assertEquals("/framework/base.dex", base.overlay(JvmWorkspaceConfiguration()).androidDex)
+        assertEquals("/framework/device.dex", base.overlay(JvmWorkspaceConfiguration(
+            androidDex = "/framework/device.dex"
+        )).androidDex)
+        assertEquals("/framework/device.dex", JvmWorkspaceConfiguration().overlay(
+            JvmWorkspaceConfiguration.fromMetadata(mapOf("jvm.androidDex" to "/framework/device.dex"))
+        ).androidDex)
+    }
+
     /**
      * Host android-35 jar hard-lock for TASK-568 / TASK-608.
      *
@@ -105,6 +117,157 @@ class JvmClassloaderConfigurationTddTest {
         assertTrue("ConfiguredThing" in packageModule.fields)
         assertTrue("SecondThing" in packageModule.fields)
         assertFalse("Nested" in packageModule.fields, "Wildcard package enumeration should not expose inner classes as top-level names.")
+    }
+
+    @Test
+    fun deferred_wildcard_catalog_does_not_expand_unused_class_members() {
+        val fixture = fixtureWorkspace(configuredThingSource())
+        val lazyProvider = JvmClassModuleProvider(deferPackageMemberReflection = true)
+        val packageModule = lazyProvider.packageProvidersFor(
+            listOf("fixture.config.*"),
+            JvmWorkspaceConfiguration(classpathEntries = listOf(fixture.jarPath.toString()))
+        ).assertPackageModule("fixture.config")
+        val classModule = packageModule.fields["ConfiguredThing"] as ModuleType
+        val instance = classModule.fields["__class"] as JavaInstanceType
+        assertTrue(instance.classType.instanceMembers.isEmpty())
+        assertTrue(instance.classType.staticMembers.isEmpty())
+        assertTrue(instance.classType.constructors.isEmpty)
+        assertEquals("fixture.config.ConfiguredThing", instance.classType.javaName.canonicalName)
+    }
+
+    @Test
+    fun cancelled_reflection_does_not_cache_a_partial_class_surface() {
+        var checkpoints = 0
+        var cancel = true
+        val cancellable = JvmClassModuleProvider(analysisCheckpoint = {
+            checkpoints += 1
+            if (cancel && checkpoints >= 3) throw java.util.concurrent.CancellationException()
+        })
+        val configuration = JvmWorkspaceConfiguration(classes = setOf("java.util.ArrayList"))
+        kotlin.test.assertFailsWith<java.util.concurrent.CancellationException> {
+            cancellable.providersFor(configuration)
+        }
+        cancel = false
+        val module = cancellable.providersFor(configuration).assertModule("java.util.ArrayList")
+        val instance = module.fields["__class"] as JavaInstanceType
+        assertTrue(instance.classType.instanceMembers.keys.containsAll(listOf("add", "clear")))
+        assertTrue(instance.classType.constructors.isNotEmpty)
+    }
+
+    @Test
+    fun deferred_implicit_class_reference_hydrates_when_the_editor_uses_it() {
+        val lazyProvider = JvmClassModuleProvider(deferPackageMemberReflection = true)
+        val reference = assertNotNull(lazyProvider.implicitClassSymbol("StringBuilder", JvmWorkspaceConfiguration()))
+        assertTrue((reference.moduleType.fields["__class"] as JavaInstanceType).classType.instanceMembers.isEmpty())
+        val harness = WorkspaceSemanticHarness.build("main.lua" to
+            "local builder = StringBuilder('hello')\nbuilder.",
+            engine = JvmWorkspaceEngine(classModuleProvider = lazyProvider))
+        val labels = harness.queries.completions(harness.path("main.lua"),
+            io.github.dingyi222666.luaparser.parser.ast.node.Position(2, 9)).map { it.label }
+        assertTrue(labels.containsAll(listOf("append", "setLength")), labels.toString())
+    }
+
+    @Test
+    fun deferred_explicit_imports_register_identity_without_reflecting_members() {
+        val lazyProvider = JvmClassModuleProvider(deferPackageMemberReflection = true)
+        val configuration = JvmWorkspaceConfiguration(classes = setOf("java.lang.StringBuilder"))
+        val module = lazyProvider.providersFor(configuration, deferMembers = true)
+            .assertModule("java.lang.StringBuilder")
+        val reference = assertNotNull(lazyProvider.importedSymbolForTarget(
+            "java.lang.StringBuilder", configuration, deferMembers = true))
+        for (surface in listOf(module, reference.moduleType)) {
+            val instance = surface.fields["__class"] as JavaInstanceType
+            assertEquals("java.lang.StringBuilder", instance.classType.javaName.canonicalName)
+            assertTrue(instance.classType.instanceMembers.isEmpty())
+            assertTrue(instance.classType.constructors.isEmpty)
+        }
+        val hydrated = assertNotNull(lazyProvider.importedSymbolForTarget("java.lang.StringBuilder", configuration))
+        assertTrue((hydrated.moduleType.fields["__class"] as JavaInstanceType)
+            .classType.allInstanceMembers().keys.containsAll(listOf("append", "setLength")))
+    }
+
+    @Test
+    fun deferred_explicit_and_configured_imports_keep_constructor_static_nested_and_fluent_queries() {
+        val fixture = fixtureWorkspace(configuredThingSource())
+        fun build(source: String, configured: Boolean = false) = WorkspaceSemanticHarness.build(
+            "main.lua" to source,
+            metadata = buildMap {
+                put(JvmWorkspaceConfiguration.CLASSPATH_METADATA_KEY, fixture.jarPath.toString())
+                if (configured) put(JvmClassModuleProvider.CLASSES_METADATA_KEY, CONFIGURED_THING_CLASS)
+            },
+            engine = JvmWorkspaceEngine(
+                classModuleProvider = JvmClassModuleProvider(deferPackageMemberReflection = true),
+                deferDependencyGlobals = true
+            )
+        )
+        val static = build("import 'fixture.config.ConfiguredThing'\nConfiguredThing.")
+        assertTrue(static.queries.completions(static.path("main.lua"),
+            io.github.dingyi222666.luaparser.parser.ast.node.Position(2, 17))
+            .map { it.label }.containsAll(listOf("NAME", "Nested")))
+        val nested = build("local thing = require 'ConfiguredThing'\nthing.Nested.", configured = true)
+        assertTrue(nested.queries.completions(nested.path("main.lua"),
+            io.github.dingyi222666.luaparser.parser.ast.node.Position(2, 14)).any { it.label == "VALUE" })
+        val fluent = build("import 'java.lang.StringBuilder'\nlocal builder = StringBuilder('hello').append('world')\nbuilder.")
+        assertTrue(fluent.queries.completions(fluent.path("main.lua"),
+            io.github.dingyi222666.luaparser.parser.ast.node.Position(3, 9))
+            .map { it.label }.containsAll(listOf("append", "setLength")))
+        val help = fluent.queries.signatureHelp(fluent.path("main.lua"),
+            fluent.positionOf("main.lua", "'hello'"))
+        assertNotNull(help)
+        assertTrue(help.signatures.any { it.parameters.size == 1 }, help.toString())
+    }
+
+    @Test
+    fun jar_package_index_keeps_sibling_and_nested_packages_separate() {
+        val fixture = fixtureWorkspace(configuredThingSource(), FixtureSource(
+            "fixture/config/inner/DeepThing.java",
+            "package fixture.config.inner; public class DeepThing {}"
+        ), FixtureSource("fixture/other/OtherThing.java",
+            "package fixture.other; public class OtherThing {}"))
+        val configuration = JvmWorkspaceConfiguration(classpathEntries = listOf(fixture.jarPath.toString()))
+        val catalogs = provider.packageProvidersFor(
+            listOf("fixture.config.*", "fixture.other.*", "fixture.config.inner.*"), configuration
+        )
+        assertEquals(setOf("ConfiguredThing"), catalogs.assertPackageModule("fixture.config").fields.keys)
+        assertEquals(setOf("OtherThing"), catalogs.assertPackageModule("fixture.other").fields.keys)
+        assertEquals(setOf("DeepThing"), catalogs.assertPackageModule("fixture.config.inner").fields.keys)
+        assertEquals(catalogs, provider.packageProvidersFor(
+            listOf("fixture.other.*", "fixture.config.inner.*", "fixture.config.*"), configuration
+        ))
+    }
+
+    @Test
+    fun deferred_wildcard_class_hydrates_members_constructors_and_nested_types_on_use() {
+        val fixture = fixtureWorkspace(configuredThingSource(), FixtureSource(
+            "fixture/config/NamedThing.java",
+            """
+            package fixture.config;
+            public class NamedThing extends ConfiguredThing {
+                public NamedThing(String name) {}
+                public String getLabel() { return NAME; }
+            }
+            """.trimIndent()
+        ))
+        fun build(source: String) = WorkspaceSemanticHarness.build("main.lua" to source,
+            metadata = mapOf(JvmWorkspaceConfiguration.CLASSPATH_METADATA_KEY to fixture.jarPath.toString()),
+            engine = JvmWorkspaceEngine(classModuleProvider = JvmClassModuleProvider(
+                deferPackageMemberReflection = true
+            )))
+        val static = build("import 'fixture.config.*'\nConfiguredThing.")
+        assertTrue(static.queries.completions(static.path("main.lua"),
+            io.github.dingyi222666.luaparser.parser.ast.node.Position(2, 17))
+            .map { it.label }.containsAll(listOf("NAME", "Nested")))
+        val nested = build("import 'fixture.config.*'\nConfiguredThing.Nested.")
+        assertTrue(nested.queries.completions(nested.path("main.lua"),
+            io.github.dingyi222666.luaparser.parser.ast.node.Position(2, 24)).any { it.label == "VALUE" })
+        val instance = build("import 'fixture.config.*'\nlocal thing = NamedThing('test')\nthing.")
+        val labels = instance.queries.completions(instance.path("main.lua"),
+            io.github.dingyi222666.luaparser.parser.ast.node.Position(3, 7)).map { it.label }
+        assertTrue(labels.containsAll(listOf("describe", "getLabel", "label")), labels.toString())
+        val help = instance.queries.signatureHelp(instance.path("main.lua"),
+            instance.positionOf("main.lua", "'test'"))
+        assertNotNull(help, "deferred catalog must expose constructor signatures")
+        assertTrue(help.signatures.any { it.parameters.size == 1 }, help.toString())
     }
 
     private fun configuredThingSource(): FixtureSource {

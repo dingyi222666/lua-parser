@@ -311,15 +311,15 @@ class LuaLanguageServer(
         clientSupportsWorkDoneProgress = params.capabilities
             ?.window
             ?.workDoneProgress == true
-        println("LSP-DEVICE: client window.workDoneProgress=$clientSupportsWorkDoneProgress")
-        println("LSP-DEVICE: initialize entered, state=$lifecycleState")
+        System.err.println("LSP-DEVICE: client window.workDoneProgress=$clientSupportsWorkDoneProgress")
+        System.err.println("LSP-DEVICE: initialize entered, state=$lifecycleState")
         return synchronized(lifecycleLock) {
             when (lifecycleState) {
                 LifecycleState.CREATED -> {
                     try {
                         val t0 = System.currentTimeMillis()
                         val result = languageService.initialize(params)
-                        println("LSP-DEVICE: languageService.initialize done in ${System.currentTimeMillis() - t0}ms")
+                        System.err.println("LSP-DEVICE: languageService.initialize done in ${System.currentTimeMillis() - t0}ms")
                         lifecycleState = LifecycleState.INITIALIZED
                         CompletableFuture.completedFuture(result)
                     } catch (throwable: Throwable) {
@@ -342,6 +342,7 @@ class LuaLanguageServer(
             when (lifecycleState) {
                 LifecycleState.INITIALIZED -> {
                     lifecycleState = LifecycleState.SHUTDOWN
+                    languageService.close()
                     CompletableFuture.completedFuture(0)
                 }
 
@@ -359,6 +360,7 @@ class LuaLanguageServer(
             }
             val code = if (lifecycleState == LifecycleState.SHUTDOWN) 0 else 1
             lifecycleState = LifecycleState.EXITED
+            languageService.close()
             client = null
             code
         }

@@ -6,6 +6,7 @@ import android.util.Pair
 import io.github.rosemoe.sora.lsp.client.connection.CustomConnectProvider
 import java.io.InputStream
 import java.io.OutputStream
+import java.io.FilterOutputStream
 
 /**
  * Client-side half of the abstract LocalSocket connection to
@@ -38,6 +39,14 @@ class LocalSocketStreamProvider(
         )
         socket = localSocket
         // android.util.Pair — the StreamProvider contract's pair type.
-        return Pair(localSocket.inputStream, localSocket.outputStream)
+        return Pair(localSocket.inputStream, localSocket.lspOutputStream())
     }
+}
+
+internal fun LocalSocket.lspOutputStream(): OutputStream = object : FilterOutputStream(outputStream) {
+    override fun write(bytes: ByteArray, offset: Int, length: Int) = out.write(bytes, offset, length)
+
+    // LocalSocket writes are unbuffered. Its flush waits for the peer's queue
+    // to drain, which can deadlock JSON-RPC notifications with their handlers.
+    override fun flush() = Unit
 }

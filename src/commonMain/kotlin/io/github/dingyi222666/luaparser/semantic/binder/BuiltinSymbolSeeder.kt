@@ -9,14 +9,14 @@ import io.github.dingyi222666.luaparser.semantic.workspace.std.BuiltinOverlayLoa
 import io.github.dingyi222666.luaparser.semantic.workspace.std.BuiltinOverlaySnapshot
 
 internal object BuiltinSymbolSeeder {
-    private val standaloneCompatibilityGlobals = BuiltinOverlayLoader.standaloneGlobals()
+    private val standaloneCompatibilityGlobals by lazy { BuiltinOverlayLoader.standaloneGlobals() }
 
     /**
      * Seeds root builtin VALUE declarations from the active overlay globals snapshot.
      *
      * Android-Lua / AndroLua overlays document `luajava` as a ModuleType with helper methods
      * (including `getContext(): AndroidLuaContext`). Seeding those declared types is required so
-     * ExpressionTypeEvaluator can hard-lock getContext call returns (TASK-575) and so activity/
+     * ExpressionTypeEvaluator can resolve documented getContext returns and activity/
      * this/service ClassType surfaces remain available for AndroidLuaContext member completion
      * (getLuaDir/getLuaPath/setContentView/…).
      *
@@ -44,7 +44,7 @@ internal object BuiltinSymbolSeeder {
                         member.type != UnknownType
                 }
             val declaration = when {
-                documented != null && isDocumentedCallableGlobal(documented.kind, documented.type) ->
+                documented != null && isDocumentedCallableGlobal(documented.type) ->
                     functionDeclaration(
                         id = builder.nextDeclarationId(),
                         name = name,
@@ -71,16 +71,7 @@ internal object BuiltinSymbolSeeder {
                         owner = DeclarationOwner.Root
                     )
 
-                // AndroLua import-install helpers fall here when overlay surface is thin:
-                // still seed as functions so free-id completions keep FUNCTION kind.
-                name in ANDROLUA_IMPORT_INSTALL_HELPER_GLOBALS -> functionDeclaration(
-                    id = builder.nextDeclarationId(),
-                    name = name,
-                    origin = DeclarationOrigin.BUILTIN,
-                    owner = DeclarationOwner.Root
-                )
-
-                else -> functionDeclaration(
+                else -> globalDeclaration(
                     id = builder.nextDeclarationId(),
                     name = name,
                     origin = DeclarationOrigin.BUILTIN,
@@ -91,33 +82,10 @@ internal object BuiltinSymbolSeeder {
         }
     }
 
-    private fun isDocumentedCallableGlobal(kind: SymbolKind, type: Type): Boolean {
-        if (kind == SymbolKind.FUNCTION || kind == SymbolKind.METHOD) {
-            return true
-        }
+    private fun isDocumentedCallableGlobal(type: Type): Boolean {
         // Documented FunctionType/OverloadedFunctionType free-ids (env_import, import, loadlayout…)
         // must seed as FUNCTION even when EmmyLua parse marks them FIELD via assignment forms.
         return type is FunctionType || type is OverloadedFunctionType
     }
 
-    /**
-     * Free-id helpers installed by AndroLua runtime `require "import"` / `env_import(_G)`.
-     * Keep in sync with BuiltinOverlayLoader.androlua53Catalog globalNames helpers.
-     */
-    private val ANDROLUA_IMPORT_INSTALL_HELPER_GLOBALS = setOf(
-        "import",
-        "env_import",
-        "compile",
-        "enum",
-        "each",
-        "dump",
-        "printstack",
-        "getids",
-        "thread",
-        "task",
-        "timer",
-        "loadlayout",
-        "loadbitmap",
-        "loadmenu"
-    )
 }

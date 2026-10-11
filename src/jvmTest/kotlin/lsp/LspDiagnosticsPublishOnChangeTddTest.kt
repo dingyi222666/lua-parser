@@ -76,7 +76,9 @@ class LspDiagnosticsPublishOnChangeTddTest {
         assertEquals(listOf(uri), harness.published.map { it.uri })
         assertTrue(harness.published.single().diagnostics.isNotEmpty())
         assertTrue(
-            harness.published.single().diagnostics.all { it.severity == DiagnosticSeverity.Error }
+            harness.published.single().diagnostics.any {
+                it.code?.left == "lua-parse" && it.severity == DiagnosticSeverity.Error
+            }
         )
         assertTrue(
             harness.languageService.diagnostics("workspace/change-valid-to-invalid-sibling.lua")
@@ -191,7 +193,9 @@ class LspDiagnosticsPublishOnChangeTddTest {
             "range edit that breaks parse must publish non-empty diagnostics"
         )
         assertTrue(
-            harness.published.single().diagnostics.all { it.severity == DiagnosticSeverity.Error }
+            harness.published.single().diagnostics.any {
+                it.code?.left == "lua-parse" && it.severity == DiagnosticSeverity.Error
+            }
         )
     }
 

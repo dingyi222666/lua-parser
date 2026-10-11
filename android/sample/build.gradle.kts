@@ -4,7 +4,7 @@
 //
 //   CodeEditor (layout) -> CustomLanguageServerDefinition over an abstract
 //   LocalSocket ("lua-lsp") -> LspProject -> LspEditor (wrapperLanguage =
-//   TextMateLanguage) -> connectWithTimeout -> didChangeWorkspaceFolders /
+//   LuaHighlightLanguage) -> connectWithTimeout -> didChangeWorkspaceFolders /
 //   didChangeConfiguration -> dispose in onDestroy.
 //
 // The SERVER side lives in LspServerService.kt: instead of sora's TCP
@@ -46,15 +46,18 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "1.0.0"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     buildTypes {
         release {
-            // Sample-only: keep R8 out of the loop so no keep rules are needed
-            // here (the :android AAR ships its own consumer rules for release apps).
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
+            signingConfig = signingConfigs.getByName("debug")
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
     }
+    testBuildType = providers.gradleProperty("androidE2eBuildType").orElse("debug").get()
 
     // Java 17 + jvmTarget 17: a transitive sora dep ships Java 16+ records,
     // and D8's Record desugaring fails with "Invalid build configuration ...
@@ -80,7 +83,6 @@ dependencies {
     val soraVersion = "0.23.6"
     implementation("io.github.Rosemoe.sora-editor:editor:$soraVersion")
     implementation("io.github.Rosemoe.sora-editor:editor-lsp:$soraVersion")
-    implementation("io.github.Rosemoe.sora-editor:language-textmate:$soraVersion")
 
     // lsp4j aligned with :android (android/build.gradle.kts pins 0.23.1).
     // CHECK-API(sora): sora-editor 0.23.6 itself declares lsp4j 0.24.0; Gradle
@@ -98,6 +100,7 @@ dependencies {
     // AppCompatActivity + lifecycleScope (same hosts the sora sample uses).
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
+    implementation("androidx.profileinstaller:profileinstaller:1.4.1")
 
     // Material 3, View-based (NOT Compose): the app hosts sora's View-based
     // CodeEditor, so the M3 surface comes from MaterialComponents —
@@ -109,4 +112,8 @@ dependencies {
     // explicit pin keeps the compile classpath independent of material's
     // internal dependency resolution).
     implementation("androidx.recyclerview:recyclerview:1.3.2")
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test:rules:1.6.1")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    androidTestImplementation("androidx.test.espresso:espresso-core:3.6.1")
 }

@@ -8,9 +8,13 @@ import android.app.Service
 import android.content.Intent
 import android.net.LocalServerSocket
 import android.net.LocalSocket
+import android.net.LocalSocketAddress
+import android.os.Handler
+import android.os.Looper
 import android.os.IBinder
 import android.util.Log
 import io.github.dingyi222666.luaparser.lsp.LuaLanguageServer
+import io.github.dingyi222666.luaparser.lsp.LuaLanguageService
 import io.github.dingyi222666.luaparser.lsp.LuaLanguageServerLauncher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -49,6 +53,14 @@ import java.util.concurrent.atomic.AtomicBoolean
 class LspServerService : Service() {
 
     companion object {
+        @Volatile
+        private var pendingWorkspaceMetadata: Map<String, String> = emptyMap()
+
+        /** Supplies per-connection settings before the LSP initialize request. */
+        fun configureWorkspaceMetadata(metadata: Map<String, String>) {
+            pendingWorkspaceMetadata = metadata.toMap()
+        }
+
         /**
          * Abstract LocalSocket name. MUST stay in sync with the client side
          * (LocalSocketStreamProvider in MainActivity.kt).
@@ -69,13 +81,23 @@ class LspServerService : Service() {
     private val acceptLoopRunning = AtomicBoolean(false)
 
     private var serverSocket: LocalServerSocket? = null
+    private val listenerLock = Any()
+    private val lifecycleHandler = Handler(Looper.getMainLooper())
+    private var latestStartId = 0
+    private val stopWhenIdle = Runnable {
+        if (clients.isEmpty()) stopSelfResult(latestStartId)
+    }
 
     /** One Job per accepted connection; each job runs one lsp4j reading loop. */
     private val connections = CopyOnWriteArrayList<Job>()
+    private val clients = CopyOnWriteArrayList<LocalSocket>()
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        latestStartId = startId
+        lifecycleHandler.removeCallbacks(stopWhenIdle)
+        lifecycleHandler.postDelayed(stopWhenIdle, 60_000)
         promoteToForeground()
         if (acceptLoopRunning.compareAndSet(false, true)) {
             scope.launch { acceptLoop() }
@@ -119,14 +141,16 @@ class LspServerService : Service() {
      */
     private suspend fun acceptLoop() {
         val listener = try {
-            LocalServerSocket(SOCKET_NAME)
+            synchronized(listenerLock) {
+                if (!acceptLoopRunning.get()) return
+                LocalServerSocket(SOCKET_NAME).also { serverSocket = it }
+            }
         } catch (failure: IOException) {
             Log.e(TAG, "cannot bind LocalServerSocket \"$SOCKET_NAME\"", failure)
             acceptLoopRunning.set(false)
             stopSelf()
             return
         }
-        serverSocket = listener
         Log.d(TAG, "Lua LSP listening on abstract local socket \"$SOCKET_NAME\"")
 
         while (acceptLoopRunning.get()) {
@@ -140,7 +164,16 @@ class LspServerService : Service() {
             // throws UnsupportedOperationException for abstract-namespace
             // sockets (device-verified crash).
             Log.i(TAG, "LSP client connected")
-            connections += scope.launch { serve(client) }
+            clients += client
+            lifecycleHandler.removeCallbacks(stopWhenIdle)
+            if (!acceptLoopRunning.get()) {
+                clients.remove(client)
+                client.close()
+                break
+            }
+            val job = scope.launch { serve(client) }
+            connections += job
+            job.invokeOnCompletion { connections.remove(job) }
         }
     }
 
@@ -150,16 +183,22 @@ class LspServerService : Service() {
      * until the lsp4j reading loop finishes (peer disconnect, error or cancel).
      */
     private suspend fun serve(client: LocalSocket) {
+        var server: LuaLanguageServer? = null
         try {
             // Fresh LuaLanguageServer per connection (mandatory, see
             // LuaLspServerHost's concurrency contract) + no-op exit hook.
-            val server = LuaLanguageServer()
+            server = LuaLanguageServer(
+                languageService = LuaLanguageService(
+                    initialWorkspaceMetadata = pendingWorkspaceMetadata,
+                    deferDocumentAnalysis = true
+                )
+            )
             server.setOnBuildProgressListener { done, total, phase ->
                 buildProgress.value = "$phase $done/$total"
             }
             val connection = LuaLanguageServerLauncher.launch(
                 client.inputStream,
-                client.outputStream,
+                client.lspOutputStream(),
                 server = server
             )
             // Blocks until the peer closes the stream or we get cancelled.
@@ -169,6 +208,14 @@ class LspServerService : Service() {
                 Log.w(TAG, "LSP connection ended with failure", failure)
             }
         } finally {
+            server?.exit()
+            clients.remove(client)
+            lifecycleHandler.post {
+                if (acceptLoopRunning.get() && clients.isEmpty()) {
+                    lifecycleHandler.removeCallbacks(stopWhenIdle)
+                    lifecycleHandler.postDelayed(stopWhenIdle, 60_000)
+                }
+            }
             try {
                 client.close()
             } catch (_: IOException) {
@@ -179,12 +226,20 @@ class LspServerService : Service() {
 
     override fun onDestroy() {
         acceptLoopRunning.set(false)
-        try {
-            serverSocket?.close()
-        } catch (_: IOException) {
-            // best effort
+        lifecycleHandler.removeCallbacksAndMessages(null)
+        synchronized(listenerLock) {
+            // Closing another thread's fd alone need not interrupt accept on
+            // Android. Wake it first so the abstract socket name is released.
+            if (serverSocket != null) {
+                runCatching {
+                    LocalSocket().use { it.connect(LocalSocketAddress(SOCKET_NAME)) }
+                }
+                runCatching { serverSocket?.close() }
+                serverSocket = null
+            }
         }
-        serverSocket = null
+        clients.forEach { client -> runCatching { client.close() } }
+        clients.clear()
         connections.forEach { it.cancel() }
         connections.clear()
         scope.cancel()

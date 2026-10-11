@@ -23,7 +23,7 @@ data class FunctionType(
 
 data class OverloadedFunctionType(
     override val callSignatures: List<FunctionType>,
-    override val name: String = callSignatures.joinToString(" & ") { it.displayName }
+    override val name: String = callableSummary(callSignatures)
 ) : CallableType
 
 private fun buildFunctionTypeName(
@@ -51,4 +51,10 @@ private fun buildFunctionTypeName(
     }
 
     return "fun$typeParameterText($parameterText): ${returnType.displayName}"
+}
+
+/** A list row previews one signature; call-site queries select the actual overload. */
+fun callableSummary(signatures: List<FunctionType>): String {
+    val first = signatures.firstOrNull() ?: return "function"
+    return first.displayName + if (signatures.size > 1) " (+${signatures.size - 1} overloads)" else ""
 }

@@ -14,6 +14,33 @@ import kotlin.test.assertTrue
  * members (`data.x = ...`) attach to the root.
  */
 class NestedMemberPathCompletionTddTest {
+    @Test
+    fun deep_member_writes_keep_sibling_fields_and_do_not_merge_shadowed_roots() {
+        val segments = (1..12).map { "level$it" }
+        val target = "tree." + segments.joinToString(".")
+        val initial = segments.asReversed().fold("{ kept = 1 }") { nested, name -> "{ $name = $nested }" }
+        val source = """
+            local tree = $initial
+            local function update(value)
+                $target.written = value
+            end
+            do
+                local tree = $initial
+                $target.shadowOnly = true
+            end
+            $target.
+        """.trimIndent()
+        val service = workspaceService()
+        try {
+            val uri = "file:///workspace/deep-member-path.lua"
+            service.didOpen(DidOpenTextDocumentParams(TextDocumentItem(uri, "lua", 1, source)))
+            val labels = service.completion(uri, source.lines().lastIndex, source.lines().last().length).items.map { it.label }
+            assertTrue("written" in labels && "kept" in labels, labels.toString())
+            kotlin.test.assertFalse("shadowOnly" in labels, labels.toString())
+        } finally {
+            service.close()
+        }
+    }
 
     @Test
     fun nested_member_assignments_complete_on_the_sub_table() {

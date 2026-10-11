@@ -9,7 +9,7 @@ import io.github.dingyi222666.luaparser.semantic.workspace.std.BuiltinOverlaySna
 import io.github.dingyi222666.luaparser.semantic.types.resolve.TypeScopeGraphBuilder
 
 class BinderPass(
-    private val builtinGlobals: BuiltinOverlaySnapshot.GlobalsSnapshot = BuiltinOverlayLoader.standaloneGlobals()
+    private val builtinGlobals: BuiltinOverlaySnapshot.GlobalsSnapshot? = null
 ) {
 
     fun bind(
@@ -26,7 +26,7 @@ class BinderPass(
         builder.pushScope(rootScopeId)
 
         try {
-            BuiltinSymbolSeeder.seed(builder, builtinGlobalsOverride ?: builtinGlobals)
+            BuiltinSymbolSeeder.seed(builder, builtinGlobalsOverride ?: builtinGlobals ?: BuiltinOverlayLoader.standaloneGlobals())
             DeclarationBinder(builder, comments).bind(chunk)
         } finally {
             builder.popScope()

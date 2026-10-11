@@ -171,11 +171,11 @@ object TypeSyntaxParser {
             val parameters = parseFunctionParameters()
             consume(')', EXPECTED_RPAREN_TO_CLOSE_FUNCTION_PARAMS)
             // The return annotation is optional: `fun(message: any)` is idiomatic in the
-            // AndroLua/EmmyLua corpus and means "returns nil".
+            // AndroLua/EmmyLua corpus and means "returns no values".
             val returnType = if (match(':')) {
                 parseType(allowMultiReturn = true)
             } else {
-                NamedTypeSyntax("nil")
+                NamedTypeSyntax("void")
             }
             return FunctionTypeSyntax(
                 parameters = parameters,

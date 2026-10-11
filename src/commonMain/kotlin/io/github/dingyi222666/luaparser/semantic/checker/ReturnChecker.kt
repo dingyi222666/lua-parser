@@ -31,6 +31,9 @@ class ReturnChecker internal constructor(
 
         val function = resolveOwningFunctionDeclaration(binder, declaration) ?: return emptyList()
         val functionType = declaration.declaredType as? FunctionType ?: return emptyList()
+        // Unconstrained returns cannot produce a mismatch or extra-value warning.
+        // ExpressionUsageChecker still checks the body independently.
+        if (functionType.returnType == UnknownType) return emptyList()
         val body = function.body ?: return emptyList()
         val fallbackScopeId = binder.scopeGraph.getScope(body)?.id ?: binder.scopeGraph.rootScope.id
         val context = evaluator.buildFunctionBodyContext(function, functionType.parameters, fallbackScopeId)
@@ -50,39 +53,13 @@ class ReturnChecker internal constructor(
         if (returnSites.isEmpty() || hasImplicitFallthrough) {
             return diagnostics + compareReturnSite(
                 expected = expected,
-                actual = ValueSequence(fixed = listOf(PrimitiveType.NIL)),
+                actual = ValueSequence(),
                 range = body.range,
                 functionType = functionType
             )
         }
 
         return diagnostics
-    }
-
-    private fun mayFallThrough(block: BlockNode): Boolean {
-        if (block.returnStatement != null) {
-            return false
-        }
-        val lastStatement = block.statements.lastOrNull() ?: return true
-        return statementMayFallThrough(lastStatement)
-    }
-
-    private fun statementMayFallThrough(statement: StatementNode): Boolean {
-        return when (statement) {
-            is DoStatement -> mayFallThrough(statement.body)
-            // Falls through when no `else` exists (open condition — an empty cause list is
-            // covered by `none` too) or any branch body itself falls through.
-            is IfStatement -> {
-                val causes = statement.causes
-                if (causes.none { it is ElseClause }) true else causes.any { mayFallThrough(it.body) }
-            }
-            is WhenStatement -> {
-                val elseClause = statement.elseCause
-                elseClause == null || statementMayFallThrough(statement.ifCause) || statementMayFallThrough(elseClause)
-            }
-            is FunctionDeclaration -> true
-            else -> true
-        }
     }
 
     private fun compareReturnSite(
@@ -152,5 +129,31 @@ class ReturnChecker internal constructor(
                 code = "checker.function.return.typeMismatch"
             )
         }
+    }
+}
+
+internal fun mayFallThrough(block: BlockNode): Boolean {
+    if (block.returnStatement != null) {
+        return false
+    }
+    val lastStatement = block.statements.lastOrNull() ?: return true
+    return statementMayFallThrough(lastStatement)
+}
+
+private fun statementMayFallThrough(statement: StatementNode): Boolean {
+    return when (statement) {
+        is DoStatement -> mayFallThrough(statement.body)
+        // Falls through when no `else` exists (open condition — an empty cause list is
+        // covered by `none` too) or any branch body itself falls through.
+        is IfStatement -> {
+            val causes = statement.causes
+            if (causes.none { it is ElseClause }) true else causes.any { mayFallThrough(it.body) }
+        }
+        is WhenStatement -> {
+            val elseClause = statement.elseCause
+            elseClause == null || statementMayFallThrough(statement.ifCause) || statementMayFallThrough(elseClause)
+        }
+        is FunctionDeclaration -> true
+        else -> true
     }
 }

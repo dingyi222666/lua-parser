@@ -212,7 +212,7 @@ class LuaLanguageServiceTest {
         workspace.didChangeConfiguration(
             DidChangeConfigurationParams(
                 mapOf(
-                    "jvm.androidJar" to "G:/Android/Sdk/platforms/android-35/android.jar"
+                    "jvm.androidJar" to requireNotNull(io.github.dingyi222666.luaparser.interop.jvm.JvmWorkspaceConfiguration.discoverReflectiveAndroidJarPath()) { "Android SDK fixture is required" }
                 )
             )
         )
@@ -246,7 +246,7 @@ class LuaLanguageServiceTest {
         workspace.didChangeConfiguration(
             DidChangeConfigurationParams(
                 mapOf(
-                    "jvm.androidJar" to "G:/Android/Sdk/platforms/android-35/android.jar"
+                    "jvm.androidJar" to requireNotNull(io.github.dingyi222666.luaparser.interop.jvm.JvmWorkspaceConfiguration.discoverReflectiveAndroidJarPath()) { "Android SDK fixture is required" }
                 )
             )
         )

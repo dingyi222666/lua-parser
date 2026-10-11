@@ -845,7 +845,8 @@ class TypeResolver(
         "string" -> PrimitiveType.STRING
         "number", "integer" -> PrimitiveType.NUMBER
         "boolean", "bool" -> PrimitiveType.BOOLEAN
-        "nil", "void" -> PrimitiveType.NIL
+        "void" -> PrimitiveType.VOID
+        "nil" -> PrimitiveType.NIL
         "function" -> PrimitiveType.FUNCTION
         "table" -> PrimitiveType.TABLE
         "thread" -> PrimitiveType.THREAD

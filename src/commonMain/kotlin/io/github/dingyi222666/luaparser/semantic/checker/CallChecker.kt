@@ -66,7 +66,8 @@ class CallChecker(
         callableType: Type,
         argumentTypes: List<Type>,
         lexicalScopeId: ScopeId,
-        declaration: BinderDeclaration? = null
+        declaration: BinderDeclaration? = null,
+        allowIncomplete: Boolean = false
     ): CallResolution {
         val callableResolution = resolveCallable(callableType, lexicalScopeId, declaration)
         if (!callableResolution.isSuccess) {
@@ -77,7 +78,7 @@ class CallChecker(
         }
 
         val compatible = callableResolution.signatures.mapIndexedNotNull { index, signature ->
-            rankSignature(instantiateGenericSignature(signature, argumentTypes), argumentTypes, index)
+            rankSignature(instantiateGenericSignature(signature, argumentTypes), argumentTypes, index, allowIncomplete)
         }
         if (compatible.isEmpty()) {
             return CallResolution(
@@ -108,7 +109,8 @@ class CallChecker(
             callableResolution = callableResolution,
             selectedSignature = best.signature,
             failureReason = if (ambiguous) CallFailureReason.AMBIGUOUS_MATCH else null,
-            ambiguous = ambiguous
+            ambiguous = ambiguous,
+            selectedSignatureIndex = best.index
         )
     }
 
@@ -173,11 +175,11 @@ class CallChecker(
      *   (→ [CallFailureReason.NO_MATCHING_SIGNATURE]).
      * - Unknown arguments remain soft through assignability and do not invent signatures.
      */
-    private fun rankSignature(signature: FunctionType, argumentTypes: List<Type>, index: Int): Candidate? {
+    private fun rankSignature(signature: FunctionType, argumentTypes: List<Type>, index: Int, allowIncomplete: Boolean): Candidate? {
         val parameters = signature.parameters
         val requiredParameters = parameters.count { !it.optional && !it.vararg }
         val hasVararg = parameters.any { it.vararg }
-        if (argumentTypes.size < requiredParameters) {
+        if (!allowIncomplete && argumentTypes.size < requiredParameters) {
             return null
         }
         if (!hasVararg && argumentTypes.size > parameters.size) {
@@ -231,7 +233,7 @@ class CallChecker(
         }
 
         parameters.forEachIndexed { parameterIndex, parameter ->
-            if (parameterIndex >= argumentTypes.size && !parameter.optional && !parameter.vararg) {
+            if (!allowIncomplete && parameterIndex >= argumentTypes.size && !parameter.optional && !parameter.vararg) {
                 assignabilityPenalty += 10
             }
         }
@@ -240,7 +242,7 @@ class CallChecker(
             signature = signature,
             index = index,
             score = Score(
-                requiredPenalty = arityRequiredPenalty(
+                requiredPenalty = if (allowIncomplete) 0 else arityRequiredPenalty(
                     parameters = parameters,
                     argumentCount = argumentTypes.size,
                     requiredParameters = requiredParameters,

@@ -1,6 +1,7 @@
 package io.github.dingyi222666.luaparser.semantic.model
 
 import io.github.dingyi222666.luaparser.parser.ast.node.BaseASTNode
+import io.github.dingyi222666.luaparser.semantic.checker.ExpressionTypeEvaluator
 import io.github.dingyi222666.luaparser.parser.ast.node.Identifier
 import io.github.dingyi222666.luaparser.parser.ast.node.MemberExpression
 import io.github.dingyi222666.luaparser.parser.ast.node.Position
@@ -9,125 +10,74 @@ import io.github.dingyi222666.luaparser.semantic.api.CompletionItemKind
 import io.github.dingyi222666.luaparser.semantic.api.Symbol
 import io.github.dingyi222666.luaparser.semantic.api.SymbolKind
 import io.github.dingyi222666.luaparser.semantic.api.TypeInfoKind
+import io.github.dingyi222666.luaparser.semantic.types.model.CallableType
 
 internal class CompletionProvider(
     private val nodePositionIndex: NodePositionIndex,
     private val referenceQueries: ReferenceQueries,
-    private val adapters: ApiAdapters
+    private val adapters: ApiAdapters,
+    private val evaluator: ExpressionTypeEvaluator,
+    private val signatures: SignatureHelpProvider
 ) {
-    fun getCompletionsAt(position: Position): List<CompletionItem> {
+    fun getCompletionsAt(position: Position, nameFilter: ((String) -> Boolean)? = null): List<CompletionItem> {
         val node = nodePositionIndex.findInnermost(position)
-        val memberExpression = resolveMemberExpression(node, position)
+        val memberExpression = nodePositionIndex.completionMemberAt(position)
 
         return if (memberExpression != null) {
-            memberCompletions(memberExpression)
+            memberCompletions(memberExpression, position, nameFilter)
         } else {
-            lexicalCompletions(position, node)
+            lexicalCompletions(position, node, nameFilter)
         }
     }
 
-    private fun resolveMemberExpression(node: BaseASTNode?, position: Position): MemberExpression? {
-        memberExpressionFromNode(node, position)?.let { return it }
-
-        // Fall back to enclosing nodes when parent links are missing or the innermost
-        // hit is a broader expression covering the member access site.
-        nodePositionIndex.findEnclosing(position)
-            .asSequence()
-            .mapNotNull { candidate -> memberExpressionFromNode(candidate, position) }
-            .firstOrNull()
-            ?.let { return it }
-
-        // NodePositionIndex is half-open [start, end). Trailing-dot carets often sit exactly
-        // at MemberExpression.range.end (`table.|` / `greeter.|`) and miss the member node.
-        // Probe one column left so incomplete member access still uses the member surface.
-        if (position.column > 1) {
-            val left = Position(position.line, position.column - 1)
-            val leftNode = nodePositionIndex.findInnermost(left)
-            memberExpressionFromNode(leftNode, left)?.let { return it }
-            nodePositionIndex.findEnclosing(left)
-                .asSequence()
-                .mapNotNull { candidate -> memberExpressionFromNode(candidate, left) }
-                .firstOrNull()
-                ?.let { return it }
-        }
-
-        if (node is Identifier) {
-            val parent = runCatching { node.parent }.getOrNull() as? MemberExpression
-            if (
-                parent != null &&
-                parent.base === node &&
-                parent.identifier.name.isBlank() &&
-                position.line == parent.range.end.line &&
-                position.column >= parent.range.end.column
-            ) {
-                return parent
-            }
-        }
-        return null
-    }
-
-    /**
-     * Member completions apply when the caret is on the member name / after the indexer
-     * (`base.|`, `base:set|`), not when the caret is still on the receiver identifier
-     * of a completed access (`mess|ageText:setText` must stay lexical for the local).
-     */
-    private fun memberExpressionFromNode(node: BaseASTNode?, position: Position): MemberExpression? {
-        return when (node) {
-            is MemberExpression -> node.takeIf { isMemberCompletionSite(it, position) }
-            is Identifier -> {
-                val parent = runCatching { node.parent }.getOrNull() as? MemberExpression
-                parent?.takeIf {
-                    // Caret on member name, or incomplete `base.` / `base:` with blank member.
-                    it.identifier === node ||
-                        (it.base === node && it.identifier.name.isBlank())
-                }?.takeIf { isMemberCompletionSite(it, position) }
-            }
-            else -> null
-        }
-    }
-
-    private fun isMemberCompletionSite(expression: MemberExpression, position: Position): Boolean {
-        if (expression.identifier.name.isBlank()) {
-            return true
-        }
-        val baseEnd = expression.base.range.end
-        // `>=` (not `>`): a caret exactly at the base-end column sits on the indexer itself
-        // (`self|.` / `self.|`) — the member surface is correct there, and this branch only
-        // runs when the indexer exists in the source.
-        val afterBase =
-            position.line > baseEnd.line ||
-                (position.line == baseEnd.line && position.column >= baseEnd.column)
-        if (!afterBase) {
-            return false
-        }
-        val end = expression.range.end
-        return position.line < end.line ||
-            (position.line == end.line && position.column <= end.column + 1)
-    }
-
-    private fun lexicalCompletions(position: Position, node: BaseASTNode?): List<CompletionItem> {
-        val visibleItems = referenceQueries.visibleValueDeclarations(position)
+    private fun lexicalCompletions(position: Position, node: BaseASTNode?, nameFilter: ((String) -> Boolean)?): List<CompletionItem> {
+        val visibleItems = referenceQueries.visibleValueDeclarations(position, nameFilter)
             .mapNotNull { visible ->
                 // Prefer declaredType-backed detail/kind for ambient binder builtins
                 // (activity/service VARIABLE, load* FUNCTION, luajava MODULE).
-                adapters.toDeclarationSymbol(visible.declaration).let { symbol ->
+                val declared = visible.declaration.declaredType
+                val isCallableDeclaration = visible.declaration.kind == io.github.dingyi222666.luaparser.semantic.binder.DeclarationKind.FUNCTION ||
+                    visible.declaration.kind == io.github.dingyi222666.luaparser.semantic.binder.DeclarationKind.GLOBAL ||
+                    visible.declaration.kind == io.github.dingyi222666.luaparser.semantic.binder.DeclarationKind.METHOD ||
+                    declared is CallableType
+                if (!isCallableDeclaration) {
+                    val symbol = adapters.toDeclarationSymbol(visible.declaration)
                     completionItem(symbol, categoryPrefix(symbol), visible.lexicalDepth)
+                } else {
+                    val type = declared.takeIf { candidate ->
+                        candidate is CallableType && candidate.callSignatures.all { it.returnType.displayName != "unknown" }
+                    } ?: evaluator.declarationValueType(visible.declaration)
+                    adapters.toDeclarationSymbol(visible.declaration, typeOverride = type).let { symbol ->
+                        val expression = (node as? Identifier)?.takeIf { it.name == symbol.name }
+                        completionItem(symbol, categoryPrefix(symbol), visible.lexicalDepth).copy(
+                            detail = signatures.callableDetail(type, expression, position, visible.declaration)
+                        )
+                    }
                 }
             }
         val lazyImportItem = (node as? Identifier)
             ?.let { identifier -> referenceQueries.importedCompletionSymbol(identifier.name, position) }
-            ?.let { symbol -> completionItem(symbol, categoryPrefix(symbol), 0) }
-        return (visibleItems + listOfNotNull(lazyImportItem))
+            ?.let { symbol ->
+                val item = completionItem(symbol, categoryPrefix(symbol), 0)
+                val importedType = adapters.typeByKey(symbol.declaredType?.typeKey ?: symbol.type?.typeKey)
+                if (importedType is CallableType) {
+                    item.copy(detail = signatures.callableDetail(importedType, null, position))
+                } else {
+                    item
+                }
+            }
+        return (visibleItems + listOfNotNull(lazyImportItem).filter { nameFilter?.invoke(it.label) != false })
             .distinctBy(CompletionItem::label)
             .sortedBy(CompletionItem::sortText)
     }
 
-    private fun memberCompletions(expression: MemberExpression): List<CompletionItem> {
+    private fun memberCompletions(expression: MemberExpression, position: Position, nameFilter: ((String) -> Boolean)?): List<CompletionItem> {
         // Member surface includes conservative JavaBean property aliases as FIELD symbols
         // (from ReferenceQueries) alongside direct getter/setter METHOD members. For `:`
         // the surface already excludes non-callable FIELD members (aliases, data fields)
         // because a colon site is a call site; `.` keeps the full list.
         return referenceQueries.resolveMemberCompletionSurface(expression)
+            .filter { nameFilter?.invoke(it.name) != false }
             .mapIndexed { index, symbol ->
                 val prefix = if (expression.indexer == ":") {
                     if (symbol.kind == SymbolKind.METHOD) "0" else "1"
@@ -136,7 +86,14 @@ internal class CompletionProvider(
                     // targets) over methods for `.` members.
                     if (symbol.kind == SymbolKind.FIELD || isMemberFieldLike(symbol)) "0" else "1"
                 }
-                memberCompletionItem(symbol, prefix, index)
+                val type = adapters.typeByKey(symbol.declaredType?.typeKey ?: symbol.type?.typeKey)
+                memberCompletionItem(symbol, prefix, index).let { item ->
+                    if (type == null || (type !is CallableType && symbol.kind != SymbolKind.METHOD && symbol.kind != SymbolKind.FUNCTION)) {
+                        item
+                    } else item.copy(detail = signatures.callableDetail(
+                        type, expression.takeIf { it.identifier.name == symbol.name }, position
+                    ))
+                }
             }
             .sortedBy(CompletionItem::sortText)
     }

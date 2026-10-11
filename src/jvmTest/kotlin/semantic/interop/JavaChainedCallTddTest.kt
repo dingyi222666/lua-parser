@@ -7,6 +7,10 @@ import io.github.dingyi222666.luaparser.semantic.api.CompletionItem
 import io.github.dingyi222666.luaparser.semantic.api.CompletionItemKind
 import io.github.dingyi222666.luaparser.semantic.api.Diagnostic
 import io.github.dingyi222666.luaparser.semantic.api.SymbolKind
+import io.github.dingyi222666.luaparser.semantic.checker.allReadableInstanceJavaBeanProperties
+import io.github.dingyi222666.luaparser.semantic.checker.javaInstanceSurface
+import io.github.dingyi222666.luaparser.semantic.checker.resolveInstanceJavaBeanProperty
+import io.github.dingyi222666.luaparser.semantic.types.model.JavaInstanceType
 import java.io.File
 import semantic.support.WorkspaceSemanticHarness
 import kotlin.test.Test
@@ -17,6 +21,27 @@ import kotlin.test.assertTrue
 
 class JavaChainedCallTddTest {
     private val androidJar = File(JvmWorkspaceConfiguration.DEFAULT_ANDROID_JAR_PATH)
+
+    @Test
+    fun bean_enumeration_retains_exact_lookup_ambiguity_and_inherited_members() {
+        val imported = assertNotNull(JvmClassModuleProvider().importedSymbolForTarget(
+            BeanEnumerationFixture::class.java.name, JvmWorkspaceConfiguration()
+        ))
+        val instance = imported.moduleType.javaInstanceSurface() as JavaInstanceType
+        val properties = instance.allReadableInstanceJavaBeanProperties().associateBy { it.name }
+        assertTrue(properties.keys.containsAll(listOf("title", "URL", "ready")), properties.keys.toString())
+        assertEquals("setTitle", properties.getValue("title").setterName)
+        assertEquals("isReady", properties.getValue("ready").getterName)
+        assertFalse("code" in properties, "overloaded getters remain ambiguous")
+        assertFalse("broken" in properties, "nonboolean is-getter must not supply a property")
+        assertFalse("token" in properties, "write-only setters must not supply readable properties")
+        assertFalse("class" in properties, "getClass is not a bean property")
+        properties.forEach { (name, surface) ->
+            assertEquals(instance.resolveInstanceJavaBeanProperty(name), surface)
+        }
+        assertEquals(properties.getValue("title").valueType,
+            instance.resolveInstanceJavaBeanProperty("Title")?.valueType)
+    }
 
     /**
      * TASK-589 product hard-lock: resource_reflection_fixture_chained_static_and_instance_calls_are_typed
@@ -424,7 +449,7 @@ class JavaChainedCallTddTest {
         }
     }
 
-    class MutableJavaBean {
+    open class MutableJavaBean {
         fun getTitle(): String = "initial"
 
         fun setTitle(value: String) {
@@ -432,6 +457,17 @@ class JavaChainedCallTddTest {
         }
 
         private var storedTitle: String = "initial"
+    }
+
+    class BeanEnumerationFixture : MutableJavaBean() {
+        fun getURL(): String = "example"
+        fun getReady(): Boolean = true
+        fun isReady(): Boolean = true
+        fun getBroken(): Boolean = true
+        fun isBroken(): String = "invalid"
+        fun getCode(): String = "zero"
+        fun getCode(index: Int): String = index.toString()
+        fun setToken(value: String) = Unit
     }
 
     class ListenerHolder {

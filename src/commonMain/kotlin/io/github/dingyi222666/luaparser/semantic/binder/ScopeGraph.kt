@@ -1,18 +1,34 @@
 package io.github.dingyi222666.luaparser.semantic.binder
 
 import io.github.dingyi222666.luaparser.parser.ast.node.BaseASTNode
+import io.github.dingyi222666.luaparser.parser.ast.node.CallExpression
 
 class ScopeGraph(
     scopes: List<Scope>,
     rootScopeId: ScopeId,
-    nodeToScopeId: Map<BaseASTNode, ScopeId>
+    nodeToScopeId: Map<BaseASTNode, ScopeId>,
+    calls: Collection<CallExpression> = emptyList(),
+    globalWrites: Collection<BaseASTNode> = emptyList(),
+    globalWriteNames: Set<String> = emptySet()
 ) {
+    internal val calls: List<CallExpression> = calls.toList()
+    internal val globalWrites: List<BaseASTNode> = globalWrites.toList()
+    internal val globalWriteNames: Set<String> = globalWriteNames.toSet()
     private val scopesById = scopes.associateBy(Scope::id)
     private val nodeToScope = nodeToScopeId.toMap()
 
     val scopes: List<Scope> = scopes.toList()
     val rootScope: Scope = requireNotNull(scopesById[rootScopeId]) {
         "Missing root scope $rootScopeId."
+    }
+    private val declarationScopes by lazy {
+        buildMap {
+            this@ScopeGraph.scopes.forEach { scope ->
+                scope.declarationIds.forEach { id ->
+                    if (id !in this) put(id, scope)
+                }
+            }
+        }
     }
 
     init {
@@ -38,5 +54,5 @@ class ScopeGraph(
 
     fun getDeclarations(id: ScopeId): List<DeclarationId> = scopesById[id]?.declarationIds.orEmpty()
 
-    fun getDeclarationScope(id: DeclarationId): Scope? = scopes.firstOrNull { id in it.declarationIds }
+    fun getDeclarationScope(id: DeclarationId): Scope? = declarationScopes[id]
 }

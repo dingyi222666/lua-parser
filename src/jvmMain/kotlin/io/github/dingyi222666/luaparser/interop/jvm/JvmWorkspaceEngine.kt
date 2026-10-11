@@ -2,26 +2,6 @@ package io.github.dingyi222666.luaparser.interop.jvm
 
 import io.github.dingyi222666.luaparser.parser.LuaParser
 import io.github.dingyi222666.luaparser.parser.LuaVersion
-import io.github.dingyi222666.luaparser.parser.ast.node.ArrayConstructorExpression
-import io.github.dingyi222666.luaparser.parser.ast.node.AssignmentStatement
-import io.github.dingyi222666.luaparser.parser.ast.node.AttributeIdentifier
-import io.github.dingyi222666.luaparser.parser.ast.node.CallExpression
-import io.github.dingyi222666.luaparser.parser.ast.node.ChunkNode
-import io.github.dingyi222666.luaparser.parser.ast.node.CommentStatement
-import io.github.dingyi222666.luaparser.parser.ast.node.ConstantNode
-import io.github.dingyi222666.luaparser.parser.ast.node.ExpressionNode
-import io.github.dingyi222666.luaparser.parser.ast.node.ForGenericStatement
-import io.github.dingyi222666.luaparser.parser.ast.node.ForNumericStatement
-import io.github.dingyi222666.luaparser.parser.ast.node.FunctionDeclaration
-import io.github.dingyi222666.luaparser.parser.ast.node.Identifier
-import io.github.dingyi222666.luaparser.parser.ast.node.LambdaDeclaration
-import io.github.dingyi222666.luaparser.parser.ast.node.LocalStatement
-import io.github.dingyi222666.luaparser.parser.ast.node.MemberExpression
-import io.github.dingyi222666.luaparser.parser.ast.node.StringCallExpression
-import io.github.dingyi222666.luaparser.parser.ast.node.TableCallExpression
-import io.github.dingyi222666.luaparser.parser.ast.node.TableConstructorExpression
-import io.github.dingyi222666.luaparser.parser.ast.node.TableKeyString
-import io.github.dingyi222666.luaparser.parser.ast.visitor.ASTVisitor
 import io.github.dingyi222666.luaparser.semantic.SemanticWorkspaceContext
 import io.github.dingyi222666.luaparser.semantic.UnresolvedLuaJavaTarget
 import io.github.dingyi222666.luaparser.semantic.WorkspaceImportedSymbol
@@ -36,26 +16,53 @@ import io.github.dingyi222666.luaparser.semantic.workspace.WorkspaceSnapshot
  * JVM workspace engine for Android-Lua / LuaJava reflective modules.
  * Host android.jar discovery uses ANDROID_HOME/SDK_ROOT and well-known SDK roots; never G:/.
  */
-class JvmWorkspaceEngine(
+open class JvmWorkspaceEngine(
     private val workspaceParserFactory: (LuaVersion) -> LuaParser = { version -> LuaParser(version) },
     private val classModuleProvider: JvmClassModuleProvider = JvmClassModuleProvider(),
-    private val configuration: JvmWorkspaceConfiguration = JvmWorkspaceConfiguration()
-) : LuaWorkspaceEngine(workspaceParserFactory) {
+    private val configuration: JvmWorkspaceConfiguration = JvmWorkspaceConfiguration(),
+    private val analysisCheckpoint: () -> Unit = {},
+    private val deferDependencyGlobals: Boolean = false,
+    private val workspaceParallelism: Int = 1,
     /**
-     * Per-document facts + AST import targets, keyed by path and guarded by the exact source text.
-     *
-     * `extraProviders` is called with the *whole* workspace on every build and every update, so
-     * re-deriving these for untouched files made a single keystroke walk every file twice. Both
-     * products are deterministic in (path, source), so an edit only invalidates its own document.
+     * Interactive snapshots do not need a complete package directory. Resolve the
+     * class names actually referenced by the current buffers and let the full
+     * background index enumerate wildcard packages later.
      */
-    private class DocumentImportFacts(
-        val source: String,
-        val facts: DocumentFacts,
-        val importTargets: Set<String>,
-        val freeClassNames: Set<String>
-    )
+    private val deferWildcardPackageIndex: Boolean = false
+) : LuaWorkspaceEngine(workspaceParserFactory) {
+    override fun <T> analysisStage(stage: String, path: VirtualPath?, action: () -> T): T {
+        if (System.getProperty("lua.parser.perf") != "true" && System.getenv("LUA_PARSER_PERF") == null) {
+            return action()
+        }
+        val started = System.nanoTime()
+        return try { action() } finally {
+            System.err.println("ANALYSIS stage=$stage path=${path ?: "workspace"} " +
+                "ms=${(System.nanoTime() - started) / 1_000_000} thread=${Thread.currentThread().name}")
+        }
+    }
 
-    private val documentImportFactsCache = mutableMapOf<VirtualPath, DocumentImportFacts>()
+    override fun <T> mapIndependentDocuments(paths: List<VirtualPath>, action: (VirtualPath) -> T): List<T> {
+        val workers = workspaceParallelism.coerceIn(1, 8).coerceAtMost(paths.size)
+        if (workers < 2) return super.mapIndependentDocuments(paths, action)
+        val executor = java.util.concurrent.Executors.newFixedThreadPool(workers) { task ->
+            Thread(task, "lua-workspace-frontend").apply { isDaemon = true }
+        }
+        val futures = paths.map { path -> executor.submit(java.util.concurrent.Callable {
+            analysisCheckpoint()
+            action(path).also { analysisCheckpoint() }
+        }) }
+        try {
+            // Consume in input order so publication and declaration precedence stay deterministic.
+            return futures.map { future ->
+                try { future.get() } catch (failure: java.util.concurrent.ExecutionException) {
+                    throw failure.cause ?: failure
+                }
+            }
+        } finally {
+            futures.forEach { it.cancel(true) }
+            executor.shutdownNow()
+        }
+    }
 
     /**
      * Per-update [io.github.dingyi222666.luaparser.semantic.workspace.WorkspaceModuleResolver]
@@ -80,6 +87,11 @@ class JvmWorkspaceEngine(
     private var cachedResolver: io.github.dingyi222666.luaparser.semantic.workspace.WorkspaceModuleResolver? = null
     private val cachedResolverPaths = mutableSetOf<VirtualPath>()
 
+    internal override fun createWorkspaceResolver(snapshot: WorkspaceSnapshot) =
+        io.github.dingyi222666.luaparser.semantic.workspace.WorkspaceModuleResolver(snapshot, deferDependencyGlobals) { candidate ->
+            cachedChunkFor(snapshot.files, candidate)
+        }
+
     private fun workspaceResolverFor(
         snapshot: WorkspaceSnapshot,
         path: VirtualPath
@@ -89,9 +101,7 @@ class JvmWorkspaceEngine(
             cachedResolverPaths += path
             return cached
         }
-        val fresh = io.github.dingyi222666.luaparser.semantic.workspace.WorkspaceModuleResolver(snapshot) { candidate ->
-            cachedChunkFor(snapshot.files, candidate)
-        }
+        val fresh = createWorkspaceResolver(snapshot)
         cachedResolverSnapshot = snapshot
         cachedResolver = fresh
         cachedResolverPaths.clear()
@@ -99,31 +109,21 @@ class JvmWorkspaceEngine(
         return fresh
     }
 
-    private fun documentImportFacts(path: VirtualPath, source: String): DocumentImportFacts {
-        documentImportFactsCache[path]?.takeIf { it.source == source }?.let { return it }
-        val scan = scanDocument(parseWorkspaceSource(path, source))
-        return DocumentImportFacts(
-            source = source,
-            // Facts come from the engine-wide memo so a document is walked once, not once here
-            // and again in analyzeFile.
-            facts = documentFacts(path, source),
-            importTargets = scan.importTargets,
-            freeClassNames = scan.freeClassNames
-        ).also { documentImportFactsCache[path] = it }
-    }
-
     override fun extraProviders(input: LuaWorkspaceInput): Map<VirtualPath, WorkspaceSnapshot.FileSnapshot> {
+        analysisCheckpoint()
         val baseConfiguration = configuration.overlay(JvmWorkspaceConfiguration.fromMetadata(input.metadata))
-        // Single parse per file feeds both document facts and AST import discovery.
-        val perFile = input.files.mapValues { (path, source) -> documentImportFacts(path, source) }
-        documentImportFactsCache.keys.retainAll(input.files.keys)
-        val documentFacts = perFile.mapValues { (_, entry) -> entry.facts }
-        val astImportTargets = perFile.values.flatMapTo(linkedSetOf()) { it.importTargets }
+        val documentFacts = input.files.mapValues { (path, source) -> documentFacts(path, source) }
         val resolvedConfiguration = configurationWithWildcardImportPrefixes(
             baseConfiguration,
-            documentFacts,
-            astImportTargets
+            documentFacts
         )
+        if (deferWildcardPackageIndex) {
+            // The live query context owns path-scoped imported symbols, including
+            // direct JVM/DEX shells. Keep the cold graph free of reflective class
+            // and package providers; the authoritative background engine mounts
+            // that complete catalog later.
+            return emptyMap()
+        }
         // Explicit / bindClass / simple import targets only. Wildcard package modules list under
         // packageProvidersFor (packages/ paths only). Shallow class providers for package
         // members come from packageMemberClassProvidersFor (classes/ paths) so package-list
@@ -134,28 +134,21 @@ class JvmWorkspaceEngine(
         // CLASSES_METADATA / explicit import/bindClass must stay unresolved (TASK-628).
         val sourceDiscoveredClasses = collectSourceDiscoveredClasses(
             documentFacts,
-            resolvedConfiguration,
-            astImportTargets,
-            freeClassNames = emptySet()
+            resolvedConfiguration
         )
-        val packageTargets = collectWildcardImportTargets(baseConfiguration, documentFacts, astImportTargets)
+        val packageTargets = collectWildcardImportTargets(baseConfiguration, documentFacts)
             .mapNotNull(::normalizePackageProviderTarget)
             .toCollection(linkedSetOf())
-        val packageProviders = classModuleProvider.packageProvidersFor(
-            packageTargets,
-            resolvedConfiguration
-        )
-        val packageMemberClassProviders = classModuleProvider.packageMemberClassProvidersFor(
-            packageTargets,
-            resolvedConfiguration
-        )
+        val packageProviders = classModuleProvider.packageProvidersFor(packageTargets, resolvedConfiguration)
+        val packageMemberClassProviders = classModuleProvider.packageMemberClassProvidersFor(packageTargets, resolvedConfiguration)
         // Bare `import "libs/classes.dex"` library mounts (library module + per-class
         // providers) fed from configured imports, document source imports and AST targets.
         // The provider re-filters to bare existing dex/apk paths; nothing mounts by
         // directory scan alone.
         val dexLibraryProviders = classModuleProvider.dexLibraryProvidersFor(
-            collectDexLibraryImportTargets(baseConfiguration, documentFacts, astImportTargets),
-            resolvedConfiguration
+            collectDexLibraryImportTargets(baseConfiguration, documentFacts),
+            resolvedConfiguration,
+            deferMembers = deferDependencyGlobals
         )
         val providerConfiguration = if (sourceDiscoveredClasses.isEmpty()) {
             resolvedConfiguration
@@ -169,7 +162,7 @@ class JvmWorkspaceEngine(
         // full providers win on path collision so bindClass / configured classes keep deep
         // reflection surfaces.
         return packageProviders + packageMemberClassProviders + dexLibraryProviders +
-            classModuleProvider.providersFor(providerConfiguration)
+            classModuleProvider.providersFor(providerConfiguration, deferMembers = deferDependencyGlobals)
     }
 
     internal override fun workspaceContext(
@@ -182,42 +175,45 @@ class JvmWorkspaceEngine(
         // Snapshot documentFacts from analyzeFile are authoritative; fall back to a single-path collect.
         val currentSource = input.files[path]
             ?: snapshot.files[path]?.semanticFile?.source
-        // Facts and import targets were already derived for this exact source in extraProviders;
-        // reuse them instead of re-walking the document a second time per analyzed file.
-        val currentEntry = currentSource?.let { source -> documentImportFacts(path, source) }
-        val currentFacts = snapshot.files[path]?.documentFacts ?: currentEntry?.facts
-        // Configured imports are workspace-wide; source imports stay scoped to the current file.
-        val configuredImports = collectConfiguredImports(baseConfiguration)
-        val currentAstImportTargets = currentEntry?.importTargets.orEmpty()
+        val currentFacts = snapshot.files[path]?.documentFacts
+            ?: currentSource?.let { documentFacts(path, it) }
+        val configuredImports = if (deferWildcardPackageIndex) emptyMap()
+        else analysisStage("configured-imports", path) { activateImports(baseConfiguration.normalized().androluaImports, emptySet(), baseConfiguration) }
         val resolvedConfiguration = configurationWithWildcardImportPrefixes(
-            baseConfiguration,
-            currentFacts?.let { mapOf(path to it) }.orEmpty(),
-            currentAstImportTargets
+            baseConfiguration, currentFacts?.let { mapOf(path to it) }.orEmpty()
         )
-        val freeClassNames = currentEntry?.freeClassNames.orEmpty()
-        val sourceImports = collectSourceImports(
-            currentFacts,
-            resolvedConfiguration,
-            currentAstImportTargets,
-            freeClassNames
-        )
+        val mustMountDex = currentFacts?.sourceImports.orEmpty().any { importFact ->
+            val target = importFact.target.removePrefix("import ").trim()
+            target.endsWith(".dex") || target.endsWith(".apk") || target.contains(':')
+        }
+        val sourceImports = if (deferWildcardPackageIndex && !mustMountDex) emptyMap()
+        else analysisStage("source-imports", path) { activateImports(currentFacts?.sourceImports.orEmpty().map { it.target },
+            currentFacts?.classLikeNames.orEmpty(), resolvedConfiguration) }
         val activeImports = linkedMapOf<String, WorkspaceImportedSymbol>().apply {
             putAll(configuredImports)
             putAll(sourceImports)
         }
-        val workspaceResolver = workspaceResolverFor(snapshot, path)
+        val workspaceResolver = analysisStage("resolver", path) {
+            workspaceResolverFor(snapshot, path)
+        }
         // Compose on the common-engine base context so currentPath / overlayGlobals /
         // layoutPropertyExtensions derive from one place; only the JVM-specific layers
         // (per-update resolver, configured+source imports, dynamic target resolution,
         // unresolved LuaJava diagnostics) are stacked on top via copy.
-        return super.workspaceContext(input, path, snapshot).copy(
+        val baseContext = analysisStage("base-context", path) {
+            super.workspaceContext(input, path, snapshot)
+        }
+        return baseContext.copy(
+            analysisCheckpoint = analysisCheckpoint,
             workspaceResolver = workspaceResolver,
             // Only base configured imports go in the context map; document source imports are
             // re-applied by SemanticWorkspaceContext.withWorkspaceImportEffects() for this path.
             // Keep activeImports here so current-file analysis already sees both layers.
             importedSymbols = activeImports,
             resolveImportedSymbol = { name ->
-                activeImports[name]
+                activeImports[name] ?: lazyImportedSymbol(
+                    name, currentFacts, baseConfiguration, resolvedConfiguration
+                )
             },
             // Dynamic import()/import "..." targets must resolve even when not yet on the
             // sourceImports activation set for this path (engine-level JVM resolution).
@@ -228,8 +224,35 @@ class JvmWorkspaceEngine(
                 currentFacts,
                 resolvedConfiguration,
                 workspaceResolver
-            )
+            ),
+            lazyImportedSymbols = deferWildcardPackageIndex
         )
+    }
+
+    private fun lazyImportedSymbol(
+        alias: String,
+        facts: DocumentFacts?,
+        baseConfiguration: JvmWorkspaceConfiguration,
+        resolvedConfiguration: JvmWorkspaceConfiguration
+    ): WorkspaceImportedSymbol? {
+        val targets = buildList {
+            facts?.sourceImports.orEmpty().forEach { add(it.target) }
+            baseConfiguration.normalized().androluaImports.forEach(::add)
+        }
+        return targets.firstNotNullOfOrNull { target ->
+            val normalized = target.removePrefix("import ").trim()
+            val simple = normalized.substringAfterLast('.').removeSuffix("*")
+            if (simple == alias || normalized == alias) {
+                classModuleProvider.importedSymbolForTarget(target, resolvedConfiguration)
+                    ?.copy(alias = alias)
+            } else if (normalized.endsWith(".*")) {
+                val packageName = normalized.removeSuffix(".*").substringAfter(':')
+                classModuleProvider.importedSymbolForTarget(
+                    "$packageName.$alias", resolvedConfiguration,
+                    deferMembers = deferDependencyGlobals
+                )?.copy(alias = alias)
+            } else null
+        }
     }
 
     private fun collectUnresolvedLuaJavaTargets(
@@ -294,65 +317,66 @@ class JvmWorkspaceEngine(
             .toList()
     }
 
-    private fun collectConfiguredImports(
+    private data class ImportFileIdentity(val path: String, val exists: Boolean, val size: Long, val modified: Long)
+    private data class ImportActivationKey(
+        val configuration: JvmWorkspaceConfiguration,
+        val targets: List<String>,
+        val classNames: Set<String>,
+        val files: List<ImportFileIdentity>
+    )
+    private val importActivations = java.util.LinkedHashMap<ImportActivationKey, Map<String, WorkspaceImportedSymbol>>(16, 0.75f, true)
+    internal var onImportActivation: (() -> Unit)? = null
+
+    private fun activateImports(
+        targets: List<String>,
+        classNames: Set<String>,
         configuration: JvmWorkspaceConfiguration
     ): Map<String, WorkspaceImportedSymbol> {
+        val normalized = configuration.normalized()
+        val files = (normalized.reflectionClasspathEntries() + listOfNotNull(normalized.androidDex) +
+            targets.mapNotNull { target ->
+                val text = target.removePrefix("import ").trim()
+                when {
+                    ':' in text -> text.substringBefore(':')
+                    text.endsWith(".dex") || text.endsWith(".apk") -> text
+                    else -> null
+                }
+            }).distinct().map { java.io.File(it) }
+        // Exploded class directories can change without updating the root timestamp.
+        // Their providers remain uncached here rather than silently reusing stale activations.
+        val key = if (files.any { it.isDirectory }) null else ImportActivationKey(normalized,
+            targets.toList(), classNames.toSet(), files.map { file ->
+                ImportFileIdentity(file.absolutePath, file.exists(), file.length(), file.lastModified())
+            })
+        key?.let { importActivations[it]?.let { return it } }
+        analysisCheckpoint()
+        onImportActivation?.invoke()
         val imported = linkedMapOf<String, WorkspaceImportedSymbol>()
-        configuration.normalized().androluaImports.forEach { importText ->
-            // Prefer package/class symbol resolution over expanding every wildcard member.
-            classModuleProvider.importedSymbolForTarget(importText, configuration)?.let { symbol ->
-                imported[symbol.alias] = symbol
-            }
-            // Bare AndroLua short names (TextView/Button) still need class alias activation.
-            if (!isWildcardOrPackageTarget(importText)) {
-                classModuleProvider.importedClassNames(importText, configuration)
-                    .mapNotNull { classModuleProvider.importedSymbol(it, configuration) }
+        targets.forEach { target ->
+            if (deferWildcardPackageIndex && isWildcardOrPackageTarget(target)) return@forEach
+            val symbol = classModuleProvider.importedSymbolForTarget(target, normalized,
+                deferMembers = deferDependencyGlobals)
+            symbol?.let { imported[it.alias] = it }
+            if (!isWildcardOrPackageTarget(target) && symbol == null) {
+                classModuleProvider.importedClassNames(target, normalized)
+                    .mapNotNull { classModuleProvider.importedSymbol(it, normalized, deferMembers = deferDependencyGlobals) }
                     .forEach { imported[it.alias] = it }
             }
         }
-        return imported
-    }
-
-    private fun collectSourceImports(
-        facts: DocumentFacts?,
-        configuration: JvmWorkspaceConfiguration,
-        astImportTargets: Collection<String> = emptyList(),
-        freeClassNames: Collection<String> = emptyList()
-    ): Map<String, WorkspaceImportedSymbol> {
-        val imported = linkedMapOf<String, WorkspaceImportedSymbol>()
-        fun activate(target: String) {
-            // Package/wildcard targets activate package module only; class members resolve via
-            // WorkspaceModuleResolver.packageMembers + shallow class providers (not deep expand).
-            classModuleProvider.importedSymbolForTarget(target, configuration)?.let { symbol ->
-                imported[symbol.alias] = symbol
-            }
-            if (!isWildcardOrPackageTarget(target)) {
-                classModuleProvider.importedClassNames(target, configuration)
-                    .mapNotNull { classModuleProvider.importedSymbol(it, configuration) }
-                    .forEach { imported[it.alias] = it }
+        classNames.filter(::isClassLikeSimpleName).forEach { name ->
+            if (name !in imported) classModuleProvider.implicitClassSymbol(name, normalized)?.let { imported[it.alias] = it }
+        }
+        return imported.toMap().also { result ->
+            if (key != null) {
+                importActivations[key] = result
+                if (importActivations.size > 32) importActivations.remove(importActivations.keys.first())
             }
         }
-        facts?.sourceImports?.forEach { importFact ->
-            activate(importFact.target)
-        }
-        // AST-derived table import targets keep path-scoped activation even when
-        // DocumentFacts sequence-key filtering drops import({ "A", "B" }) entries.
-        astImportTargets.forEach(::activate)
-        // Free UpperCamel identifiers (Locale / TextView) fall back through default Android-Lua
-        // import prefixes when not bound by an explicit import/loadLib/bindClass target.
-        freeClassNames.forEach { name ->
-            if (name !in imported) {
-                activate(name)
-            }
-        }
-        return imported
     }
 
     private fun collectSourceDiscoveredClasses(
         documentFacts: Map<VirtualPath, DocumentFacts>,
-        configuration: JvmWorkspaceConfiguration,
-        astImportTargets: Collection<String> = emptyList(),
-        freeClassNames: Collection<String> = emptyList()
+        configuration: JvmWorkspaceConfiguration
     ): Set<String> {
         return buildSet {
             fun addExplicitClassTarget(target: String) {
@@ -382,134 +406,7 @@ class JvmWorkspaceEngine(
                     }
                 }
             }
-            astImportTargets.forEach(::addExplicitClassTarget)
-            // freeClassNames: intentionally not mounted into extraProviders (TASK-628).
-            // Path-scoped activation still uses free names in collectSourceImports.
-            @Suppress("UNUSED_PARAMETER")
-            val ignoredFreeClassNames = freeClassNames
         }
-    }
-
-    private class DocumentScan(
-        /**
-         * Import targets read straight off the AST, with a more permissive table-sequence rule
-         * than DocumentFactsCollector's range-equality check. Ensures `import({ "A", "B" })`
-         * mounts providers even when integer key ranges are non-degenerate after finishNode.
-         */
-        val importTargets: Set<String>,
-        /**
-         * Free UpperCamel identifiers used as class-like roots. Used only to mount reflective
-         * providers for the Android-Lua default import-prefix fallback (Locale / File / TextView
-         * without an explicit import). Never invents non-loadable names;
-         * [JvmClassModuleProvider.importedClassName] still has to resolve each candidate.
-         */
-        val freeClassNames: Set<String>
-    )
-
-    /**
-     * Single walk producing both AST import targets and free class-like identifiers.
-     *
-     * The two used to be separate back-to-back traversals of the same chunk. The binding-position
-     * skips below (local declared names, assignment targets, parameters, loop variables, member
-     * names) only ever elide `Identifier` nodes, which can never contain a call, so import
-     * discovery is unaffected by sharing this traversal. Only FREE READS qualify as class roots:
-     * a binding site (`local File = ...` / bare `File = ...` / `local function File() end`) must
-     * not feed the DEFAULT_IMPORT_PREFIXES activation in [collectSourceImports] — a shadowed
-     * local's name would otherwise activate its Java simple-name class, and unrelated local
-     * names that happen to match class simple names pollute the activation set.
-     */
-    private fun scanDocument(chunk: ChunkNode): DocumentScan {
-        val names = linkedSetOf<String>()
-        val targets = linkedSetOf<String>()
-        chunk.accept(
-            object : ASTVisitor<Unit> {
-                override fun visitCallExpression(node: CallExpression, value: Unit) {
-                    if (isImportCallee(unwrapCallBase(node.base))) {
-                        // Compact short-call forms keep the first argument on the inner node.
-                        importTargetsOf(node.base.compactCallArguments() + node.arguments)
-                            .forEach(targets::add)
-                    }
-                    super.visitCallExpression(node, value)
-                }
-
-                override fun visitIdentifier(node: Identifier, value: Unit) {
-                    if (isClassLikeSimpleName(node.name)) {
-                        names += node.name
-                    }
-                }
-
-                /** `Foo.Bar` roots at `Foo`; the member name is not a class-like root. */
-                override fun visitMemberExpression(node: MemberExpression, value: Unit) {
-                    visitExpressionNode(node.base, value)
-                }
-
-                /**
-                 * Local declared names are binding sites, not free reads. The printer-reversed
-                 * AST puts them in [LocalStatement.init] while the initializer expressions land
-                 * in [LocalStatement.variables] — the same quirk DocumentFactsCollector
-                 * documents for collectLocalAliases — so only the initializers are walked.
-                 * `local File = io.open(".")` must not activate java.io.File through the
-                 * default import prefixes, and a bare UpperCamel local name must not enter the
-                 * activation set merely by being declared.
-                 */
-                override fun visitLocalStatement(node: LocalStatement, value: Unit) {
-                    visitExpressionNodes(node.variables, value)
-                }
-
-                /**
-                 * Assignment targets are writes, not free reads: bare `File = io.open(".")`
-                 * binds a name and must not activate a JVM class alias. Non-plain targets
-                 * (`Foo.Bar = v` / `t[k] = v`) still read their base and index, so they are
-                 * walked; compound assignment desugars into a plain assignment whose RHS
-                 * re-reads a clone of the target, keeping genuine reads live.
-                 */
-                override fun visitAssignmentStatement(node: AssignmentStatement, value: Unit) {
-                    visitExpressionNodes(node.variables, value)
-                    node.init.forEach { target ->
-                        if (target !is Identifier) {
-                            visitExpressionNode(target, value)
-                        }
-                    }
-                }
-
-                /**
-                 * Declared names/bodies only: parameter names are bindings, not class roots.
-                 * A `local function` name is a local-declaration binding too, so it is skipped
-                 * when it is a plain Identifier; `function Foo.Bar() end` keeps walking the
-                 * member expression because naming the receiver member reads `Foo`.
-                 */
-                override fun visitFunctionDeclaration(node: FunctionDeclaration, value: Unit) {
-                    node.identifier?.let { identifier ->
-                        if (!(node.isLocal && identifier is Identifier)) {
-                            visitExpressionNode(identifier, value)
-                        }
-                    }
-                    node.body?.let { visitBlockNode(it, value) }
-                }
-
-                override fun visitLambdaDeclaration(node: LambdaDeclaration, value: Unit) {
-                    visitExpressionNode(node.expression, value)
-                }
-
-                /** Loop variables are fresh bindings. */
-                override fun visitForGenericStatement(node: ForGenericStatement, value: Unit) {
-                    visitExpressionNodes(node.iterators, value)
-                    visitBlockNode(node.body, value)
-                }
-
-                override fun visitForNumericStatement(node: ForNumericStatement, value: Unit) {
-                    visitExpressionNode(node.start, value)
-                    visitExpressionNode(node.end, value)
-                    node.step?.let { visitExpressionNode(it, value) }
-                    visitBlockNode(node.body, value)
-                }
-
-                override fun visitAttributeIdentifier(identifier: AttributeIdentifier, value: Unit) = Unit
-                override fun visitCommentStatement(commentStatement: CommentStatement, value: Unit) = Unit
-            },
-            Unit
-        )
-        return DocumentScan(importTargets = targets, freeClassNames = names)
     }
 
     private fun isClassLikeSimpleName(name: String): Boolean {
@@ -531,51 +428,6 @@ class JvmWorkspaceEngine(
         return target.endsWith(".*") || packageNameAliasPrefix(importText) != null
     }
 
-    /** `import "x"` / `import { ... }` keep the callee under a compact short-call node. */
-    private fun unwrapCallBase(expression: ExpressionNode): ExpressionNode {
-        var current = expression
-        while (true) {
-            current = when (current) {
-                is StringCallExpression -> current.base
-                is TableCallExpression -> current.base
-                else -> return current
-            }
-        }
-    }
-
-    /**
-     * Local aliases like `local import = require("import")` still call as Identifier("import").
-     * Chained aliases (load/again) are covered by DocumentFacts alias scopes; this AST pass
-     * focuses on direct import(...) and import table arguments.
-     */
-    private fun isImportCallee(expression: ExpressionNode): Boolean {
-        return expression is Identifier && expression.name == "import"
-    }
-
-    private fun ExpressionNode.compactCallArguments(): List<ExpressionNode> {
-        return (this as? CallExpression)?.arguments.orEmpty()
-    }
-
-    private fun importTargetsOf(arguments: List<ExpressionNode>): List<String> {
-        return arguments.flatMap { argument ->
-            when (argument) {
-                is ArrayConstructorExpression -> argument.values.mapNotNull(::stringLiteral)
-                is TableConstructorExpression -> {
-                    // Sequence slots hold the targets; fall back to all field values when integer
-                    // keys survive parsing and the sequence filter yields nothing.
-                    argument.fields.filter { it !is TableKeyString }.mapNotNull { stringLiteral(it.value) }
-                        .ifEmpty { argument.fields.mapNotNull { stringLiteral(it.value) } }
-                }
-                else -> listOfNotNull(stringLiteral(argument))
-            }
-        }
-    }
-
-    private fun stringLiteral(expression: ExpressionNode?): String? {
-        val constant = expression as? ConstantNode ?: return null
-        return constant.takeIf { it.constantType == ConstantNode.TYPE.STRING }?.stringOf()
-    }
-
     /**
      * Candidate import targets for dex library mounts (`import "libs/classes.dex"`):
      * configured imports, document source imports and AST import targets. The provider
@@ -583,8 +435,7 @@ class JvmWorkspaceEngine(
      */
     private fun collectDexLibraryImportTargets(
         configuration: JvmWorkspaceConfiguration,
-        documentFacts: Map<VirtualPath, DocumentFacts>,
-        astImportTargets: Collection<String>
+        documentFacts: Map<VirtualPath, DocumentFacts>
     ): Set<String> {
         return buildSet {
             configuration.normalized().androluaImports.forEach(::add)
@@ -593,14 +444,12 @@ class JvmWorkspaceEngine(
                     add(importFact.target)
                 }
             }
-            astImportTargets.forEach(::add)
         }
     }
 
     private fun collectWildcardImportTargets(
         configuration: JvmWorkspaceConfiguration,
-        documentFacts: Map<VirtualPath, DocumentFacts>,
-        astImportTargets: Collection<String> = emptyList()
+        documentFacts: Map<VirtualPath, DocumentFacts>
     ): Set<String> {
         // Mount package module providers for:
         // - wildcard proxies: import "android.widget.*" / import("android.widget.*")
@@ -618,14 +467,12 @@ class JvmWorkspaceEngine(
                     maybeAddPackageTarget(importFact.target)
                 }
             }
-            astImportTargets.forEach(::maybeAddPackageTarget)
         }
     }
 
     private fun configurationWithWildcardImportPrefixes(
         configuration: JvmWorkspaceConfiguration,
-        documentFacts: Map<VirtualPath, DocumentFacts>,
-        astImportTargets: Collection<String> = emptyList()
+        documentFacts: Map<VirtualPath, DocumentFacts>
     ): JvmWorkspaceConfiguration {
         val normalized = configuration.normalized()
         // Import precedence (wave K): AndroLua installs imports into _G sequentially, so the
@@ -643,7 +490,7 @@ class JvmWorkspaceEngine(
         // which keeps each file's internal order intact.
         val documentWildcardPrefixes = documentFacts.values.flatMap { facts ->
             facts.sourceImports.mapNotNull { importFact -> wildcardImportPrefix(importFact.target) }
-        } + astImportTargets.mapNotNull(::wildcardImportPrefix)
+        }
         val configuredWildcardPrefixes = normalized.androluaImports.mapNotNull(::wildcardImportPrefix)
         if (documentWildcardPrefixes.isEmpty() && configuredWildcardPrefixes.isEmpty()) {
             return normalized

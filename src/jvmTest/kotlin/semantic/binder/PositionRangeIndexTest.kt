@@ -78,6 +78,30 @@ class PositionRangeIndexTest {
         assertEquals(listOf("valid"), index.query(pos(1, 3)))
     }
 
+    @Test
+    fun longRootAndOverlappingSiblingsPreserveAllMatches() {
+        val intervals = listOf(range(1, 1, 501, 1) to "root") +
+            (1..400).map { line -> range(line, 2, line + 3, 5) to "scope$line" }
+        val index = PositionRangeIndex(intervals.reversed().mapIndexed { order, (range, name) ->
+            PositionRangeIndex.Entry(range, name, order)
+        })
+        for (line in 1..501) {
+            for (column in listOf(1, 2, 4, 5, 8)) {
+                val point = pos(line, column)
+                val expected = intervals.filter { (range, _) ->
+                    val afterStart = point.line > range.start.line ||
+                        (point.line == range.start.line && point.column >= range.start.column)
+                    val beforeEnd = point.line < range.end.line ||
+                        (point.line == range.end.line && point.column < range.end.column)
+                    afterStart && beforeEnd
+                }
+                    .map { it.second }.toSet()
+                assertEquals(expected, index.query(point).toSet(), "at $point")
+                assertEquals(index.query(point), index.queryEntries(point).map { it.payload })
+            }
+        }
+    }
+
     private fun indexOf(vararg entries: Pair<Range, String>): PositionRangeIndex<String> {
         return PositionRangeIndex(
             entries.mapIndexed { index, (range, payload) ->

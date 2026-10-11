@@ -32,7 +32,15 @@ import io.github.dingyi222666.luaparser.semantic.types.model.Type
 internal class ApiAdapters(
     private val binder: BinderPassResult
 ) {
-    private val typeKeysByType = linkedMapOf<Type, String>()
+    // A presentation handle identifies an object in this immutable model. Structural
+    // hashing walks every Java member/signature and can grow exponentially on shared
+    // type graphs; structural equality is neither needed nor meaningful for this key.
+    private class TypeIdentity(val type: Type) {
+        override fun hashCode(): Int = type.name.hashCode()
+        override fun equals(other: Any?): Boolean = other is TypeIdentity && type === other.type
+    }
+
+    private val typeKeysByType = linkedMapOf<TypeIdentity, String>()
     private val typesByKey = linkedMapOf<String, Type>()
     private var nextTypeKey = 1
 
@@ -41,7 +49,7 @@ internal class ApiAdapters(
             return null
         }
 
-        val key = typeKeysByType.getOrPut(type) {
+        val key = typeKeysByType.getOrPut(TypeIdentity(type)) {
             "type:${nextTypeKey++}".also { createdKey -> typesByKey[createdKey] = type }
         }
         val moduleType = type as? ModuleType

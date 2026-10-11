@@ -53,11 +53,12 @@ internal class DexByteReader(
 
     /** Reads one unsigned 16-bit little-endian value. */
     fun readU2(): Int {
-        val lo = readU1()
         if (failed) return 0
-        val hi = readU1()
-        if (failed) return 0
-        return lo or (hi shl 8)
+        if (position > data.size - 2) return truncatedFixedRead()
+        val offset = position
+        position += 2
+        return (data[offset].toInt() and 0xFF) or
+            ((data[offset + 1].toInt() and 0xFF) shl 8)
     }
 
     /**
@@ -65,15 +66,21 @@ internal class DexByteReader(
      * (two's complement); dex offsets/sizes that large are treated as out of bounds upstream.
      */
     fun readU4(): Int {
-        val b0 = readU1()
         if (failed) return 0
-        val b1 = readU1()
-        if (failed) return 0
-        val b2 = readU1()
-        if (failed) return 0
-        val b3 = readU1()
-        if (failed) return 0
-        return b0 or (b1 shl 8) or (b2 shl 16) or (b3 shl 24)
+        if (position > data.size - 4) return truncatedFixedRead()
+        val offset = position
+        position += 4
+        return (data[offset].toInt() and 0xFF) or
+            ((data[offset + 1].toInt() and 0xFF) shl 8) or
+            ((data[offset + 2].toInt() and 0xFF) shl 16) or
+            ((data[offset + 3].toInt() and 0xFF) shl 24)
+    }
+
+    private fun truncatedFixedRead(): Int {
+        // Match byte-at-a-time reads: consume the available prefix, preserving a cursor
+        // already beyond EOF, and diagnose the offset at which the next byte was missing.
+        position = maxOf(position, data.size)
+        return fail("read past end of data at offset $position")
     }
 
     /**
@@ -139,7 +146,24 @@ internal class DexByteReader(
      *         bytes - callers record a diagnostic instead of this ever throwing.
      */
     fun readMutf8(maxUtf16Units: Int = Int.MAX_VALUE): String? {
-        val builder = StringBuilder()
+        // Most metadata strings are ASCII class/member/descriptors. Decode that span
+        // directly instead of growing a builder and dispatching append per byte.
+        val start = position
+        var end = start
+        while (end < data.size) {
+            val byte = data[end].toInt() and 0xFF
+            if (byte == 0) {
+                position = end + 1
+                if (end - start > maxUtf16Units) {
+                    fail("MUTF-8 string longer than declared utf16_size $maxUtf16Units")
+                    return null
+                }
+                return data.decodeToString(start, end)
+            }
+            if (byte >= 0x80) break
+            end++
+        }
+        val builder = StringBuilder(minOf(maxUtf16Units.coerceAtLeast(0), remaining.coerceAtLeast(0)))
         while (true) {
             if (position >= data.size) {
                 fail("MUTF-8 string not terminated before end of data")

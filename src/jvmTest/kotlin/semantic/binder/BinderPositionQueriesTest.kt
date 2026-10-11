@@ -12,6 +12,8 @@ import io.github.dingyi222666.luaparser.semantic.binder.DeclarationOwner
 import io.github.dingyi222666.luaparser.semantic.binder.DeclarationOrigin
 import io.github.dingyi222666.luaparser.semantic.binder.ScopeKind
 import io.github.dingyi222666.luaparser.semantic.comments.CommentAttachPass
+import io.github.dingyi222666.luaparser.semantic.types.resolve.TypeResolver
+import io.github.dingyi222666.luaparser.semantic.types.model.PrimitiveType
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -21,6 +23,25 @@ import kotlin.test.assertTrue
 class BinderPositionQueriesTest {
 
     private val parser = LuaParser()
+
+    @Test
+    fun queried_bound_index_and_resolved_index_keep_their_own_declarations() {
+        val chunk = parser.parse("---@type number\nlocal value = 1\nprint(value)")
+        val bound = BinderPass().bind(chunk, CommentAttachPass().attach(chunk))
+        val original = bound.declarationIndex.declarations.single { it.name == "value" }
+        val position = original.range!!.start
+        assertEquals(original, bound.positionQueries.getDeclarationAt(position))
+        assertEquals(listOf(original), bound.positionQueries.valueDeclarationsInScope(bound.scopeGraph.rootScope.id, "value"))
+        val resolved = TypeResolver().resolve(bound)
+        val updated = resolved.declarationIndex.declarations.single { it.name == "value" }
+        assertEquals(PrimitiveType.NUMBER, updated.declaredType)
+        assertEquals(updated, resolved.positionQueries.getDeclarationAt(position))
+        assertEquals(original, bound.positionQueries.getDeclarationAt(position))
+        assertEquals(listOf(updated), resolved.positionQueries.valueDeclarationsInScope(resolved.scopeGraph.rootScope.id, "value"))
+        assertEquals(listOf(original), bound.positionQueries.valueDeclarationsInScope(bound.scopeGraph.rootScope.id, "value"))
+        assertEquals(bound.positionQueries.getScopeAt(position), resolved.positionQueries.getScopeAt(position))
+        assertEquals(updated.symbolId, resolved.positionQueries.getSymbolAt(position)?.id)
+    }
 
     @Test
     fun returnsRootAndInnermostScopesAcrossNestedConstructs() {

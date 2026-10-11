@@ -110,7 +110,8 @@ class TypeAnnotationParser {
             "string" -> PrimitiveType.STRING
             "number", "integer" -> PrimitiveType.NUMBER
             "boolean", "bool" -> PrimitiveType.BOOLEAN
-            "nil", "void" -> PrimitiveType.NIL
+            "void" -> PrimitiveType.VOID
+        "nil" -> PrimitiveType.NIL
             "any" -> PrimitiveType.ANY
             "unknown" -> UnknownType
             "never" -> NeverType
@@ -195,7 +196,7 @@ class TypeAnnotationParser {
 
         val returnTypes = syntax.returnTypes.map { resolveInternal(it, functionContext, resolvingAliases) }
         val returnType = when (returnTypes.size) {
-            0 -> PrimitiveType.NIL
+            0 -> PrimitiveType.VOID
             1 -> returnTypes[0]
             else -> MultiReturnType(returnTypes)
         }

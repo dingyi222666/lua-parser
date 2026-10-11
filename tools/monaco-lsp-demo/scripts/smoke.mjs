@@ -72,12 +72,13 @@ function runProtocol(info, files) {
     const notify = (method, params) => send({ jsonrpc: '2.0', method, params });
     const request = (method, params, timeoutMs = 30000) => {
       const id = nextId++;
+      const started = performance.now();
       return new Promise((resolveRequest, rejectRequest) => {
         const timer = setTimeout(() => {
           pending.delete(id);
           rejectRequest(new Error(`Timed out waiting for ${method}`));
         }, timeoutMs);
-        pending.set(id, { resolve: resolveRequest, reject: rejectRequest, timer });
+        pending.set(id, { resolve: resolveRequest, reject: rejectRequest, timer, started, method });
         send({ jsonrpc: '2.0', id, method, params });
       });
     };
@@ -95,6 +96,7 @@ function runProtocol(info, files) {
         if (!requestState) return;
         pending.delete(message.id);
         clearTimeout(requestState.timer);
+        console.log(`[smoke:timing] ${requestState.method}=${(performance.now() - requestState.started).toFixed(1)}ms`);
         if (message.error) {
           requestState.reject(new Error(message.error.message || JSON.stringify(message.error)));
         } else {

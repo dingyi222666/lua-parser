@@ -5,6 +5,7 @@ data class PrimitiveType(
     val kind: Kind
 ) : Type {
     enum class Kind {
+        VOID,
         NIL,
         BOOLEAN,
         NUMBER,
@@ -20,6 +21,7 @@ data class PrimitiveType(
     }
 
     companion object {
+        val VOID = PrimitiveType("void", Kind.VOID)
         val NIL = PrimitiveType("nil", Kind.NIL)
         val BOOLEAN = PrimitiveType("boolean", Kind.BOOLEAN)
         val NUMBER = PrimitiveType("number", Kind.NUMBER)

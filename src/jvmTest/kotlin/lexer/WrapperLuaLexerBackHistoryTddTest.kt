@@ -32,6 +32,30 @@ import kotlin.test.assertTrue
 class WrapperLuaLexerBackHistoryTddTest {
 
     @Test
+    fun repeatedPeeksAndHistoryRewindPreserveMultilineTokenPositions() {
+        val wrapper = newWrapper("name [[first\nsecond]] + next")
+        data class Token(val type: LuaTokenTypes, val text: String, val line: Int, val column: Int)
+        val tokens = mutableListOf<Token>()
+        while (true) {
+            val type = wrapper.advance()
+            val token = Token(type, wrapper.text().toString(), wrapper.line(), wrapper.column())
+            repeat(8) {
+                wrapper.pushback(wrapper.length())
+                assertEquals(token, Token(wrapper.advance(), wrapper.text().toString(), wrapper.line(), wrapper.column()))
+            }
+            tokens += token
+            if (type == LuaTokenTypes.EOF) break
+        }
+        assertEquals(listOf("name", " ", "[[first\nsecond]]", " ", "+", " ", "next", ""), tokens.map { it.text })
+        assertEquals(2, tokens.first { it.text == "next" }.line)
+        wrapper.back(tokens.size)
+        assertFalse(wrapper.lastBackTruncated)
+        assertEquals(tokens, List(tokens.size) {
+            Token(wrapper.advance(), wrapper.text().toString(), wrapper.line(), wrapper.column())
+        })
+    }
+
+    @Test
     fun back100ReplaysAll100AdvancedTokensInOrder() {
         // Stream: NAME v1, COMMA, NAME v2, COMMA, ... — 199 significant tokens.
         val source = (1..100).joinToString(",") { "v$it" }

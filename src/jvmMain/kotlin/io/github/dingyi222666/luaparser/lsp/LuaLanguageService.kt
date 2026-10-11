@@ -1,5 +1,7 @@
 package io.github.dingyi222666.luaparser.lsp
 
+import java.util.concurrent.TimeUnit
+
 import io.github.dingyi222666.luaparser.interop.jvm.JvmWorkspaceEngine
 import io.github.dingyi222666.luaparser.lexer.LuaLexer
 import io.github.dingyi222666.luaparser.lexer.LuaTokenTypes
@@ -136,11 +138,65 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
 import java.util.Base64
+import java.util.concurrent.CompletableFuture
 
 class LuaLanguageService(
-    private val engine: JvmWorkspaceEngine = JvmWorkspaceEngine()
+    engine: JvmWorkspaceEngine? = null,
+    initialWorkspaceMetadata: Map<String, String> = emptyMap(),
+    private val deferDocumentAnalysis: Boolean = false
 ) {
     private val stateLock = Any()
+    @Volatile private var closed = false
+    private fun checkConnectionOpen() {
+        if (closed) throw java.util.concurrent.CancellationException("Language server closed")
+    }
+    private val engine = engine ?: object : JvmWorkspaceEngine(
+        classModuleProvider = io.github.dingyi222666.luaparser.interop.jvm.JvmClassModuleProvider(
+            deferPackageMemberReflection = deferDocumentAnalysis,
+            analysisCheckpoint = ::checkConnectionOpen
+        ),
+        analysisCheckpoint = ::checkConnectionOpen,
+        deferDependencyGlobals = deferDocumentAnalysis,
+        workspaceParallelism = if (deferDocumentAnalysis)
+            (Runtime.getRuntime().availableProcessors() - 2).coerceIn(1, 8) else 1
+    ) {
+        // Interactive clients need the complete binding before checker work.
+        // The diagnostic worker checks open documents against that binding.
+        override val checkDiagnostics = !deferDocumentAnalysis
+    }
+    private var nextQueryPublication = CompletableFuture<Unit>()
+    private val completionExecutor = java.util.concurrent.Executors.newSingleThreadExecutor { task ->
+        Thread(task, "lsp-completion").apply { isDaemon = true }
+    }
+
+    private fun signalQueryPublication() {
+        val published = nextQueryPublication
+        nextQueryPublication = CompletableFuture()
+        published.complete(Unit)
+    }
+    private val cancellationReporter = ProgressReporter {
+        checkConnectionOpen()
+    }
+
+    /** Ends background work when the owning protocol connection shuts down. */
+    internal fun close() {
+        closed = true
+        onBuildProgress = null
+        onLiveAnalysisProgress = null
+        onLiveDiagnosticsFileChecked = null
+        onDocumentDiagnostics = null
+        backgroundRebuildThread?.interrupt()
+        synchronized(documentRefreshLock) { documentRefreshPending = false }
+        synchronized(liveDiagnosticLock) {
+            pendingLiveDiagnostics = null
+            checkedLiveDiagnostics.clear()
+            lastDiagnosticFiles = emptyMap()
+        }
+        synchronized(stateLock) {
+            nextQueryPublication.completeExceptionally(java.util.concurrent.CancellationException("Language server closed"))
+        }
+        completionExecutor.shutdownNow()
+    }
 
     /**
      * Position indexes are derived purely from a chunk, but rename/call-hierarchy walks look up
@@ -159,7 +215,13 @@ class LuaLanguageService(
     }
 
     private var snapshot: WorkspaceSnapshot = WorkspaceSnapshot()
-    private var queries: LuaWorkspaceQueryFacade = LuaWorkspaceQueryFacade(snapshot)
+    @Volatile
+    private var publishedQueries: LuaWorkspaceQueryFacade? = null
+    private var queries: LuaWorkspaceQueryFacade
+        get() = publishedQueries ?: synchronized(stateLock) {
+            publishedQueries ?: LuaWorkspaceQueryFacade(snapshot).also { publishedQueries = it }
+        }
+        set(value) { publishedQueries = value }
     private val indexedWorkspaceFiles = linkedMapOf<VirtualPath, String>()
     private val indexedWorkspaceUris = linkedMapOf<VirtualPath, String>()
     private val workspaceFolderUriPrefixes = linkedMapOf<String, String>()
@@ -168,7 +230,7 @@ class LuaLanguageService(
     /** Last full semantic-tokens payload per path for delta requests (TASK-252). */
     private val semanticTokensCache = linkedMapOf<VirtualPath, CachedSemanticTokens>()
     private var semanticTokensResultSeq: Long = 0L
-    private var workspaceMetadata: Map<String, String> = emptyMap()
+    private var workspaceMetadata: Map<String, String> = initialWorkspaceMetadata.toMap()
     private var workspaceFolders: List<WorkspaceFolder> = emptyList()
     /**
      * Captured from client initialize:
@@ -193,6 +255,7 @@ class LuaLanguageService(
     private var definitionLinkSupport: Boolean = false
     /** Files last applied to [snapshot] via build/update (indexed + open overlays). */
     private var lastSyncedFiles: Map<VirtualPath, String> = emptyMap()
+    @Volatile
     private var snapshotReady: Boolean = false
 
     /** Counts full engine.build invocations (initialize / metadata invalidation). Test-visible. */
@@ -243,12 +306,12 @@ class LuaLanguageService(
     internal fun awaitWorkspaceReady(timeoutMs: Long = 30_000): Boolean {
         val deadline = System.currentTimeMillis() + timeoutMs
         while (System.currentTimeMillis() < deadline) {
-            if (synchronized(stateLock) { snapshotReady }) {
+            if (snapshotReady) {
                 return true
             }
             Thread.sleep(50)
         }
-        return synchronized(stateLock) { snapshotReady }
+        return snapshotReady
     }
 
     /**
@@ -260,6 +323,7 @@ class LuaLanguageService(
     private val rebuildLock = Any()
     private var backgroundRebuildRunning = false
     private var backgroundRebuildThread: Thread? = null
+    private val firstLivePublication = java.util.concurrent.CountDownLatch(1)
     /**
      * Bumped by every snapshot-affecting mutation (incremental apply, metadata
      * change). The background cold build records the generation when it starts
@@ -270,7 +334,7 @@ class LuaLanguageService(
     private var backgroundBuildGeneration: Long = -1
     private fun scheduleBackgroundRebuild() {
         synchronized(rebuildLock) {
-            if (backgroundRebuildRunning) {
+            if (closed || backgroundRebuildRunning) {
                 return
             }
             backgroundRebuildRunning = true
@@ -278,12 +342,28 @@ class LuaLanguageService(
         }
         val thread = Thread({
             try {
+                if (deferDocumentAnalysis) {
+                    // Wait for actual foreground publication. A fixed head start
+                    // expired while the cold parser was still running, making the
+                    // two engines contend for CPU and shared builtin templates.
+                    // Clients that never open a buffer still receive a full index;
+                    // a broken/continuously edited live buffer cannot starve it.
+                    if (!firstLivePublication.await(8, TimeUnit.SECONDS)) {
+                        val hasOpenBuffers = synchronized(stateLock) { openDocuments.isNotEmpty() }
+                        if (hasOpenBuffers) firstLivePublication.await(30, TimeUnit.SECONDS)
+                    }
+                }
+                if (closed) return@Thread
                 runBackgroundRebuild()
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+            } catch (_: java.util.concurrent.CancellationException) {
             } finally {
                 synchronized(rebuildLock) { backgroundRebuildRunning = false }
             }
         }, "lsp-workspace-build")
         thread.isDaemon = true
+        thread.priority = Thread.MIN_PRIORITY
         backgroundRebuildThread = thread
         thread.start()
     }
@@ -297,42 +377,81 @@ class LuaLanguageService(
         if (thread != null && thread.isAlive) {
             thread.join(timeoutMs)
         }
+        if (closed) return false
         // If the thread was discarded by the stale-swap guard, run one
         // synchronous build so observers see a settled snapshot.
-        if (!synchronized(stateLock) { snapshotReady }) {
+        if (thread?.isAlive == true) return false
+        if (!snapshotReady) {
             synchronized(stateLock) { rebuildFullLocked(currentWorkspaceFiles()) }
         }
         return synchronized(stateLock) { snapshotReady }
     }
 
+    private val engineLock = Any()
+    private class ObsoleteLiveAnalysis : java.util.concurrent.CancellationException()
+    private val liveAnalysisCheckpoint = ThreadLocal<() -> Unit>()
+    internal var onLiveAnalysisProgress: ((AnalysisProgress) -> Unit)? = null
+
+    private fun checkLiveAnalysisCurrent() {
+        liveAnalysisCheckpoint.get()?.invoke()
+    }
+
+    private val liveBufferEngine = object : JvmWorkspaceEngine(
+        classModuleProvider = io.github.dingyi222666.luaparser.interop.jvm.JvmClassModuleProvider(
+            deferPackageMemberReflection = true,
+            analysisCheckpoint = ::checkLiveAnalysisCurrent
+        ),
+        analysisCheckpoint = ::checkLiveAnalysisCurrent,
+        deferDependencyGlobals = true,
+        deferWildcardPackageIndex = true
+    ) {
+        override val includeAndroidFramework = false
+        override val checkDiagnostics = false
+    }
+
+    private var liveBufferSnapshot: WorkspaceSnapshot? = null
+
     private fun runBackgroundRebuild() {
-        // Hold stateLock for the WHOLE build (read files → engine.build →
-        // apply). Requests during the build queue briefly on the lock — the
-        // same consistency contract as the original synchronous path. After
-        // applying, re-check whether the workspace moved (didOpen/didChange
-        // that queued behind the lock) and rebuild once more if so, so the
-        // final snapshot always reflects the latest state.
-        var attempts = 0
-        while (attempts < 3) {
-            val generationAtStart = synchronized(stateLock) {
-                backgroundBuildGeneration = workspaceGeneration
-                rebuildFullLocked(currentWorkspaceFiles())
-                workspaceGeneration
-            }
-            val moved = synchronized(stateLock) {
-                workspaceGeneration != generationAtStart
-            }
-            if (!moved) {
-                // Warm the Java member surfaces (dex/framework classes) so the
-                // FIRST user completion isn't the one paying the build cost.
-                runCatching {
-                    queries.completions(
-                        VirtualPath.of("warmup/main.lua"), Position(1, 1)
-                    )
+        // Do the expensive parser/dex work without holding stateLock. Requests
+        // can keep updating the open-document overlay while the cold index is
+        // built; publish the result only if its generation is still current.
+        val (files, metadata) = synchronized(stateLock) {
+            currentWorkspaceFiles() to workspaceMetadata
+        }
+        var result = buildWorkspace(files, metadata)
+        var builtFiles = files
+        while (true) {
+            var settled = false
+            var diagnostics: List<PublishDiagnosticsParams> = emptyList()
+            var diagnosticFiles: Map<VirtualPath, String> = emptyMap()
+            val latestFiles = synchronized(stateLock) {
+                if (closed || workspaceMetadata != metadata) return
+                val latest = currentWorkspaceFiles()
+                if (latest == builtFiles) {
+                    fullRebuildCount += 1
+                    applyWorkspaceResult(result, builtFiles)
+                    settled = true
+                    if (deferDocumentAnalysis) {
+                        diagnosticFiles = openDocuments.toMap()
+                        diagnostics = openDocuments.keys.map { publishDiagnostics(it) }
+                    }
                 }
+                latest
+            }
+            if (settled) {
+                onDocumentDiagnostics?.invoke(diagnostics)
+                if (deferDocumentAnalysis) scheduleLiveDiagnostics(result.snapshot, diagnosticFiles, result.affectedDocuments)
                 return
             }
-            attempts += 1
+            // Reconcile edits without holding the request lock. The foreground
+            // continues to serve live-buffer queries until publication is atomic.
+            result = synchronized(engineLock) {
+                engine.update(result.snapshot, WorkspaceDelta(
+                    upserts = latestFiles.filter { (path, source) -> builtFiles[path] != source },
+                    removals = builtFiles.keys - latestFiles.keys
+                ), reporter = cancellationReporter)
+            }
+            builtFiles = latestFiles
         }
     }
 
@@ -359,19 +478,39 @@ class LuaLanguageService(
         } else {
             ProgressReporter.NONE
         }
-        val result = engine.build(
-            LuaWorkspaceInput(
-                files = files,
-                metadata = workspaceMetadata
-            ),
-            reporter = reporter
-        )
+        val result = synchronized(engineLock) {
+            engine.build(
+                LuaWorkspaceInput(files = files, metadata = workspaceMetadata),
+                reporter = reporter
+            )
+        }
         fullRebuildCount += 1
         applyWorkspaceResult(result, files)
         progressSink?.invoke(
             AnalysisProgress(AnalysisProgress.Phase.COMPLETE, completedFiles = files.size, totalFiles = files.size)
         )
         return result.affectedDocuments
+    }
+
+    private fun buildWorkspace(
+        files: Map<VirtualPath, String>,
+        metadata: Map<String, String>
+    ): WorkspaceUpdateResult {
+        val progressSink = onBuildProgress
+        val reporter = if (progressSink != null) {
+            ProgressReporter { progress ->
+                if (closed) throw java.util.concurrent.CancellationException("Language server closed")
+                if (progress.phase == AnalysisProgress.Phase.COMPLETE || progress.completedFiles % 5 == 0) {
+                    progressSink(progress)
+                }
+            }
+        } else ProgressReporter {
+            if (closed) throw java.util.concurrent.CancellationException("Language server closed")
+        }
+        return synchronized(engineLock) {
+            cancellationReporter.report(AnalysisProgress(AnalysisProgress.Phase.PARSING))
+            engine.build(LuaWorkspaceInput(files = files, metadata = metadata), reporter = reporter)
+        }
     }
 
     fun setWorkspaceMetadata(metadata: Map<String, String>): Unit = synchronized(stateLock) {
@@ -497,13 +636,269 @@ class LuaLanguageService(
             ?: uri.trim().trimEnd('/')
     }
 
-    fun didOpen(params: DidOpenTextDocumentParams): PublishDiagnosticsParams = synchronized(stateLock) {
+    /** Receives fresh diagnostics after deferred Android document analysis. */
+    internal var onDocumentDiagnostics: ((List<PublishDiagnosticsParams>) -> Unit)? = null
+
+    private val documentRefreshLock = Any()
+    private var documentRefreshPending = false
+    private var documentRefreshRunning = false
+
+    private data class LiveDiagnosticWork(
+        val snapshot: WorkspaceSnapshot,
+        val files: Map<VirtualPath, String>,
+        val checkOrder: List<VirtualPath>
+    )
+    private val liveDiagnosticLock = Any()
+    private var pendingLiveDiagnostics: LiveDiagnosticWork? = null
+    private var liveDiagnosticRunning = false
+    private var lastDiagnosticFiles: Map<VirtualPath, String> = emptyMap()
+    private val checkedLiveDiagnostics = mutableMapOf<VirtualPath,
+        io.github.dingyi222666.luaparser.semantic.checker.CheckerPassResult>()
+    internal var onLiveDiagnosticsFileChecked: ((VirtualPath) -> Unit)? = null
+
+    private fun scheduleLiveDiagnostics(
+        snapshot: WorkspaceSnapshot,
+        files: Map<VirtualPath, String>,
+        affectedDocuments: Set<VirtualPath>
+    ) {
+        synchronized(liveDiagnosticLock) {
+            if (closed) return
+            checkedLiveDiagnostics.keys.retainAll(files.keys)
+            affectedDocuments.forEach(checkedLiveDiagnostics::remove)
+            val changed = files.keys.filter { files[it] != lastDiagnosticFiles[it] }
+            pendingLiveDiagnostics = LiveDiagnosticWork(snapshot, files, changed + (files.keys - changed.toSet()))
+            lastDiagnosticFiles = files
+            if (liveDiagnosticRunning) return
+            liveDiagnosticRunning = true
+        }
+        Thread({
+            val pipeline = io.github.dingyi222666.luaparser.semantic.SemanticPipeline()
+            while (true) {
+                val work = synchronized(liveDiagnosticLock) {
+                    val pending = if (closed) null else pendingLiveDiagnostics
+                    if (pending == null) {
+                        liveDiagnosticRunning = false
+                        return@Thread
+                    }
+                    pendingLiveDiagnostics = null
+                    pending
+                }
+                try {
+                    val checkedFiles = work.snapshot.files.toMutableMap()
+                    // Completion and diagnostics evaluate concurrently. Keep the checker's
+                    // provider/global caches separate from the published query resolver.
+                    val diagnosticResolver = io.github.dingyi222666.luaparser.semantic.workspace.WorkspaceModuleResolver(
+                        work.snapshot, deferDependencyGlobals = true
+                    )
+                    val completedPaths = mutableListOf<VirtualPath>()
+                    val publishedPaths = mutableSetOf<VirtualPath>()
+                    for (path in work.checkOrder) {
+                        val file = checkedFiles[path] ?: continue
+                        val semantic = file.semanticFile ?: continue
+                        // An unrelated edit need not discard a checker already running.
+                        // Re-analysis replaces the binding for every affected document.
+                        fun isCurrent() = !closed && openDocuments[path] == work.files[path] &&
+                            this.snapshot.files[path]?.semanticFile?.snapshot?.binder === semantic.snapshot.binder
+                        if (!synchronized(stateLock) { isCurrent() }) continue
+                        liveAnalysisCheckpoint.set {
+                            synchronized(stateLock) {
+                                if (!isCurrent()) throw ObsoleteLiveAnalysis()
+                            }
+                        }
+                        val cached = synchronized(liveDiagnosticLock) {
+                            checkedLiveDiagnostics[path]?.takeIf { it.binder === semantic.snapshot.binder }
+                        }
+                        val checked = if (cached != null) {
+                            pipeline.finishDiagnostics(semantic.snapshot, cached)
+                        } else {
+                            val checkingSnapshot = semantic.snapshot.copy(
+                                workspaceContext = semantic.snapshot.workspaceContext.copy(
+                                    workspaceResolver = diagnosticResolver,
+                                    resolveImportedSymbol = null,
+                                    resolveImportTarget = null,
+                                    analysisCheckpoint = {
+                                        checkLiveAnalysisCurrent()
+                                        semantic.snapshot.workspaceContext.analysisCheckpoint()
+                                        checkLiveAnalysisCurrent()
+                                    }
+                                ).withWorkspaceImportEffects()
+                            )
+                            pipeline.finishDiagnostics(checkingSnapshot)
+                                .copy(workspaceContext = semantic.snapshot.workspaceContext).also {
+                                checkLiveAnalysisCurrent()
+                                synchronized(liveDiagnosticLock) {
+                                    if (!closed) checkedLiveDiagnostics[path] = it.checker
+                                }
+                            }
+                        }
+                        val checkedFile = file.copy(semanticFile = WorkspaceSemanticFile(
+                            path, semantic.source, semantic.chunk, checked.model, checked, semantic.recoveryDiagnostics
+                        ))
+                        checkedFiles[path] = checkedFile
+                        completedPaths += path
+                        // Keep query publication atomic, but do not make a fresh document
+                        // warning wait for every other open document's checker.
+                        val diagnostic = synchronized(stateLock) {
+                            if (isCurrent()) {
+                                publishDiagnostics(path, checkedFile = checkedFile)
+                            } else null
+                        }
+                        diagnostic?.let {
+                            onDocumentDiagnostics?.invoke(listOf(it))
+                            publishedPaths += path
+                        }
+                        if (cached == null) onLiveDiagnosticsFileChecked?.invoke(path)
+                    }
+                    liveAnalysisCheckpoint.remove()
+                    val diagnostics = synchronized(stateLock) {
+                        if (!closed) {
+                            // Merge each valid checker result into the CURRENT workspace.
+                            // Unrelated edits can publish a new workspace while an unchanged
+                            // document is checking; that must neither discard its report nor
+                            // replace the newly edited file with an older semantic snapshot.
+                            val merged = this.snapshot.files.toMutableMap()
+                            val mergedPaths = completedPaths.filter { path ->
+                                val checkedFile = checkedFiles[path] ?: return@filter false
+                                val checkedSemantic = checkedFile.semanticFile ?: return@filter false
+                                val currentFile = merged[path] ?: return@filter false
+                                val currentSemantic = currentFile.semanticFile ?: return@filter false
+                                if (openDocuments[path] != work.files[path] ||
+                                    currentSemantic.snapshot.binder !== checkedSemantic.snapshot.binder) return@filter false
+                                val checked = pipeline.finishDiagnostics(currentSemantic.snapshot, checkedSemantic.snapshot.checker)
+                                merged[path] = currentFile.copy(semanticFile = WorkspaceSemanticFile(
+                                    path, currentSemantic.source, currentSemantic.chunk,
+                                    checked.model, checked,
+                                    currentSemantic.recoveryDiagnostics
+                                ))
+                                true
+                            }
+                            this.snapshot = this.snapshot.copy(files = merged)
+                            queries = LuaWorkspaceQueryFacade(this.snapshot)
+                            mergedPaths.filterNot { it in publishedPaths }.map { publishDiagnostics(it) }
+                        } else emptyList()
+                    }
+                    onDocumentDiagnostics?.invoke(diagnostics)
+                } catch (_: ObsoleteLiveAnalysis) {
+                } catch (failure: Exception) {
+                    System.err.println("LSP: live diagnostics failed: ${failure.message}")
+                } finally {
+                    liveAnalysisCheckpoint.remove()
+                }
+            }
+        }, "lsp-live-diagnostics").apply {
+            isDaemon = true
+            priority = Thread.MIN_PRIORITY
+            start()
+        }
+    }
+
+    private fun scheduleDocumentRefresh() {
+        synchronized(documentRefreshLock) {
+            if (closed) return
+            documentRefreshPending = true
+            if (documentRefreshRunning) return
+            documentRefreshRunning = true
+        }
+        Thread({
+            try {
+                while (true) {
+                    synchronized(documentRefreshLock) {
+                        if (closed || !documentRefreshPending) {
+                            documentRefreshRunning = false
+                            return@Thread
+                        }
+                        documentRefreshPending = false
+                    }
+                    val liveFiles = synchronized(stateLock) {
+                        if (snapshotReady) null else openDocuments.toMap()
+                    }
+                    if (liveFiles != null) {
+                        // Parse and bind outside the protocol lock. Publish only
+                        // if the buffers still match and the full index has not
+                        // superseded this small live snapshot.
+                        val result = try {
+                            analyzeLiveBuffers(liveFiles)
+                        } catch (_: ObsoleteLiveAnalysis) {
+                            synchronized(documentRefreshLock) { documentRefreshPending = true }
+                            continue
+                        }
+                        val published = synchronized(stateLock) {
+                            if (!closed && !snapshotReady && openDocuments == liveFiles) {
+                                snapshot = result.snapshot
+                                queries = LuaWorkspaceQueryFacade(snapshot)
+                                System.err.println("LSP-DEVICE: published live files=${liveFiles.map { (p, s) -> "$p:${s.length}/${snapshot.files[p]?.semanticFile?.source?.length}" }}")
+                                signalQueryPublication()
+                                firstLivePublication.countDown()
+                                true
+                            } else {
+                                synchronized(documentRefreshLock) { documentRefreshPending = true }
+                                false
+                            }
+                        }
+                        if (published) scheduleLiveDiagnostics(result.snapshot, liveFiles, result.affectedDocuments)
+                        continue
+                    }
+                    val diagnostics = refreshDeferredWorkspace()
+                    onDocumentDiagnostics?.invoke(diagnostics)
+                }
+            } catch (failure: Exception) {
+                synchronized(documentRefreshLock) { documentRefreshRunning = false }
+                if (!closed) System.err.println("LSP: document refresh failed: ${failure.message}")
+            }
+        }, "lsp-document-refresh").apply {
+            isDaemon = true
+            start()
+        }
+    }
+
+    private fun refreshDeferredWorkspace(): List<PublishDiagnosticsParams> {
+        val (previous, syncedFiles, files) = synchronized(stateLock) {
+            Triple(snapshot, lastSyncedFiles, currentWorkspaceFiles())
+        }
+        val upserts = files.filter { (path, source) -> syncedFiles[path] != source }
+        val removals = syncedFiles.keys - files.keys
+        if (upserts.isEmpty() && removals.isEmpty()) {
+            // Opening an indexed file has no source delta, but its checker may
+            // never have run. Closing/reopening also needs the current report.
+            val openFiles = synchronized(stateLock) { openDocuments.toMap() }
+            scheduleLiveDiagnostics(previous, openFiles, emptySet())
+            return emptyList()
+        }
+        val result = synchronized(engineLock) {
+            engine.update(previous, WorkspaceDelta(upserts = upserts, removals = removals), reporter = cancellationReporter)
+        }
+        var diagnosticFiles: Map<VirtualPath, String>? = null
+        val diagnostics = synchronized(stateLock) {
+            if (!closed && snapshot === previous && currentWorkspaceFiles() == files) {
+                incrementalUpdateCount += 1
+                applyWorkspaceResult(result, files)
+                diagnosticFiles = openDocuments.toMap()
+                openDocuments.keys.map { publishDiagnostics(it) }
+            } else {
+                synchronized(documentRefreshLock) { documentRefreshPending = true }
+                emptyList()
+            }
+        }
+        // Publish the unchecked/syntax report before starting a checker that
+        // could otherwise finish first and have its fresh report overwritten.
+        onDocumentDiagnostics?.invoke(diagnostics)
+        diagnosticFiles?.let { scheduleLiveDiagnostics(result.snapshot, it, result.affectedDocuments) }
+        return emptyList()
+    }
+
+    fun didOpen(params: DidOpenTextDocumentParams): PublishDiagnosticsParams {
         val document = params.textDocument
         val path = pathOf(document.uri)
-        openDocuments[path] = document.text
-        documentUris[path] = document.uri
-        refreshIncremental()
-        publishDiagnostics(path)
+        synchronized(stateLock) {
+            openDocuments[path] = document.text
+            documentUris[path] = document.uri
+            if (!deferDocumentAnalysis) {
+                refreshIncremental()
+                return publishDiagnostics(path)
+            }
+        }
+        scheduleDocumentRefresh()
+        return PublishDiagnosticsParams(document.uri, emptyList())
     }
 
     /**
@@ -527,6 +922,10 @@ class LuaLanguageService(
             ?: ""
         openDocuments[path] = applyContentChanges(baseSource, params.contentChanges)
         documentUris[path] = params.textDocument.uri
+        if (deferDocumentAnalysis) {
+            scheduleDocumentRefresh()
+            return@synchronized emptyList<PublishDiagnosticsParams>()
+        }
         val affected = refreshIncremental()
         val publishOrder = linkedSetOf(path)
         affected
@@ -536,20 +935,23 @@ class LuaLanguageService(
         publishOrder.map { candidate -> publishDiagnostics(candidate) }
     }
 
-    fun didClose(params: DidCloseTextDocumentParams): List<PublishDiagnosticsParams> = synchronized(stateLock) {
+    fun didClose(params: DidCloseTextDocumentParams): List<PublishDiagnosticsParams> {
         val uri = params.textDocument.uri
         val path = pathOf(uri)
-        openDocuments.remove(path)
-        documentUris.remove(path)
-        // Closed buffers must not pin their last full semantic-tokens payload.
-        semanticTokensCache.remove(path)
-        // Dependents re-analyzed against the closed file's disk text need fresh
-        // diagnostics too, otherwise they keep the pre-close markers.
-        val affected = refreshIncremental()
-        val republished = affected
-            .filter { it != path && it in openDocuments }
-            .map { publishDiagnostics(it) }
-        republished + PublishDiagnosticsParams(uri, emptyList())
+        synchronized(stateLock) {
+            openDocuments.remove(path)
+            documentUris.remove(path)
+            semanticTokensCache.remove(path)
+            if (!deferDocumentAnalysis) {
+                val affected = refreshIncremental()
+                return affected.filter { it != path && it in openDocuments }
+                    .map { publishDiagnostics(it) } + PublishDiagnosticsParams(uri, emptyList())
+            }
+        }
+        // Close notifications are on Sora's disconnect path. Analyze later and
+        // publish dependent diagnostics through the same coalescing worker.
+        scheduleDocumentRefresh()
+        return listOf(PublishDiagnosticsParams(uri, emptyList()))
     }
 
     fun didSave(@Suppress("UNUSED_PARAMETER") params: DidSaveTextDocumentParams) {
@@ -596,9 +998,13 @@ class LuaLanguageService(
         // light up the moment the build swaps its snapshot in. `queries` is an
         // atomically-swapped reference and the facade is read-only, so a
         // lock-free read is safe.
+        return completion(queries, path, line, character)
+    }
+
+    private fun completion(queriesNow: LuaWorkspaceQueryFacade, path: String, line: Int, character: Int,
+        nameFilter: ((String) -> Boolean)? = null): CompletionList {
         val t0 = System.currentTimeMillis()
-        val queriesNow = queries
-        val items = queriesNow.completions(pathFromClientPath(path), Position(line + 1, character + 1)).map { completion ->
+        val items = queriesNow.completionsMatching(pathFromClientPath(path), Position(line + 1, character + 1), nameFilter).map { completion ->
             CompletionItem(completion.label).apply {
                 kind = completion.kind.toLspKind()
                 detail = completion.detail
@@ -607,8 +1013,73 @@ class LuaLanguageService(
                 sortText = completion.sortText
             }
         }
-        println("LSP-DEVICE: completion ${System.currentTimeMillis() - t0}ms items=${items.size} ready=$snapshotReady path=$path")
+        System.err.println("LSP-DEVICE: completion ${System.currentTimeMillis() - t0}ms items=${items.size} ready=$snapshotReady path=$path")
         return CompletionList(false, items)
+    }
+
+    internal fun completionAsync(path: String, line: Int, character: Int): CompletableFuture<CompletionList> {
+        if (!deferDocumentAnalysis) return CompletableFuture.completedFuture(completion(path, line, character))
+        // Validate on the executor, not before enqueue: didChange/publication may occur
+        // while an earlier completion owns the worker. Capture the validated query revision
+        // and evaluate that exact facade outside the protocol lock.
+        if (closed) return cancelledCompletion()
+        return try {
+            CompletableFuture.supplyAsync({
+                val virtualPath = pathFromClientPath(path)
+                val revision = synchronized(stateLock) {
+                    checkConnectionOpen()
+                    val source = openDocuments[virtualPath]
+                    val semantic = snapshot.files[virtualPath]?.semanticFile
+                    Triple(queries to semantic?.snapshot?.binder, source,
+                        if (source == null || snapshot.files[virtualPath]?.semanticFile?.source == source) null
+                        else nextQueryPublication)
+                }
+                val waiting = revision.third
+                if (waiting != null) {
+                    waiting.thenCompose { completionAsync(path, line, character) }
+                } else {
+                    val result = completion(revision.first.first, path, line, character,
+                        revision.second?.let { completionNameFilter(it, line, character) })
+                    val stillCurrent = synchronized(stateLock) {
+                        checkConnectionOpen()
+                        // Diagnostics-only publication keeps the binding and query caches valid.
+                        // Source/dependency invalidation gives affected documents a new binding.
+                        openDocuments[virtualPath] == revision.second &&
+                            snapshot.files[virtualPath]?.semanticFile?.snapshot?.binder === revision.first.second
+                    }
+                    if (stillCurrent) CompletableFuture.completedFuture(result)
+                    else completionAsync(path, line, character)
+                }
+            }, completionExecutor).thenCompose { it }
+        } catch (rejected: java.util.concurrent.RejectedExecutionException) {
+            if (closed) cancelledCompletion() else throw rejected
+        }
+    }
+
+    /** Apply the client's identifier prefix before typing unrelated lexical candidates. */
+    private fun completionNameFilter(source: String, line: Int, character: Int): ((String) -> Boolean)? {
+        val end = lspOffsetAt(source, org.eclipse.lsp4j.Position(line, character))
+        var start = end
+        while (start > 0) {
+            val c = source[start - 1]
+            if (c != '_' && !c.isLetterOrDigit()) break
+            start--
+        }
+        if (start == end) return null
+        val prefix = source.substring(start, end)
+        // Preserve case-insensitive subsequence matches, including camel-case initials.
+        return { candidate ->
+            var matched = 0
+            for (c in candidate) {
+                if (c.equals(prefix[matched], ignoreCase = true)) matched++
+                if (matched == prefix.length) break
+            }
+            matched == prefix.length
+        }
+    }
+
+    private fun cancelledCompletion() = CompletableFuture<CompletionList>().apply {
+        completeExceptionally(java.util.concurrent.CancellationException("Language server closed"))
     }
 
     /**
@@ -955,9 +1426,8 @@ class LuaLanguageService(
 
     /**
      * TASK-544 — textDocument/formatting full-document surface.
-     * Prefers AST2Lua pretty-print when the buffer parses cleanly; otherwise applies
-     * a minimal indent/newline normalize. Malformed / unknown sources soft-degrade
-     * to an empty edit list without throwing.
+     * Formats through AST2Lua only when both the source and printed text parse cleanly.
+     * An unsupported source produces no replacement.
      */
     fun formatting(params: DocumentFormattingParams): List<TextEdit> = synchronized(stateLock) {
         try {
@@ -970,7 +1440,7 @@ class LuaLanguageService(
     /**
      * TASK-544 — textDocument/rangeFormatting surface.
      * Formats the selected span (or full document when range is null/invalid) using
-     * the same AST2Lua / indent-normalize pipeline. Inverted, beyond-EOF, negative,
+     * the same AST2Lua pipeline. Inverted, beyond-EOF, negative,
      * missing-document, and empty ranges soft-degrade to an empty list.
      */
     fun rangeFormatting(params: DocumentRangeFormattingParams): List<TextEdit> = synchronized(stateLock) {
@@ -1533,31 +2003,22 @@ class LuaLanguageService(
         publishDiagnostics(pathOf(uri), uri)
     }
 
-    private fun publishDiagnostics(path: VirtualPath, uri: String? = null): PublishDiagnosticsParams {
-        // Parse/recovery diagnostics are always LSP Error (lua-parse).
-        //
-        // Soft-noise policy for the LSP publish surface:
-        // 1) Recovery partial ASTs bind Identifier("") and could produce "Unused local ''"
-        //    noise; blank/underscore names are already suppressed upstream
-        //    (ExpressionUsageChecker.isIgnoredLocalName).
-        // 2) Unused-local checker diagnostics (code checker.local.unused) are published as
-        //    LSP Information — but only while the analyzed snapshot reflects the current
-        //    buffer text (same staleness guard as [parseDiagnostics]). A stale analysis must
-        //    not inject positional soft noise into didChange / didOpen Error hard-locks or
-        //    repair-clears windows.
-        // 3) When parse recovery diagnostics exist, non-Error semantic diagnostics
-        //    (unused-local Information included) are dropped so invalid sources hard-lock
-        //    to Error only and repair/valid stays empty. The truncation sentinel joins the
-        //    hard-lock: on such publishes it emits as Error (not its usual Hint) so an
-        //    over-cap invalid source still publishes Error-only.
+    private fun publishDiagnostics(
+        path: VirtualPath,
+        uri: String? = null,
+        checkedFile: WorkspaceSnapshot.FileSnapshot? = null
+    ): PublishDiagnosticsParams {
+        // Publish findings from the current revision. A recoverable syntax error in one
+        // region must not hide valid semantic findings elsewhere in the document.
         val buffer = openDocuments[path] ?: indexedWorkspaceFiles[path]
-        val bufferAnalyzed = snapshot.files[path]?.semanticFile?.let { semanticFile ->
+        val semanticFile = (checkedFile ?: snapshot.files[path])?.semanticFile
+        val bufferAnalyzed = semanticFile?.let { semanticFile ->
             buffer != null && semanticFile.source == buffer
         } == true
         val parse = parseDiagnostics(path)
-        val semantic = queries.diagnostics(path)
+        val semantic = (semanticFile?.model?.getDiagnostics().orEmpty())
             .asSequence()
-            .filter { diagnostic -> diagnostic.code != UNUSED_LOCAL_DIAGNOSTIC_CODE || bufferAnalyzed }
+            .filter { bufferAnalyzed }
             .map { diagnostic ->
                 Diagnostic().apply {
                     message = diagnostic.message
@@ -1574,13 +2035,6 @@ class LuaLanguageService(
                     }
                 }
             }
-            .let { mapped ->
-                if (parse.isNotEmpty()) {
-                    mapped.filter { it.severity == org.eclipse.lsp4j.DiagnosticSeverity.Error }
-                } else {
-                    mapped
-                }
-            }
             .toList()
         val distinct = (parse + semantic)
             .distinctBy { diagnostic ->
@@ -1595,14 +2049,13 @@ class LuaLanguageService(
             }
         // Bound the payload: a typo-heavy file can produce hundreds of per-site
         // unresolved-global warnings; clients choke on megabyte diagnostic arrays.
-        // Truncation is announced with one trailing sentinel diagnostic (HINT, or
-        // ERROR while the Error-only hard-lock is active, code `diagnostics.truncated`)
+        // Truncation is announced with one trailing Hint (code diagnostics.truncated)
         // so clients can tell a capped payload from a clean bill of health instead of
         // silently losing the tail.
         val truncatedCount = distinct.size - PUBLISH_DIAGNOSTICS_CAP
         val diagnostics = if (truncatedCount > 0) {
             distinct.take(PUBLISH_DIAGNOSTICS_CAP) +
-                truncatedDiagnosticsSentinel(truncatedCount, buffer, hardLocked = parse.isNotEmpty())
+                truncatedDiagnosticsSentinel(truncatedCount, buffer)
         } else {
             distinct
         }
@@ -1613,18 +2066,12 @@ class LuaLanguageService(
      * Synthetic trailing marker published ONLY when the payload exceeded
      * [PUBLISH_DIAGNOSTICS_CAP]. Reuses the same fallback anchor as range-less diagnostics
      * (1-character span on the document's first token) and a HINT severity with a dedicated
-     * code so it can never be mistaken for a real finding. While the Error-only hard-lock
-     * is active ([hardLocked] — parse recovery diagnostics present), the sentinel emits as
-     * ERROR so hard-locked publishes keep the Error-only invariant end to end.
+     * code so it can never be mistaken for a real finding.
      */
-    private fun truncatedDiagnosticsSentinel(count: Int, source: String?, hardLocked: Boolean): Diagnostic {
+    private fun truncatedDiagnosticsSentinel(count: Int, source: String?): Diagnostic {
         return Diagnostic().apply {
             range = fallbackDiagnosticRange(source)
-            severity = if (hardLocked) {
-                org.eclipse.lsp4j.DiagnosticSeverity.Error
-            } else {
-                org.eclipse.lsp4j.DiagnosticSeverity.Hint
-            }
+            severity = org.eclipse.lsp4j.DiagnosticSeverity.Hint
             code = Either.forLeft<String, Int>("diagnostics.truncated")
             message = "$count more diagnostics truncated"
         }
@@ -1695,6 +2142,7 @@ class LuaLanguageService(
     private fun applyWorkspaceResult(result: WorkspaceUpdateResult, files: Map<VirtualPath, String>) {
         snapshot = result.snapshot
         queries = LuaWorkspaceQueryFacade(snapshot)
+        signalQueryPublication()
         lastSyncedFiles = files.toMap()
         snapshotReady = true
     }
@@ -1708,23 +2156,54 @@ class LuaLanguageService(
         rebuildFullLocked(currentWorkspaceFiles())
     }
 
-    /**
-     * Incremental path: compute a [WorkspaceDelta] against the last applied file map
-     * and call engine.update (LuaWorkspaceEngine.update). Falls back to a full
-     * rebuild when no snapshot has been established yet.
-     *
-     * Returns [WorkspaceUpdateResult.affectedDocuments] for the applied delta (empty when
-     * nothing changed) so didChange can republish every document the edit touched.
-     */
+    private val liveBufferAnalysisLock = Any()
+
+    private fun analyzeLiveBuffers(files: Map<VirtualPath, String>): WorkspaceUpdateResult =
+        synchronized(liveBufferAnalysisLock) {
+            val started = System.currentTimeMillis()
+            System.err.println("LSP-DEVICE: live analysis start files=${files.size}")
+            val previous = liveBufferSnapshot
+            liveAnalysisCheckpoint.set {
+                synchronized(stateLock) {
+                    if (closed) throw java.util.concurrent.CancellationException("Language server closed")
+                    if (snapshotReady || openDocuments != files) throw ObsoleteLiveAnalysis()
+                }
+            }
+            val reporter = ProgressReporter { progress ->
+                onLiveAnalysisProgress?.invoke(progress)
+                checkLiveAnalysisCurrent()
+            }
+            val result = try {
+                if (previous == null) {
+                    liveBufferEngine.build(LuaWorkspaceInput(files = files,
+                        metadata = synchronized(stateLock) { workspaceMetadata.toMap() }), reporter = reporter)
+                } else {
+                    liveBufferEngine.update(previous, WorkspaceDelta(
+                        upserts = files.filter { (path, text) -> previous.files[path]?.semanticFile?.source != text },
+                        removals = previous.files.keys - files.keys
+                    ), reporter = reporter)
+                }
+            } finally {
+                liveAnalysisCheckpoint.remove()
+            }
+            liveBufferSnapshot = result.snapshot
+            System.err.println("LSP-DEVICE: live analysis done ${System.currentTimeMillis() - started}ms files=${files.size}")
+            result
+        }
+
+    /** Synchronous notification path for JVM clients; Android uses the deferred worker. */
     private fun refreshIncremental(): Set<VirtualPath> {
         val files = currentWorkspaceFiles()
         if (!snapshotReady) {
-            // The cold-start background build hasn't finished yet. Incremental
-            // deltas are cheap (DexLibraryMounter's parse-once cache makes the
-            // dex mount ~free), so run this one synchronously — didOpen
-            // diagnostics then appear without waiting for the cold build.
+            if (!deferDocumentAnalysis) return rebuildFullLocked(files)
+            // Analyze only the live buffers while the authoritative JVM index
+            // builds. A separate Lua engine avoids both the dex cost and access
+            // to the background engine's mutable caches.
             workspaceGeneration += 1
-            return rebuildFull()
+            val result = analyzeLiveBuffers(openDocuments.toMap())
+            snapshot = result.snapshot
+            queries = LuaWorkspaceQueryFacade(snapshot)
+            return result.affectedDocuments
         }
         workspaceGeneration += 1
 
@@ -1745,13 +2224,13 @@ class LuaLanguageService(
             return emptySet()
         }
 
-        val result = engine.update(
+        val result = synchronized(engineLock) { engine.update(
             previous = snapshot,
             delta = WorkspaceDelta(
                 upserts = upserts,
                 removals = removals
             )
-        )
+        ) }
         incrementalUpdateCount += 1
         applyWorkspaceResult(result, files)
         return result.affectedDocuments
@@ -1925,7 +2404,7 @@ class LuaLanguageService(
 
     private fun serverCapabilities(): ServerCapabilities {
         return ServerCapabilities().apply {
-            textDocumentSync = Either.forLeft(TextDocumentSyncKind.Full)
+            textDocumentSync = Either.forLeft(TextDocumentSyncKind.Incremental)
             hoverProvider = Either.forRight(HoverOptions())
             declarationProvider = Either.forLeft(true)
             definitionProvider = Either.forRight(DefinitionOptions())
@@ -2348,28 +2827,14 @@ class LuaLanguageService(
         }
         val parameters = linkedSetOf<NameKey>()
         val functions = linkedSetOf<NameKey>()
-        try {
-            val visitor = object : ASTVisitor<Unit> {
-                override fun visitAttributeIdentifier(
-                    identifier: io.github.dingyi222666.luaparser.parser.ast.node.AttributeIdentifier,
-                    value: Unit
-                ) = Unit
-
-                override fun visitFunctionDeclaration(node: FunctionDeclaration, value: Unit) {
-                    node.params.forEach { param ->
-                        parameters += nameKey(param)
-                    }
-                    when (val name = node.identifier) {
-                        is Identifier -> functions += nameKey(name)
-                        is MemberExpression -> functions += nameKey(name.identifier)
-                        else -> Unit
-                    }
-                    super.visitFunctionDeclaration(node, value)
-                }
+        // Resolve each occurrence in its own lexical scope. A name used as a parameter
+        // in one function says nothing about a same-named local in another scope.
+        semanticFile.identifiers.forEach { identifier ->
+            when (semanticFile.model.getSymbolAt(identifier.range.start)?.kind) {
+                SemanticSymbolKind.PARAMETER -> parameters += nameKey(identifier)
+                SemanticSymbolKind.FUNCTION, SemanticSymbolKind.METHOD -> functions += nameKey(identifier)
+                else -> Unit
             }
-            visitor.visitChunkNode(semanticFile.chunk, Unit)
-        } catch (_: Exception) {
-            // Soft-degrade: lexer-only classification remains available.
         }
         return NameClassification(parameters = parameters, functions = functions)
     }
@@ -2455,13 +2920,6 @@ class LuaLanguageService(
             return TYPE_PARAMETER
         }
         if (key in classification.functions || previousWasFunctionKeyword) {
-            return TYPE_FUNCTION
-        }
-        // Soft fallback: same-name parameter references elsewhere in the file.
-        if (classification.parameters.any { it.name == text }) {
-            return TYPE_PARAMETER
-        }
-        if (classification.functions.any { it.name == text }) {
             return TYPE_FUNCTION
         }
         return TYPE_VARIABLE
@@ -2791,10 +3249,9 @@ class LuaLanguageService(
             return emptyList()
         }
         val selected = source.substring(startOffset, endOffset)
-        // Prefer formatting the selected slice alone (table bodies, etc.). Falls back
-        // to indent normalize when the fragment is not a complete parse unit.
+        // Only a complete, parseable selection can produce a syntax-based replacement.
         val selectedFormatted = formatSourceText(selected, tabSize, insertSpaces)
-            ?: normalizeIndentNewlines(selected, tabSize, insertSpaces)
+            ?: return emptyList()
         if (selectedFormatted == selected) {
             return emptyList()
         }
@@ -2812,7 +3269,7 @@ class LuaLanguageService(
      * that drops or invents tokens (the if-statement terminal `end` regression from the
      * adversarial audit) would otherwise reach the editor as a full-document replacement
      * that corrupts the buffer. When the re-parse reports any recovery diagnostic, or throws,
-     * the safe indent/newline normalization of the ORIGINAL text is returned instead.
+     * no replacement is returned and the original source is preserved.
      */
     private fun formatSourceText(
         source: String,
@@ -2858,8 +3315,7 @@ class LuaLanguageService(
                 // Verify the exact text about to replace the document: it must parse back
                 // without recovery diagnostics under the same default parser used above.
                 // Any diagnostic (or parser throw) means the printer produced a surface the
-                // parser does not accept — fall through to the safe normalization below
-                // rather than hand the editor corrupting text.
+                // parser does not accept, so no replacement is published.
                 val printedReparsesCleanly = try {
                     LuaParser().parseWithDiagnostics(printed).recoveryDiagnostics.isEmpty()
                 } catch (_: Exception) {
@@ -2870,86 +3326,9 @@ class LuaLanguageService(
                 }
             }
         } catch (_: Exception) {
-            // Fall through to indent normalize / empty degrade.
+            return null
         }
-        // Minimal indent/newline normalize for safety corpora (mixed tabs/spaces, etc.).
-        return try {
-            normalizeIndentNewlines(source, tabSize, insertSpaces)
-        } catch (_: Exception) {
-            null
-        }
-    }
-
-    private fun normalizeIndentNewlines(source: String, tabSize: Int, insertSpaces: Boolean): String {
-        val usesCrlf = source.contains("\r\n")
-        val lines = source.replace("\r\n", "\n").replace('\r', '\n').split('\n')
-        val indentUnit = if (insertSpaces) " ".repeat(tabSize.coerceAtLeast(1)) else "\t"
-        val out = StringBuilder()
-        var depth = 0
-        for ((index, rawLine) in lines.withIndex()) {
-            val trimmed = rawLine.trim()
-            if (trimmed.isEmpty()) {
-                // Preserve empty lines as empty (no trailing spaces).
-                if (index < lines.lastIndex) {
-                    out.append(if (usesCrlf) "\r\n" else "\n")
-                } else if (source.endsWith("\n") || source.endsWith("\r\n")) {
-                    out.append(if (usesCrlf) "\r\n" else "\n")
-                }
-                continue
-            }
-            // Decrease depth for lines that close a block before indenting.
-            val lower = trimmed.lowercase()
-            val closesBefore =
-                lower == "end" ||
-                    lower.startsWith("end ") ||
-                    lower.startsWith("end;") ||
-                    lower == "else" ||
-                    lower.startsWith("else ") ||
-                    lower.startsWith("elseif") ||
-                    lower == "until" ||
-                    lower.startsWith("until ") ||
-                    trimmed == "}" ||
-                    trimmed.startsWith("},") ||
-                    trimmed.startsWith("};")
-            if (closesBefore) {
-                depth = (depth - 1).coerceAtLeast(0)
-            }
-            out.append(indentUnit.repeat(depth))
-            out.append(trimmed)
-            if (index < lines.lastIndex || source.endsWith("\n") || source.endsWith("\r\n")) {
-                out.append(if (usesCrlf) "\r\n" else "\n")
-            }
-            // Increase depth after openers.
-            val opensAfter =
-                lower.endsWith(" then") ||
-                    lower.endsWith(" do") ||
-                    lower.endsWith(" else") ||
-                    lower == "else" ||
-                    lower.startsWith("function") ||
-                    lower.startsWith("local function") ||
-                    lower.startsWith("repeat") ||
-                    trimmed.endsWith("{") ||
-                    trimmed.endsWith("({")
-            // crude: count unmatched { on the line
-            val openBraces = trimmed.count { it == '{' }
-            val closeBraces = trimmed.count { it == '}' }
-            var nextDepth = depth
-            if (opensAfter || openBraces > closeBraces) {
-                nextDepth += 1
-            }
-            // `else` / `elseif` re-open after the pre-close above.
-            if (lower == "else" || lower.startsWith("elseif") || lower.startsWith("else ")) {
-                nextDepth = depth + 1
-            }
-            depth = nextDepth.coerceAtLeast(0)
-        }
-        // If original had no trailing newline and we added one only because of loop, trim
-        // when last line was non-empty and source lacked trailing newline.
-        var result = out.toString()
-        if (!source.endsWith("\n") && !source.endsWith("\r\n") && (result.endsWith("\n") || result.endsWith("\r\n"))) {
-            result = result.trimEnd('\n', '\r')
-        }
-        return result
+        return null
     }
 
     private fun convertLeadingSpacesToTabs(text: String, tabSize: Int): String {
@@ -3287,41 +3666,9 @@ class LuaLanguageService(
             }
         }
 
-        // Fallback: scan local functions by name and match via same-file references/highlights.
-        val candidates = collectLocalFunctionDeclarations(chunk)
-        if (candidates.isEmpty()) {
-            return null
-        }
-        val sameFileRefs = sameFileHighlights(path, identifier.range.start).ifEmpty {
-            sameFileReferences(path, identifier.range.start)
-        }
-
-        for (candidate in candidates) {
-            val nameId = localFunctionNameIdentifier(candidate) ?: continue
-            if (nameId.name != identifier.name) {
-                continue
-            }
-            // Exact name-node identity
-            if (nameId === identifier) {
-                return candidate
-            }
-            // Reference range covers this candidate's name or the caret identifier.
-            val nameRange = nameId.range
-            val matchesRef = sameFileRefs.any { location ->
-                rangesOverlapParser(location.range, nameRange) ||
-                    rangesOverlapParser(location.range, identifier.range)
-            }
-            if (matchesRef || sameFileRefs.isEmpty() && nameId.name == identifier.name) {
-                // Prefer declaration whose name range is closest to a definition hit.
-                if (defLocations.any { rangesOverlapParser(it.range, nameRange) }) {
-                    return candidate
-                }
-            }
-        }
-
-        // Last resort: if caret identifier name uniquely matches one local function.
-        val byName = candidates.filter { localFunctionNameIdentifier(it)?.name == identifier.name }
-        return byName.singleOrNull()
+        // No lexical binding means no call-graph edge, even when one declaration
+        // elsewhere in the file happens to have the same spelling.
+        return null
     }
 
     private fun findIdentifierAtRange(chunk: ChunkNode, range: Range): Identifier? {
@@ -3499,29 +3846,6 @@ class LuaLanguageService(
                 .addCallRangeIfDistinct(site.range.toLspRange())
         }
 
-        // AST walk fallback: find CallExpressions whose base is the target name.
-        if (byCaller.isEmpty()) {
-            val visitor = object : ASTVisitor<Unit> {
-                override fun visitAttributeIdentifier(
-                    identifier: io.github.dingyi222666.luaparser.parser.ast.node.AttributeIdentifier,
-                    value: Unit
-                ) = Unit
-
-                override fun visitCallExpression(node: CallExpression, value: Unit) {
-                    val baseName = callBaseIdentifier(node)
-                    if (baseName != null && baseName.name == targetName.name) {
-                        val caller = enclosingLocalFunctionAllowSelf(node)
-                        if (caller != null) {
-                            byCaller.getOrPut(caller) { mutableListOf() }
-                                .addCallRangeIfDistinct(baseName.range.toLspRange())
-                        }
-                    }
-                    super.visitCallExpression(node, value)
-                }
-            }
-            visitor.visitChunkNode(chunk, Unit)
-        }
-
         return byCaller.mapNotNull { (caller, fromRanges) ->
             val fromItem = callHierarchyItemForFunction(caller, uri) ?: return@mapNotNull null
             CallHierarchyIncomingCall(fromItem, fromRanges)
@@ -3566,11 +3890,7 @@ class LuaLanguageService(
             }
         }
         // Visit only the root function body to avoid other top-level calls.
-        try {
-            body.accept(visitor, Unit)
-        } catch (_: Exception) {
-            visitor.visitChunkNode(chunk, Unit)
-        }
+        body.accept(visitor, Unit)
 
         return byCallee.mapNotNull { (callee, fromRanges) ->
             val toItem = callHierarchyItemForFunction(callee, uri) ?: return@mapNotNull null
@@ -3598,14 +3918,11 @@ class LuaLanguageService(
         if (candidates.isEmpty()) {
             return null
         }
-        if (candidates.size == 1) {
-            return candidates.first()
-        }
         return candidates.firstOrNull { decl ->
             val nameId = localFunctionNameIdentifier(decl) ?: return@firstOrNull false
             val sel = nameId.range.toLspRange()
             sameLspRange(sel, selection) || containsRangeLsp(selection, sel) || containsRangeLsp(sel, selection)
-        } ?: candidates.firstOrNull()
+        }
     }
 
     private fun callBaseIdentifier(call: CallExpression): Identifier? {
@@ -3841,9 +4158,6 @@ class LuaLanguageService(
         return afterStart && beforeEnd
     }
 }
-
-/** Matches ExpressionUsageChecker unused-local code; filtered from LSP publish. */
-private const val UNUSED_LOCAL_DIAGNOSTIC_CODE = "checker.local.unused"
 
 /** org.eclipse.lsp4j.DiagnosticTag.Deprecated. */
 private const val DIAGNOSTIC_TAG_DEPRECATED = 2

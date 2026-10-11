@@ -13,9 +13,7 @@ data class JvmWorkspaceConfiguration(
     val classLoader: ClassLoader? = null,
     val classpathEntries: List<String> = emptyList(),
     val androidJar: String? = null,
-    /** Device path of a dex file holding framework classes (android.jar converted
-     *  by d8). On an Android host the reflection pipeline loads this through
-     *  DexClassLoader instead of URLClassLoader-over-android.jar. */
+    /** Framework API metadata converted from android.jar by d8; parsed, never executed. */
     val androidDex: String? = null,
     val classes: Set<String> = emptySet(),
     val androluaImports: List<String> = emptyList(),
@@ -84,7 +82,7 @@ data class JvmWorkspaceConfiguration(
             ?.trim()
             ?.takeIf(String::isNotEmpty)
             ?.let(::add)
-        if (androidJar.isNullOrBlank()) {
+        if (androidJar.isNullOrBlank() && androidDex.isNullOrBlank()) {
             discoverReflectiveAndroidJarPath(environment, userHome, localAppData)?.let(::add)
         }
     }.distinct()
@@ -145,6 +143,7 @@ data class JvmWorkspaceConfiguration(
             classLoader = extra.classLoader ?: base.classLoader,
             classpathEntries = if (extra.classpathEntries.isNotEmpty()) extra.classpathEntries else base.classpathEntries,
             androidJar = extra.androidJar ?: base.androidJar,
+            androidDex = extra.androidDex ?: base.androidDex,
             classes = (base.classes + extra.classes).toCollection(linkedSetOf()),
             androluaImports = (base.androluaImports + extra.androluaImports).distinct(),
             importPrefixes = if (overrides.hasExplicitImportPrefixes()) extra.importPrefixes else base.importPrefixes

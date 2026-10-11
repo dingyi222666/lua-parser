@@ -17,6 +17,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertNotSame
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
@@ -26,16 +27,47 @@ import kotlin.test.assertTrue
  *
  * 1. Prefixed-import target classloaders are cached per (entry path, parent identity)
  *    instead of leaking one unclosed URLClassLoader per import resolution.
- * 2. Deep reflection over a broken jar entry (NoClassDefFoundError) degrades to a
- *    member-less shell module instead of aborting the workspace update.
- * 3. Exported __class member surfaces are O(n)-deduped and hard-capped (400) after
- *    deterministic alphabetical sorting.
- * 4. The blank-jar host-android.jar soft fallback only applies to configurations that
- *    actually carry JVM interop configuration.
+ * 2. Broken reflective metadata is reported and omitted without fabricating a class.
+ * 3. Exported __class member surfaces are complete and O(n)-deduped before sorting.
+ * 4. Explicit framework metadata is authoritative, including when its file is missing.
  *
- * All tests are jar-free: JDK classes, synthetic type-model graphs, and temp directories.
+ * Fixtures include actual compiled Java classes with an intentionally missing dependency.
  */
 class JvmInteropRobustnessFixesTddTest {
+    @Test
+    fun broken_class_metadata_is_reported_without_mounting_a_fake_class() {
+        val root = Files.createTempDirectory("lua-parser-missing-member-type-")
+        val sources = mapOf(
+            "Missing" to "public class Missing {}",
+            "Broken" to "public class Broken { public Missing value() { return null; } }",
+            "Healthy" to "public class Healthy { public static int answer() { return 42; } }"
+        ).map { (name, body) ->
+            root.resolve("$name.java").also { Files.writeString(it, "package fixture.metadata; $body") }
+        }
+        val compiler = assertNotNull(javax.tools.ToolProvider.getSystemJavaCompiler())
+        val args = listOf("-d", root.toString()) + sources.map { it.toString() }
+        assertEquals(0, compiler.run(null, null, null, *args.toTypedArray()))
+        val missing = root.resolve("fixture/metadata/Missing.class")
+        val bytes = Files.readAllBytes(missing)
+        Files.delete(missing)
+        val provider = JvmClassModuleProvider()
+        URLClassLoader(arrayOf(root.toUri().toURL()), null).use { loader ->
+            val config = JvmWorkspaceConfiguration(classLoader = loader, classes = linkedSetOf("fixture.metadata.Broken", "fixture.metadata.Healthy"))
+            val mounted = provider.providersFor(config)
+            assertEquals(listOf("Healthy"), mounted.values.map { it.moduleExportSurface!!.moduleType.moduleName })
+            assertNull(provider.importedSymbolForTarget("fixture.metadata.Broken", config))
+            val failure = provider.importDiagnostics(config).single()
+            assertEquals("jvm.metadata-unavailable", failure.code)
+            assertTrue(failure.message.contains("Missing"))
+        }
+        Files.write(missing, bytes)
+        URLClassLoader(arrayOf(root.toUri().toURL()), null).use { loader ->
+            val config = JvmWorkspaceConfiguration(classLoader = loader, classes = linkedSetOf("fixture.metadata.Broken"))
+            assertNotNull(provider.importedSymbolForTarget("fixture.metadata.Broken", config))
+            assertTrue(provider.importDiagnostics(config).isEmpty(), "Failures belong to their defining class loader.")
+        }
+    }
+
     private val provider = JvmClassModuleProvider()
     private val shellOwner = JavaTypeName(packageName = "fixture.shell", simpleNames = listOf("Shell"))
 
@@ -82,12 +114,12 @@ class JvmInteropRobustnessFixesTddTest {
     }
 
     // ------------------------------------------------------------------
-    // Fix 2: reflection failure degrades to a member-less shell
+    // Fix 2: deferred catalog references retain real class identity
     // ------------------------------------------------------------------
 
     @Test
-    fun shell_module_type_is_a_member_less_class_shell() {
-        val shell: ModuleType = provider.shellModuleTypeFor(String::class.java)
+    fun deferred_catalog_reference_has_no_eager_members() {
+        val shell: ModuleType = provider.deferredModuleTypeFor(String::class.java)
 
         assertEquals("String", shell.moduleName)
         assertEquals(setOf("__class"), shell.fields.keys, "Shell module must only carry the __class shell.")
@@ -125,7 +157,7 @@ class JvmInteropRobustnessFixesTddTest {
     // ------------------------------------------------------------------
 
     @Test
-    fun class_members_surface_is_hard_capped_after_deterministic_sort() {
+    fun class_members_surface_retains_every_real_member_after_deterministic_sort() {
         val instanceMembers = (0 until 450).associate { index ->
             val name = "m%03d".format(index)
             name to JavaInstanceMemberType(
@@ -140,14 +172,14 @@ class JvmInteropRobustnessFixesTddTest {
         val members = provider.classMembers(JavaInstanceType(classType))
 
         assertEquals(
-            JvmClassModuleProvider.MAX_CLASS_EXPORT_MEMBERS,
+            450,
             members.size,
-            "Member export surface must be hard-capped."
+            "A large real class must not silently lose its last members."
         )
         val names = members.map { it.name }
-        assertEquals(names.sorted(), names, "Capped surface must stay alphabetically sorted (deterministic).")
-        assertEquals("m399", members.last().name, "Truncation keeps the alphabetically first members.")
-        assertFalse(names.contains("m449"))
+        assertEquals(names.sorted(), names, "The complete surface stays deterministically sorted.")
+        assertEquals("m449", members.last().name)
+        assertTrue(names.contains("m449"))
     }
 
     @Test
@@ -189,56 +221,16 @@ class JvmInteropRobustnessFixesTddTest {
         assertEquals(names.sorted(), names, "Under-cap surfaces stay deterministically sorted.")
     }
 
-    // ------------------------------------------------------------------
-    // Fix 4: blank-jar host fallback requires deliberate interop configuration
-    // ------------------------------------------------------------------
-
     @Test
-    fun blank_android_jar_fallback_requires_deliberate_interop_configuration() {
-        assertFalse(
-            provider.shouldSoftFallbackToHostAndroidJar(JvmWorkspaceConfiguration()),
-            "A fully empty configuration must not silently mount a host SDK jar."
-        )
-        assertTrue(
-            provider.shouldSoftFallbackToHostAndroidJar(
-                JvmWorkspaceConfiguration(classpathEntries = listOf("does-not-need-to-exist/app.jar"))
-            ),
-            "Explicit classpath configuration keeps the host-jar fallback available."
-        )
-        assertTrue(
-            provider.shouldSoftFallbackToHostAndroidJar(
-                JvmWorkspaceConfiguration(classes = linkedSetOf("android.view.View"))
-            ),
-            "Explicit classes configuration keeps the host-jar fallback available."
-        )
-        assertTrue(
-            provider.shouldSoftFallbackToHostAndroidJar(
-                JvmWorkspaceConfiguration(androluaImports = listOf("android.view.View"))
-            ),
-            "Explicit import configuration keeps the host-jar fallback available."
-        )
-    }
-
-    @Test
-    fun missing_configured_android_jar_fallback_still_follows_well_known_path_rules() {
-        val wellKnownMacCandidate = "/Users/someone/Library/Android/sdk/platforms/android-35/android.jar"
-        assertTrue(
-            provider.shouldSoftFallbackToHostAndroidJar(JvmWorkspaceConfiguration(androidJar = wellKnownMacCandidate)),
-            "Missing well-known dual-path SDK candidates still soft-fall back."
-        )
-        assertFalse(
-            provider.shouldSoftFallbackToHostAndroidJar(
-                JvmWorkspaceConfiguration(androidJar = "/nonexistent/random/tools.jar")
-            ),
-            "Arbitrary missing configured paths never invent a host jar."
-        )
-        val existingJar = Files.createTempFile("lua-parser-existing-configured", ".jar").toFile()
-        existingJar.deleteOnExit()
-        assertFalse(
-            provider.shouldSoftFallbackToHostAndroidJar(
-                JvmWorkspaceConfiguration(androidJar = existingJar.absolutePath)
-            ),
-            "An existing configured jar is authoritative; no fallback."
-        )
+    fun explicit_missing_framework_paths_never_substitute_the_host_sdk() {
+        for (path in listOf(
+            "/Users/someone/Library/Android/sdk/platforms/android-35/android.jar",
+            "G:/Android/Sdk/platforms/android-35/android.jar",
+            "/nonexistent/random/tools.jar"
+        )) {
+            val configuration = JvmWorkspaceConfiguration(androidJar = path)
+            assertEquals(listOf(path), configuration.reflectionClasspathEntries())
+            assertTrue(provider.importedClassNames("android.app.Activity", configuration).isEmpty(), path)
+        }
     }
 }

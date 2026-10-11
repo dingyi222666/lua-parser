@@ -1,0 +1,7025 @@
+[
+  {
+    "id": "assignments:0",
+    "source": "a",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:1] '=' expected near '<eof>'"
+  },
+  {
+    "id": "assignments:1",
+    "source": "a,",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:2] unexpected symbol near '<eof>'"
+  },
+  {
+    "id": "assignments:2",
+    "source": "a,b,c",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:5] '=' expected near '<eof>'"
+  },
+  {
+    "id": "assignments:3",
+    "source": "a,b =",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:5] <expression> expected near '<eof>'"
+  },
+  {
+    "id": "assignments:4",
+    "source": "a = 1",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "assignments:5",
+    "source": "a = 1,2,3",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "assignments:6",
+    "source": "a,b,c = 1",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "assignments:7",
+    "source": "a,b,c = 1,2,3",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "assignments:8",
+    "source": "a.b = 1",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "assignments:9",
+    "source": "a.b.c = 1",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "assignments:10",
+    "source": "a[b] = 1",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "assignments:11",
+    "source": "a[b][c] = 1",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "assignments:12",
+    "source": "a.b[c] = 1",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "assignments:13",
+    "source": "a[b].c = 1",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "assignments:14",
+    "source": "a[b], a[c] = 1",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "assignments:15",
+    "source": "a().b = 1",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "assignments:16",
+    "source": "({})[b] = 1",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "assignments:17",
+    "source": "a\"\"[b] = 1",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "assignments:18",
+    "source": "a{}[b] = 1",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "assignments:19",
+    "source": "({{}})[a][b] = 1",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "assignments:20",
+    "source": "(a).b = 1",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "assignments:21",
+    "source": "(1).a = 0",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "assignments:22",
+    "source": "0 = 0",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:0] unexpected number '0' near '='"
+  },
+  {
+    "id": "assignments:23",
+    "source": "\"foo\" = 0",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:0] unexpected string '\"foo\"' near '='"
+  },
+  {
+    "id": "assignments:24",
+    "source": "true = 0",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:0] unexpected boolean 'true' near '='"
+  },
+  {
+    "id": "assignments:25",
+    "source": "(a) = 0",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:4] unexpected symbol '=' near '0'"
+  },
+  {
+    "id": "assignments:26",
+    "source": "{} = 0",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:0] unexpected symbol '{' near '}'"
+  },
+  {
+    "id": "assignments:27",
+    "source": "a, b() c()",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:7] unexpected identifier 'c' near '('"
+  },
+  {
+    "id": "assignments:28",
+    "source": "a, b(), c",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:6] unexpected symbol ',' near 'c'"
+  },
+  {
+    "id": "assignments:29",
+    "source": "a:b() = 0",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:6] unexpected symbol '=' near '0'"
+  },
+  {
+    "id": "assignments:30",
+    "source": "a() = 0",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:4] unexpected symbol '=' near '0'"
+  },
+  {
+    "id": "assignments:31",
+    "source": "a.b:c() = 0",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:8] unexpected symbol '=' near '0'"
+  },
+  {
+    "id": "assignments:32",
+    "source": "a[b]() = 0",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:7] unexpected symbol '=' near '0'"
+  },
+  {
+    "id": "assignments:33",
+    "source": "a = a b",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:7] '=' expected near '<eof>'"
+  },
+  {
+    "id": "assignments:34",
+    "source": "a = 1 2",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:6] unexpected number '2' near '<eof>'"
+  },
+  {
+    "id": "assignments:35",
+    "source": "a = a = 1",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:6] unexpected symbol '=' near '1'"
+  },
+  {
+    "id": "break:0",
+    "source": "break",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:5] no loop to break near '<eof>'"
+  },
+  {
+    "id": "break:1",
+    "source": "do break end",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:9] no loop to break near 'end'"
+  },
+  {
+    "id": "break:2",
+    "source": "if 0 then break end",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:16] no loop to break near 'end'"
+  },
+  {
+    "id": "break:3",
+    "source": "if 0 then else break end",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:21] no loop to break near 'end'"
+  },
+  {
+    "id": "break:4",
+    "source": "while 0 do function x() break end end",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:30] no loop to break near 'end'"
+  },
+  {
+    "id": "break:5",
+    "source": "repeat function x() break end until 0",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:26] no loop to break near 'end'"
+  },
+  {
+    "id": "break:6",
+    "source": "repeat x = function() break end until 0",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:28] no loop to break near 'end'"
+  },
+  {
+    "id": "break:7",
+    "source": "repeat break until 0",
+    "accept": true,
+    "body": [
+      "RepeatStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "break:8",
+    "source": "repeat do break end until 0",
+    "accept": true,
+    "body": [
+      "RepeatStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "break:9",
+    "source": "repeat if 0 then break end until 0",
+    "accept": true,
+    "body": [
+      "RepeatStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "break:10",
+    "source": "repeat if 0 then else break end until 0",
+    "accept": true,
+    "body": [
+      "RepeatStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "break:11",
+    "source": "while 0 do break end",
+    "accept": true,
+    "body": [
+      "WhileStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "break:12",
+    "source": "while 0 do break; end",
+    "accept": true,
+    "body": [
+      "WhileStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "break:13",
+    "source": "while 0 do break;; end",
+    "accept": true,
+    "body": [
+      "WhileStatement"
+    ],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "break:14",
+    "source": "while 0 do do break end end",
+    "accept": true,
+    "body": [
+      "WhileStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "break:15",
+    "source": "while 0 do if 0 then break end end",
+    "accept": true,
+    "body": [
+      "WhileStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "break:16",
+    "source": "while 0 do if 0 then else break end end",
+    "accept": true,
+    "body": [
+      "WhileStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "break:17",
+    "source": "for i = 1, 2 do break end",
+    "accept": true,
+    "body": [
+      "ForNumericStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "break:18",
+    "source": "for i = 1, 2 do do break end end",
+    "accept": true,
+    "body": [
+      "ForNumericStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "break:19",
+    "source": "for i = 1, 2 do if 0 then break end end",
+    "accept": true,
+    "body": [
+      "ForNumericStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "break:20",
+    "source": "for i = 1, 2 do if 0 then else break end end",
+    "accept": true,
+    "body": [
+      "ForNumericStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "break:21",
+    "source": "for a in b do break end",
+    "accept": true,
+    "body": [
+      "ForGenericStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "break:22",
+    "source": "for a in b do do break end end",
+    "accept": true,
+    "body": [
+      "ForGenericStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "break:23",
+    "source": "for a in b do if 0 then break end end",
+    "accept": true,
+    "body": [
+      "ForGenericStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "break:24",
+    "source": "for a in b do if 0 then else break end end",
+    "accept": true,
+    "body": [
+      "ForGenericStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "break:25",
+    "source": "function x() break end",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:19] no loop to break near 'end'"
+  },
+  {
+    "id": "break:26",
+    "source": "local function x() break end",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:25] no loop to break near 'end'"
+  },
+  {
+    "id": "break:27",
+    "source": "function x() repeat break until 0 end",
+    "accept": true,
+    "body": [
+      "FunctionDeclaration"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "break:28",
+    "source": "break",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.2",
+    "error": "[1:5] no loop to break near '<eof>'"
+  },
+  {
+    "id": "break:29",
+    "source": "do break end",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.2",
+    "error": "[1:9] no loop to break near 'end'"
+  },
+  {
+    "id": "break:30",
+    "source": "if 0 then break end",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.2",
+    "error": "[1:16] no loop to break near 'end'"
+  },
+  {
+    "id": "break:31",
+    "source": "if 0 then else break end",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.2",
+    "error": "[1:21] no loop to break near 'end'"
+  },
+  {
+    "id": "break:32",
+    "source": "while 0 do break;; end",
+    "accept": true,
+    "body": [
+      "WhileStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.2"
+  },
+  {
+    "id": "break:33",
+    "source": "while 0 do function x() break end end",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.2",
+    "error": "[1:30] no loop to break near 'end'"
+  },
+  {
+    "id": "break:34",
+    "source": "repeat function x() break end until 0",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.2",
+    "error": "[1:26] no loop to break near 'end'"
+  },
+  {
+    "id": "break:35",
+    "source": "repeat x = function() break end until 0",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.2",
+    "error": "[1:28] no loop to break near 'end'"
+  },
+  {
+    "id": "break:36",
+    "source": "repeat break until 0",
+    "accept": true,
+    "body": [
+      "RepeatStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.2"
+  },
+  {
+    "id": "break:37",
+    "source": "repeat do break end until 0",
+    "accept": true,
+    "body": [
+      "RepeatStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.2"
+  },
+  {
+    "id": "comments:0",
+    "source": "-- comment",
+    "accept": true,
+    "body": [],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "comments:1",
+    "source": "-- comment\n-- comment",
+    "accept": true,
+    "body": [],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "comments:2",
+    "source": "--coment",
+    "accept": true,
+    "body": [],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "comments:3",
+    "source": "-- comment\nreturn",
+    "accept": true,
+    "body": [
+      "ReturnStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "comments:4",
+    "source": "return --comment \n",
+    "accept": true,
+    "body": [
+      "ReturnStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "comments:5",
+    "source": "--[[comment]]",
+    "accept": true,
+    "body": [],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "comments:6",
+    "source": "if true--[[comment]]then end",
+    "accept": true,
+    "body": [
+      "IfStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "comments:7",
+    "source": "--[=[comment]=] return",
+    "accept": true,
+    "body": [
+      "ReturnStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "comments:8",
+    "source": "--[===[comment\n--[=[sub]=]--\n]===]return",
+    "accept": true,
+    "body": [
+      "ReturnStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "comments:9",
+    "source": "--[[comment\nline two]]",
+    "accept": true,
+    "body": [],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "comments:10",
+    "source": "--[[\ncomment\nline two\n]]",
+    "accept": true,
+    "body": [],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "comments:11",
+    "source": "--[==\nreturn --]]",
+    "accept": true,
+    "body": [
+      "ReturnStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "comments:12",
+    "source": "if true -- comment\nthen end",
+    "accept": true,
+    "body": [
+      "IfStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "comments:13",
+    "source": "--[=[x]x",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:9] unfinished long comment (starting at line 1) near '<eof>'"
+  },
+  {
+    "id": "conditional:0",
+    "source": "if",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:2] <expression> expected near '<eof>'"
+  },
+  {
+    "id": "conditional:1",
+    "source": "elseif",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:0] unexpected keyword 'elseif' near '<eof>'"
+  },
+  {
+    "id": "conditional:2",
+    "source": "else",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:0] unexpected keyword 'else' near '<eof>'"
+  },
+  {
+    "id": "conditional:3",
+    "source": "then",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:0] unexpected keyword 'then' near '<eof>'"
+  },
+  {
+    "id": "conditional:4",
+    "source": "if then",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:3] <expression> expected near 'then'"
+  },
+  {
+    "id": "conditional:5",
+    "source": "if 1",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:4] 'then' expected near '<eof>'"
+  },
+  {
+    "id": "conditional:6",
+    "source": "if 1 then",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:9] 'end' expected near '<eof>'"
+  },
+  {
+    "id": "conditional:7",
+    "source": "if 1 else",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:5] 'then' expected near 'else'"
+  },
+  {
+    "id": "conditional:8",
+    "source": "if 1 then else",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:14] 'end' expected near '<eof>'"
+  },
+  {
+    "id": "conditional:9",
+    "source": "if 1 then elseif",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:16] <expression> expected near '<eof>'"
+  },
+  {
+    "id": "conditional:10",
+    "source": "if 1 then end",
+    "accept": true,
+    "body": [
+      "IfStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "conditional:11",
+    "source": "if 1 then local a end",
+    "accept": true,
+    "body": [
+      "IfStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "conditional:12",
+    "source": "if 1 then local a local b end",
+    "accept": true,
+    "body": [
+      "IfStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "conditional:13",
+    "source": "if 1 then local a; local b; end",
+    "accept": true,
+    "body": [
+      "IfStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "conditional:14",
+    "source": "if 1 then else end",
+    "accept": true,
+    "body": [
+      "IfStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "conditional:15",
+    "source": "if 1 then local a else local b end",
+    "accept": true,
+    "body": [
+      "IfStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "conditional:16",
+    "source": "if 1 then local a; else local b; end",
+    "accept": true,
+    "body": [
+      "IfStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "conditional:17",
+    "source": "if 1 then elseif 2",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:18] 'then' expected near '<eof>'"
+  },
+  {
+    "id": "conditional:18",
+    "source": "if 1 then elseif 2 then",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:23] 'end' expected near '<eof>'"
+  },
+  {
+    "id": "conditional:19",
+    "source": "if 1 then elseif 2 then end",
+    "accept": true,
+    "body": [
+      "IfStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "conditional:20",
+    "source": "if 1 then local a elseif 2 then local b end",
+    "accept": true,
+    "body": [
+      "IfStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "conditional:21",
+    "source": "if 1 then local a; elseif 2 then local b; end",
+    "accept": true,
+    "body": [
+      "IfStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "conditional:22",
+    "source": "if 1 then elseif 2 then else end",
+    "accept": true,
+    "body": [
+      "IfStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "conditional:23",
+    "source": "if 1 then else if 2 then end end",
+    "accept": true,
+    "body": [
+      "IfStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "conditional:24",
+    "source": "if 1 then else if 2 then end",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:28] 'end' expected near '<eof>'"
+  },
+  {
+    "id": "conditional:25",
+    "source": "if 1 then return end",
+    "accept": true,
+    "body": [
+      "IfStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "conditional:26",
+    "source": "if 1 then return return end",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:17] 'end' expected near 'return'"
+  },
+  {
+    "id": "conditional:27",
+    "source": "if 1 then end; if 1 then end;",
+    "accept": true,
+    "body": [
+      "IfStatement",
+      "IfStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "conditional:28",
+    "source": "if then end",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:3] <expression> expected near 'then'"
+  },
+  {
+    "id": "conditional:29",
+    "source": "if 1 then elseif then end",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:17] <expression> expected near 'then'"
+  },
+  {
+    "id": "do:0",
+    "source": "do",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:2] 'end' expected near '<eof>'"
+  },
+  {
+    "id": "do:1",
+    "source": "end",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:0] unexpected keyword 'end' near '<eof>'"
+  },
+  {
+    "id": "do:2",
+    "source": "do end",
+    "accept": true,
+    "body": [
+      "DoStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "do:3",
+    "source": "do ; end",
+    "accept": true,
+    "body": [
+      "DoStatement"
+    ],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "do:4",
+    "source": "do 1 end",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:3] unexpected number '1' near 'end'"
+  },
+  {
+    "id": "do:5",
+    "source": "do \"foo\" end",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:3] unexpected string '\"foo\"' near 'end'"
+  },
+  {
+    "id": "do:6",
+    "source": "do local a, b end",
+    "accept": true,
+    "body": [
+      "DoStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "do:7",
+    "source": "do local a local b end",
+    "accept": true,
+    "body": [
+      "DoStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "do:8",
+    "source": "do local a; local b; end",
+    "accept": true,
+    "body": [
+      "DoStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "do:9",
+    "source": "do local a = 1 end",
+    "accept": true,
+    "body": [
+      "DoStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "do:10",
+    "source": "do do end end",
+    "accept": true,
+    "body": [
+      "DoStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "do:11",
+    "source": "do do end; end",
+    "accept": true,
+    "body": [
+      "DoStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "do:12",
+    "source": "do do do end end end",
+    "accept": true,
+    "body": [
+      "DoStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "do:13",
+    "source": "do do do end; end; end",
+    "accept": true,
+    "body": [
+      "DoStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "do:14",
+    "source": "do do do return end end end",
+    "accept": true,
+    "body": [
+      "DoStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "do:15",
+    "source": "do end do",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:9] 'end' expected near '<eof>'"
+  },
+  {
+    "id": "do:16",
+    "source": "do end end",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:7] unexpected keyword 'end' near '<eof>'"
+  },
+  {
+    "id": "do:17",
+    "source": "do return end",
+    "accept": true,
+    "body": [
+      "DoStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "do:18",
+    "source": "do return return end",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:10] 'end' expected near 'return'"
+  },
+  {
+    "id": "do:19",
+    "source": "do ; end",
+    "accept": true,
+    "body": [
+      "DoStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.2"
+  },
+  {
+    "id": "escapesequences:0",
+    "source": "a = \"bar\nbaz\"",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:10] unfinished string near '\"bar'"
+  },
+  {
+    "id": "escapesequences:1",
+    "source": "a = \"bar\rbaz\"",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:10] unfinished string near '\"bar'"
+  },
+  {
+    "id": "escapesequences:2",
+    "source": "a = \"bar\\n\\r\\t\tbaz\"",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "escapesequences:3",
+    "source": "a = \"bar\\80baz\\a\\80\\0foo\"",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "escapesequences:4",
+    "source": "a = \"bar\\f\\v\\bbaz\"",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "escapesequences:5",
+    "source": "a = \"bar\f\u000b\baz\"",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "escapesequences:6",
+    "source": "a = '\\\\'",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "escapesequences:7",
+    "source": "a = '\\''",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "escapesequences:8",
+    "source": "a = '\\['",
+    "accept": false,
+    "body": [],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1",
+    "error": "[1:7] invalid escape sequence near '\\['"
+  },
+  {
+    "id": "escapesequences:9",
+    "source": "a = '\\123'",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "escapesequences:10",
+    "source": "a = '\\255'",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "escapesequences:11",
+    "source": "a = '\\256'",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:10] decimal escape too large near '\\256'"
+  },
+  {
+    "id": "escapesequences:12",
+    "source": "a = '\\300'",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:10] decimal escape too large near '\\300'"
+  },
+  {
+    "id": "escapesequences:13",
+    "source": "a = [[bar\\f\\v\\bbaz]]",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "escapesequences:14",
+    "source": "a = [[\\]]",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "escapesequences:15",
+    "source": "a = '\\z \\x'",
+    "accept": false,
+    "body": [],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1",
+    "error": "[1:10] hexadecimal digit expected near '\\x''"
+  },
+  {
+    "id": "escapesequences:16",
+    "source": "a = '\\['",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.2",
+    "error": "[1:7] invalid escape sequence near '\\['"
+  },
+  {
+    "id": "escapesequences:17",
+    "source": "a = '\\x23'",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.2"
+  },
+  {
+    "id": "escapesequences:18",
+    "source": "a = '\\x0'",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.2",
+    "error": "[1:7] hexadecimal digit expected near '\\x0'"
+  },
+  {
+    "id": "escapesequences:19",
+    "source": "a = '\\x0x'",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.2",
+    "error": "[1:7] hexadecimal digit expected near '\\x0'"
+  },
+  {
+    "id": "escapesequences:20",
+    "source": "a = '\\xx'",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.2",
+    "error": "[1:7] hexadecimal digit expected near '\\xx'"
+  },
+  {
+    "id": "escapesequences:21",
+    "source": "a = \"bar\\z    baz\"",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.2"
+  },
+  {
+    "id": "escapesequences:22",
+    "source": "a = '\\u{0}'",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.3"
+  },
+  {
+    "id": "escapesequences:23",
+    "source": "a = '\\u{1f4a9}'",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.3"
+  },
+  {
+    "id": "escapesequences:24",
+    "source": "a = '\\u{7f}\\u{80}'",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.3"
+  },
+  {
+    "id": "escapesequences:25",
+    "source": "a = '\\u{7ff}\\u{800}'",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.3"
+  },
+  {
+    "id": "escapesequences:26",
+    "source": "a = '\\u{ffff}\\u{1f4a9}'",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.3"
+  },
+  {
+    "id": "escapesequences:27",
+    "source": "a = '\\u{10ffff}'",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.3"
+  },
+  {
+    "id": "escapesequences:28",
+    "source": "a = '\\u{110000}'",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.3",
+    "error": "[1:16] UTF-8 value too large near '\\u{110000}'"
+  },
+  {
+    "id": "escapesequences:29",
+    "source": "a = '\\u{120000}'",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.3",
+    "error": "[1:16] UTF-8 value too large near '\\u{120000}'"
+  },
+  {
+    "id": "escapesequences:30",
+    "source": "a = '\\u{000000001f4a9}'",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.3"
+  },
+  {
+    "id": "escapesequences:31",
+    "source": "a = '\\u{100000001f4a9}'",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.3",
+    "error": "[1:16] UTF-8 value too large near '\\u{1000000'"
+  },
+  {
+    "id": "escapesequences:32",
+    "source": "a = '\\u{1f4a9'",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.3",
+    "error": "[1:14] missing '}' near '\\u{1f4a9''"
+  },
+  {
+    "id": "escapesequences:33",
+    "source": "a = \"\\u{1f4a9\"",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.3",
+    "error": "[1:14] missing '}' near '\\u{1f4a9\"'"
+  },
+  {
+    "id": "escapesequences:34",
+    "source": "a = '\\uaa'",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.3",
+    "error": "[1:9] missing '{' near '\\ua'"
+  },
+  {
+    "id": "escapesequences:35",
+    "source": "a = '\\u{}'",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.3",
+    "error": "[1:9] hexadecimal digit expected near '\\u{'"
+  },
+  {
+    "id": "escapesequences:36",
+    "source": "a = '\\u{0g}'",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.3",
+    "error": "[1:11] hexadecimal digit expected near '\\u{0g'"
+  },
+  {
+    "id": "expressions:0",
+    "source": "a =",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:3] <expression> expected near '<eof>'"
+  },
+  {
+    "id": "expressions:1",
+    "source": "a = [[foo]]",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "expressions:2",
+    "source": "a = {}",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "expressions:3",
+    "source": "a = (a)",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "expressions:4",
+    "source": "a = (nil)",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "expressions:5",
+    "source": "a = (true)",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "expressions:6",
+    "source": "a = (1)",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "expressions:7",
+    "source": "a = (\"foo\")",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "expressions:8",
+    "source": "a = ([[foo]])",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "expressions:9",
+    "source": "a = ({})",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "expressions:10",
+    "source": "a = a.b",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "expressions:11",
+    "source": "a = a.b.",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:8] <name> expected near '<eof>'"
+  },
+  {
+    "id": "expressions:12",
+    "source": "a = a.b.c",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "expressions:13",
+    "source": "a = a:b",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:7] function arguments expected near '<eof>'"
+  },
+  {
+    "id": "expressions:14",
+    "source": "a = a[]",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:6] <expression> expected near ']'"
+  },
+  {
+    "id": "expressions:15",
+    "source": "a = a[b]",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "expressions:16",
+    "source": "a = a[1]",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "expressions:17",
+    "source": "a = a[\"foo\"]",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "expressions:18",
+    "source": "a = ()",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:5] <expression> expected near ')'"
+  },
+  {
+    "id": "expressions:19",
+    "source": "a = function",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:12] '(' expected near '<eof>'"
+  },
+  {
+    "id": "expressions:20",
+    "source": "a = function 1",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:13] '(' expected near '1'"
+  },
+  {
+    "id": "expressions:21",
+    "source": "a = function a",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:13] '(' expected near 'a'"
+  },
+  {
+    "id": "expressions:22",
+    "source": "a = function end",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:13] '(' expected near 'end'"
+  },
+  {
+    "id": "expressions:23",
+    "source": "a = function(",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:13] <name> or '...' expected near '<eof>'"
+  },
+  {
+    "id": "expressions:24",
+    "source": "a = function() end",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "expressions:25",
+    "source": "a = function(1",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:13] <name> or '...' expected near '1'"
+  },
+  {
+    "id": "expressions:26",
+    "source": "a = function(p) end",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "expressions:27",
+    "source": "a = function(p,q) end",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "expressions:28",
+    "source": "a = function(p q) end",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:15] ')' expected near 'q'"
+  },
+  {
+    "id": "expressions:29",
+    "source": "a = function(p,)",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:15] <name> or '...' expected near ')'"
+  },
+  {
+    "id": "expressions:30",
+    "source": "a = function(p q",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:15] ')' expected near 'q'"
+  },
+  {
+    "id": "expressions:31",
+    "source": "a = function(p,q,r) end",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "expressions:32",
+    "source": "a = function(p,q,1",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:17] <name> or '...' expected near '1'"
+  },
+  {
+    "id": "expressions:33",
+    "source": "a = function(...) end",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "expressions:34",
+    "source": "a = function(...,",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:16] ')' expected near ','"
+  },
+  {
+    "id": "expressions:35",
+    "source": "a = function(p,...) end",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "expressions:36",
+    "source": "a = function(p,q,r,...) end",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "expressions:37",
+    "source": "a = {'-'}",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "expressions:38",
+    "source": "a = {'not'}",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "expressions:39",
+    "source": "a = {not true}",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "for:0",
+    "source": "for",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:3] <name> expected near '<eof>'"
+  },
+  {
+    "id": "for:1",
+    "source": "for do",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:4] <name> expected near 'do'"
+  },
+  {
+    "id": "for:2",
+    "source": "for end",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:4] <name> expected near 'end'"
+  },
+  {
+    "id": "for:3",
+    "source": "for 1",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:4] <name> expected near '1'"
+  },
+  {
+    "id": "for:4",
+    "source": "for a",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:5] 'in' expected near '<eof>'"
+  },
+  {
+    "id": "for:5",
+    "source": "for true",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:4] <name> expected near 'true'"
+  },
+  {
+    "id": "for:6",
+    "source": "for a, in",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:7] <name> expected near 'in'"
+  },
+  {
+    "id": "for:7",
+    "source": "for a in",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:8] <expression> expected near '<eof>'"
+  },
+  {
+    "id": "for:8",
+    "source": "for a do",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:6] 'in' expected near 'do'"
+  },
+  {
+    "id": "for:9",
+    "source": "for a in do",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:9] <expression> expected near 'do'"
+  },
+  {
+    "id": "for:10",
+    "source": "for a in b do",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:13] 'end' expected near '<eof>'"
+  },
+  {
+    "id": "for:11",
+    "source": "for a in b end",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:11] 'do' expected near 'end'"
+  },
+  {
+    "id": "for:12",
+    "source": "for a in b, do",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:12] <expression> expected near 'do'"
+  },
+  {
+    "id": "for:13",
+    "source": "for a in b do end",
+    "accept": true,
+    "body": [
+      "ForGenericStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "for:14",
+    "source": "for a in b do local a local b end",
+    "accept": true,
+    "body": [
+      "ForGenericStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "for:15",
+    "source": "for a in b do local a; local b; end",
+    "accept": true,
+    "body": [
+      "ForGenericStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "for:16",
+    "source": "for a in b do 1 end",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:14] unexpected number '1' near 'end'"
+  },
+  {
+    "id": "for:17",
+    "source": "for a in b do \"foo\" end",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:14] unexpected string '\"foo\"' near 'end'"
+  },
+  {
+    "id": "for:18",
+    "source": "for a b in",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:6] 'in' expected near 'b'"
+  },
+  {
+    "id": "for:19",
+    "source": "for a, b, c in p do end",
+    "accept": true,
+    "body": [
+      "ForGenericStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "for:20",
+    "source": "for a, b, c in p, q, r do end",
+    "accept": true,
+    "body": [
+      "ForGenericStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "for:21",
+    "source": "for a in 1 do end",
+    "accept": true,
+    "body": [
+      "ForGenericStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "for:22",
+    "source": "for a in true do end",
+    "accept": true,
+    "body": [
+      "ForGenericStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "for:23",
+    "source": "for a in \"foo\" do end",
+    "accept": true,
+    "body": [
+      "ForGenericStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "for:24",
+    "source": "for a in b do break end",
+    "accept": true,
+    "body": [
+      "ForGenericStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "for:25",
+    "source": "for a in b do break break end",
+    "accept": true,
+    "body": [
+      "ForGenericStatement"
+    ],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "for:26",
+    "source": "for a in b do return end",
+    "accept": true,
+    "body": [
+      "ForGenericStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "for:27",
+    "source": "for a in b do return return end",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:21] 'end' expected near 'return'"
+  },
+  {
+    "id": "for:28",
+    "source": "for a in b do do end end",
+    "accept": true,
+    "body": [
+      "ForGenericStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "for:29",
+    "source": "for a in b do do break end end",
+    "accept": true,
+    "body": [
+      "ForGenericStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "for:30",
+    "source": "for a in b do do return end end",
+    "accept": true,
+    "body": [
+      "ForGenericStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "for:31",
+    "source": "for =",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:4] <name> expected near '='"
+  },
+  {
+    "id": "for:32",
+    "source": "for a =",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:7] <expression> expected near '<eof>'"
+  },
+  {
+    "id": "for:33",
+    "source": "for a, b =",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:9] 'in' expected near '='"
+  },
+  {
+    "id": "for:34",
+    "source": "for a = do",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:8] <expression> expected near 'do'"
+  },
+  {
+    "id": "for:35",
+    "source": "for a = 1, do",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:11] <expression> expected near 'do'"
+  },
+  {
+    "id": "for:36",
+    "source": "for a = p, q, do",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:14] <expression> expected near 'do'"
+  },
+  {
+    "id": "for:37",
+    "source": "for a = p q do",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:10] ',' expected near 'q'"
+  },
+  {
+    "id": "for:38",
+    "source": "for a = b do end",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:10] ',' expected near 'do'"
+  },
+  {
+    "id": "for:39",
+    "source": "for a = 1, 2, 3, 4 do end",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:15] 'do' expected near ','"
+  },
+  {
+    "id": "for:40",
+    "source": "for a = p, q do end",
+    "accept": true,
+    "body": [
+      "ForNumericStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "for:41",
+    "source": "for a = 1, 2 do end",
+    "accept": true,
+    "body": [
+      "ForNumericStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "for:42",
+    "source": "for a = 1, 2 do local a local b end",
+    "accept": true,
+    "body": [
+      "ForNumericStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "for:43",
+    "source": "for a = 1, 2 do local a; local b; end",
+    "accept": true,
+    "body": [
+      "ForNumericStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "for:44",
+    "source": "for a = 1, 2 do 3 end",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:16] unexpected number '3' near 'end'"
+  },
+  {
+    "id": "for:45",
+    "source": "for a = 1, 2 do \"foo\" end",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:16] unexpected string '\"foo\"' near 'end'"
+  },
+  {
+    "id": "for:46",
+    "source": "for a = p, q, r do end",
+    "accept": true,
+    "body": [
+      "ForNumericStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "for:47",
+    "source": "for a = 1, 2, 3 do end",
+    "accept": true,
+    "body": [
+      "ForNumericStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "for:48",
+    "source": "for a = p, q do break end",
+    "accept": true,
+    "body": [
+      "ForNumericStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "for:49",
+    "source": "for a = p, q do break break end",
+    "accept": true,
+    "body": [
+      "ForNumericStatement"
+    ],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "for:50",
+    "source": "for a = 1, 2 do return end",
+    "accept": true,
+    "body": [
+      "ForNumericStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "for:51",
+    "source": "for a = 1, 2 do return return end",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:23] 'end' expected near 'return'"
+  },
+  {
+    "id": "for:52",
+    "source": "for a = p, q do do end end",
+    "accept": true,
+    "body": [
+      "ForNumericStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "for:53",
+    "source": "for a = p, q do do break end end",
+    "accept": true,
+    "body": [
+      "ForNumericStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "for:54",
+    "source": "for a = p, q do do return end end",
+    "accept": true,
+    "body": [
+      "ForNumericStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "for:55",
+    "source": "for a in b do break break end",
+    "accept": true,
+    "body": [
+      "ForGenericStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.2"
+  },
+  {
+    "id": "for:56",
+    "source": "for a = p, q do break break end",
+    "accept": true,
+    "body": [
+      "ForNumericStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.2"
+  },
+  {
+    "id": "functioncalls:0",
+    "source": "a(",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:2] ')' expected near '<eof>'"
+  },
+  {
+    "id": "functioncalls:1",
+    "source": "a()",
+    "accept": true,
+    "body": [
+      "CallStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "functioncalls:2",
+    "source": "a(1)",
+    "accept": true,
+    "body": [
+      "CallStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "functioncalls:3",
+    "source": "a(,1)",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:2] ')' expected near ','"
+  },
+  {
+    "id": "functioncalls:4",
+    "source": "a(1,)",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:4] <expression> expected near ')'"
+  },
+  {
+    "id": "functioncalls:5",
+    "source": "a(1,2,3)",
+    "accept": true,
+    "body": [
+      "CallStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "functioncalls:6",
+    "source": "1()",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:0] unexpected number '1' near '('"
+  },
+  {
+    "id": "functioncalls:7",
+    "source": "a()()",
+    "accept": true,
+    "body": [
+      "CallStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "functioncalls:8",
+    "source": "a.b()",
+    "accept": true,
+    "body": [
+      "CallStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "functioncalls:9",
+    "source": "a[b]()",
+    "accept": true,
+    "body": [
+      "CallStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "functioncalls:10",
+    "source": "a.1",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:1] '=' expected near '.1'"
+  },
+  {
+    "id": "functioncalls:11",
+    "source": "a.b",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:3] '=' expected near '<eof>'"
+  },
+  {
+    "id": "functioncalls:12",
+    "source": "a[b]",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:4] '=' expected near '<eof>'"
+  },
+  {
+    "id": "functioncalls:13",
+    "source": "a.b.(",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:4] <name> expected near '('"
+  },
+  {
+    "id": "functioncalls:14",
+    "source": "a.b.c()",
+    "accept": true,
+    "body": [
+      "CallStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "functioncalls:15",
+    "source": "a[b][c]()",
+    "accept": true,
+    "body": [
+      "CallStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "functioncalls:16",
+    "source": "a[b].c()",
+    "accept": true,
+    "body": [
+      "CallStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "functioncalls:17",
+    "source": "a.b[c]()",
+    "accept": true,
+    "body": [
+      "CallStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "functioncalls:18",
+    "source": "a:b()",
+    "accept": true,
+    "body": [
+      "CallStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "functioncalls:19",
+    "source": "a:b",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:3] function arguments expected near '<eof>'"
+  },
+  {
+    "id": "functioncalls:20",
+    "source": "a:1",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:2] <name> expected near '1'"
+  },
+  {
+    "id": "functioncalls:21",
+    "source": "a.b:c()",
+    "accept": true,
+    "body": [
+      "CallStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "functioncalls:22",
+    "source": "a[b]:c()",
+    "accept": true,
+    "body": [
+      "CallStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "functioncalls:23",
+    "source": "a:b:",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:3] function arguments expected near ':'"
+  },
+  {
+    "id": "functioncalls:24",
+    "source": "a:b():c()",
+    "accept": true,
+    "body": [
+      "CallStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "functioncalls:25",
+    "source": "(a)()",
+    "accept": true,
+    "body": [
+      "CallStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "functioncalls:26",
+    "source": "()()",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:1] <expression> expected near ')'"
+  },
+  {
+    "id": "functioncalls:27",
+    "source": "(\"foo\")()",
+    "accept": true,
+    "body": [
+      "CallStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "functioncalls:28",
+    "source": "(a)()()",
+    "accept": true,
+    "body": [
+      "CallStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "functioncalls:29",
+    "source": "(a).b()",
+    "accept": true,
+    "body": [
+      "CallStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "functioncalls:30",
+    "source": "(a)[b]()",
+    "accept": true,
+    "body": [
+      "CallStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "functioncalls:31",
+    "source": "(a):b()",
+    "accept": true,
+    "body": [
+      "CallStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "functioncalls:32",
+    "source": "a\"foo\"",
+    "accept": true,
+    "body": [
+      "CallStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "functioncalls:33",
+    "source": "a\"foo",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:7] unfinished string near '\"foo'"
+  },
+  {
+    "id": "functioncalls:34",
+    "source": "a[[foo]]",
+    "accept": true,
+    "body": [
+      "CallStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "functioncalls:35",
+    "source": "a.b\"foo\"",
+    "accept": true,
+    "body": [
+      "CallStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "functioncalls:36",
+    "source": "a[b]\"foo\"",
+    "accept": true,
+    "body": [
+      "CallStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "functioncalls:37",
+    "source": "a:b\"foo\"",
+    "accept": true,
+    "body": [
+      "CallStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "functioncalls:38",
+    "source": "a()\"foo\"",
+    "accept": true,
+    "body": [
+      "CallStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "functioncalls:39",
+    "source": "a\"foo\"()",
+    "accept": true,
+    "body": [
+      "CallStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "functioncalls:40",
+    "source": "a\"foo\".b()",
+    "accept": true,
+    "body": [
+      "CallStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "functioncalls:41",
+    "source": "a\"foo\"[b]()",
+    "accept": true,
+    "body": [
+      "CallStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "functioncalls:42",
+    "source": "a\"foo\":c()",
+    "accept": true,
+    "body": [
+      "CallStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "functioncalls:43",
+    "source": "a\"foo\"\"bar\"",
+    "accept": true,
+    "body": [
+      "CallStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "functioncalls:44",
+    "source": "a\"foo\"{}",
+    "accept": true,
+    "body": [
+      "CallStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "functioncalls:45",
+    "source": "(a):b\"foo\".c[d]:e\"bar\"",
+    "accept": true,
+    "body": [
+      "CallStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "functioncalls:46",
+    "source": "(a):b\"foo\"[c].d:e\"bar\"",
+    "accept": true,
+    "body": [
+      "CallStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "functioncalls:47",
+    "source": "a{}\"foo\"",
+    "accept": true,
+    "body": [
+      "CallStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "functioncalls:48",
+    "source": "a{}",
+    "accept": true,
+    "body": [
+      "CallStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "functioncalls:49",
+    "source": "a.b{}",
+    "accept": true,
+    "body": [
+      "CallStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "functioncalls:50",
+    "source": "a[b]{}",
+    "accept": true,
+    "body": [
+      "CallStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "functioncalls:51",
+    "source": "a:b{}",
+    "accept": true,
+    "body": [
+      "CallStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "functioncalls:52",
+    "source": "a(){}",
+    "accept": true,
+    "body": [
+      "CallStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "functioncalls:53",
+    "source": "a{}()",
+    "accept": true,
+    "body": [
+      "CallStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "functioncalls:54",
+    "source": "a{}.b()",
+    "accept": true,
+    "body": [
+      "CallStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "functioncalls:55",
+    "source": "a{}[b]()",
+    "accept": true,
+    "body": [
+      "CallStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "functioncalls:56",
+    "source": "a{}:c()",
+    "accept": true,
+    "body": [
+      "CallStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "functioncalls:57",
+    "source": "a{}{}",
+    "accept": true,
+    "body": [
+      "CallStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "functioncalls:58",
+    "source": "(a):b{}.c[d]:e{}",
+    "accept": true,
+    "body": [
+      "CallStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "functioncalls:59",
+    "source": "(a):b{}[c].d:e{}",
+    "accept": true,
+    "body": [
+      "CallStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "functioncalls:60",
+    "source": "(a\"\")",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:5] unexpected symbol near '<eof>'"
+  },
+  {
+    "id": "functioncalls:61",
+    "source": "(a())",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:5] unexpected symbol near '<eof>'"
+  },
+  {
+    "id": "functioncalls:62",
+    "source": "(a{})",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:5] unexpected symbol near '<eof>'"
+  },
+  {
+    "id": "functioncalls:63",
+    "source": "a\n()",
+    "accept": true,
+    "body": [
+      "CallStatement"
+    ],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "functioncalls:64",
+    "source": "a\n\"\"",
+    "accept": true,
+    "body": [
+      "CallStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "functioncalls:65",
+    "source": "a\n{}",
+    "accept": true,
+    "body": [
+      "CallStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "functioncalls:66",
+    "source": "a.b\n()",
+    "accept": true,
+    "body": [
+      "CallStatement"
+    ],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "functioncalls:67",
+    "source": "a.b\n\"\"",
+    "accept": true,
+    "body": [
+      "CallStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "functioncalls:68",
+    "source": "a.b\n{}",
+    "accept": true,
+    "body": [
+      "CallStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "functioncalls:69",
+    "source": "a:b\n()",
+    "accept": true,
+    "body": [
+      "CallStatement"
+    ],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "functioncalls:70",
+    "source": "a:b\n\"\"",
+    "accept": true,
+    "body": [
+      "CallStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "functioncalls:71",
+    "source": "a:b\n{}",
+    "accept": true,
+    "body": [
+      "CallStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "functioncalls:72",
+    "source": "(a\n())",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[2:3] unexpected symbol near '<eof>'"
+  },
+  {
+    "id": "functioncalls:73",
+    "source": "(a\n\"\")",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[2:3] unexpected symbol near '<eof>'"
+  },
+  {
+    "id": "functioncalls:74",
+    "source": "(a\n{})",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[2:3] unexpected symbol near '<eof>'"
+  },
+  {
+    "id": "functioncalls:75",
+    "source": "(a)\n()",
+    "accept": true,
+    "body": [
+      "CallStatement"
+    ],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "functioncalls:76",
+    "source": "(a)\n\"\"",
+    "accept": true,
+    "body": [
+      "CallStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "functioncalls:77",
+    "source": "(a)\n{}",
+    "accept": true,
+    "body": [
+      "CallStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "functioncalls:78",
+    "source": "a\n()",
+    "accept": true,
+    "body": [
+      "CallStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.2"
+  },
+  {
+    "id": "functioncalls:79",
+    "source": "a.b\n()",
+    "accept": true,
+    "body": [
+      "CallStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.2"
+  },
+  {
+    "id": "functioncalls:80",
+    "source": "a:b\n()",
+    "accept": true,
+    "body": [
+      "CallStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.2"
+  },
+  {
+    "id": "functioncalls:81",
+    "source": "(a\n())",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.2",
+    "error": "[2:3] unexpected symbol near '<eof>'"
+  },
+  {
+    "id": "functioncalls:82",
+    "source": "(a)\n()",
+    "accept": true,
+    "body": [
+      "CallStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.2"
+  },
+  {
+    "id": "functions:0",
+    "source": "function",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:8] <name> expected near '<eof>'"
+  },
+  {
+    "id": "functions:1",
+    "source": "function 1",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:9] <name> expected near '1'"
+  },
+  {
+    "id": "functions:2",
+    "source": "function end",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:9] <name> expected near 'end'"
+  },
+  {
+    "id": "functions:3",
+    "source": "function a",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:10] '(' expected near '<eof>'"
+  },
+  {
+    "id": "functions:4",
+    "source": "function a end",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:11] '(' expected near 'end'"
+  },
+  {
+    "id": "functions:5",
+    "source": "function a( end",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:12] <name> or '...' expected near 'end'"
+  },
+  {
+    "id": "functions:6",
+    "source": "function a() end",
+    "accept": true,
+    "body": [
+      "FunctionDeclaration"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "functions:7",
+    "source": "function a(1",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:11] <name> or '...' expected near '1'"
+  },
+  {
+    "id": "functions:8",
+    "source": "function a(\"foo\"",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:11] <name> or '...' expected near '\"foo\"'"
+  },
+  {
+    "id": "functions:9",
+    "source": "function a(p",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:12] ')' expected near '<eof>'"
+  },
+  {
+    "id": "functions:10",
+    "source": "function a(p,)",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:13] <name> or '...' expected near ')'"
+  },
+  {
+    "id": "functions:11",
+    "source": "function a(p q",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:13] ')' expected near 'q'"
+  },
+  {
+    "id": "functions:12",
+    "source": "function a(p) end",
+    "accept": true,
+    "body": [
+      "FunctionDeclaration"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "functions:13",
+    "source": "function a(p,q) end",
+    "accept": true,
+    "body": [
+      "FunctionDeclaration"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "functions:14",
+    "source": "function a(p q) end",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:13] ')' expected near 'q'"
+  },
+  {
+    "id": "functions:15",
+    "source": "function a(p,q,) end",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:15] <name> or '...' expected near ')'"
+  },
+  {
+    "id": "functions:16",
+    "source": "function a(p,q,r) end",
+    "accept": true,
+    "body": [
+      "FunctionDeclaration"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "functions:17",
+    "source": "function a(p,q,1",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:15] <name> or '...' expected near '1'"
+  },
+  {
+    "id": "functions:18",
+    "source": "function a(p) do",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:16] 'end' expected near '<eof>'"
+  },
+  {
+    "id": "functions:19",
+    "source": "function a(p) 1 end",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:14] unexpected number '1' near 'end'"
+  },
+  {
+    "id": "functions:20",
+    "source": "function a(p) return end",
+    "accept": true,
+    "body": [
+      "FunctionDeclaration"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "functions:21",
+    "source": "function a(p) return return end",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:21] 'end' expected near 'return'"
+  },
+  {
+    "id": "functions:22",
+    "source": "function a(p) do end end",
+    "accept": true,
+    "body": [
+      "FunctionDeclaration"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "functions:23",
+    "source": "function a.(",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:11] <name> expected near '('"
+  },
+  {
+    "id": "functions:24",
+    "source": "function a.1",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:10] '(' expected near '.1'"
+  },
+  {
+    "id": "functions:25",
+    "source": "function a.b() end",
+    "accept": true,
+    "body": [
+      "FunctionDeclaration"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "functions:26",
+    "source": "function a.b,",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:12] '(' expected near ','"
+  },
+  {
+    "id": "functions:27",
+    "source": "function a.b.(",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:13] <name> expected near '('"
+  },
+  {
+    "id": "functions:28",
+    "source": "function a.b.c.d() end",
+    "accept": true,
+    "body": [
+      "FunctionDeclaration"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "functions:29",
+    "source": "function a:",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:11] <name> expected near '<eof>'"
+  },
+  {
+    "id": "functions:30",
+    "source": "function a:1",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:11] <name> expected near '1'"
+  },
+  {
+    "id": "functions:31",
+    "source": "function a:b() end",
+    "accept": true,
+    "body": [
+      "FunctionDeclaration"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "functions:32",
+    "source": "function a:b:",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:12] '(' expected near ':'"
+  },
+  {
+    "id": "functions:33",
+    "source": "function a:b.",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:12] '(' expected near '.'"
+  },
+  {
+    "id": "functions:34",
+    "source": "function a.b.c:d() end",
+    "accept": true,
+    "body": [
+      "FunctionDeclaration"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "functions:35",
+    "source": "function a(...) end",
+    "accept": true,
+    "body": [
+      "FunctionDeclaration"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "functions:36",
+    "source": "function a(...,",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:14] ')' expected near ','"
+  },
+  {
+    "id": "functions:37",
+    "source": "function a(p,...) end",
+    "accept": true,
+    "body": [
+      "FunctionDeclaration"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "functions:38",
+    "source": "function a(...,p) end",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:14] ')' expected near ','"
+  },
+  {
+    "id": "functions:39",
+    "source": "function a(p,q,r,...) end",
+    "accept": true,
+    "body": [
+      "FunctionDeclaration"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "functions:40",
+    "source": "function a() local a local b end",
+    "accept": true,
+    "body": [
+      "FunctionDeclaration"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "functions:41",
+    "source": "function a() local a; local b; end",
+    "accept": true,
+    "body": [
+      "FunctionDeclaration"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "functions:42",
+    "source": "function a() end; function a() end;",
+    "accept": true,
+    "body": [
+      "FunctionDeclaration",
+      "FunctionDeclaration"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "functions:43",
+    "source": "return ...",
+    "accept": true,
+    "body": [
+      "ReturnStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "functions:44",
+    "source": "function a(...) return ... end",
+    "accept": true,
+    "body": [
+      "FunctionDeclaration"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "functions:45",
+    "source": "function a() return ... end",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:20] cannot use '...' outside a vararg function near '...'"
+  },
+  {
+    "id": "functions:46",
+    "source": "function a(...) function b() return ... end end",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:36] cannot use '...' outside a vararg function near '...'"
+  },
+  {
+    "id": "labels:0",
+    "source": "goto \"foo\"",
+    "accept": false,
+    "body": [],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1",
+    "error": "[1:5] <name> expected near '\"foo\"'"
+  },
+  {
+    "id": "labels:1",
+    "source": "::foo::",
+    "accept": true,
+    "body": [
+      "LabelStatement"
+    ],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "labels:2",
+    "source": "goto foo",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:0] no visible label 'foo' for <goto>"
+  },
+  {
+    "id": "labels:3",
+    "source": "::foo",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.2",
+    "error": "[1:5] '::' expected near '<eof>'"
+  },
+  {
+    "id": "labels:4",
+    "source": "::foo::",
+    "accept": true,
+    "body": [
+      "LabelStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.2"
+  },
+  {
+    "id": "labels:5",
+    "source": "::break::",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.2",
+    "error": "[1:2] <name> expected near 'break'"
+  },
+  {
+    "id": "labels:6",
+    "source": "goto \"foo\"",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.2",
+    "error": "[1:5] <name> expected near '\"foo\"'"
+  },
+  {
+    "id": "labels:7",
+    "source": "goto hasOwnProperty",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.2",
+    "error": "[1:0] no visible label 'hasOwnProperty' for <goto>"
+  },
+  {
+    "id": "labels:8",
+    "source": "goto x ::x::",
+    "accept": true,
+    "body": [
+      "GotoStatement",
+      "LabelStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.2"
+  },
+  {
+    "id": "labels:9",
+    "source": "goto x do ::x:: end",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.2",
+    "error": "[1:0] no visible label 'x' for <goto>"
+  },
+  {
+    "id": "labels:10",
+    "source": "do ::l1:: end goto l1",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.2",
+    "error": "[1:14] no visible label 'l1' for <goto>"
+  },
+  {
+    "id": "labels:11",
+    "source": "::x:: ::x::",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.2",
+    "error": "[1:8] label 'x' already defined on line 1"
+  },
+  {
+    "id": "labels:12",
+    "source": "goto x local a ::x:: f()",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.2",
+    "error": "[1:0] <goto x> jumps into the scope of local 'a'"
+  },
+  {
+    "id": "labels:13",
+    "source": "goto x local a, b ::x:: f()",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.2",
+    "error": "[1:0] <goto x> jumps into the scope of local 'a'"
+  },
+  {
+    "id": "labels:14",
+    "source": "goto x local function a() end ::x:: f()",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.2",
+    "error": "[1:0] <goto x> jumps into the scope of local 'a'"
+  },
+  {
+    "id": "labels:15",
+    "source": "do goto x local a end ::x:: f()",
+    "accept": true,
+    "body": [
+      "DoStatement",
+      "LabelStatement",
+      "CallStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.2"
+  },
+  {
+    "id": "labels:16",
+    "source": "do local a goto x end local b ::x:: f()",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.2",
+    "error": "[1:11] <goto x> jumps into the scope of local 'b'"
+  },
+  {
+    "id": "labels:17",
+    "source": "do goto x local a ::x:: end",
+    "accept": true,
+    "body": [
+      "DoStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.2"
+  },
+  {
+    "id": "labels:18",
+    "source": "while 0 do goto x local a ::x:: end",
+    "accept": true,
+    "body": [
+      "WhileStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.2"
+  },
+  {
+    "id": "labels:19",
+    "source": "repeat goto x local a ::x:: until 0",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.2",
+    "error": "[1:7] <goto x> jumps into the scope of local 'a'"
+  },
+  {
+    "id": "labels:20",
+    "source": "do goto x local a ::x:: ::y:: ::z:: end",
+    "accept": true,
+    "body": [
+      "DoStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.2"
+  },
+  {
+    "id": "labels:21",
+    "source": "do do ::x:: end do goto x end end",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.2",
+    "error": "[1:19] no visible label 'x' for <goto>"
+  },
+  {
+    "id": "labels:22",
+    "source": "do do goto x end do ::x:: end end",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.2",
+    "error": "[1:6] no visible label 'x' for <goto>"
+  },
+  {
+    "id": "labels:23",
+    "source": "do do goto x end do end ::x:: end",
+    "accept": true,
+    "body": [
+      "DoStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.2"
+  },
+  {
+    "id": "labels:24",
+    "source": "::foo::",
+    "accept": true,
+    "body": [
+      "LabelStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "LuaJIT"
+  },
+  {
+    "id": "labels:25",
+    "source": "goto \"foo\"",
+    "accept": false,
+    "body": [],
+    "originalAccept": true,
+    "originalLuaVersion": "LuaJIT",
+    "error": "[1:5] <name> expected near '\"foo\"'"
+  },
+  {
+    "id": "labels:26",
+    "source": "goto foo",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "LuaJIT",
+    "error": "[1:0] no visible label 'foo' for <goto>"
+  },
+  {
+    "id": "labels:27",
+    "source": "::foo:: goto foo",
+    "accept": true,
+    "body": [
+      "LabelStatement",
+      "GotoStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "LuaJIT"
+  },
+  {
+    "id": "labels:28",
+    "source": "goto goto",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "LuaJIT",
+    "error": "[1:5] <name> expected near 'goto'"
+  },
+  {
+    "id": "labels:29",
+    "source": "::goto:: -- sic!",
+    "accept": false,
+    "body": [],
+    "originalAccept": true,
+    "originalLuaVersion": "LuaJIT",
+    "error": "[1:2] <name> expected near 'goto'"
+  },
+  {
+    "id": "literals:0",
+    "source": "a",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:1] '=' expected near '<eof>'"
+  },
+  {
+    "id": "literals:1",
+    "source": "a = 1",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "literals:2",
+    "source": "a = .1",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "literals:3",
+    "source": "a = 1.1",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "literals:4",
+    "source": "a = 10.1",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "literals:5",
+    "source": "a = 1e",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:7] malformed number near '1e'"
+  },
+  {
+    "id": "literals:6",
+    "source": "a = 1e1",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "literals:7",
+    "source": "a = 1E1",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "literals:8",
+    "source": "a = 1e+9",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "literals:9",
+    "source": "a = 1e-1",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "literals:10",
+    "source": "a = 0x",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:7] malformed number near '0x'"
+  },
+  {
+    "id": "literals:11",
+    "source": "a = 0xf",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "literals:12",
+    "source": "a = 0xf.",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "literals:13",
+    "source": "a = 0xf.3",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "literals:14",
+    "source": "a = 0xfp",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:9] malformed number near '0xfp'"
+  },
+  {
+    "id": "literals:15",
+    "source": "a = 0xfp1",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "literals:16",
+    "source": "a = 0xfp+1",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "literals:17",
+    "source": "a = 0xfp-1",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "literals:18",
+    "source": "a = 0xFP+9",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "literals:19",
+    "source": "a = 1 .. 3 .. -2",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "literals:20",
+    "source": "a = 1 .. \"bar\"",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "literals:21",
+    "source": "a = \"",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:7] unfinished string near '\"'"
+  },
+  {
+    "id": "literals:22",
+    "source": "a = \"'",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:8] unfinished string near '\"''"
+  },
+  {
+    "id": "literals:23",
+    "source": "a = '\"",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:8] unfinished string near ''\"'"
+  },
+  {
+    "id": "literals:24",
+    "source": "a = \"\n\"",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:7] unfinished string near '\"'"
+  },
+  {
+    "id": "literals:25",
+    "source": "a = '",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:7] unfinished string near '''"
+  },
+  {
+    "id": "literals:26",
+    "source": "a = '\n'",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:7] unfinished string near '''"
+  },
+  {
+    "id": "literals:27",
+    "source": "a = [[",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:7] unfinished long string (starting at line 1) near '<eof>'"
+  },
+  {
+    "id": "literals:28",
+    "source": "a = [[\n]]",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "literals:29",
+    "source": "a = \"bar",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:10] unfinished string near '\"bar'"
+  },
+  {
+    "id": "literals:30",
+    "source": "a = 'bar'",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "literals:31",
+    "source": "a = \"bar\"",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "literals:32",
+    "source": "a = [=aa",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:2] '[' expected near '='"
+  },
+  {
+    "id": "literals:33",
+    "source": "a = nil",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "literals:34",
+    "source": "a = true",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "literals:35",
+    "source": "a = false",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "literals:36",
+    "source": "a = ...",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "literals:37",
+    "source": "a = [[hello\nworld]]",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "literals:38",
+    "source": "a = { 1, 2, [[hello\n\nworld]], \n 3 }",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "literals:39",
+    "source": "a = \"\\\r\"",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "literals:40",
+    "source": "a = \"\\\n\"",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "literals:41",
+    "source": "a = \"\\\r\n\"",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "literals:42",
+    "source": "a = \"\\\n\r\"",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "literals:43",
+    "source": "a = \"\\u\"",
+    "accept": false,
+    "body": [],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1",
+    "error": "[1:9] missing '{' near '\\u\"'"
+  },
+  {
+    "id": "literals:44",
+    "source": "a = \"\\?\"",
+    "accept": false,
+    "body": [],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1",
+    "error": "[1:7] invalid escape sequence near '\\?'"
+  },
+  {
+    "id": "literals:45",
+    "source": "a = [=[]",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:9] unfinished long string (starting at line 1) near '<eof>'"
+  },
+  {
+    "id": "literals:46",
+    "source": "a = [=[x]",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:10] unfinished long string (starting at line 1) near '<eof>'"
+  },
+  {
+    "id": "literals:47",
+    "source": "a = [=[x]x",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:11] unfinished long string (starting at line 1) near '<eof>'"
+  },
+  {
+    "id": "literals:48",
+    "source": "a = \"\\u\"",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.2",
+    "error": "[1:9] missing '{' near '\\u\"'"
+  },
+  {
+    "id": "literals:49",
+    "source": "a = \"\\?\"",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.2",
+    "error": "[1:7] invalid escape sequence near '\\?'"
+  },
+  {
+    "id": "literals:50",
+    "source": "a = 1",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "LuaJIT"
+  },
+  {
+    "id": "literals:51",
+    "source": "a = 1L",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "LuaJIT",
+    "error": "[1:6] '=' expected near '<eof>'"
+  },
+  {
+    "id": "literals:52",
+    "source": "a = 1LL",
+    "accept": false,
+    "body": [],
+    "originalAccept": true,
+    "originalLuaVersion": "LuaJIT",
+    "error": "[1:7] '=' expected near '<eof>'"
+  },
+  {
+    "id": "literals:53",
+    "source": "a = 1.1L",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "LuaJIT",
+    "error": "[1:8] '=' expected near '<eof>'"
+  },
+  {
+    "id": "literals:54",
+    "source": "a = 1.1LL",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "LuaJIT",
+    "error": "[1:9] '=' expected near '<eof>'"
+  },
+  {
+    "id": "literals:55",
+    "source": "a = 1l",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "LuaJIT",
+    "error": "[1:6] '=' expected near '<eof>'"
+  },
+  {
+    "id": "literals:56",
+    "source": "a = 1ll",
+    "accept": false,
+    "body": [],
+    "originalAccept": true,
+    "originalLuaVersion": "LuaJIT",
+    "error": "[1:7] '=' expected near '<eof>'"
+  },
+  {
+    "id": "literals:57",
+    "source": "a = 1.1l",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "LuaJIT",
+    "error": "[1:8] '=' expected near '<eof>'"
+  },
+  {
+    "id": "literals:58",
+    "source": "a = 1.1ll",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "LuaJIT",
+    "error": "[1:9] '=' expected near '<eof>'"
+  },
+  {
+    "id": "literals:59",
+    "source": "a = 1U",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "LuaJIT",
+    "error": "[1:6] '=' expected near '<eof>'"
+  },
+  {
+    "id": "literals:60",
+    "source": "a = 1UL",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "LuaJIT",
+    "error": "[1:7] '=' expected near '<eof>'"
+  },
+  {
+    "id": "literals:61",
+    "source": "a = 1ULL",
+    "accept": false,
+    "body": [],
+    "originalAccept": true,
+    "originalLuaVersion": "LuaJIT",
+    "error": "[1:8] '=' expected near '<eof>'"
+  },
+  {
+    "id": "literals:62",
+    "source": "a = 1.1U",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "LuaJIT",
+    "error": "[1:8] '=' expected near '<eof>'"
+  },
+  {
+    "id": "literals:63",
+    "source": "a = 1.1UL",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "LuaJIT",
+    "error": "[1:9] '=' expected near '<eof>'"
+  },
+  {
+    "id": "literals:64",
+    "source": "a = 1.1ULL",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "LuaJIT",
+    "error": "[1:10] '=' expected near '<eof>'"
+  },
+  {
+    "id": "literals:65",
+    "source": "a = 1u",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "LuaJIT",
+    "error": "[1:6] '=' expected near '<eof>'"
+  },
+  {
+    "id": "literals:66",
+    "source": "a = 1ul",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "LuaJIT",
+    "error": "[1:7] '=' expected near '<eof>'"
+  },
+  {
+    "id": "literals:67",
+    "source": "a = 1ull",
+    "accept": false,
+    "body": [],
+    "originalAccept": true,
+    "originalLuaVersion": "LuaJIT",
+    "error": "[1:8] '=' expected near '<eof>'"
+  },
+  {
+    "id": "literals:68",
+    "source": "a = 1.1u",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "LuaJIT",
+    "error": "[1:8] '=' expected near '<eof>'"
+  },
+  {
+    "id": "literals:69",
+    "source": "a = 1.1ul",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "LuaJIT",
+    "error": "[1:9] '=' expected near '<eof>'"
+  },
+  {
+    "id": "literals:70",
+    "source": "a = 1.1ull",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "LuaJIT",
+    "error": "[1:10] '=' expected near '<eof>'"
+  },
+  {
+    "id": "literals:71",
+    "source": "a = 1i",
+    "accept": false,
+    "body": [],
+    "originalAccept": true,
+    "originalLuaVersion": "LuaJIT",
+    "error": "[1:6] '=' expected near '<eof>'"
+  },
+  {
+    "id": "literals:72",
+    "source": "a = 1.1i",
+    "accept": false,
+    "body": [],
+    "originalAccept": true,
+    "originalLuaVersion": "LuaJIT",
+    "error": "[1:8] '=' expected near '<eof>'"
+  },
+  {
+    "id": "literals:73",
+    "source": "a = 1I",
+    "accept": false,
+    "body": [],
+    "originalAccept": true,
+    "originalLuaVersion": "LuaJIT",
+    "error": "[1:6] '=' expected near '<eof>'"
+  },
+  {
+    "id": "literals:74",
+    "source": "a = 1.1I",
+    "accept": false,
+    "body": [],
+    "originalAccept": true,
+    "originalLuaVersion": "LuaJIT",
+    "error": "[1:8] '=' expected near '<eof>'"
+  },
+  {
+    "id": "literals:75",
+    "source": "a = 1e1i",
+    "accept": false,
+    "body": [],
+    "originalAccept": true,
+    "originalLuaVersion": "LuaJIT",
+    "error": "[1:8] '=' expected near '<eof>'"
+  },
+  {
+    "id": "literals:76",
+    "source": "a = 1.1e1i",
+    "accept": false,
+    "body": [],
+    "originalAccept": true,
+    "originalLuaVersion": "LuaJIT",
+    "error": "[1:10] '=' expected near '<eof>'"
+  },
+  {
+    "id": "literals:77",
+    "source": "a = 1e1I",
+    "accept": false,
+    "body": [],
+    "originalAccept": true,
+    "originalLuaVersion": "LuaJIT",
+    "error": "[1:8] '=' expected near '<eof>'"
+  },
+  {
+    "id": "literals:78",
+    "source": "a = 1.1e1I",
+    "accept": false,
+    "body": [],
+    "originalAccept": true,
+    "originalLuaVersion": "LuaJIT",
+    "error": "[1:10] '=' expected near '<eof>'"
+  },
+  {
+    "id": "literals:79",
+    "source": "a = 0xfi",
+    "accept": false,
+    "body": [],
+    "originalAccept": true,
+    "originalLuaVersion": "LuaJIT",
+    "error": "[1:8] '=' expected near '<eof>'"
+  },
+  {
+    "id": "literals:80",
+    "source": "a = 0xf.i",
+    "accept": false,
+    "body": [],
+    "originalAccept": true,
+    "originalLuaVersion": "LuaJIT",
+    "error": "[1:9] '=' expected near '<eof>'"
+  },
+  {
+    "id": "literals:81",
+    "source": "a = 0xf.3i",
+    "accept": false,
+    "body": [],
+    "originalAccept": true,
+    "originalLuaVersion": "LuaJIT",
+    "error": "[1:10] '=' expected near '<eof>'"
+  },
+  {
+    "id": "literals:82",
+    "source": "a = 0xfp1i",
+    "accept": false,
+    "body": [],
+    "originalAccept": true,
+    "originalLuaVersion": "LuaJIT",
+    "error": "[1:10] '=' expected near '<eof>'"
+  },
+  {
+    "id": "literals:83",
+    "source": "a = 0xf.p1i",
+    "accept": false,
+    "body": [],
+    "originalAccept": true,
+    "originalLuaVersion": "LuaJIT",
+    "error": "[1:11] '=' expected near '<eof>'"
+  },
+  {
+    "id": "literals:84",
+    "source": "a = 0xf.3p+1i",
+    "accept": false,
+    "body": [],
+    "originalAccept": true,
+    "originalLuaVersion": "LuaJIT",
+    "error": "[1:13] '=' expected near '<eof>'"
+  },
+  {
+    "id": "local:0",
+    "source": "local",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:5] <name> expected near '<eof>'"
+  },
+  {
+    "id": "local:1",
+    "source": "local;",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:5] <name> expected near ';'"
+  },
+  {
+    "id": "local:2",
+    "source": "local =",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:6] <name> expected near '='"
+  },
+  {
+    "id": "local:3",
+    "source": "local end",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:6] <name> expected near 'end'"
+  },
+  {
+    "id": "local:4",
+    "source": "local a",
+    "accept": true,
+    "body": [
+      "LocalStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "local:5",
+    "source": "local a;",
+    "accept": true,
+    "body": [
+      "LocalStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "local:6",
+    "source": "local a, b, c",
+    "accept": true,
+    "body": [
+      "LocalStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "local:7",
+    "source": "local a; local b local c;",
+    "accept": true,
+    "body": [
+      "LocalStatement",
+      "LocalStatement",
+      "LocalStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "local:8",
+    "source": "local a = 1",
+    "accept": true,
+    "body": [
+      "LocalStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "local:9",
+    "source": "local a local b = a",
+    "accept": true,
+    "body": [
+      "LocalStatement",
+      "LocalStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "local:10",
+    "source": "local a, b = 1, 2",
+    "accept": true,
+    "body": [
+      "LocalStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "local:11",
+    "source": "local a, b, c = 1, 2, 3",
+    "accept": true,
+    "body": [
+      "LocalStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "local:12",
+    "source": "local a, b, c = 1",
+    "accept": true,
+    "body": [
+      "LocalStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "local:13",
+    "source": "local a = 1, 2, 3",
+    "accept": true,
+    "body": [
+      "LocalStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "local:14",
+    "source": "local a, local",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:9] <name> expected near 'local'"
+  },
+  {
+    "id": "local:15",
+    "source": "local 1",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:6] <name> expected near '1'"
+  },
+  {
+    "id": "local:16",
+    "source": "local \"foo\"",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:6] <name> expected near '\"foo\"'"
+  },
+  {
+    "id": "local:17",
+    "source": "local a = local",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:10] <expression> expected near 'local'"
+  },
+  {
+    "id": "local:18",
+    "source": "local a, b, =",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:12] <name> expected near '='"
+  },
+  {
+    "id": "local:19",
+    "source": "local a, b = 1, local",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:16] <expression> expected near 'local'"
+  },
+  {
+    "id": "local:20",
+    "source": "local a, b = , local",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:13] <expression> expected near ','"
+  },
+  {
+    "id": "local:21",
+    "source": "local function",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:14] <name> expected near '<eof>'"
+  },
+  {
+    "id": "local:22",
+    "source": "local function 1",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:15] <name> expected near '1'"
+  },
+  {
+    "id": "local:23",
+    "source": "local function end",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:15] <name> expected near 'end'"
+  },
+  {
+    "id": "local:24",
+    "source": "local function a",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:16] '(' expected near '<eof>'"
+  },
+  {
+    "id": "local:25",
+    "source": "local function a end",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:17] '(' expected near 'end'"
+  },
+  {
+    "id": "local:26",
+    "source": "local function a( end",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:18] <name> or '...' expected near 'end'"
+  },
+  {
+    "id": "local:27",
+    "source": "local function a() end",
+    "accept": true,
+    "body": [
+      "FunctionDeclaration"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "local:28",
+    "source": "local function a(1",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:17] <name> or '...' expected near '1'"
+  },
+  {
+    "id": "local:29",
+    "source": "local function a(\"foo\"",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:17] <name> or '...' expected near '\"foo\"'"
+  },
+  {
+    "id": "local:30",
+    "source": "local function a(p",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:18] ')' expected near '<eof>'"
+  },
+  {
+    "id": "local:31",
+    "source": "local function a(p,)",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:19] <name> or '...' expected near ')'"
+  },
+  {
+    "id": "local:32",
+    "source": "local function a(p q",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:19] ')' expected near 'q'"
+  },
+  {
+    "id": "local:33",
+    "source": "local function a(p) end",
+    "accept": true,
+    "body": [
+      "FunctionDeclaration"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "local:34",
+    "source": "local function a(p,q) end",
+    "accept": true,
+    "body": [
+      "FunctionDeclaration"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "local:35",
+    "source": "local function a(p q) end",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:19] ')' expected near 'q'"
+  },
+  {
+    "id": "local:36",
+    "source": "local function a(p,q,) end",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:21] <name> or '...' expected near ')'"
+  },
+  {
+    "id": "local:37",
+    "source": "local function a(p,q,r) end",
+    "accept": true,
+    "body": [
+      "FunctionDeclaration"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "local:38",
+    "source": "local function a(p,q,1",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:21] <name> or '...' expected near '1'"
+  },
+  {
+    "id": "local:39",
+    "source": "local function a(p) do",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:22] 'end' expected near '<eof>'"
+  },
+  {
+    "id": "local:40",
+    "source": "local function a(p) 1 end",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:20] unexpected number '1' near 'end'"
+  },
+  {
+    "id": "local:41",
+    "source": "local function a(p) return end",
+    "accept": true,
+    "body": [
+      "FunctionDeclaration"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "local:42",
+    "source": "local function a(p) return return end",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:27] 'end' expected near 'return'"
+  },
+  {
+    "id": "local:43",
+    "source": "local function a(p) do end end",
+    "accept": true,
+    "body": [
+      "FunctionDeclaration"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "local:44",
+    "source": "local function a.",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:16] '(' expected near '.'"
+  },
+  {
+    "id": "local:45",
+    "source": "local function a:",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:16] '(' expected near ':'"
+  },
+  {
+    "id": "local:46",
+    "source": "local function a(...) end",
+    "accept": true,
+    "body": [
+      "FunctionDeclaration"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "local:47",
+    "source": "local function a(...,",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:20] ')' expected near ','"
+  },
+  {
+    "id": "local:48",
+    "source": "local function a(p,...) end",
+    "accept": true,
+    "body": [
+      "FunctionDeclaration"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "local:49",
+    "source": "local function a(p,q,r,...) end",
+    "accept": true,
+    "body": [
+      "FunctionDeclaration"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "local:50",
+    "source": "local function a() local a local b end",
+    "accept": true,
+    "body": [
+      "FunctionDeclaration"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "local:51",
+    "source": "local function a() local a; local b; end",
+    "accept": true,
+    "body": [
+      "FunctionDeclaration"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "local:52",
+    "source": "local function a() end; local function a() end;",
+    "accept": true,
+    "body": [
+      "FunctionDeclaration",
+      "FunctionDeclaration"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "local:53",
+    "source": "local a = { b = { z = 1 } }",
+    "accept": true,
+    "body": [
+      "LocalStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "local:54",
+    "source": "local Дождь = {}",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:7] unexpected symbol 'Д' near 'local'"
+  },
+  {
+    "id": "local:55",
+    "extendedIdentifiers": true,
+    "source": "local Дождь = {}",
+    "accept": true,
+    "body": [
+      "LocalStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "operators:0",
+    "source": "a = -\"foo\"",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "operators:1",
+    "source": "a = -",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:5] <expression> expected near '<eof>'"
+  },
+  {
+    "id": "operators:2",
+    "source": "a = not 10",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "operators:3",
+    "source": "a = not",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:7] <expression> expected near '<eof>'"
+  },
+  {
+    "id": "operators:4",
+    "source": "a = 1 +",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:7] <expression> expected near '<eof>'"
+  },
+  {
+    "id": "operators:5",
+    "source": "a = 1 ..",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:8] <expression> expected near '<eof>'"
+  },
+  {
+    "id": "operators:6",
+    "source": "a = 1 * /",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:8] <expression> expected near '/'"
+  },
+  {
+    "id": "operators:7",
+    "source": "a = 1 + -2; a = 1 - -2",
+    "accept": true,
+    "body": [
+      "AssignmentStatement",
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "operators:8",
+    "source": "a = 1 * -",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:9] <expression> expected near '<eof>'"
+  },
+  {
+    "id": "operators:9",
+    "source": "a = 1 * not 2; a = 1 / not 2",
+    "accept": true,
+    "body": [
+      "AssignmentStatement",
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "operators:10",
+    "source": "a = 1 / not",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:11] <expression> expected near '<eof>'"
+  },
+  {
+    "id": "operators:11",
+    "source": "a = 1 + 2 - 3 * 4 / 5 ^ 6",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "operators:12",
+    "source": "a = ((1",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:7] ')' expected near '<eof>'"
+  },
+  {
+    "id": "operators:13",
+    "source": "a = ((1 + 2)",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:12] ')' expected near '<eof>'"
+  },
+  {
+    "id": "operators:14",
+    "source": "a = 1)",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:5] unexpected symbol ')' near '<eof>'"
+  },
+  {
+    "id": "operators:15",
+    "source": "a = a + b - c",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "operators:16",
+    "source": "a = \"foo\" + \"bar\"",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "operators:17",
+    "source": "a = \"foo\"..\"bar\"..\"baz\"",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "operators:18",
+    "source": "a = true + false - nil",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "operators:19",
+    "source": "a = {} * {}",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "operators:20",
+    "source": "a = function() end / function() end",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "operators:21",
+    "source": "a = a() ^ b()",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "operators:22",
+    "source": "a = 1 == 2; a = 1 ~= 2",
+    "accept": true,
+    "body": [
+      "AssignmentStatement",
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "operators:23",
+    "source": "a = 1 < 2 <= 2 > 2 >= 2 == 2",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "operators:24",
+    "source": "a = 1 ==",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:8] <expression> expected near '<eof>'"
+  },
+  {
+    "id": "operators:25",
+    "source": "a = `",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:5] unexpected symbol '`' near '='"
+  },
+  {
+    "id": "operators:26",
+    "source": "a = ~",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:5] <expression> expected near '<eof>'"
+  },
+  {
+    "id": "operators:27",
+    "source": "a = ~= 2",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:4] <expression> expected near '~='"
+  },
+  {
+    "id": "operators:28",
+    "source": "a = a ~= b",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "operators:29",
+    "source": "a = 1 and 2 or 2",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "operators:30",
+    "source": "a = 1 and",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:9] <expression> expected near '<eof>'"
+  },
+  {
+    "id": "operators:31",
+    "source": "a = or 1",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:4] <expression> expected near 'or'"
+  },
+  {
+    "id": "operators:32",
+    "source": "a = {} and {} or {}",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "operators:33",
+    "source": "a = (1) and (\"foo\") or (nil)",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "operators:34",
+    "source": "a = 1 // 0",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": false,
+    "originalLuaVersion": "5.2"
+  },
+  {
+    "id": "operators:35",
+    "source": "a = p ~ q",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": false,
+    "originalLuaVersion": "5.2"
+  },
+  {
+    "id": "operators:36",
+    "source": "a = p & q",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": false,
+    "originalLuaVersion": "5.2"
+  },
+  {
+    "id": "operators:37",
+    "source": "a = 1 // 0",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.3"
+  },
+  {
+    "id": "operators:38",
+    "source": "a = p ~ q >> r | s",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.3"
+  },
+  {
+    "id": "operators:39",
+    "source": "a = ~ p ~ q / r",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.3"
+  },
+  {
+    "id": "operators:40",
+    "source": "a = a <=",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.3",
+    "error": "[1:8] <expression> expected near '<eof>'"
+  },
+  {
+    "id": "operators:41",
+    "source": "a = a >=",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.3",
+    "error": "[1:8] <expression> expected near '<eof>'"
+  },
+  {
+    "id": "repeat:0",
+    "source": "repeat",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:6] 'until' expected near '<eof>'"
+  },
+  {
+    "id": "repeat:1",
+    "source": "repeat until",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:12] <expression> expected near '<eof>'"
+  },
+  {
+    "id": "repeat:2",
+    "source": "repeat until 0",
+    "accept": true,
+    "body": [
+      "RepeatStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "repeat:3",
+    "source": "repeat until false",
+    "accept": true,
+    "body": [
+      "RepeatStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "repeat:4",
+    "source": "repeat until local",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:13] <expression> expected near 'local'"
+  },
+  {
+    "id": "repeat:5",
+    "source": "repeat end",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:7] 'until' expected near 'end'"
+  },
+  {
+    "id": "repeat:6",
+    "source": "repeat 1",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:7] unexpected number '1' near '<eof>'"
+  },
+  {
+    "id": "repeat:7",
+    "source": "repeat =",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:7] unexpected symbol '=' near '<eof>'"
+  },
+  {
+    "id": "repeat:8",
+    "source": "repeat local a until 1",
+    "accept": true,
+    "body": [
+      "RepeatStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "repeat:9",
+    "source": "repeat local a local b until 0",
+    "accept": true,
+    "body": [
+      "RepeatStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "repeat:10",
+    "source": "repeat local a; local b; until 0",
+    "accept": true,
+    "body": [
+      "RepeatStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "repeat:11",
+    "source": "repeat ; until 1",
+    "accept": true,
+    "body": [
+      "RepeatStatement"
+    ],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "repeat:12",
+    "source": "repeat 2 until 1",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:7] unexpected number '2' near 'until'"
+  },
+  {
+    "id": "repeat:13",
+    "source": "repeat \"foo\" until 1",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:7] unexpected string '\"foo\"' near 'until'"
+  },
+  {
+    "id": "repeat:14",
+    "source": "repeat return until 0",
+    "accept": true,
+    "body": [
+      "RepeatStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "repeat:15",
+    "source": "repeat return return until 0",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:14] 'until' expected near 'return'"
+  },
+  {
+    "id": "repeat:16",
+    "source": "repeat break until 0",
+    "accept": true,
+    "body": [
+      "RepeatStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "repeat:17",
+    "source": "repeat break break until 0",
+    "accept": true,
+    "body": [
+      "RepeatStatement"
+    ],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "repeat:18",
+    "source": "repeat do end until 0",
+    "accept": true,
+    "body": [
+      "RepeatStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "repeat:19",
+    "source": "repeat do return end until 0",
+    "accept": true,
+    "body": [
+      "RepeatStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "repeat:20",
+    "source": "repeat do break end until 0",
+    "accept": true,
+    "body": [
+      "RepeatStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "repeat:21",
+    "source": "repeat ; until 1",
+    "accept": true,
+    "body": [
+      "RepeatStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.2"
+  },
+  {
+    "id": "repeat:22",
+    "source": "repeat break break until 0",
+    "accept": true,
+    "body": [
+      "RepeatStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.2"
+  },
+  {
+    "id": "return:0",
+    "source": "return return",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:7] unexpected keyword 'return' near '<eof>'"
+  },
+  {
+    "id": "return:1",
+    "source": "return 1",
+    "accept": true,
+    "body": [
+      "ReturnStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "return:2",
+    "source": "return local",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:7] unexpected keyword 'local' near '<eof>'"
+  },
+  {
+    "id": "return:3",
+    "source": "return \"foo\"",
+    "accept": true,
+    "body": [
+      "ReturnStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "return:4",
+    "source": "return ,1",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:7] unexpected symbol ',' near '1'"
+  },
+  {
+    "id": "return:5",
+    "source": "return 1,",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:9] <expression> expected near '<eof>'"
+  },
+  {
+    "id": "return:6",
+    "source": "return 1,2,3",
+    "accept": true,
+    "body": [
+      "ReturnStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "return:7",
+    "source": "return a,b,c,d",
+    "accept": true,
+    "body": [
+      "ReturnStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "return:8",
+    "source": "return 1,2;",
+    "accept": true,
+    "body": [
+      "ReturnStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "scope:0",
+    "source": "local foo = 1 do foo = 2 end",
+    "accept": true,
+    "body": [
+      "LocalStatement",
+      "DoStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "scope:1",
+    "source": "do local foo = 1 end foo = 2",
+    "accept": true,
+    "body": [
+      "DoStatement",
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "scope:2",
+    "source": "do local foo = 1 end do foo = 2 end",
+    "accept": true,
+    "body": [
+      "DoStatement",
+      "DoStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "scope:3",
+    "source": "local foo do foo = 1 do foo = 2 end end",
+    "accept": true,
+    "body": [
+      "LocalStatement",
+      "DoStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "scope:4",
+    "source": "local function foo() end foo()",
+    "accept": true,
+    "body": [
+      "FunctionDeclaration",
+      "CallStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "scope:5",
+    "source": "local a = { a }",
+    "accept": true,
+    "body": [
+      "LocalStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "scope:6",
+    "source": "local b = { b, b.a, b[a], b:a() }",
+    "accept": true,
+    "body": [
+      "LocalStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "scope:7",
+    "source": "local b = {} local a = { b, b.a, b[a], b:a() }",
+    "accept": true,
+    "body": [
+      "LocalStatement",
+      "LocalStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "scope:8",
+    "source": "local c local a = { b[c] }",
+    "accept": true,
+    "body": [
+      "LocalStatement",
+      "LocalStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "scope:9",
+    "source": "local a = function() end a()",
+    "accept": true,
+    "body": [
+      "LocalStatement",
+      "CallStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "scope:10",
+    "source": "local a, b = 1, a",
+    "accept": true,
+    "body": [
+      "LocalStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "scope:11",
+    "source": "local a, b = 1, function() b = 2 end",
+    "accept": true,
+    "body": [
+      "LocalStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "scope:12",
+    "source": "local a (a):b():c()",
+    "accept": true,
+    "body": [
+      "LocalStatement",
+      "CallStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "scope:13",
+    "source": "local a, b for i, a, b in c do end",
+    "accept": true,
+    "body": [
+      "LocalStatement",
+      "ForGenericStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "scope:14",
+    "source": "local a, b, c for i, a, b in c do end",
+    "accept": true,
+    "body": [
+      "LocalStatement",
+      "ForGenericStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "scope:15",
+    "source": "local a = {} function a:b() return self end self = nil",
+    "accept": true,
+    "body": [
+      "LocalStatement",
+      "FunctionDeclaration",
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "scope:16",
+    "source": "repeat local a = true until a",
+    "accept": true,
+    "body": [
+      "RepeatStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "scope:17",
+    "source": "local a = function (b) end b = 0",
+    "accept": true,
+    "body": [
+      "LocalStatement",
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "scope:18",
+    "source": "for a = 1, 5 do end a = 0",
+    "accept": true,
+    "body": [
+      "ForNumericStatement",
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "statements:0",
+    "source": "return",
+    "accept": true,
+    "body": [
+      "ReturnStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "statements:1",
+    "source": "nil",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:0] unexpected symbol 'nil' near '<eof>'"
+  },
+  {
+    "id": "statements:2",
+    "source": "return;",
+    "accept": true,
+    "body": [
+      "ReturnStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "statements:3",
+    "source": ";",
+    "accept": true,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "statements:4",
+    "source": "return;",
+    "accept": true,
+    "body": [
+      "ReturnStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.2"
+  },
+  {
+    "id": "statements:5",
+    "source": "return;;",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.2",
+    "error": "[1:7] unexpected symbol ';' near '<eof>'"
+  },
+  {
+    "id": "statements:6",
+    "source": ";",
+    "accept": true,
+    "body": [],
+    "originalAccept": true,
+    "originalLuaVersion": "5.2"
+  },
+  {
+    "id": "tableconstructors:0",
+    "source": "a = {",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:5] '}' expected near '<eof>'"
+  },
+  {
+    "id": "tableconstructors:1",
+    "source": "a = {}",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "tableconstructors:2",
+    "source": "a = {,}",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:5] '}' expected near ','"
+  },
+  {
+    "id": "tableconstructors:3",
+    "source": "a = {;}",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:5] '}' expected near ';'"
+  },
+  {
+    "id": "tableconstructors:4",
+    "source": "a = {,,}",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:5] '}' expected near ','"
+  },
+  {
+    "id": "tableconstructors:5",
+    "source": "a = {;;}",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:5] '}' expected near ';'"
+  },
+  {
+    "id": "tableconstructors:6",
+    "source": "a = {{",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:6] '}' expected near '<eof>'"
+  },
+  {
+    "id": "tableconstructors:7",
+    "source": "a = {{{}}}",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "tableconstructors:8",
+    "source": "a = {{},{},{{}},}",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "tableconstructors:9",
+    "source": "a = { 1 }",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "tableconstructors:10",
+    "source": "a = { 1, }",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "tableconstructors:11",
+    "source": "a = { 1; }",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "tableconstructors:12",
+    "source": "a = { 1, 2 }",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "tableconstructors:13",
+    "source": "a = { a, b, c, }",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "tableconstructors:14",
+    "source": "a = { true; false, nil; }",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "tableconstructors:15",
+    "source": "a = { a.b, a[b]; a:c(), }",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "tableconstructors:16",
+    "source": "a = { 1 + 2, a > b, \"a\" or \"b\" }",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "tableconstructors:17",
+    "source": "a = { a=1, }",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "tableconstructors:18",
+    "source": "a = { a=1, b=\"foo\", c=nil }",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "tableconstructors:19",
+    "source": "a = { a",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:7] '}' expected near '<eof>'"
+  },
+  {
+    "id": "tableconstructors:20",
+    "source": "a = { a=",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:8] <expression> expected near '<eof>'"
+  },
+  {
+    "id": "tableconstructors:21",
+    "source": "a = { a=,",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:8] <expression> expected near ','"
+  },
+  {
+    "id": "tableconstructors:22",
+    "source": "a = { a=;",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:8] <expression> expected near ';'"
+  },
+  {
+    "id": "tableconstructors:23",
+    "source": "a = { 1, a=\"foo\"",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:16] '}' expected near '<eof>'"
+  },
+  {
+    "id": "tableconstructors:24",
+    "source": "a = { 1, a=\"foo\"; b={}, d=true; }",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "tableconstructors:25",
+    "source": "a = { [",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:7] <expression> expected near '<eof>'"
+  },
+  {
+    "id": "tableconstructors:26",
+    "source": "a = { [1",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:8] ']' expected near '<eof>'"
+  },
+  {
+    "id": "tableconstructors:27",
+    "source": "a = { [1]",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:9] '=' expected near '<eof>'"
+  },
+  {
+    "id": "tableconstructors:28",
+    "source": "a = { [a]=",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:10] <expression> expected near '<eof>'"
+  },
+  {
+    "id": "tableconstructors:29",
+    "source": "a = { [\"foo\"]=\"bar\" }",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "tableconstructors:30",
+    "source": "a = { [1]=a, [2]=b, }",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "tableconstructors:31",
+    "source": "a = { true, a=1; [\"foo\"]=\"bar\", }",
+    "accept": true,
+    "body": [
+      "AssignmentStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "tableconstructors:32",
+    "source": "a = { [] }",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:7] <expression> expected near ']'"
+  },
+  {
+    "id": "tableconstructors:33",
+    "source": "a = { a= }",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:9] <expression> expected near '}'"
+  },
+  {
+    "id": "tableconstructors:34",
+    "source": "a = { a.b=1 }",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:9] '}' expected near '='"
+  },
+  {
+    "id": "tableconstructors:35",
+    "source": "a = { a[b[c]]=1 }",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:13] '}' expected near '='"
+  },
+  {
+    "id": "tableconstructors:36",
+    "source": "a = { 2 3 4 }",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:8] '}' expected near '3'"
+  },
+  {
+    "id": "while:0",
+    "source": "while",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:5] <expression> expected near '<eof>'"
+  },
+  {
+    "id": "while:1",
+    "source": "while do",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:6] <expression> expected near 'do'"
+  },
+  {
+    "id": "while:2",
+    "source": "while =",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:6] <expression> expected near '='"
+  },
+  {
+    "id": "while:3",
+    "source": "while 1 do",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:10] 'end' expected near '<eof>'"
+  },
+  {
+    "id": "while:4",
+    "source": "while 1 do end",
+    "accept": true,
+    "body": [
+      "WhileStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "while:5",
+    "source": "while 1 do local a end",
+    "accept": true,
+    "body": [
+      "WhileStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "while:6",
+    "source": "while 1 do local a local b end",
+    "accept": true,
+    "body": [
+      "WhileStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "while:7",
+    "source": "while 1 do local a; local b; end",
+    "accept": true,
+    "body": [
+      "WhileStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "while:8",
+    "source": "while 1 do 2 end",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:11] unexpected number '2' near 'end'"
+  },
+  {
+    "id": "while:9",
+    "source": "while 1 do \"foo\" end",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:11] unexpected string '\"foo\"' near 'end'"
+  },
+  {
+    "id": "while:10",
+    "source": "while true do end",
+    "accept": true,
+    "body": [
+      "WhileStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "while:11",
+    "source": "while 1 do ; end",
+    "accept": true,
+    "body": [
+      "WhileStatement"
+    ],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "while:12",
+    "source": "while 1 do while",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:16] <expression> expected near '<eof>'"
+  },
+  {
+    "id": "while:13",
+    "source": "while 1 end",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:8] 'do' expected near 'end'"
+  },
+  {
+    "id": "while:14",
+    "source": "while 1 2 do",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:8] 'do' expected near '2'"
+  },
+  {
+    "id": "while:15",
+    "source": "while 1 = 2 do",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:8] 'do' expected near '='"
+  },
+  {
+    "id": "while:16",
+    "source": "while 1 do return end",
+    "accept": true,
+    "body": [
+      "WhileStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "while:17",
+    "source": "while 1 do return return end",
+    "accept": false,
+    "body": [],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1",
+    "error": "[1:18] 'end' expected near 'return'"
+  },
+  {
+    "id": "while:18",
+    "source": "while 1 do do end end",
+    "accept": true,
+    "body": [
+      "WhileStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "while:19",
+    "source": "while 1 do do return end end",
+    "accept": true,
+    "body": [
+      "WhileStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "while:20",
+    "source": "while 1 do break end",
+    "accept": true,
+    "body": [
+      "WhileStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "while:21",
+    "source": "while 1 do break break end",
+    "accept": true,
+    "body": [
+      "WhileStatement"
+    ],
+    "originalAccept": false,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "while:22",
+    "source": "while 1 do do break end end",
+    "accept": true,
+    "body": [
+      "WhileStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.1"
+  },
+  {
+    "id": "while:23",
+    "source": "while 1 do ; end",
+    "accept": true,
+    "body": [
+      "WhileStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.2"
+  },
+  {
+    "id": "while:24",
+    "source": "while 1 do break break end",
+    "accept": true,
+    "body": [
+      "WhileStatement"
+    ],
+    "originalAccept": true,
+    "originalLuaVersion": "5.2"
+  }
+]

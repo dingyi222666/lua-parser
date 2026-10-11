@@ -41,7 +41,7 @@ class LspLifecycleDiagnosticsTddTest {
 
         val capabilities = server.initialize(InitializeParams()).get().capabilities
 
-        assertEquals(TextDocumentSyncKind.Full, capabilities.textDocumentSync.left)
+        assertEquals(TextDocumentSyncKind.Incremental, capabilities.textDocumentSync.left)
     }
 
     @Test

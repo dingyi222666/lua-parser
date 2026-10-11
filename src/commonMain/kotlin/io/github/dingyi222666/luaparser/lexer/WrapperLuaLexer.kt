@@ -1,5 +1,7 @@
 package io.github.dingyi222666.luaparser.lexer
 
+import io.github.dingyi222666.luaparser.parser.ast.node.Position
+
 /**
  * @author: dingyi
  * @date: 2023/2/3
@@ -29,6 +31,10 @@ class WrapperLuaLexer(
     fun line() = currentState.line
 
     fun column() = currentState.column + 1
+
+    fun startPosition(): Position = currentState.startPosition
+
+    fun endPosition(): Position = currentState.endPosition
 
     fun hasLineBreakBeforeNextSignificantToken(): Boolean {
         // After pushback/back, the next significant token is queued in currentStates.
@@ -62,7 +68,10 @@ class WrapperLuaLexer(
         // token for re-play, drop the matching history head so back() does not see a
         // ghost duplicate (TASK-612 recovery underflow / history starvation).
         dropHistoryHeadMatchingCurrent()
-        if (currentStates.isNotEmpty()) {
+        if (size == currentState.length || currentStates.isNotEmpty()) {
+            // Parser peeks rewind the entire token. Replaying its immutable
+            // state avoids scanning the same name/string/operator on every
+            // grammar probe; the underlying lexer remains at that token's end.
             currentStates.addFirst(currentState)
             // Must NOT fall through to doAdvance() here: that would rescan a brand-new
             // token instead of leaving the requeued one as the next replay entry.
@@ -217,4 +226,9 @@ internal data class LexerState(
     val column: Int,
     val type: LuaTokenTypes,
     val length: Int
-)
+) {
+    // Grammar probes replay a token many times. Coordinates are immutable and
+    // can be shared with AST ranges instead of allocated on every peek.
+    val startPosition = Position(line, (column + 1).coerceAtLeast(1))
+    val endPosition = Position(line, (column + 1 + length).coerceAtLeast(1))
+}

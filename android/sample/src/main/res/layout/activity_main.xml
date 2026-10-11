@@ -5,10 +5,10 @@
        diagnostics bar  — "X error(s), Y warning(s)" summary fed by the sora
                           editor-lsp publishDiagnostics event; tap = jump to
                           the first reported line.
-     All wiring (LspEditor attach, TextMate language/theme) happens in
+     All wiring (LspEditor attach, Lua highlighting) happens in
      MainActivity. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:app="http://schemas.android.com/apk/res/auto"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:id="@+id/root_layout"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
@@ -22,7 +22,7 @@
         android:elevation="4dp"
         />
 
-    <io.github.rosemoe.sora.widget.CodeEditor
+    <io.github.dingyi222666.luaparser.sample.WorkspaceCodeEditor
         android:id="@+id/code_editor"
         android:layout_width="match_parent"
         android:layout_height="0dp"

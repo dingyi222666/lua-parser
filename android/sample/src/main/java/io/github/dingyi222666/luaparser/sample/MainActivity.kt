@@ -20,42 +20,39 @@ import io.github.rosemoe.sora.lsp.requests.Timeout
 import io.github.rosemoe.sora.lsp.requests.Timeouts
 import io.github.rosemoe.sora.event.EventReceiver
 import io.github.rosemoe.sora.event.Unsubscribe
-import io.github.rosemoe.sora.langs.textmate.TextMateColorScheme
-import io.github.rosemoe.sora.langs.textmate.TextMateLanguage
-import io.github.rosemoe.sora.langs.textmate.registry.FileProviderRegistry
-import io.github.rosemoe.sora.langs.textmate.registry.GrammarRegistry
-import io.github.rosemoe.sora.langs.textmate.registry.ThemeRegistry
-import io.github.rosemoe.sora.langs.textmate.registry.dsl.languages
-import io.github.rosemoe.sora.langs.textmate.registry.model.ThemeModel
-import io.github.rosemoe.sora.langs.textmate.registry.provider.AssetsFileResolver
 import io.github.rosemoe.sora.lsp.client.connection.CustomConnectProvider
 import io.github.rosemoe.sora.lsp.client.languageserver.serverdefinition.CustomLanguageServerDefinition
 import io.github.rosemoe.sora.lsp.editor.LspEditor
 import io.github.rosemoe.sora.lsp.editor.LspProject
+import io.github.rosemoe.sora.lang.EmptyLanguage
 import io.github.rosemoe.sora.lsp.editor.getOption
 import io.github.rosemoe.sora.lsp.events.EventContext
 import io.github.rosemoe.sora.lsp.events.EventListener
 import io.github.rosemoe.sora.lsp.events.EventType
 import io.github.rosemoe.sora.lsp.events.document.applyEdits
+import io.github.rosemoe.sora.lsp.events.document.DocumentChangeEvent
 import io.github.rosemoe.sora.lsp.events.diagnostics.publishDiagnostics
+import io.github.rosemoe.sora.lsp.events.diagnostics.PublishDiagnosticsEvent
 import io.github.rosemoe.sora.lsp.utils.createTextDocumentIdentifier
+import io.github.rosemoe.sora.lsp.utils.transformToEditorDiagnostics
+import io.github.rosemoe.sora.lang.diagnostic.DiagnosticsContainer
 import io.github.rosemoe.sora.text.Content
 import io.github.rosemoe.sora.widget.CodeEditor
+import io.github.rosemoe.sora.widget.schemes.SchemeGitHub
 import io.github.rosemoe.sora.widget.subscribeEvent
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import org.eclipse.lsp4j.Diagnostic
 import org.eclipse.lsp4j.DiagnosticSeverity
-import org.eclipse.lsp4j.DidChangeConfigurationParams
-import org.eclipse.lsp4j.DidChangeWorkspaceFoldersParams
 import org.eclipse.lsp4j.DocumentFormattingParams
 import org.eclipse.lsp4j.FormattingOptions
-import org.eclipse.lsp4j.WorkspaceFolder
-import org.eclipse.lsp4j.WorkspaceFoldersChangeEvent
-import org.eclipse.tm4e.core.registry.IThemeSource
 import java.io.File
+import java.util.concurrent.TimeUnit
 
 /**
  * sora-editor Lua LSP sample for the lua-parser language server with a
@@ -65,10 +62,10 @@ import java.io.File
  *  - the server runs in-process ([LspServerService] over an abstract
  *    LocalSocket instead of a TCP `java.net.ServerSocket`),
  *  - `workspace/didChangeConfiguration` carries the JVM interop settings
- *    (`jvm.androidJar`, optionally `jvm.classpath` for dex files) once the
+ *    (`jvm.androidDex`, optionally `jvm.classpath` for dex files) once the
  *    connection is up — see LuaWorkspaceService.parseWorkspaceMetadata in
- *    :android for the accepted shapes (flat "jvm.androidJar" or nested
- *    jvm { androidJar } both work; this sample sends the flat form),
+ *    :android for the accepted shapes (flat "jvm.androidDex" or nested
+ *    jvm { androidDex } both work; this sample sends the flat form),
  *  - the demo workspace (filesDir/project holding the REAL demo corpus:
  *    main.lua + adapter/ + model/ + mods/ + views/ + layout/ + image/ +
  *    libs/classes.dex) is materialized from assets/project on first run via
@@ -91,7 +88,7 @@ import java.io.File
  */
 class MainActivity : AppCompatActivity(), FileBrowserFragment.Listener {
 
-    private lateinit var editor: CodeEditor
+    private lateinit var editor: WorkspaceCodeEditor
     private lateinit var toolbar: MaterialToolbar
     private lateinit var diagnosticsBar: LinearLayout
     private lateinit var diagSummary: TextView
@@ -103,8 +100,6 @@ class MainActivity : AppCompatActivity(), FileBrowserFragment.Listener {
     private lateinit var projectDir: File
     private lateinit var sampleFile: File
 
-    /** Optional android.jar pushed into assets (see README.md). */
-    private lateinit var androidJarCopy: File
     private lateinit var androidDexCopy: File
 
     /** Demo corpus dex (filesDir/project/libs/classes.dex) advertised via jvm.classpath. */
@@ -123,6 +118,10 @@ class MainActivity : AppCompatActivity(), FileBrowserFragment.Listener {
     private var isApplyingProgrammaticText = false
 
     private var connectedToastShown = false
+    private val openMutex = Mutex()
+    private val documentBridges = linkedMapOf<String, LspEditor>()
+    private val documentBuffers = linkedMapOf<String, String>()
+    private val dirtyDocuments = mutableSetOf<String>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -155,15 +154,17 @@ class MainActivity : AppCompatActivity(), FileBrowserFragment.Listener {
             requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 1)
         }
 
-        ensureTextmateTheme()
+        editor.colorScheme = SchemeGitHub()
+        // Keep the first editable frame cheap. The Lua highlighter is attached
+        // with the active LSP bridge in openFile after the workspace handshake;
+        // running a full lexer pass while the first live semantic analysis is
+        // starting only contends for the same software-emulated CPU.
+        editor.setEditorLanguage(EmptyLanguage())
         setupToolbar()
 
-        // INIT needs the long window: the first on-device initialize builds the
-        // whole demo corpus AND mounts the 929-class demo dex. COMPLETION/HOVER
-        // stay at sora's fast 3s defaults — completions never queue behind the
-        // cold build (lock-free snapshot read), so 3s is plenty and keeps the
-        // popup snappy.
-        Timeout[Timeouts.INIT] = 60_000
+        // initialize returns capabilities immediately; heavy indexing is background work.
+        Timeout[Timeouts.INIT] = 10_000
+        Timeout[Timeouts.COMPLETION] = 10_000
         Timeout[Timeouts.SHUTDOWN] = 15_000
         subscribeDirtyTracking()
         diagnosticsBar.setOnClickListener { jumpToFirstProblem() }
@@ -185,17 +186,25 @@ class MainActivity : AppCompatActivity(), FileBrowserFragment.Listener {
                     diagSummary.text = getString(R.string.diag_opening, phase, total.toInt())
                 }
             }
+            // The first document is usable while the rest of the bundled
+            // workspace is copied. Connecting later opens the current buffer,
+            // preserving any edits made during that copy.
+            mark("editor text loading")
+            val initialText = withContext(Dispatchers.IO) {
+                val existing = File(filesDir, "project/main.lua")
+                if (existing.isFile) existing.readText()
+                else assets.open("project/main.lua").bufferedReader().use { it.readText() }
+            }
+            isApplyingProgrammaticText = true
+            editor.setText(initialText)
+            isApplyingProgrammaticText = false
+            currentFile = "main.lua"
+            toolbar.subtitle = currentFile
+            editor.editable = true
+            mark("editor text shown")
             mark("copying workspace")
             prepareWorkspace()
             mark("workspace ready")
-            // Second-level open: show the file text in the editor FIRST
-            // (plain sora editor — readable without the language server),
-            // then attach the LSP bridge and run the handshake.
-            mark("editor text loading")
-            withContext(Dispatchers.Main) {
-                editor.setText(sampleFile.readText())
-            }
-            mark("editor text shown")
             connectToLanguageServer()
             mark("lsp connected")
             openFile(sampleFile.toRelativeString(projectDir))
@@ -212,40 +221,28 @@ class MainActivity : AppCompatActivity(), FileBrowserFragment.Listener {
      * Materializes the demo project from assets/project into
      * filesDir/project (first run, or whenever the shipped corpus changes —
      * see [ProjectBootstrapper] for the manifest + version marker contract)
-     * and copies the optional android.jar interop payload (OPTIONAL-IF-PRESENT
-     * — the sample works without it; diagnostics about luajava interop just
-     * stay quieter). The demo corpus's libs/classes.dex is advertised through
-     * jvm.classpath so the dex mounting feature is exercised on-device.
+     * and copies the required Android framework DEX interop payload. The demo corpus's
+     * libs/classes.dex is advertised through jvm.classpath so the dex mounting feature is
+     * exercised on-device.
      */
     private suspend fun prepareWorkspace(): Unit = withContext(Dispatchers.IO) {
         projectDir = ProjectBootstrapper.ensureWorkspace(this@MainActivity)
         sampleFile = File(projectDir, "main.lua")
 
-        // assets/android.jar -> filesDir/android.jar (advertised via jvm.androidJar)
-        androidJarCopy = File(filesDir, "android.jar")
-        if (!androidJarCopy.isFile) {
-            runCatching {
-                assets.open(ANDROID_JAR_ASSET).use { input ->
-                    androidJarCopy.outputStream().use { output -> input.copyTo(output) }
-                }
-            }.onFailure {
-                // No android.jar in assets: jvm.androidJar simply stays unset.
-                androidJarCopy.delete()
-                Log.i(TAG, "no $ANDROID_JAR_ASSET in assets; JVM interop config omitted")
-            }
-        }
-
-        // assets/android.dex (CI: platform android.jar converted by d8) loads
-        // framework classes through DexClassLoader on-device; optional-if-present.
+        // Refresh the required metadata on APK upgrades, publishing only a complete copy.
         androidDexCopy = File(filesDir, "android.dex")
-        if (!androidDexCopy.isFile) {
-            runCatching {
+        val metadataVersion = File(filesDir, "android.dex.version")
+        val apkVersion = packageManager.getPackageInfo(packageName, 0).lastUpdateTime.toString()
+        if (!androidDexCopy.isFile || !metadataVersion.isFile || metadataVersion.readText() != apkVersion) {
+            val pending = File(filesDir, "android.dex.pending")
+            try {
                 assets.open(ANDROID_DEX_ASSET).use { input ->
-                    androidDexCopy.outputStream().use { output -> input.copyTo(output) }
+                    pending.outputStream().use { output -> input.copyTo(output) }
                 }
-            }.onFailure {
-                Log.i(TAG, "no $ANDROID_DEX_ASSET in assets; device framework reflection omitted")
-                androidDexCopy.delete()
+                check(pending.renameTo(androidDexCopy)) { "Cannot publish Android API metadata" }
+                metadataVersion.writeText(apkVersion)
+            } finally {
+                pending.delete()
             }
         }
 
@@ -261,6 +258,10 @@ class MainActivity : AppCompatActivity(), FileBrowserFragment.Listener {
      * Per-file bridges are created lazily by [openFile].
      */
     private suspend fun connectToLanguageServer(): Unit = withContext(Dispatchers.IO) {
+        // The server must see dex/android metadata before initialize schedules
+        // its first workspace build. Sending this later through
+        // didChangeConfiguration would rebuild the whole workspace a second time.
+        LspServerService.configureWorkspaceMetadata(buildJvmSettings())
         // 1. Server side: bind the LocalSocket and launch one LuaLanguageServer
         //    per accepted connection.
         startService(Intent(this@MainActivity, LspServerService::class.java))
@@ -275,7 +276,8 @@ class MainActivity : AppCompatActivity(), FileBrowserFragment.Listener {
         //    instance, per the LspServerService concurrency contract.
         lspProject.addServerDefinition(createServerDefinition("lua"))
         lspProject.addServerDefinition(createServerDefinition("aly"))
-
+        lspProject.init()
+        editor.bindProject(lspProject)
         attachDiagnosticsListener()
     }
 
@@ -285,11 +287,11 @@ class MainActivity : AppCompatActivity(), FileBrowserFragment.Listener {
      * initialize handshake -> workspace/config (re)registration ->
      * `textDocument/didOpen`.
      */
-    private suspend fun openFile(relativePath: String) {
-        if (relativePath == currentFile && isEditorReady()) return
+    private suspend fun openFile(relativePath: String) = openMutex.withLock {
+        if (relativePath == currentFile && isEditorReady()) return@withLock
 
         val file = File(projectDir, relativePath)
-        val text = withContext(Dispatchers.IO) {
+        val text = documentBuffers[relativePath] ?: withContext(Dispatchers.IO) {
             runCatching { file.readText() }
                 .onFailure { Log.e(TAG, "unable to read $relativePath", it) }
                 .getOrNull()
@@ -297,40 +299,20 @@ class MainActivity : AppCompatActivity(), FileBrowserFragment.Listener {
             withContext(Dispatchers.Main) {
                 toast(getString(R.string.msg_open_failed, relativePath))
             }
-            return
+            return@withLock
         }
 
         withContext(Dispatchers.Main) {
             if (!this@MainActivity::lspEditor.isInitialized) {
                 toast(getString(R.string.msg_starting_server))
             }
-            // Read-only while the connection and initial workspace index build.
-            editor.editable = false
+            editor.editable = true
         }
 
-        // 4. Detach the previous bridge OFF the main thread: LspEditor.dispose()
-        //    blocks on textDocument/didClose (a local-socket write), and two
-        //    live LspEditors must never subscribe the same CodeEditor (each
-        //    would mirror didChange for its own URI). NOTE: disposing the last
-        //    connected editor also STOPS the shared LanguageServerWrapper at
-        //    0.23.6 (LanguageServerWrapper.disconnect -> stop(false)), tearing
-        //    down the socket and its per-connection LuaLanguageServer — so
-        //    every open below effectively re-initializes a fresh server
-        //    connection. That is why step 7 re-sends workspace + config.
-        val previous = if (this::lspEditor.isInitialized) lspEditor else null
-        if (previous != null) {
-            withContext(Dispatchers.IO) { runCatching { previous.dispose() } }
-        }
-
+        val highlightLanguage = LuaHighlightLanguage()
         withContext(Dispatchers.Main) {
-            // 5. Fresh bridge. LspEditor.editor's setter calls
-            //    CodeEditor.setEditorLanguage, which destroys the previous
-            //    Language — and LspLanguage.destroy() disposes its LspEditor,
-            //    so stale bridges can never linger (already disposed above;
-            //    dispose() is idempotent via its isClosed guard).
-            lspEditor = lspProject.getOrCreateEditor(file.absolutePath)
-            lspEditor.wrapperLanguage = createTextMateLanguage()
-            lspEditor.editor = editor
+            currentFile?.let { documentBuffers[it] = editor.text.toString() }
+            editor.detachBridgeEvents()
 
             // 6. Load the text BEFORE didOpen: sora's DocumentOpenEvent builds
             //    textDocument/didOpen from LspEditor.editorContent (the editor's
@@ -339,9 +321,14 @@ class MainActivity : AppCompatActivity(), FileBrowserFragment.Listener {
             isApplyingProgrammaticText = true
             // CHECK-API(sora): none — CodeEditor.setText(CharSequence) verified
             // at tag 0.23.6 (CodeEditor.java).
-            editor.setText(text)
+            if (currentFile != relativePath) editor.setText(text)
             isApplyingProgrammaticText = false
             currentFile = relativePath
+            lspEditor = documentBridges.getOrPut(relativePath) { lspProject.getOrCreateEditor(file.absolutePath) }
+            lspEditor.wrapperLanguage = highlightLanguage
+            // Reattach even when the view is the same: switching away removes
+            // its subscriptions, so returning must install fresh receivers.
+            lspEditor.editor = editor
             toolbar.subtitle = relativePath
             // XML res-auto attrs (app:title* / app:iconTint) are avoided on
             // purpose: AAPT2 attr linking against the material/appcompat AARs
@@ -353,61 +340,12 @@ class MainActivity : AppCompatActivity(), FileBrowserFragment.Listener {
 
         var connected = false
         try {
-            // 7. initialize/initialized handshake (retries until the service
-            //    accepts the socket; throws TimeoutException on failure).
-            // sora's INIT retry window is a hard-coded 10s and our first
-            // initialize on-device builds the whole corpus + mounts the 929-class
-            // dex synchronously — longer than that window on first run. Keep
-            // calling connectWithTimeout (it retries internally); the outer
-            // retry loop below survives the first cold-start timeout and wins
-            // on the second pass once the server has warmed up.
-            var warmed = false
-            repeat(3) { attempt ->
-                try {
-                    withContext(Dispatchers.IO) { lspEditor.connectWithTimeout() }
-                    warmed = true
-                    return@repeat
-                } catch (e: java.util.concurrent.TimeoutException) {
-                    Log.w(TAG, "LSP connect attempt ${attempt + 1} timed out; retrying (server warms up in background)", e)
-                }
-            }
-            if (!warmed) {
-                withContext(Dispatchers.IO) { lspEditor.connectWithTimeout() }
-            }
-
-            withContext(Dispatchers.IO) {
-                // 8. (Re-)register the demo workspace folder and push the JVM
-                //    interop config — the fresh server connection from step 4
-                //    knows neither. The server dedupes/refreshes workspace
-                //    roots (LuaWorkspaceService.didChangeWorkspaceFolders).
-                lspEditor.requestManager?.didChangeWorkspaceFolders(
-                    DidChangeWorkspaceFoldersParams().apply {
-                        event = WorkspaceFoldersChangeEvent().apply {
-                            added = listOf(
-                                WorkspaceFolder(
-                                    "file://${projectDir.absolutePath}",
-                                    "sample-project"
-                                )
-                            )
-                        }
-                    }
-                )
-
-                val settings = buildJvmSettings()
-                if (settings.isNotEmpty()) {
-                    lspEditor.requestManager?.didChangeConfiguration(
-                        DidChangeConfigurationParams(settings)
-                    )
-                }
-
-                // 9. textDocument/didOpen — carries the buffer text from step 6;
-                //    the server answers with textDocument/publishDiagnostics,
-                //    feeding both the editor squiggles (sora's built-in
-                //    PublishDiagnosticsEvent) and the summary bar (step 3's
-                //    listener).
-                lspEditor.openDocument()
-            }
+            Log.i(TAG, "connecting editor $relativePath")
+            // Existing bridges already own their open buffer; reuse their
+            // connection instead of restarting the whole extension server.
+            if (!lspEditor.isConnected) withContext(Dispatchers.IO) { lspEditor.connectWithTimeout() }
             connected = true
+            Log.i(TAG, "editor connected $relativePath")
         } catch (failure: Exception) {
             Log.e(TAG, "unable to open $relativePath (language server)", failure)
         }
@@ -415,7 +353,7 @@ class MainActivity : AppCompatActivity(), FileBrowserFragment.Listener {
         withContext(Dispatchers.Main) {
             editor.editable = true
             if (connected) {
-                setDirty(false)
+                setDirty(relativePath in dirtyDocuments)
                 if (!connectedToastShown) {
                     connectedToastShown = true
                     toast(getString(R.string.msg_server_connected))
@@ -443,19 +381,16 @@ class MainActivity : AppCompatActivity(), FileBrowserFragment.Listener {
 
     /**
      * Flat workspace configuration consumed by LuaWorkspaceService in :android
-     * (verified against its parseWorkspaceMetadata: flat "jvm.androidJar" /
+     * (verified against its parseWorkspaceMetadata: flat "jvm.androidDex" /
      * "jvm.classpath" keys or nested jvm { ... } sections are both accepted).
      *
-     * jvm.androidJar  — absolute path of android.jar; powers luajava interop
-     *                   (bindClass/import of java.* types with hover + completion).
+     * jvm.androidDex  — absolute path of framework classes.dex; powers device-side
+     *                   framework member hydration and luajava interop.
      * jvm.classpath   — extra classpath entries; dex/apk entries are mounted
      *                   through the dex parser (see DexMountingTddTest in :android).
      */
-    private fun buildJvmSettings(): Map<String, Any> {
-        val settings = linkedMapOf<String, Any>()
-        if (this::androidJarCopy.isInitialized && androidJarCopy.isFile) {
-            settings["jvm.androidJar"] = androidJarCopy.absolutePath
-        }
+    private fun buildJvmSettings(): Map<String, String> {
+        val settings = linkedMapOf<String, String>()
         if (this::androidDexCopy.isInitialized && androidDexCopy.isFile) {
             settings["jvm.androidDex"] = androidDexCopy.absolutePath
         }
@@ -505,6 +440,10 @@ class MainActivity : AppCompatActivity(), FileBrowserFragment.Listener {
     }
 
     override fun onFileSelected(relativePath: String) {
+        if (!isEditorReady()) {
+            toast(getString(R.string.msg_starting_server))
+            return
+        }
         lifecycleScope.launch { openFile(relativePath) }
     }
 
@@ -528,6 +467,7 @@ class MainActivity : AppCompatActivity(), FileBrowserFragment.Listener {
 
     /** Save indicator: the toolbar save icon warms up while the buffer is dirty. */
     private fun setDirty(dirty: Boolean) {
+        currentFile?.let { path -> if (dirty) dirtyDocuments.add(path) else dirtyDocuments.remove(path) }
         if (!this::toolbar.isInitialized) return
         val item = toolbar.menu.findItem(R.id.action_save) ?: return
         val icon = item.icon?.mutate() ?: return
@@ -556,17 +496,19 @@ class MainActivity : AppCompatActivity(), FileBrowserFragment.Listener {
             toast(getString(R.string.msg_not_connected))
             return
         }
+        val bridge = lspEditor
         lifecycleScope.launch {
             val text = withContext(Dispatchers.Main) { editor.text.toString() }
             val failure = withContext(Dispatchers.IO) {
                 runCatching {
                     File(projectDir, path).writeText(text)
-                    lspEditor.saveDocument()
+                    bridge.eventManager.getEventListener(DocumentChangeEvent::class.java)?.future?.get(10, TimeUnit.SECONDS)
+                    bridge.saveDocument()
                 }.exceptionOrNull()
             }
             withContext(Dispatchers.Main) {
                 if (failure == null) {
-                    setDirty(false)
+                    if (currentFile == path && editor.text.toString() == text) setDirty(false)
                     toast(getString(R.string.msg_saved, path))
                 } else {
                     Log.e(TAG, "save failed for $path", failure)
@@ -592,13 +534,16 @@ class MainActivity : AppCompatActivity(), FileBrowserFragment.Listener {
             toast(getString(R.string.msg_not_connected))
             return
         }
+        val bridge = lspEditor
+        val source = editor.text.toString()
         lifecycleScope.launch {
-            val edits = withContext(Dispatchers.IO) {
+            val edits = try { withContext(Dispatchers.IO) {
+                bridge.eventManager.getEventListener(DocumentChangeEvent::class.java)?.future?.get(10, TimeUnit.SECONDS)
                 // Formatting profile per the sample contract. sora's
                 // LspEventManager.init() registered a FormattingOptions
                 // (tabSize=4, insertSpaces=true); reuse that instance so its
                 // own FullFormattingEvent path would see the same profile.
-                val options = lspEditor.eventManager.getOption<FormattingOptions>()
+                val options = bridge.eventManager.getOption<FormattingOptions>()
                     ?.apply {
                         tabSize = 4
                         isInsertSpaces = false
@@ -607,9 +552,15 @@ class MainActivity : AppCompatActivity(), FileBrowserFragment.Listener {
                         isInsertSpaces = false
                     }
                 val params = DocumentFormattingParams()
-                params.textDocument = lspEditor.uri.createTextDocumentIdentifier()
+                params.textDocument = bridge.uri.createTextDocumentIdentifier()
                 params.options = options
-                lspEditor.requestManager?.formatting(params)?.get()
+                bridge.requestManager?.formatting(params)?.get(10, TimeUnit.SECONDS)
+            } } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                Log.e(TAG, "format failed for ${bridge.uri}", failure)
+                toast(getString(R.string.msg_format_failed))
+                return@launch
             }
 
             if (edits.isNullOrEmpty()) {
@@ -618,9 +569,10 @@ class MainActivity : AppCompatActivity(), FileBrowserFragment.Listener {
             }
 
             withContext(Dispatchers.Main) {
+                if (lspEditor !== bridge || editor.text.toString() != source) return@withContext
                 isApplyingProgrammaticText = true
                 val formatted = Content(editor.text.toString())
-                lspEditor.eventManager.emit(EventType.applyEdits) {
+                bridge.eventManager.emit(EventType.applyEdits) {
                     put("edits", edits)
                     put("content", formatted)
                 }
@@ -644,12 +596,36 @@ class MainActivity : AppCompatActivity(), FileBrowserFragment.Listener {
      * the emitter is owned by the LspProject, not by any single LspEditor.
      */
     private fun attachDiagnosticsListener() {
+        lspProject.eventEmitter.removeListener(PublishDiagnosticsEvent::class.java)
         lspProject.eventEmitter.addListener(object : EventListener {
             override val eventName: String = EventType.publishDiagnostics
 
             override fun handle(context: EventContext) {
-                val diagnostics = context.getOrNull<List<Diagnostic>>("data") ?: return
-                runOnUiThread { showDiagnostics(diagnostics) }
+                val bridge = context.getOrNull<LspEditor>("lsp-editor") ?: return
+                val diagnostics = context.getOrNull<List<Diagnostic>>("data")?.toList() ?: return
+                // Sora 0.23.6 appends each complete LSP report. Consume its
+                // staging list synchronously so the next report replaces this
+                // one, including an empty report that clears all errors.
+                lspProject.diagnosticsContainer.setDiagnostics(bridge.uri, mutableListOf())
+                runOnUiThread {
+                    if (this@MainActivity::lspEditor.isInitialized && bridge === lspEditor && !isDestroyed) {
+                        // A delayed report may refer to the pre-edit buffer.
+                        // Convert and assign on this same UI turn; Sora's
+                        // default renderer posts again and can race setText.
+                        val content = editor.text
+                        val valid = diagnostics.filter { diagnostic ->
+                            val range = diagnostic.range ?: return@filter false
+                            listOf(range.start, range.end).all { position ->
+                                position.line in 0 until content.lineCount &&
+                                    position.character in 0..content.getColumnCount(position.line)
+                            }
+                        }
+                        val regions = DiagnosticsContainer()
+                        regions.addDiagnostics(valid.transformToEditorDiagnostics(editor))
+                        editor.diagnostics = regions
+                        showDiagnostics(valid)
+                    }
+                }
             }
         })
     }
@@ -693,83 +669,21 @@ class MainActivity : AppCompatActivity(), FileBrowserFragment.Listener {
         else -> 2
     }
 
-    // ----------------------------------------------------- TextMate rendering
-
-    private var grammarsLoaded = false
-
-    private fun createTextMateLanguage(): TextMateLanguage {
-        // Grammar must be resolvable through FileProviderRegistry, which was
-        // pointed at assets in ensureTextmateTheme() (same order as the sora
-        // sample). Registration happens once; each call still returns a FRESH
-        // TextMateLanguage because CodeEditor.setEditorLanguage destroys the
-        // previous language (and its LspLanguage wrapper) on every file switch.
-        if (!grammarsLoaded) {
-            GrammarRegistry.getInstance().loadGrammars(
-                languages {
-                    language("lua") {
-                        grammar = "textmate/lua/syntaxes/lua.tmLanguage.json"
-                        scopeName = "source.lua"
-                        languageConfiguration = "textmate/lua/language-configuration.json"
-                    }
-                }
-            )
-            grammarsLoaded = true
-        }
-        // true: also collect plain identifiers for word-based completion on top
-        // of the LSP completion items. (The sora sample passes false.)
-        return TextMateLanguage.create("source.lua", true)
-    }
-
-    private fun ensureTextmateTheme() {
-        val currentScheme = editor.colorScheme
-        if (currentScheme is TextMateColorScheme) {
-            return
-        }
-
-        // Route every textmate file lookup through assets before any registry load.
-        FileProviderRegistry.getInstance().addFileProvider(AssetsFileResolver(assets))
-
-        val themeRegistry = ThemeRegistry.getInstance()
-        // sora LSP sample's own theme — known-good with this engine version.
-        val themePath = "textmate/quietlight.json"
-        themeRegistry.loadTheme(
-            ThemeModel(
-                IThemeSource.fromInputStream(
-                    FileProviderRegistry.getInstance().tryGetInputStream(themePath),
-                    themePath,
-                    null
-                ),
-                "quietlight"
-            )
-        )
-        themeRegistry.setTheme("quietlight")
-
-        editor.colorScheme = TextMateColorScheme.create(themeRegistry)
-    }
-
     // ------------------------------------------------------------- teardown
 
     override fun onDestroy() {
         super.onDestroy()
-        // Graceful LSP shutdown: dispose sends shutdown/exit and detaches the
-        // editor bridges (mirrors the sora sample's intent). lifecycleScope is
-        // ALREADY cancelled by the time onDestroy runs, so the dispose calls go
-        // through a fresh IO scope instead — LspEditor.dispose() writes to the
-        // local socket and must not run on the main thread anyway.
+        editor.detachBridgeEvents()
         editor.release()
-        // LspProject.dispose() -> closeAllEditors() -> LspEditor.dispose() has a
-        // race in sora 0.23.6 (its internal edit-history removeAll can hit an
-        // empty list — IndexOutOfBoundsException, device-verified crash on
-        // destroy). Guard the whole dispose path; a leaked connection on
-        // process teardown is harmless (the service closes the sockets).
-        val disposeScope = CoroutineScope(Dispatchers.IO)
-        if (this::lspEditor.isInitialized) {
-            disposeScope.launch { runCatching { lspEditor.dispose() } }
-        }
+        val bridges = documentBridges.values.toList()
         if (this::lspProject.isInitialized) {
-            disposeScope.launch { runCatching { lspProject.dispose() } }
+            CoroutineScope(Dispatchers.IO).launch {
+                // Dispose a stable list first: Sora closeAllEditors mutates its
+                // own map during iteration. Never dispose bridges concurrently.
+                bridges.forEach { bridge -> runCatching { bridge.dispose() } }
+                runCatching { lspProject.dispose() }
+            }
         }
-        stopService(Intent(this, LspServerService::class.java))
     }
 
     private fun toast(text: String) {
@@ -778,7 +692,6 @@ class MainActivity : AppCompatActivity(), FileBrowserFragment.Listener {
 
     private companion object {
         const val TAG = "MainActivity"
-        const val ANDROID_JAR_ASSET = "android.jar"
         const val ANDROID_DEX_ASSET = "android.dex"
     }
 }

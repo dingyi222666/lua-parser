@@ -1,7 +1,6 @@
 package io.github.dingyi222666.luaparser.semantic.checker
 
 import io.github.dingyi222666.luaparser.parser.ast.node.ChunkNode
-import io.github.dingyi222666.luaparser.parser.ast.node.LocalStatement
 import io.github.dingyi222666.luaparser.semantic.SemanticWorkspaceContext
 import io.github.dingyi222666.luaparser.semantic.api.Diagnostic
 import io.github.dingyi222666.luaparser.semantic.binder.BinderPassResult
@@ -14,7 +13,8 @@ class CheckerPass {
         context: SemanticWorkspaceContext = SemanticWorkspaceContext()
     ): CheckerPassResult {
         val signatureChecker = FunctionSignatureChecker(binder)
-        val returnChecker = ReturnChecker(binder, context)
+        val evaluator = ExpressionTypeEvaluator(binder, context)
+        val returnChecker = ReturnChecker(binder, context, evaluator)
         val declarations = binder.declarationIndex.declarations.filter {
             it.kind in setOf(
                 DeclarationKind.FUNCTION,
@@ -24,11 +24,8 @@ class CheckerPass {
         }
 
         // Fresh expression checker per analyze call so diagnostics never accumulate on reuse.
-        val expressionChecker = ExpressionUsageChecker(binder, context)
-        val expressionDiagnostics = filterCleanAnalyzeNoise(
-            chunk = chunk,
-            diagnostics = expressionChecker.check(chunk)
-        )
+        val expressionChecker = ExpressionUsageChecker(binder, context, evaluator)
+        val expressionDiagnostics = expressionChecker.check(chunk)
         val diagnostics = (declarations
             .flatMap { declaration ->
                 buildList {
@@ -65,28 +62,8 @@ class CheckerPass {
         )
     }
 
-    /**
-     * Binding-only snippets such as `local value = 1` are common clean-analyze fixtures.
-     * Unused-local warnings there are false-positive noise for diagnosticCount hard-locks;
-     * keep unused-local (and all other) diagnostics when the chunk has executable surface
-     * (return / non-local statements) so intentional unused fixtures still report.
-     */
-    private fun filterCleanAnalyzeNoise(
-        chunk: ChunkNode,
-        diagnostics: List<Diagnostic>
-    ): List<Diagnostic> {
-        val body = chunk.body
-        val hasExecutableSurface = body.returnStatement != null ||
-            body.statements.any { statement -> statement !is LocalStatement }
-        if (hasExecutableSurface) {
-            return diagnostics
-        }
-        return diagnostics.filterNot { diagnostic ->
-            diagnostic.code == UNUSED_LOCAL_CODE
-        }
-    }
 
 }
 
-/** Wire-protocol code shared by the unused-local emitter and the empty-chunk filter. */
+/** Wire-protocol code for an unused local declaration. */
 internal const val UNUSED_LOCAL_CODE = "checker.local.unused"

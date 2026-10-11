@@ -917,7 +917,7 @@ class LspRealProjectMultiModuleGraphTddTest {
                     workspaceFolders = listOf(WorkspaceFolder(root.toUri().toString(), root.fileName.toString()))
                 }
             )
-            service.flushBackgroundRebuild()
+            assertTrue(service.flushBackgroundRebuild(), "Project workspace must be published before queries")
         }
         return ProjectWorkspace(root, service, written)
     }

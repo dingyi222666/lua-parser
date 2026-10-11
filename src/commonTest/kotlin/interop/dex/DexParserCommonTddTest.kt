@@ -20,6 +20,41 @@ import kotlin.test.assertTrue
  * signature left as zeros, map_list omitted) and then parsed back.
  */
 class DexParserCommonTddTest {
+    @Test
+    fun fixed_width_reads_preserve_unsigned_bits_and_truncated_cursor_state() {
+        val reader = DexByteReader(byteArrayOf(0xFF.toByte(), 0x80.toByte(), 1, 0xFF.toByte(), 0xFF.toByte(), 0xFF.toByte()))
+        assertEquals(0x80FF, reader.readU2())
+        assertEquals(0xFFFFFF01.toInt(), reader.readU4())
+        assertEquals(6, reader.position)
+        assertFalse(reader.failed)
+        reader.seek(5)
+        assertEquals(0, reader.readU4())
+        assertTrue(reader.failed)
+        assertEquals(6, reader.position)
+        reader.resetFailure()
+        reader.seek(20)
+        assertEquals(0, reader.readU2())
+        assertEquals(20, reader.position)
+        reader.resetFailure()
+        reader.seek(0)
+        assertEquals(0x80FF, reader.readU2())
+        assertFalse(reader.failed)
+    }
+
+    @Test
+    fun ascii_decode_keeps_cursor_and_declared_length_validation() {
+        val bytes = "prefix\u0000next\u0000".encodeToByteArray()
+        val reader = DexByteReader(bytes)
+        assertEquals("prefix", reader.readMutf8(6))
+        assertEquals(7, reader.position)
+        assertEquals("next", reader.readMutf8(4))
+        assertEquals(bytes.size, reader.position)
+        reader.seek(0)
+        reader.resetFailure()
+        assertNull(reader.readMutf8(5))
+        assertTrue(reader.failed)
+    }
+
 
     // ---------------------------------------------------------------- builders
 

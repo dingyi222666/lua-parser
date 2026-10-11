@@ -56,6 +56,7 @@ fun CallExpression.compactCallArguments(): List<ExpressionNode> {
 class LuaParser(
     private val luaVersion: LuaVersion = LuaVersion.ANDROLUA_5_3,
     private val errorRecovery: Boolean = true,
+    private val extendedIdentifiers: Boolean = true,
 ) {
     private var lexer by Delegates.notNull<WrapperLuaLexer>()
 
@@ -72,6 +73,9 @@ class LuaParser(
     private var lastCommittedEndPosition: Position = Position(line = 1, column = 1)
     private var recoverIncompleteWorkspaceSnippet = false
     private val mutableRecoveryDiagnostics = mutableListOf<LuaParserRecoveryDiagnostic>()
+    private val parenthesizedExpressions = mutableSetOf<ExpressionNode>()
+    private var loopDepth = 0
+    private val varargFunctionStack = mutableListOf<Boolean>()
 
     val recoveryDiagnostics: List<LuaParserRecoveryDiagnostic>
         get() = mutableRecoveryDiagnostics.toList()
@@ -122,7 +126,8 @@ class LuaParser(
      * invisible to the workspace and consumers had to re-parse the same buffer to see them.
      */
     fun parseWorkspaceSnippetWithDiagnostics(source: String): LuaParseResult {
-        val snippetParser = snippetParser ?: LuaParser(luaVersion, errorRecovery = true).also {
+        val snippetParser = snippetParser ?: LuaParser(luaVersion, errorRecovery = true,
+            extendedIdentifiers = extendedIdentifiers).also {
             it.recoverIncompleteWorkspaceSnippet = true
             snippetParser = it
         }
@@ -138,6 +143,7 @@ class LuaParser(
         reset()
         this.lexer = WrapperLuaLexer(lexer, supportAndroLuaKeywords = isAndroLua())
         val chunk = parseChunk()
+        if (!errorRecovery && !isAndroLua()) StrictJumpValidator().validate(chunk)
         // parseChunk always consumes EOF (strict or recovery drain); close after.
         this.lexer.close()
         return chunk
@@ -149,6 +155,9 @@ class LuaParser(
         locations.clear()
         lastCommittedEndPosition = Position(line = 1, column = 1)
         mutableRecoveryDiagnostics.clear()
+        parenthesizedExpressions.clear()
+        loopDepth = 0
+        varargFunctionStack.clear()
     }
 
     private inline fun <T> consume(crossinline func: (LuaTokenTypes) -> T): T {
@@ -226,10 +235,7 @@ class LuaParser(
         currentToken = advanceToken
         // Commit end only for a real consume. peek()/consume-false pushback restore the
         // prior token's end via lastCommittedEndPosition before leaving those helpers.
-        lastCommittedEndPosition = Position(
-            line = lexer.line(),
-            column = max(lexer.column() + lexer.length(), 1)
-        )
+        lastCommittedEndPosition = lexer.endPosition()
         return currentToken
     }
 
@@ -696,12 +702,7 @@ class LuaParser(
     }
 
     private fun markLocation() {
-        locations.addFirst(
-            Position(
-                line = lexer.line(),
-                column = max(lexer.column(), 1)
-            )
-        )
+        locations.addFirst(lexer.startPosition())
     }
 
     private fun currentEndPosition(): Position {
@@ -817,6 +818,9 @@ class LuaParser(
                 }
 
                 consumeToken(LuaTokenTypes.BREAK) -> {
+                    if (!errorRecovery && !isAndroLua() && loopDepth == 0) {
+                        error("break is only valid inside a loop")
+                    }
                     markLocation()
                     BreakStatement()
                 }
@@ -959,7 +963,7 @@ class LuaParser(
             }
 
             // ;
-            consumeToken(LuaTokenTypes.SEMI)
+            if (stat !is ReturnStatement) consumeToken(LuaTokenTypes.SEMI)
 
             if (stat is ReturnStatement) {
                 // Trailing end-of-line comments after `return` are trivia before
@@ -1133,6 +1137,10 @@ class LuaParser(
         val result = ReturnStatement()
         result.parent = parent
 
+        // Comments are trivia after the return keyword. Keep them out of the
+        // expression-list parser so `return -- note` and block-comment forms
+        // terminate cleanly at the following newline/end/EOF.
+        skipCommentTokens()
         val next = peek()
         if (isBlockTerminator(next) || next == LuaTokenTypes.SEMI) {
             consumeToken(LuaTokenTypes.SEMI)
@@ -1297,6 +1305,9 @@ class LuaParser(
      * plain-Lua recovery warns and marks the clause bad. Then parses the clause body.
      */
     private fun IfClause.consumeThenAndParseBody() {
+        // A comment may separate the condition from `then` without changing
+        // the grammar: `if ready-- comment\nthen ... end`.
+        skipCommentTokens()
         if (!consumeToken(LuaTokenTypes.THEN)) {
             if (isAndroLua()) {
                 val silentThenOmission = peek() == LuaTokenTypes.ELSE ||
@@ -1383,7 +1394,12 @@ class LuaParser(
 
     private fun parseForBody(parent: BaseASTNode): BlockNode {
         recoverToken(LuaTokenTypes.DO) { missingDoExpectedNearToken }
-        return parseBlockNode(parent)
+        loopDepth++
+        return try {
+            parseBlockNode(parent)
+        } finally {
+            loopDepth--
+        }
     }
 
     //     goto Name |
@@ -1510,7 +1526,8 @@ class LuaParser(
         val result = RepeatStatement()
         result.parent = parent
 
-        result.body = parseBlockNode(result)
+        loopDepth++
+        result.body = try { parseBlockNode(result) } finally { loopDepth-- }
 
         if (!recoverToken(LuaTokenTypes.UNTIL) { "'until' expected near '${lexerText()}'" }) {
             result.condition = missingExpression(result)
@@ -1532,7 +1549,8 @@ class LuaParser(
 
         recoverToken(LuaTokenTypes.DO) { missingDoExpectedNearToken }
 
-        result.body = parseBlockNode(result)
+        loopDepth++
+        result.body = try { parseBlockNode(result) } finally { loopDepth-- }
 
         recoverBlockEnd("do", currentLine)
 
@@ -1562,6 +1580,10 @@ class LuaParser(
                 expression is MemberExpression ||
                 expression is IndexExpression
     }
+
+    private fun isAssignmentTarget(expression: ExpressionNode): Boolean =
+        expression !in parenthesizedExpressions &&
+            (expression is Identifier || expression is MemberExpression || expression is IndexExpression)
 
     /**
      * AndroLua C-style compound assignment (`n += 1`, `n -= 1`, `n *= 2`, `n /= 2`,
@@ -1679,6 +1701,9 @@ class LuaParser(
             }
         } else if (suffix is CallExpression) {
             // function call
+            if (!errorRecovery && suffix in parenthesizedExpressions) {
+                error("parenthesized call is not a statement near '${lexerText()}'")
+            }
             CallStatement().apply {
                 this.parent = parent
                 suffix.parent = this
@@ -1729,6 +1754,13 @@ class LuaParser(
                 break
             }
             initList.add(parseAssignmentTargetOrMissing(result))
+        }
+
+        // Strict Lua rejects calls and other value expressions on the left-hand
+        // side. Recovery mode keeps the AST for editor diagnostics, but the
+        // strict parser used by the external grammar corpus must fail here.
+        if (!errorRecovery && initList.any { !isAssignmentTarget(it) }) {
+            error("invalid assignment target near '${lexerText()}'")
         }
 
         val hasAssign = recoverToken(LuaTokenTypes.ASSIGN) { assignExpectedNearQuotedToken }
@@ -1814,7 +1846,13 @@ class LuaParser(
 
         recoverToken(LuaTokenTypes.RPAREN) { ") expected near '${lexerText()}'" }
 
-        node.body = parseBlockNode(node)
+        val enclosingLoopDepth = loopDepth
+        loopDepth = 0
+        varargFunctionStack += node.params.any { it.name == "..." }
+        node.body = try { parseBlockNode(node) } finally {
+            varargFunctionStack.removeAt(varargFunctionStack.lastIndex)
+            loopDepth = enclosingLoopDepth
+        }
 
         recoverBlockEnd("function", currentLine)
 
@@ -1832,6 +1870,10 @@ class LuaParser(
         }
 
         result.add(parseParameter())
+
+        if (!errorRecovery && result.single().name == "..." && peek() == LuaTokenTypes.COMMA) {
+            error("vararg parameter must be last near '${lexerText()}'")
+        }
 
         while (consumeToken(LuaTokenTypes.COMMA)) {
             val parameter = parseParameter()
@@ -1863,6 +1905,9 @@ class LuaParser(
         expectToken(LuaTokenTypes.NAME) { nameExpectedNearToken }
         markLocation()
         var name = lexerText()
+        if (!extendedIdentifiers && name.any { it.code >= 128 }) {
+            error("non-ASCII identifier requires extendedIdentifiers")
+        }
         if (name.startsWith('$')) {
             if (!supportDollarSymbol) {
                 error("'$' is not allowed in name ${lexerText()}")
@@ -1991,7 +2036,12 @@ class LuaParser(
             }
 
             // primary
-            currentToken == LuaTokenTypes.ELLIPSIS -> consume { VarargLiteral() }
+            currentToken == LuaTokenTypes.ELLIPSIS -> {
+                if (!errorRecovery && varargFunctionStack.lastOrNull() == false) {
+                    error("vararg expression is only valid inside a vararg function")
+                }
+                consume { VarargLiteral() }
+            }
             currentToken == LuaTokenTypes.NIL -> consume { ConstantNode.NIL.clone() }
 
             equalsMore(
@@ -2342,7 +2392,7 @@ class LuaParser(
                 markLocation()
                 val exp = parseExp(parent)
                 recoverToken(LuaTokenTypes.RPAREN) { rparenExpectedNearToken }
-                finishNode(exp)
+                finishNode(exp).also { if (!errorRecovery) parenthesizedExpressions += it }
             }
 
             else -> error(expressionExpectedNearNextToken)
@@ -2460,6 +2510,9 @@ class LuaParser(
                             finishNodeSpanning(fieldSet, spanStart)
                             parseCallExpression(parent, fieldSet)
                         } else {
+                            if (!errorRecovery && !isAndroLua()) {
+                                error("function arguments expected after ':'")
+                            }
                             fieldSet
                         }
                     }
