@@ -2672,154 +2672,29 @@ class LuaWorkspaceQueryFacade(
         }
         val fileSnapshot = snapshot.files[path] ?: return false
         val semanticFile = fileSnapshot.semanticFile ?: return false
-        // Fast reject: document facts record syntactic require("name") strings. When facts are
-        // present and never mention [moduleName], this consumer has no matching call form.
-        // (Shadowed require still appears in facts; the AST walk below rejects non-builtin callees.)
         val facts = fileSnapshot.documentFacts
-        if (facts != null && facts.requires.none { it.moduleName == moduleName }) {
+        if (facts == null) {
             return false
         }
-        // Explicit AST walk (not ASTVisitor overrides): recognize only unshadowed builtin
-        // require("moduleName") / require "moduleName" call sites via builtinRequireModuleName.
-        return chunkHasBuiltinRequireModule(semanticFile, semanticFile.chunk.body, moduleName)
-    }
-
-    private fun chunkHasBuiltinRequireModule(
-        semanticFile: WorkspaceSemanticFile,
-        block: io.github.dingyi222666.luaparser.parser.ast.node.BlockNode,
-        moduleName: String
-    ): Boolean {
-        for (statement in block.statements) {
-            if (statementHasBuiltinRequireModule(semanticFile, statement, moduleName)) {
-                return true
-            }
-        }
-        val returnStatement = block.returnStatement
-        if (returnStatement != null) {
-            for (argument in returnStatement.arguments) {
-                if (expressionHasBuiltinRequireModule(semanticFile, argument, moduleName)) {
-                    return true
-                }
-            }
-        }
-        return false
-    }
-
-    private fun statementHasBuiltinRequireModule(
-        semanticFile: WorkspaceSemanticFile,
-        statement: io.github.dingyi222666.luaparser.parser.ast.node.StatementNode,
-        moduleName: String
-    ): Boolean {
-        return when (statement) {
-            is LocalStatement ->
-                statement.variables.any { expressionHasBuiltinRequireModule(semanticFile, it, moduleName) }
-            is io.github.dingyi222666.luaparser.parser.ast.node.AssignmentStatement ->
-                statement.variables.any { expressionHasBuiltinRequireModule(semanticFile, it, moduleName) } ||
-                    statement.init.any { expressionHasBuiltinRequireModule(semanticFile, it, moduleName) }
-            is io.github.dingyi222666.luaparser.parser.ast.node.CallStatement ->
-                expressionHasBuiltinRequireModule(semanticFile, statement.expression, moduleName)
-            is io.github.dingyi222666.luaparser.parser.ast.node.ReturnStatement ->
-                statement.arguments.any { expressionHasBuiltinRequireModule(semanticFile, it, moduleName) }
-            is io.github.dingyi222666.luaparser.parser.ast.node.DoStatement ->
-                chunkHasBuiltinRequireModule(semanticFile, statement.body, moduleName)
-            is io.github.dingyi222666.luaparser.parser.ast.node.WhileStatement ->
-                expressionHasBuiltinRequireModule(semanticFile, statement.condition, moduleName) ||
-                    chunkHasBuiltinRequireModule(semanticFile, statement.body, moduleName)
-            is io.github.dingyi222666.luaparser.parser.ast.node.RepeatStatement ->
-                chunkHasBuiltinRequireModule(semanticFile, statement.body, moduleName) ||
-                    expressionHasBuiltinRequireModule(semanticFile, statement.condition, moduleName)
-            is io.github.dingyi222666.luaparser.parser.ast.node.IfStatement ->
-                statement.causes.any { clause ->
-                    when (clause) {
-                        // ElseClause / ElseIfClause are IfClause subclasses: match most-specific first.
-                        is io.github.dingyi222666.luaparser.parser.ast.node.ElseClause ->
-                            chunkHasBuiltinRequireModule(semanticFile, clause.body, moduleName)
-                        is io.github.dingyi222666.luaparser.parser.ast.node.ElseIfClause ->
-                            expressionHasBuiltinRequireModule(semanticFile, clause.condition, moduleName) ||
-                                chunkHasBuiltinRequireModule(semanticFile, clause.body, moduleName)
-                        is io.github.dingyi222666.luaparser.parser.ast.node.IfClause ->
-                            expressionHasBuiltinRequireModule(semanticFile, clause.condition, moduleName) ||
-                                chunkHasBuiltinRequireModule(semanticFile, clause.body, moduleName)
-                        else -> false
-                    }
-                }
-            is io.github.dingyi222666.luaparser.parser.ast.node.ForNumericStatement ->
-                expressionHasBuiltinRequireModule(semanticFile, statement.start, moduleName) ||
-                    expressionHasBuiltinRequireModule(semanticFile, statement.end, moduleName) ||
-                    (statement.step?.let { expressionHasBuiltinRequireModule(semanticFile, it, moduleName) } == true) ||
-                    chunkHasBuiltinRequireModule(semanticFile, statement.body, moduleName)
-            is io.github.dingyi222666.luaparser.parser.ast.node.ForGenericStatement ->
-                statement.iterators.any { expressionHasBuiltinRequireModule(semanticFile, it, moduleName) } ||
-                    chunkHasBuiltinRequireModule(semanticFile, statement.body, moduleName)
-            is io.github.dingyi222666.luaparser.parser.ast.node.FunctionDeclaration ->
-                (statement.identifier?.let { expressionHasBuiltinRequireModule(semanticFile, it, moduleName) } == true) ||
-                    (statement.body?.let { chunkHasBuiltinRequireModule(semanticFile, it, moduleName) } == true)
-            is io.github.dingyi222666.luaparser.parser.ast.node.WhenStatement ->
-                expressionHasBuiltinRequireModule(semanticFile, statement.condition, moduleName) ||
-                    statementHasBuiltinRequireModule(semanticFile, statement.ifCause, moduleName) ||
-                    (statement.elseCause?.let { statementHasBuiltinRequireModule(semanticFile, it, moduleName) } == true)
-            is io.github.dingyi222666.luaparser.parser.ast.node.SwitchStatement ->
-                expressionHasBuiltinRequireModule(semanticFile, statement.condition, moduleName) ||
-                    statement.causes.any { cause ->
-                        when (cause) {
-                            is io.github.dingyi222666.luaparser.parser.ast.node.CaseCause ->
-                                cause.conditions.any { expressionHasBuiltinRequireModule(semanticFile, it, moduleName) } ||
-                                    chunkHasBuiltinRequireModule(semanticFile, cause.body, moduleName)
-                            is io.github.dingyi222666.luaparser.parser.ast.node.DefaultCause ->
-                                chunkHasBuiltinRequireModule(semanticFile, cause.body, moduleName)
-                            else -> false
-                        }
-                    }
-            else -> false
+        // Facts record every syntactic require("name") call range (shadowed requires
+        // included). Each candidate range is verified through builtinRequireModuleName —
+        // the same un-shadowed builtin callee test the former full-chunk AST walk
+        // applied — so this consumer recognizes exactly the call forms the walk did,
+        // at fact-lookup cost instead of an AST traversal per query.
+        return facts.requires.any { fact ->
+            fact.moduleName == moduleName &&
+                requireCallAt(semanticFile, fact.range)
+                    ?.let { builtinRequireModuleName(semanticFile, it) == moduleName } == true
         }
     }
 
-    private fun expressionHasBuiltinRequireModule(
+    /** The call enclosing the start of a collected [DocumentFacts.RequireFact] range. */
+    private fun requireCallAt(
         semanticFile: WorkspaceSemanticFile,
-        expression: ExpressionNode,
-        moduleName: String
-    ): Boolean {
-        when (expression) {
-            is CallExpression -> {
-                if (builtinRequireModuleName(semanticFile, expression) == moduleName) {
-                    return true
-                }
-                if (expressionHasBuiltinRequireModule(semanticFile, expression.base, moduleName)) {
-                    return true
-                }
-                if (expression.arguments.any { expressionHasBuiltinRequireModule(semanticFile, it, moduleName) }) {
-                    return true
-                }
-                return false
-            }
-            is MemberExpression ->
-                return expressionHasBuiltinRequireModule(semanticFile, expression.base, moduleName) ||
-                    expressionHasBuiltinRequireModule(semanticFile, expression.identifier, moduleName)
-            is IndexExpression ->
-                return expressionHasBuiltinRequireModule(semanticFile, expression.base, moduleName) ||
-                    expressionHasBuiltinRequireModule(semanticFile, expression.index, moduleName)
-            is io.github.dingyi222666.luaparser.parser.ast.node.BinaryExpression -> {
-                val left = expression.left
-                val right = expression.right
-                return (left != null && expressionHasBuiltinRequireModule(semanticFile, left, moduleName)) ||
-                    (right != null && expressionHasBuiltinRequireModule(semanticFile, right, moduleName))
-            }
-            is io.github.dingyi222666.luaparser.parser.ast.node.UnaryExpression ->
-                return expressionHasBuiltinRequireModule(semanticFile, expression.arg, moduleName)
-            is io.github.dingyi222666.luaparser.parser.ast.node.TableConstructorExpression ->
-                return expression.fields.any { field ->
-                    expressionHasBuiltinRequireModule(semanticFile, field.value, moduleName) ||
-                        expressionHasBuiltinRequireModule(semanticFile, field.key, moduleName)
-                }
-            is io.github.dingyi222666.luaparser.parser.ast.node.ArrayConstructorExpression ->
-                return expression.values.any { expressionHasBuiltinRequireModule(semanticFile, it, moduleName) }
-            is io.github.dingyi222666.luaparser.parser.ast.node.FunctionDeclaration ->
-                return (expression.identifier?.let { expressionHasBuiltinRequireModule(semanticFile, it, moduleName) } == true) ||
-                    (expression.body?.let { chunkHasBuiltinRequireModule(semanticFile, it, moduleName) } == true)
-            is io.github.dingyi222666.luaparser.parser.ast.node.LambdaDeclaration ->
-                return expressionHasBuiltinRequireModule(semanticFile, expression.expression, moduleName)
-            else -> return false
-        }
+        range: Range
+    ): io.github.dingyi222666.luaparser.parser.ast.node.CallExpression? {
+        val node = semanticFile.nodeAt(range.start) ?: return null
+        return enclosingCallExpression(node)
     }
 
     private fun requireCallSite(path: VirtualPath, position: Position): RequireCallSite? {
