@@ -398,11 +398,9 @@ object ModuleExportCollector {
             return when (expression) {
                 is Identifier -> AliasBinding.Identifier(expression.name)
                 is TableConstructorExpression -> AliasBinding.TableLiteral(expression)
-                is MemberExpression -> extractWriteTargetBase(expression)?.let { base ->
-                    normalizeAliasBinding(base.rootIdentifier, base.path, base.pathRanges)
-                } ?: AliasBinding.Unknown
-                is IndexExpression -> extractWriteTargetBase(expression)?.let { base ->
-                    normalizeAliasBinding(base.rootIdentifier, base.path, base.pathRanges)
+                is MemberExpression, is IndexExpression -> extractAccessPathSegments(expression)?.let { base ->
+                    if (base.segments.isEmpty()) null
+                    else normalizeAliasBinding(base.rootIdentifier, base.segments, base.segmentRanges)
                 } ?: AliasBinding.Unknown
                 else -> AliasBinding.Unknown
             }
@@ -669,11 +667,6 @@ object ModuleExportCollector {
         val pathRanges: List<Range?>
     )
 
-    private data class WriteTargetBase(
-        val rootIdentifier: String,
-        val path: List<String>,
-        val pathRanges: List<Range?>
-    )
 
     private data class ResolvedPath(
         val rootIdentifier: String,
@@ -805,64 +798,17 @@ object ModuleExportCollector {
     }
 
     private fun extractWriteTarget(expression: ExpressionNode): WriteTarget? {
-        return when (expression) {
-            is MemberExpression -> {
-                val base = extractWriteTargetBase(expression.base) ?: return null
-                WriteTarget(
-                    rootIdentifier = base.rootIdentifier,
-                    path = base.path + expression.identifier.name,
-                    isMethod = expression.indexer == ":",
-                    range = expression.identifier.range,
-                    pathRanges = base.pathRanges + expression.identifier.range
-                )
-            }
-
-            is IndexExpression -> {
-                val key = (expression.index as? ConstantNode)
-                    ?.takeIf { it.constantType == ConstantNode.TYPE.STRING }
-                    ?.stringOf()
-                    ?: return null
-                val base = extractWriteTargetBase(expression.base) ?: return null
-                WriteTarget(
-                    rootIdentifier = base.rootIdentifier,
-                    path = base.path + key,
-                    isMethod = false,
-                    range = expression.index.range,
-                    pathRanges = base.pathRanges + expression.index.range
-                )
-            }
-
-            else -> null
+        val base = extractAccessPathSegments(expression) ?: return null
+        if (base.segments.isEmpty()) {
+            return null
         }
-    }
-
-    private fun extractWriteTargetBase(expression: ExpressionNode): WriteTargetBase? {
-        return when (expression) {
-            is Identifier -> WriteTargetBase(expression.name, emptyList(), emptyList())
-            is MemberExpression -> {
-                val base = extractWriteTargetBase(expression.base) ?: return null
-                WriteTargetBase(
-                    rootIdentifier = base.rootIdentifier,
-                    path = base.path + expression.identifier.name,
-                    pathRanges = base.pathRanges + expression.identifier.range
-                )
-            }
-
-            is IndexExpression -> {
-                val key = (expression.index as? ConstantNode)
-                    ?.takeIf { it.constantType == ConstantNode.TYPE.STRING }
-                    ?.stringOf()
-                    ?: return null
-                val base = extractWriteTargetBase(expression.base) ?: return null
-                WriteTargetBase(
-                    rootIdentifier = base.rootIdentifier,
-                    path = base.path + key,
-                    pathRanges = base.pathRanges + expression.index.range
-                )
-            }
-
-            else -> null
-        }
+        return WriteTarget(
+            rootIdentifier = base.rootIdentifier,
+            path = base.segments,
+            isMethod = base.lastWasMethodAccess,
+            range = base.segmentRanges.lastOrNull(),
+            pathRanges = base.segmentRanges
+        )
     }
 }
 

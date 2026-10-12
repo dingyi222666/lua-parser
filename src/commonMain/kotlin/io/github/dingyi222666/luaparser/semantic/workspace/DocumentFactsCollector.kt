@@ -902,45 +902,17 @@ object DocumentFactsCollector {
     }
 
     private fun extractAccessPath(expression: ExpressionNode): AccessPath? {
-        return when (expression) {
-            is MemberExpression -> {
-                val base = extractAccessPathBase(expression.base) ?: return null
-                AccessPath.Member(base.first, base.second + expression.identifier.name)
-            }
-
-            is IndexExpression -> {
-                val key = (expression.index as? ConstantNode)
-                    ?.takeIf { it.constantType == ConstantNode.TYPE.STRING }
-                    ?.stringOf()
-                    ?: return null
-                val base = extractAccessPathBase(expression.base) ?: return null
-                AccessPath.Index(base.first, base.second + key)
-            }
-
-            else -> null
+        val base = extractAccessPathSegments(expression) ?: return null
+        if (base.segments.isEmpty()) {
+            return null
+        }
+        return if (expression is IndexExpression) {
+            AccessPath.Index(base.rootIdentifier, base.segments)
+        } else {
+            AccessPath.Member(base.rootIdentifier, base.segments)
         }
     }
 
-    private fun extractAccessPathBase(expression: ExpressionNode): Pair<String, List<String>>? {
-        return when (expression) {
-            is Identifier -> expression.name to emptyList()
-            is MemberExpression -> {
-                val base = extractAccessPathBase(expression.base) ?: return null
-                base.first to (base.second + expression.identifier.name)
-            }
-
-            is IndexExpression -> {
-                val key = (expression.index as? ConstantNode)
-                    ?.takeIf { it.constantType == ConstantNode.TYPE.STRING }
-                    ?.stringOf()
-                    ?: return null
-                val base = extractAccessPathBase(expression.base) ?: return null
-                base.first to (base.second + key)
-            }
-
-            else -> null
-        }
-    }
 
     /**
      * Path-derived module names for workspace providers.
