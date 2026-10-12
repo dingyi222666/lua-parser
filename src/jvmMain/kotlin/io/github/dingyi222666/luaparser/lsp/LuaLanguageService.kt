@@ -6,6 +6,7 @@ import io.github.dingyi222666.luaparser.interop.jvm.JvmWorkspaceEngine
 import io.github.dingyi222666.luaparser.lexer.LuaLexer
 import io.github.dingyi222666.luaparser.lexer.LuaTokenTypes
 import io.github.dingyi222666.luaparser.parser.LuaParser
+import io.github.dingyi222666.luaparser.parser.LuaVersion
 import io.github.dingyi222666.luaparser.source.AST2Lua
 import io.github.dingyi222666.luaparser.parser.LuaParserRecoveryDiagnostic
 import io.github.dingyi222666.luaparser.parser.ast.node.AssignmentStatement
@@ -325,8 +326,29 @@ class LuaLanguageService(
         // didOpen documents still resolve through openDocuments overlays, and
         // the authoritative build runs on a background thread.
         InitializeResult(serverCapabilities()).also {
+            warmBuiltinOverlay()
             scheduleBackgroundRebuild()
         }
+    }
+
+    private val builtinOverlayWarmed = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /**
+     * Pre-compiles the live path's builtin overlay on a background thread at
+     * initialize. The compiled revision is a process-wide static cache whose first
+     * build measured 10.3s on the E2E emulator — until warmed, it ran as an
+     * unabortable stage INSIDE the first live analysis, pushing that analysis's
+     * first cancellation point past every interactive budget. Warming overlaps it
+     * with the client's own startup work; the first analysis then joins the cache.
+     */
+    private fun warmBuiltinOverlay() {
+        if (!builtinOverlayWarmed.compareAndSet(false, true)) return
+        Thread({
+            runCatching {
+                io.github.dingyi222666.luaparser.semantic.workspace.std.BuiltinOverlayLoader
+                    .compiledRevision(LuaVersion.ANDROLUA_5_3, includeFramework = false)
+            }.onFailure { System.err.println("LSP: builtin overlay warmup failed: $it") }
+        }, "lsp-builtin-warmup").apply { isDaemon = true; start() }
     }
 
     /**
@@ -810,6 +832,11 @@ class LuaLanguageService(
                     val completedPaths = mutableListOf<VirtualPath>()
                     val publishedPaths = mutableSetOf<VirtualPath>()
                     for (path in work.checkOrder) {
+                        // Newer pending work (a fresh republication) supersedes the
+                        // remaining files of this work item: it re-enqueues every live
+                        // file, so finishing them here would only delay the edit the
+                        // client is actually waiting on.
+                        if (synchronized(liveDiagnosticLock) { closed || pendingLiveDiagnostics != null }) break
                         val checkStart = System.currentTimeMillis()
                         val file = checkedFiles[path] ?: continue
                         val semantic = file.semanticFile ?: continue
@@ -846,11 +873,26 @@ class LuaLanguageService(
                                 )
                             )
                         } else {
+                            // Watchdog: the emulated device once hid a >14s check with no
+                            // observable progress; this attributes the time (evaluation
+                            // counter vs elapsed) on the device log itself.
+                            val evaluations = java.util.concurrent.atomic.AtomicLong()
+                            val watchdog = Thread({
+                                while (!closed) {
+                                    try { Thread.sleep(2000) } catch (_: InterruptedException) { return@Thread }
+                                    System.err.println(
+                                        "LSP-DEVICE: liveDiagnostics checking ${path.value} " +
+                                            "ms=${System.currentTimeMillis() - checkStart} evals=${evaluations.get()}"
+                                    )
+                                }
+                            }, "lsp-check-watchdog").apply { isDaemon = true }
+                            watchdog.start()
                             val checkingSnapshot = semantic.snapshot.copy(
                                 workspaceContext = semantic.snapshot.workspaceContext.copy(
                                     workspaceResolver = diagnosticResolver,
                                     resolveImportedSymbol = null,
                                     resolveImportTarget = null,
+                                    onExpressionEvaluation = { evaluations.incrementAndGet() },
                                     analysisCheckpoint = {
                                         checkLiveAnalysisCurrent()
                                         semantic.snapshot.workspaceContext.analysisCheckpoint()
@@ -858,7 +900,11 @@ class LuaLanguageService(
                                     }
                                 ).withWorkspaceImportEffects()
                             )
-                            pipeline.finishDiagnostics(checkingSnapshot)
+                            try {
+                                pipeline.finishDiagnostics(checkingSnapshot)
+                            } finally {
+                                watchdog.interrupt()
+                            }
                                 .copy(workspaceContext = semantic.snapshot.workspaceContext).also {
                                 checkLiveAnalysisCurrent()
                                 rememberCheckedDiagnostics(path to semantic.source, it.checker.diagnostics)
