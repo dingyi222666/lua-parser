@@ -66,7 +66,7 @@ internal class ExpressionUsageChecker(
     private val workspaceContext: SemanticWorkspaceContext,
     private val evaluator: ExpressionTypeEvaluator = ExpressionTypeEvaluator(binder, workspaceContext)
 ) : ASTVisitor<MutableList<Diagnostic>> {
-    private val memberResolver = MemberResolver(binder)
+    private val memberResolver = MemberResolver(binder) { workspaceContext.analysisCheckpoint() }
     private val seenDiagnostics = linkedSetOf<String>()
     private val readLocalDeclarationIds = linkedSetOf<DeclarationId>()
 

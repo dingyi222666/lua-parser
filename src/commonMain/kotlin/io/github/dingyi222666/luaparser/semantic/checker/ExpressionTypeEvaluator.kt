@@ -113,7 +113,7 @@ class ExpressionTypeEvaluator internal constructor(
     // provisional results must not enter the completed type cache for another entry point.
     private var recursionEpoch = 0L
     private val activeDeclarationIds = mutableSetOf<DeclarationId>()
-    private val memberResolver = MemberResolver(binder)
+    private val memberResolver = MemberResolver(binder) { workspaceContext.analysisCheckpoint() }
     private val callChecker = CallChecker(binder)
     private val luaJavaArrayHelperNames = setOf("newArray", "createArray")
     // getContext is an AndroLua helper surface (TASK-575); include it so colon-call guards and

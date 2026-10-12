@@ -30,10 +30,19 @@ import io.github.dingyi222666.luaparser.semantic.types.resolve.isAssignableFrom
 import io.github.dingyi222666.luaparser.semantic.types.resolve.unionTypeOf
 
 class MemberResolver(
-    private val binder: BinderPassResult
+    private val binder: BinderPassResult,
+    /**
+     * Cancellation hook fired at every member-resolution entry. Interactive engines
+     * wire the analysis checkpoint here: a stalled check could otherwise sit inside
+     * one resolution for tens of seconds on a slow host with no cancellation point
+     * (the device watchdog measured exactly that shape — evals frozen while the
+     * check ran past every client budget).
+     */
+    private val onResolution: () -> Unit = {}
 ) {
 
     fun resolveMember(baseType: Type, memberName: String, preferMethod: Boolean, lexicalScopeId: ScopeId): MemberResolution {
+        onResolution()
         val normalized = TypeExpansion.expandForSurface(baseType, lexicalScopeId, binder)
 
         return when (normalized) {
@@ -85,6 +94,7 @@ class MemberResolver(
         })
 
     fun resolveIndex(baseType: Type, indexNode: ExpressionNode, indexType: Type, lexicalScopeId: ScopeId): MemberResolution {
+        onResolution()
         val normalized = TypeExpansion.expandForSurface(baseType, lexicalScopeId, binder)
 
         return when (normalized) {

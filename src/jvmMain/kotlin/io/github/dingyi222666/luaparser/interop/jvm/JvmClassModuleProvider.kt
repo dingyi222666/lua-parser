@@ -344,6 +344,27 @@ class JvmClassModuleProvider(
         classLoader: ClassLoader,
         deferMembers: Boolean = false
     ): WorkspaceImportedSymbol? {
+        // Mounted dex libraries resolve simple-name class targets from their O(1)
+        // alias index BEFORE any classloader work: a framework-dex classloader miss
+        // costs seconds per candidate on the device (measured 4.2s for one implicit
+        // 'Greeter' lookup that a registered runtime dex answers instantly), and the
+        // scan runs on the import-activation path of interactive edits.
+        val simpleTarget = importText.trim()
+        if (simpleTarget.isNotEmpty() && !simpleTarget.contains('.') && !simpleTarget.endsWith(".*")) {
+            dexLibrariesFor(configuration).firstNotNullOfOrNull { dex ->
+                dex.classForSimpleAlias(simpleTarget)?.let { cls ->
+                    registerDexLibrary(dex)
+                    val (providerPath, snapshot) = providerForDexClass(dex, cls, deferMembers)
+                    val moduleType = snapshot.moduleExportSurface?.moduleType ?: return@firstNotNullOfOrNull null
+                    WorkspaceImportedSymbol(
+                        alias = moduleType.moduleName,
+                        moduleName = moduleType.moduleName,
+                        providerPath = providerPath,
+                        moduleType = moduleType
+                    )
+                }
+            }?.let { return it }
+        }
         // Prefer a single class resolution; package-name targets with many classes fall through.
         val loads = resolveClassLoads(
             importText = importText,
