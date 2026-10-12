@@ -1018,11 +1018,7 @@ class LuaWorkspaceQueryFacade(
         node: BaseASTNode?,
         symbol: io.github.dingyi222666.luaparser.semantic.api.Symbol?
     ): WorkspaceModuleResolver.ResolvedExportMember? {
-        val memberExpression = when (node) {
-            is MemberExpression -> node
-            is Identifier -> runCatching { node.parent }.getOrNull() as? MemberExpression
-            else -> null
-        } ?: return null
+        val memberExpression = memberExpressionForNode(node) ?: return null
         if (memberExpression.base !== node && node !is MemberExpression) {
             return null
         }
@@ -1240,11 +1236,7 @@ class LuaWorkspaceQueryFacade(
         semanticFile: WorkspaceSemanticFile,
         node: BaseASTNode?
     ): String? {
-        val memberExpression = when (node) {
-            is MemberExpression -> node
-            is Identifier -> runCatching { node.parent }.getOrNull() as? MemberExpression
-            else -> null
-        } ?: return null
+        val memberExpression = memberExpressionForNode(node) ?: return null
         return receiverModuleName(semanticFile, memberExpression.base)
     }
 
@@ -2105,11 +2097,7 @@ class LuaWorkspaceQueryFacade(
             else -> localDeclarationForSymbol(semanticFile, symbol?.symbolId)
         }
         // Member receiver path: Identifier base of MemberExpression.
-        val memberAccess = when (node) {
-            is MemberExpression -> node
-            is Identifier -> runCatching { node.parent }.getOrNull() as? MemberExpression
-            else -> null
-        }
+        val memberAccess = memberExpressionForNode(node)
         val accessedMemberName = memberAccess
             ?.takeIf { member ->
                 val focus = node as? Identifier
@@ -2397,12 +2385,17 @@ class LuaWorkspaceQueryFacade(
         }
     }
 
-    private fun memberAccessAt(node: BaseASTNode?, position: Position): MemberExpression? {
-        val memberExpression = when (node) {
+    /** [node] itself as a MemberExpression, or the MemberExpression the identifier belongs to. */
+    private fun memberExpressionForNode(node: BaseASTNode?): MemberExpression? {
+        return when (node) {
             is MemberExpression -> node
             is Identifier -> runCatching { node.parent }.getOrNull() as? MemberExpression
             else -> null
-        } ?: return null
+        }
+    }
+
+    private fun memberAccessAt(node: BaseASTNode?, position: Position): MemberExpression? {
+        val memberExpression = memberExpressionForNode(node) ?: return null
         // Completed member-name carets only. Receiver identifiers must not enter member mode.
         val onMemberName = when {
             node is MemberExpression && rangeContains(memberExpression.identifier.range, position) -> true
