@@ -264,3 +264,42 @@ import-activation file-list construction in `activateImports`
 (`text.endsWith(".dex")` on a target that may still carry quotes) and/or the
 provider's file-target branch being skipped under
 `deferDependencyGlobals`/`deferWildcardPackageIndex` in the live-buffer engine.
+
+## Round 6 — baseResolve* fallback fix + JVM dynamic-dex mirror
+
+Landed (commit `0ec6a9f`): `JvmWorkspaceEngine.workspaceContext` now publishes its
+resolver-free import lambdas as `baseResolveImportedSymbol` / `baseResolveImportTarget`.
+The live-diagnostics checker rebuilds its context with the composed resolve* lambdas
+nulled and `withWorkspaceImportEffects()` recomposes from the base fallbacks — which
+nothing ever set, so checked models could only resolve deferred shells: a dynamically
+imported dex class could never hydrate its member surface in any checked model.
+
+New JVM mirror test (`lsp.LspLiveDiagnosticsLatencyProfileTest.dynamic_dex_import_...`):
+deferred service mode + `import '<runtime-greeter.dex>'` + `bindClass` + member
+completion — passes; the module surface hydrates 3f/2m (create, libraryMarker).
+Provider-level probe (`DynamicDexProviderProbeTest`): bare library import then class
+resolution returns the full surface — the provider chain was never broken; only the
+context fallback wiring was.
+
+Remote validation: full jvmTest 2,927 tests 0 failures/errors/skips.
+
+### Device E2E after the fix: still 5/7, failing tests vary run to run
+
+rel14 failures: the dynamic-dex test now times out at its FIRST completion
+(`complete(scenario, 1, 8)` after setText — before the dex import phase), and the
+lifecycle test at its own timing gate. Combined with earlier rounds: whichever
+phase first requests a cold completion/check after content changes absorbs a
+multi-second server-side enumeration (measured 8-9.6s completions with 68-item
+lexical surfaces), and the 10s per-await budget trips on whichever phase lands
+there. The TCG ratio (~70×) makes the first-completion cold path the remaining
+gate: JVM-equivalent work is ~100ms.
+
+### Next round
+
+Attack the cold first-completion enumeration itself: the 68-item lexical surface
+that takes 8-9.6s on device (~120ms JVM) — profile its stages (shared-global
+hydration vs candidate assembly vs adapter memo warmth) with the same
+JVM-mirror methodology, then apply per-revision caching for the enumeration so
+the first completion after any edit is warm-path cheap. Also re-check the
+completion executor serialization (single lsp-completion thread queues a fresh
+request behind an in-flight 8s one).
