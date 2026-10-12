@@ -194,8 +194,11 @@ object DexClassModelAdapter {
     private var surfaceAssemblyTicks = 0L
 
     private fun surfaceAssemblyCheckpoint() {
+        // NO runCatching: the checkpoint legitimately throws CancellationException
+        // to abort a superseded check; swallowing it here would eat the preemption
+        // and the check would keep assembling surfaces past every client budget.
         if (++surfaceAssemblyTicks % 16 == 0L) {
-            runCatching { analysisCheckpoint() }
+            analysisCheckpoint()
         }
     }
 
