@@ -303,3 +303,29 @@ JVM-mirror methodology, then apply per-revision caching for the enumeration so
 the first completion after any edit is warm-path cheap. Also re-check the
 completion executor serialization (single lsp-completion thread queues a fresh
 request behind an in-flight 8s one).
+
+## Round 7 — remaining gates quantified; lifecycle test green on device
+
+Instrumented release E2E (queue-wait + per-request completion logging):
+
+- Device E2E **6/7** — `openCompleteEditSwitchFormatSaveAndRecreate` (the
+  lifecycle/format/save/recreate gate) now passes; the only remaining failure is
+  `dynamicallyImportedDexCompletesJavaObjectsInsideLuaTables`.
+- The two stacked costs behind the remaining timeouts are now measured:
+  1. **Completion serialization**: the single `lsp-completion` executor queues a
+     fresh request behind an in-flight one — measured **6,515ms queue wait**, then
+     the request's own execution took another **7,433ms** (items=68, live-buffer
+     state) — the client's 10s await covers both.
+  2. **Cold live-buffer model derivations**: each live-analysis republication
+     rebuilds models with fresh per-evaluator caches, so the first completion
+     against a refreshed snapshot re-derives every declaration (JVM equivalent
+     ~100ms; device ~7s at the TCG ratio).
+
+Next round candidates (in order):
+1. Supersede-aware completion execution: a newer request for the same buffer
+   cancels the in-flight/queued one instead of queueing behind it (the client
+   polls; only the newest request's result matters).
+2. Content-keyed declaration-derivation cache at the liveBufferEngine level so
+   restart-after-abort and republication-after-refresh reuse derived types for
+   unchanged declarations (the revision-owned cache identified in round 3).
+3. The dynamic-dex first-touch mount (round 5's isolated activation-path issue).

@@ -144,4 +144,50 @@ class LspLiveDiagnosticsLatencyProfileTest {
         }
         service.close()
     }
+
+    /**
+     * Device E2E `openCompleteEditSwitchFormatSaveAndRecreate` cold gate: the FIRST
+     * completion after a content change. On the emulator this completion takes
+     * 8-9.6s server-side (the per-await budget is 10s). Measure the same flow on
+     * the JVM under the device dex configuration.
+     */
+    @Test
+    fun first_completion_after_content_change_latency() {
+        if (deviceConfiguration().isEmpty()) {
+            println("LSP-PROFILE: android.dex fixture missing — skipping")
+            return
+        }
+        val service = initializedService(deferred = true)
+        open(service, "file:///workspace/main.lua", fixtureSource("main.lua"))
+        open(service, "file:///workspace/mods/dingyi.lua", fixtureSource("mods/dingyi.lua"))
+        service.flushBackgroundRebuild()
+        service.awaitWorkspaceReady()
+
+        // Warm reference: completion before the edit.
+        val warmStarted = System.currentTimeMillis()
+        service.completion("file:///workspace/main.lua", 0, 0)
+        System.err.println("LSP-PROFILE: warm-completion=" + (System.currentTimeMillis() - warmStarted) + "ms")
+
+        // Content change (mirror of the E2E setText edit), then the FIRST completion.
+        val main = fixtureSource("main.lua")
+        service.didChange(
+            org.eclipse.lsp4j.DidChangeTextDocumentParams(
+                org.eclipse.lsp4j.VersionedTextDocumentIdentifier("file:///workspace/main.lua", 2),
+                listOf(org.eclipse.lsp4j.TextDocumentContentChangeEvent(main + "\nlocal afterEditValue = 1\n"))
+            )
+        )
+        // The device's expensive completion runs against the REFRESHED snapshot
+        // (the live-analysis rebuild published new binders; every declaration
+        // derivation re-runs lazily inside the first query). Wait for the refresh
+        // to settle first, then measure.
+        service.flushBackgroundRebuild()
+        service.awaitWorkspaceReady()
+        val coldStarted = System.currentTimeMillis()
+        val cold = service.completion("file:///workspace/main.lua", 0, 0)
+        val coldMs = System.currentTimeMillis() - coldStarted
+        System.err.println(
+            "LSP-PROFILE: cold-first-completion=" + coldMs + "ms items=" + cold.items.size
+        )
+        service.close()
+    }
 }
