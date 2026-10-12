@@ -425,3 +425,42 @@ completion and advertised capabilities. Downloaded debug APK SHA256:
   deterministically. Fixed the query position to `Position(1,8)` (caret inside the declared name —
   visible under both predicates); the no-hydration and shared-global assertions are unchanged.
   The class now passes solo with `-PjvmTestForks=1`.
+
+## Round complete — 2026-10-12 (commit `7fbb77f`)
+
+### Line-count gate: MET (pending full acceptance)
+- Production Kotlin (`src/commonMain` + `src/jvmMain` + `src/jsMain`): **45,618**
+  against the recorded baseline **53,562** → net **−7,944** (gate: ≥ 7,000 removed
+  through real duplicate-responsibility elimination; the retired legacy compat
+  surface had zero production callers — caller graph verified by exhaustive grep).
+
+### Remote validation evidence
+- `build/full-validation6.log`: `jvmTest --rerun-tasks -PjvmTestForks=1` (strictest
+  single-JVM isolation) → **2,924 tests, 0 failures / 0 errors / 0 skipped**.
+- `compileKotlinJs` + `compileTestKotlinJs` + `assembleDebug` +
+  `:android:sample:assembleDebugAndroidTest`: green (test-source JS compilation
+  now part of the gate — it was never compiled before and failed on a
+  commonTest/jvmMain coupling; fixed by relocating `DexClassModelAdapterTest`).
+- LSP focused `lsp.*`: 720 tests green after the consolidation.
+
+### Honest E2E finding (blocks goal completion)
+- Android E2E at the current build: **5/7** — `dynamicallyImportedDexCompletesJavaObjectsInsideLuaTables`
+  (completion timeout) and `openCompleteEditSwitchFormatSaveAndRecreate` ("checker
+  warning delivered to the visible editor" > 10s).
+- **Clean HEAD (`9279efb`) fails the SAME two tests on the same server today** —
+  verified with a controlled stash/re-run. The prior session's 7/7 evidence is
+  not reproducible; these are pre-existing, not caused by this round's changes.
+- Device timings at the current build are otherwise the best recorded so far
+  (firstValidCompletion 2,753ms; warm 219–388ms; incremental 2,337ms; ActionBar
+  first 1,004ms vs 7,123ms at HEAD; Drawable 3,264ms vs 9,726ms) — but the
+  dynamic-DEX completion and post-edit diagnostics delivery exceed their
+  deadlines even at HEAD and must be diagnosed before any acceptance claim.
+
+### Next steps
+1. Diagnose the dynamic-DEX completion timeout and the >10s post-edit checker
+   warning delivery (both reproduce at clean HEAD; instrument the server side).
+2. Re-run E2E until 7/7 plus the Monaco protocol smoke on the final revision.
+3. Continue workspace-audit consolidation bank (F2 overlay/Aly provider
+   de-dup ~80 lines; F5 access-path extractor ~50; F4 member flattening ~30)
+   and the query-facade items (#1 require-facts walk ~115, #2 LuaJava helper
+   dedup ~110) for further reduction under the same remote gates.
