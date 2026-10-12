@@ -98,101 +98,55 @@ class LuaLanguageServer(
     )
     private val textDocumentService = object : TextDocumentService by textDocuments {
         override fun didOpen(params: DidOpenTextDocumentParams) {
-            if (acceptsMessages()) {
-                textDocuments.didOpen(params)
-            }
+            // Lifecycle gating is owned by the service's acceptsNotifications policy.
+            textDocuments.didOpen(params)
         }
 
         override fun didChange(params: DidChangeTextDocumentParams) {
-            if (acceptsMessages()) {
-                textDocuments.didChange(params)
-            }
+            // Lifecycle gating is owned by the service's acceptsNotifications policy.
+            textDocuments.didChange(params)
         }
 
         override fun didClose(params: DidCloseTextDocumentParams) {
-            if (acceptsMessages()) {
-                textDocuments.didClose(params)
-            }
+            // Lifecycle gating is owned by the service's acceptsNotifications policy.
+            textDocuments.didClose(params)
         }
 
         override fun didSave(params: DidSaveTextDocumentParams) {
-            if (acceptsMessages()) {
-                textDocuments.didSave(params)
-            }
+            // Lifecycle gating is owned by the service's acceptsNotifications policy.
+            textDocuments.didSave(params)
         }
 
         override fun hover(params: HoverParams): CompletableFuture<Hover> {
-            return textDocumentRequest(
-                quietResponse = { nullFuture() }
-            ) {
-                textDocuments.hover(params)
-            }
+            return textDocuments.hover(params)
         }
 
         override fun completion(params: CompletionParams): CompletableFuture<Either<MutableList<CompletionItem>, CompletionList>> {
-            return textDocumentRequest(
-                quietResponse = {
-                    CompletableFuture.completedFuture(Either.forRight(CompletionList(false, mutableListOf<CompletionItem>())))
-                }
-            ) {
-                textDocuments.completion(params)
-            }
+            return textDocuments.completion(params)
         }
 
         override fun signatureHelp(params: SignatureHelpParams): CompletableFuture<SignatureHelp> {
-            return textDocumentRequest(
-                quietResponse = { nullFuture() }
-            ) {
-                textDocuments.signatureHelp(params)
-            }
+            return textDocuments.signatureHelp(params)
         }
 
         override fun definition(params: DefinitionParams): CompletableFuture<Either<MutableList<out Location>, MutableList<out LocationLink>>> {
-            return textDocumentRequest(
-                quietResponse = {
-                    CompletableFuture.completedFuture(
-                        Either.forLeft<MutableList<out Location>, MutableList<out LocationLink>>(mutableListOf<Location>())
-                    )
-                }
-            ) {
-                textDocuments.definition(params)
-            }
+            return textDocuments.definition(params)
         }
 
         override fun declaration(params: DeclarationParams): CompletableFuture<Either<MutableList<out Location>, MutableList<out LocationLink>>> {
-            return textDocumentRequest(
-                quietResponse = {
-                    CompletableFuture.completedFuture(
-                        Either.forLeft<MutableList<out Location>, MutableList<out LocationLink>>(mutableListOf<Location>())
-                    )
-                }
-            ) {
-                textDocuments.declaration(params)
-            }
+            return textDocuments.declaration(params)
         }
 
         override fun documentHighlight(params: DocumentHighlightParams): CompletableFuture<MutableList<out DocumentHighlight>> {
-            return textDocumentRequest(
-                quietResponse = { CompletableFuture.completedFuture(mutableListOf()) }
-            ) {
-                textDocuments.documentHighlight(params)
-            }
+            return textDocuments.documentHighlight(params)
         }
 
         override fun references(params: ReferenceParams): CompletableFuture<MutableList<out Location>> {
-            return textDocumentRequest(
-                quietResponse = { CompletableFuture.completedFuture(mutableListOf()) }
-            ) {
-                textDocuments.references(params)
-            }
+            return textDocuments.references(params)
         }
 
         override fun documentSymbol(params: DocumentSymbolParams): CompletableFuture<MutableList<Either<SymbolInformation, DocumentSymbol>>> {
-            return textDocumentRequest(
-                quietResponse = { CompletableFuture.completedFuture(mutableListOf()) }
-            ) {
-                textDocuments.documentSymbol(params)
-            }
+            return textDocuments.documentSymbol(params)
         }
         // Kotlin `by` delegation forwards only ABSTRACT interface members; lsp4j 0.23.1
         // ships default bodies for the newer methods that throw
@@ -426,26 +380,6 @@ class LuaLanguageServer(
         return lifecycleState == LifecycleState.INITIALIZED
     }
 
-    /** Quiet-empty legacy workspace/symbol payload used by the CREATED-state policy. */
-    private fun completedLegacyWorkspaceSymbols(): CompletableFuture<Either<MutableList<out SymbolInformation>, MutableList<out WorkspaceSymbol>>> {
-        return CompletableFuture.completedFuture(
-            Either.forLeft<MutableList<out SymbolInformation>, MutableList<out WorkspaceSymbol>>(
-                mutableListOf<SymbolInformation>()
-            )
-        )
-    }
-
-    private fun <T> textDocumentRequest(
-        quietResponse: () -> CompletableFuture<T>,
-        block: () -> CompletableFuture<T>
-    ): CompletableFuture<T> {
-        return when (val policy = textDocumentRequestPolicy()) {
-            LspTextDocumentRequestPolicy.Accept -> block()
-            LspTextDocumentRequestPolicy.QuietEmpty -> quietResponse()
-            is LspTextDocumentRequestPolicy.Reject -> failedFuture(IllegalStateException(policy.reason))
-        }
-    }
-
     private fun textDocumentRequestPolicy(): LspTextDocumentRequestPolicy {
         // CREATED stays quiet-empty (client probes before initialize settle); SHUTDOWN and
         // EXIT are hard lifecycle boundaries and reject identically. EXITED is reachable for
@@ -460,6 +394,15 @@ class LuaLanguageServer(
         }
     }
 
+    /** Quiet-empty legacy workspace/symbol payload used by the CREATED-state policy. */
+    private fun completedLegacyWorkspaceSymbols(): CompletableFuture<Either<MutableList<out SymbolInformation>, MutableList<out WorkspaceSymbol>>> {
+        return CompletableFuture.completedFuture(
+            Either.forLeft<MutableList<out SymbolInformation>, MutableList<out WorkspaceSymbol>>(
+                mutableListOf<SymbolInformation>()
+            )
+        )
+    }
+
     private fun publishDiagnostics(diagnostics: org.eclipse.lsp4j.PublishDiagnosticsParams) {
         if (acceptsMessages()) {
             client?.publishDiagnostics(diagnostics)
@@ -472,8 +415,5 @@ class LuaLanguageServer(
         return future
     }
 
-    private fun <T> nullFuture(): CompletableFuture<T> {
-        @Suppress("UNCHECKED_CAST")
-        return CompletableFuture.completedFuture(null) as CompletableFuture<T>
-    }
+
 }
