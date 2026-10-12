@@ -445,3 +445,11 @@ completion (lazy derivations, seconds).
 Next session: implement the revision-owned derivation cache per the documented
 design, then re-run; if the two tests still race, profile the post-publish first
 completion on device with the established 16M-buffer + marker methodology.
+
+## Round 17 — shared isBareWeakType predicate
+
+Landed (commit `9198ea5`): the bare-weak-type preference predicate (unannotated
+fun(...): unknown shells, blank/unknown/any, unmodule'd UNKNOWN) had byte-equivalent
+copies in ReferenceQueries (resolve preference ranking) and the workspace facade
+(hover fallback choice). One shared internal TypeInfo extension now owns it.
+Full remote JVM suite green (2,928/0/0).
