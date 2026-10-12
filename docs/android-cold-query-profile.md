@@ -230,3 +230,37 @@ hydrated for the first time on device (same class of cold first-touch as the
 framework dex was). Next: profile the first dynamic-dex completion
 (server-side `CompletionThread` timeout observed), then apply the same
 demand-hydration/cheap-first pattern that fixed the framework surface.
+
+## Round 5 — configuration-time dex warmup; dynamic-dex mount bug isolated
+
+Landed: `warmUpConfiguredDexLibraries` — the LSP service now pre-mounts the
+configured framework/classpath dex files on a background thread at
+`setWorkspaceMetadata` (configuration push) instead of lazily on the first
+framework member query. Previously the 5,981-class framework parse (9.2-10.3s on
+the TCG emulator) started ~11s into a test's life, mid-await, and blocked every
+framework-touching phase through the shared mount future. It now starts at
+service construction and completes before the interactive phases.
+
+Device E2E held at **6/7** (identical failing test across runs — deterministic now).
+
+### Isolated: the dynamic-dex test never mounts its dex
+
+Instrumented run evidence for
+`dynamicallyImportedDexCompletesJavaObjectsInsideLuaTables`:
+
+- `DexLibraryMounter.readClasses` (the single parseDex path) logged ZERO attempts
+  for `runtime-e2e.dex` — the engine never even tries to mount the dynamically
+  imported library during the awaited phase.
+- The awaited phase's first completion took 9,587ms (blocked on the refresh
+  worker's engine update) and returned 68 lexical items; subsequent polls returned
+  the 9-item lexical surface only — the imported library never enters the snapshot.
+- The await therefore expires regardless of the framework warmup.
+
+Next round: instrument `JvmClassModuleProvider.importedSymbolForTarget` /
+`importedClassNames` for file targets (`.dex`/`.apk`) and the `extraProviders`
+mount path, and verify the source-import fact target for the quoted
+`import '<path>'` form reaches activation unquoted. The regression suspect is the
+import-activation file-list construction in `activateImports`
+(`text.endsWith(".dex")` on a target that may still carry quotes) and/or the
+provider's file-target branch being skipped under
+`deferDependencyGlobals`/`deferWildcardPackageIndex` in the live-buffer engine.

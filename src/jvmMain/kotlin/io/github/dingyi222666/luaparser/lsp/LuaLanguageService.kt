@@ -510,11 +510,38 @@ class LuaLanguageService(
         }
     }
 
+    private val dexWarmupStarted = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /**
+     * Pre-mounts the configured framework/classpath dex files on a background
+     * thread at configuration time. The dex parse (5,981 framework classes took
+     * 9.2s on the E2E emulator) otherwise runs lazily on the first framework
+     * member query — which lands mid-await in interactive phases and blows their
+     * budgets. Mounting at configuration time overlaps the parse with the
+     * client's own startup work; later queries join the in-flight mount future.
+     */
+    private fun warmUpConfiguredDexLibraries(metadata: Map<String, String>) {
+        if (!dexWarmupStarted.compareAndSet(false, true)) return
+        val dexPaths = buildList {
+            metadata["jvm.androidDex"]?.trim()?.takeIf(String::isNotEmpty)?.let(::add)
+            metadata["jvm.classpath"]?.trim()?.takeIf(String::isNotEmpty)?.let(::add)
+        }
+        if (dexPaths.isEmpty()) return
+        Thread({
+            dexPaths.forEach { path ->
+                runCatching {
+                    io.github.dingyi222666.luaparser.interop.jvm.DexLibraryMounter.libraryFor(java.io.File(path))
+                }
+            }
+        }, "lsp-dex-warmup").apply { isDaemon = true; start() }
+    }
+
     fun setWorkspaceMetadata(metadata: Map<String, String>): Unit = synchronized(stateLock) {
         // Synchronous by contract: callers/tests expect the snapshot settled
         // when this returns. Config changes are rare (connect-time push).
         workspaceGeneration += 1
         workspaceMetadata = metadata.toMap()
+        warmUpConfiguredDexLibraries(workspaceMetadata)
         rebuildFull()
     }
 
