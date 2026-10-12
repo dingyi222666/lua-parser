@@ -329,3 +329,27 @@ Next round candidates (in order):
    restart-after-abort and republication-after-refresh reuse derived types for
    unchanged declarations (the revision-owned cache identified in round 3).
 3. The dynamic-dex first-touch mount (round 5's isolated activation-path issue).
+
+## Round 8 — cancellable per-document analyses; device variance persists
+
+Landed (commits `3e04f5f`, `36cfaee`, `ef2bfbc`): the analysis checkpoint now fires at
+every per-file analysis boundary (build loop, update loop, per-document model-build
+loop) and between the pipeline's per-document phases (bind → checker → model) —
+previously it fired only inside type evaluation, so a superseded document analysis
+ran 10s+ to completion on the emulator while the newer content waited.
+
+Full remote JVM suite green throughout. Device E2E remains timing-limited: rel18/rel19
+landed 5/7 with the same two tests (dynamic-dex, lifecycle) failing on timing gates
+that flip run to run. 16MB logcat buffer added to the harness (`adb logcat -G 16M`) —
+the default ring buffer was evicting early-test evidence.
+
+### Open items for the next rounds (evidence in this file)
+
+1. The dynamic-dex test's first await races the cold live-buffer analysis of the
+   project fixture (didOpen 5,017 chars at T+0; test setText at T+1s; the fresh
+   analysis must complete/abort and republish within the 10s budget under the 70×
+   TCG ratio + heavy allocation rate (4-5MB freed per ~2.5s GC cycle)).
+2. Completion serialization: single `lsp-completion` executor (6.5s queue waits).
+3. The revision-owned derivation cache (rounds 3/7 design) to make republication
+   after abort warm.
+4. The −12,000-line target: ~2,800 lines remain (audit-backed items queued).
