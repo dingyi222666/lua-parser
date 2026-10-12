@@ -417,3 +417,15 @@ call bases that the parser's `compactCallArguments` does not — replacement wou
 a behavior change pinned by import-string navigation tests, not a pure duplicate.
 
 Production Kotlin: 45,556 (baseline 53,562; −8,006).
+
+## Round 13 — one lifecycle-policy application point
+
+Landed: the text-document service owns the request/notification lifecycle policy
+(created=quiet-empty, initialized=accept, shutdown/exit=hard-reject) through the
+shared policy lambdas; the server wrapper now forwards directly (lsp4j
+default-method forwarding overrides kept). The double policy application per
+request/notification and the duplicated per-method quiet-response construction are
+gone; dead textDocumentRequest/nullFuture helpers removed.
+
+Remote validation: lsp suites 724 tests green (lifecycle/shutdown suites included);
+full jvmTest 2,928/0/0.
