@@ -165,7 +165,13 @@ class LuaLanguageService(
         override val checkDiagnostics = !deferDocumentAnalysis
     }
     private var nextQueryPublication = CompletableFuture<Unit>()
-    private val completionExecutor = java.util.concurrent.Executors.newSingleThreadExecutor { task ->
+    // Two workers: the LSP client supersedes requests while an earlier one is still
+    // running (every poll is a new request), and a single worker made the newest
+    // request queue behind the stale one's full enumeration (measured 6.5s queue
+    // wait + 7.4s execution against a 10s client budget). Completions are read-only
+    // facade queries, so two concurrent evaluations are safe; the bound keeps
+    // device CPU for the analysis workers.
+    private val completionExecutor = java.util.concurrent.Executors.newFixedThreadPool(2) { task ->
         Thread(task, "lsp-completion").apply { isDaemon = true }
     }
 
