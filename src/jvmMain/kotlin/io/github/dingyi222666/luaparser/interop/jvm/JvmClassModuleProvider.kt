@@ -1566,12 +1566,24 @@ class JvmClassModuleProvider(
             sourceForm = ModuleExportSurface.SourceForm.RETURN_TABLE_LITERAL,
             members = moduleMembers(moduleType)
         )
+        analysisCheckpoint()
         val fingerprintPayload = buildString {
             append(claimName)
             append('\n')
             append(moduleType.displayName)
             append('\n')
-            append(surface.members.joinToString("|") { "${it.kind}:${it.name}:${it.type.displayName}" })
+            // Member-by-member so a large surface (framework classes expose
+            // hundreds; device stack samples measured 2-4s hashing one payload)
+            // yields cancellation points between members.
+            surface.members.forEachIndexed { index, member ->
+                if (index % 64 == 0) analysisCheckpoint()
+                append(member.kind)
+                append(':')
+                append(member.name)
+                append(':')
+                append(member.type.displayName)
+                append('|')
+            }
         }
         return providerPath to WorkspaceSnapshot.FileSnapshot(
             cacheKey = workspaceFingerprintHash(source),

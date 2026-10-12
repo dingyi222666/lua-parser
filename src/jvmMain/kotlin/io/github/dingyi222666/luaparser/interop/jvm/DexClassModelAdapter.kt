@@ -86,6 +86,15 @@ object DexClassModelAdapter {
         // dozens of DEX surfaces (measured 2.4s-7.1s per check on the E2E emulator).
         val classTypes = boundedCache<ClassIdentity, JavaClassType>(512)
         val moduleTypes = boundedCache<Pair<ClassIdentity, Boolean>, ModuleType>(512)
+
+        init {
+            // Index construction over a framework-sized dex (~6k classes) measured 2-4s
+            // per device stack sample; yield to the interactive checkpoint mid-build.
+            var visited = 0
+            classes.forEach {
+                if (++visited % 256 == 0) surfaceAssemblyCheckpoint()
+            }
+        }
     }
 
     private val dexIndexes = boundedCache<DexSetKey, DexIndex>(8)
