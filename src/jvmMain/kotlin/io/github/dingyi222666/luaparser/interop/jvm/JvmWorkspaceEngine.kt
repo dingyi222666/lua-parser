@@ -369,17 +369,35 @@ open class JvmWorkspaceEngine(
         val imported = linkedMapOf<String, WorkspaceImportedSymbol>()
         targets.forEach { target ->
             if (deferWildcardPackageIndex && isWildcardOrPackageTarget(target)) return@forEach
+            val targetStart = System.currentTimeMillis()
             val symbol = classModuleProvider.importedSymbolForTarget(target, normalized,
                 deferMembers = deferDependencyGlobals)
+            val targetMs = System.currentTimeMillis() - targetStart
+            if (targetMs > 300) {
+                System.err.println("IMPORT-PERF: '$target' symbol=${symbol != null} took ${targetMs}ms")
+            }
             symbol?.let { imported[it.alias] = it }
             if (!isWildcardOrPackageTarget(target) && symbol == null) {
-                classModuleProvider.importedClassNames(target, normalized)
-                    .mapNotNull { classModuleProvider.importedSymbol(it, normalized, deferMembers = deferDependencyGlobals) }
+                val namesStart = System.currentTimeMillis()
+                val names = classModuleProvider.importedClassNames(target, normalized)
+                val namesMs = System.currentTimeMillis() - namesStart
+                if (namesMs > 300) {
+                    System.err.println("IMPORT-PERF: '$target' importedClassNames=${names.size} took ${namesMs}ms")
+                }
+                names.mapNotNull { classModuleProvider.importedSymbol(it, normalized, deferMembers = deferDependencyGlobals) }
                     .forEach { imported[it.alias] = it }
             }
         }
         classNames.filter(::isClassLikeSimpleName).forEach { name ->
-            if (name !in imported) classModuleProvider.implicitClassSymbol(name, normalized)?.let { imported[it.alias] = it }
+            if (name !in imported) {
+                val implicitStart = System.currentTimeMillis()
+                val symbol = classModuleProvider.implicitClassSymbol(name, normalized)
+                val implicitMs = System.currentTimeMillis() - implicitStart
+                if (implicitMs > 300) {
+                    System.err.println("IMPORT-PERF: implicit '$name' symbol=${symbol != null} took ${implicitMs}ms")
+                }
+                symbol?.let { imported[it.alias] = it }
+            }
         }
         return imported.toMap().also { result ->
             if (key != null) {

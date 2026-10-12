@@ -877,13 +877,22 @@ class LuaLanguageService(
                             // observable progress; this attributes the time (evaluation
                             // counter vs elapsed) on the device log itself.
                             val evaluations = java.util.concurrent.atomic.AtomicLong()
+                            val checkerThread = Thread.currentThread()
                             val watchdog = Thread({
+                                var ticks = 0
                                 while (!closed) {
                                     try { Thread.sleep(2000) } catch (_: InterruptedException) { return@Thread }
+                                    ticks++
+                                    val stack = checkerThread.stackTrace
+                                        .filter { it.className.contains("luaparser") }
+                                        .take(8)
+                                        .joinToString(" <- ") { it.methodName }
                                     System.err.println(
                                         "LSP-DEVICE: liveDiagnostics checking ${path.value} " +
-                                            "ms=${System.currentTimeMillis() - checkStart} evals=${evaluations.get()}"
+                                            "ms=${System.currentTimeMillis() - checkStart} evals=${evaluations.get()} " +
+                                            "at=[$stack]"
                                     )
+                                    if (ticks >= 10) return@Thread
                                 }
                             }, "lsp-check-watchdog").apply { isDaemon = true }
                             watchdog.start()
