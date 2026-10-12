@@ -649,8 +649,16 @@ class LuaLanguageService(
     private var pendingLiveDiagnostics: LiveDiagnosticWork? = null
     private var liveDiagnosticRunning = false
     private var lastDiagnosticFiles: Map<VirtualPath, String> = emptyMap()
-    private val checkedLiveDiagnostics = mutableMapOf<VirtualPath,
-        io.github.dingyi222666.luaparser.semantic.checker.CheckerPassResult>()
+    // Checker results are pure derivations of the document's own AST: for identical
+    // source text they stay valid across re-binds (refresh republications produce a
+    // new binder for unchanged content). Key by (path, source) so an unchanged
+    // document's report is reused instead of re-checking after every workspace
+    // republication; bounded because each entry pins its old binder graph.
+    private val checkedLiveDiagnostics = object : LinkedHashMap<Pair<VirtualPath, String>,
+        io.github.dingyi222666.luaparser.semantic.checker.CheckerPassResult>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Pair<VirtualPath, String>,
+            io.github.dingyi222666.luaparser.semantic.checker.CheckerPassResult>): Boolean = size > 32
+    }
     internal var onLiveDiagnosticsFileChecked: ((VirtualPath) -> Unit)? = null
 
     private fun scheduleLiveDiagnostics(
@@ -660,8 +668,8 @@ class LuaLanguageService(
     ) {
         synchronized(liveDiagnosticLock) {
             if (closed) return
-            checkedLiveDiagnostics.keys.retainAll(files.keys)
-            affectedDocuments.forEach(checkedLiveDiagnostics::remove)
+            checkedLiveDiagnostics.keys.retainAll { key -> key.first in files }
+            affectedDocuments.forEach { path -> checkedLiveDiagnostics.keys.removeAll { it.first == path } }
             val changed = files.keys.filter { files[it] != lastDiagnosticFiles[it] }
             pendingLiveDiagnostics = LiveDiagnosticWork(snapshot, files, changed + (files.keys - changed.toSet()))
             lastDiagnosticFiles = files
@@ -690,12 +698,13 @@ class LuaLanguageService(
                     val completedPaths = mutableListOf<VirtualPath>()
                     val publishedPaths = mutableSetOf<VirtualPath>()
                     for (path in work.checkOrder) {
+                        val checkStart = System.currentTimeMillis()
                         val file = checkedFiles[path] ?: continue
                         val semantic = file.semanticFile ?: continue
-                        // An unrelated edit need not discard a checker already running.
-                        // Re-analysis replaces the binding for every affected document.
-                        fun isCurrent() = !closed && openDocuments[path] == work.files[path] &&
-                            this.snapshot.files[path]?.semanticFile?.snapshot?.binder === semantic.snapshot.binder
+                        // An unrelated edit need not discard a checker already running:
+                        // the report derives from this document's own AST, so only a
+                        // content change of THIS buffer (or shutdown) invalidates it.
+                        fun isCurrent() = !closed && openDocuments[path] == work.files[path]
                         if (!synchronized(stateLock) { isCurrent() }) continue
                         liveAnalysisCheckpoint.set {
                             synchronized(stateLock) {
@@ -703,10 +712,12 @@ class LuaLanguageService(
                             }
                         }
                         val cached = synchronized(liveDiagnosticLock) {
-                            checkedLiveDiagnostics[path]?.takeIf { it.binder === semantic.snapshot.binder }
+                            checkedLiveDiagnostics[path to semantic.source]
                         }
                         val checked = if (cached != null) {
-                            pipeline.finishDiagnostics(semantic.snapshot, cached)
+                            pipeline.finishDiagnostics(
+                                semantic.snapshot, cached.copy(binder = semantic.snapshot.binder)
+                            )
                         } else {
                             val checkingSnapshot = semantic.snapshot.copy(
                                 workspaceContext = semantic.snapshot.workspaceContext.copy(
@@ -724,10 +735,14 @@ class LuaLanguageService(
                                 .copy(workspaceContext = semantic.snapshot.workspaceContext).also {
                                 checkLiveAnalysisCurrent()
                                 synchronized(liveDiagnosticLock) {
-                                    if (!closed) checkedLiveDiagnostics[path] = it.checker
+                                    if (!closed) checkedLiveDiagnostics[path to semantic.source] = it.checker
                                 }
                             }
                         }
+                        System.err.println(
+                            "LSP-DEVICE: liveDiagnostics checked $path cached=${cached != null} " +
+                                "in ${System.currentTimeMillis() - checkStart}ms"
+                        )
                         val checkedFile = file.copy(semanticFile = WorkspaceSemanticFile(
                             path, semantic.source, semantic.chunk, checked.model, checked, semantic.recoveryDiagnostics
                         ))
@@ -760,8 +775,11 @@ class LuaLanguageService(
                                 val currentFile = merged[path] ?: return@filter false
                                 val currentSemantic = currentFile.semanticFile ?: return@filter false
                                 if (openDocuments[path] != work.files[path] ||
-                                    currentSemantic.snapshot.binder !== checkedSemantic.snapshot.binder) return@filter false
-                                val checked = pipeline.finishDiagnostics(currentSemantic.snapshot, checkedSemantic.snapshot.checker)
+                                    currentSemantic.source != checkedSemantic.source) return@filter false
+                                val checked = pipeline.finishDiagnostics(
+                                    currentSemantic.snapshot,
+                                    checkedSemantic.snapshot.checker.copy(binder = currentSemantic.snapshot.binder)
+                                )
                                 merged[path] = currentFile.copy(semanticFile = WorkspaceSemanticFile(
                                     path, currentSemantic.source, currentSemantic.chunk,
                                     checked.model, checked,

@@ -79,8 +79,13 @@ object DexClassModelAdapter {
         val directChildren = classes.filter { '$' in it.binaryName }
             .groupBy { it.binaryName.substringBeforeLast('$') }
         val referenceTypes = java.util.concurrent.ConcurrentHashMap<String, JavaClassType>()
-        val classTypes = boundedCache<ClassIdentity, JavaClassType>(128)
-        val moduleTypes = boundedCache<Pair<ClassIdentity, Boolean>, ModuleType>(128)
+        // The working set per diagnostics/completion pass is the transitive framework
+        // closure (Activity/Context/View/Widget chains + fixture classes, a few hundred
+        // entries). The former 128-entry bounds let a single completion sweep evict the
+        // checker's hot classes, forcing every live-diagnostics check to re-assemble
+        // dozens of DEX surfaces (measured 2.4s-7.1s per check on the E2E emulator).
+        val classTypes = boundedCache<ClassIdentity, JavaClassType>(512)
+        val moduleTypes = boundedCache<Pair<ClassIdentity, Boolean>, ModuleType>(512)
     }
 
     private val dexIndexes = boundedCache<DexSetKey, DexIndex>(8)
