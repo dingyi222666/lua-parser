@@ -77,10 +77,15 @@ class SemanticPipeline(
         val state = prepareBinding(chunk, context, preparedBinder, comments)
         val effectiveContext = state.context
         val resolvedBinder = state.binder
+        // Cancellation points between the per-document phases: interactive engines abort a
+        // superseded document analysis here instead of running the remaining phases to
+        // completion (the analysis checkpoint otherwise fires only inside type evaluation).
+        effectiveContext.analysisCheckpoint()
         // CheckerPass is re-entered per call with a fresh expression checker; no pipeline-owned
         // diagnostic buffer is retained between analyzes.
         val checker = if (checkDiagnostics) checkerPass.check(chunk, resolvedBinder, effectiveContext)
             else CheckerPassResult(resolvedBinder, emptyList())
+        effectiveContext.analysisCheckpoint()
         val model = semanticModelBuilder.build(chunk, checker.binder, checker.diagnostics, effectiveContext)
         val publicDiagnostics = model.getDiagnostics()
         val result = SemanticAnalysisResult(
