@@ -351,8 +351,10 @@ open class LuaWorkspaceEngine(
 
         val analysisOrder = semanticAnalysisOrder(pathsToAnalyze, baseSnapshot.graph)
         analysisOrder.forEachIndexed { index, path ->
+            checkAnalysisCancellation()
             reportBinding?.invoke(path, index)
             analyzePathInto(files, path, sources, previous, analysisInput, analysisSnapshot, preparedBindings[path])
+            checkAnalysisCancellation()
             reportBinding?.invoke(path, index + 1)
         }
 
