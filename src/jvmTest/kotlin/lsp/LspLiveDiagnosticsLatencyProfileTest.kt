@@ -98,4 +98,50 @@ class LspLiveDiagnosticsLatencyProfileTest {
         }
         service.close()
     }
+
+    /**
+     * Device E2E `dynamicallyImportedDexCompletesJavaObjectsInsideLuaTables`
+     * mirror under the deferred-analysis service mode: a runtime dex written next
+     * to the project, imported by absolute path, must complete its members.
+     */
+    @Test
+    fun dynamic_dex_import_activates_member_completion_under_deferred_analysis() {
+        val runtimeDex = File(repoRoot, "android/sample/src/androidTest/assets/runtime-greeter.dex")
+        if (!runtimeDex.isFile || deviceConfiguration().isEmpty()) {
+            println("LSP-PROFILE: dynamic-dex fixture unavailable — skipping")
+            return
+        }
+        val service = initializedService(deferred = true)
+        val source = "import '${runtimeDex.absolutePath}'\n" +
+            "local Greeter=luajava.bindClass('fixture.dynamic.Greeter')\nGreeter."
+        open(service, "file:///workspace/dynamic_dex.lua", source)
+        service.flushBackgroundRebuild()
+        service.awaitWorkspaceReady()
+
+        // Probe: what type did the bindClass local resolve to?
+        run {
+            val snapshotField = LuaLanguageService::class.java
+                .getDeclaredField("snapshot").apply { isAccessible = true }
+            val snapshot = snapshotField.get(service) as WorkspaceSnapshot
+            val dynamicPath = snapshot.files.keys.first { it.value.endsWith("dynamic_dex.lua") }
+            val semantic = assertNotNull(snapshot.files.getValue(dynamicPath).semanticFile)
+            val model = semantic.model
+            val symbol = model.getSymbolAt(io.github.dingyi222666.luaparser.parser.ast.node.Position(3, 1))
+            System.err.println(
+                "LSP-PROFILE: Greeter symbol=" + symbol?.name +
+                    " typeKey=" + symbol?.type?.typeKey +
+                    " declared=" + symbol?.declaredType?.typeKey
+            )
+        }
+
+        // Line 3 (1-based), column after "Greeter." = "Greeter.".length + 1
+        // LSP 0-based: parser line 3 -> LSP line 2; caret after "Greeter." -> character 8.
+        val completions = service.completion("file:///workspace/dynamic_dex.lua", 2, 8)
+        val labels = completions.items.map { it.label }
+        System.err.println("LSP-PROFILE: dynamic-dex completion labels=$labels")
+        check("create" in labels && "libraryMarker" in labels) {
+            "dynamic dex members must complete; got $labels"
+        }
+        service.close()
+    }
 }

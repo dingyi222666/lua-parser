@@ -680,10 +680,20 @@ class LuaLanguageService(
     // source text they stay valid across re-binds (refresh republications produce a
     // new binder for unchanged content). Key by (path, source) and store ONLY the
     // diagnostic list so no stale binder graph is pinned; bounded LRU.
-    private val checkedLiveDiagnostics = object : LinkedHashMap<Pair<VirtualPath, String>,
-        List<io.github.dingyi222666.luaparser.semantic.api.Diagnostic>>(16, 0.75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Pair<VirtualPath, String>,
-            List<io.github.dingyi222666.luaparser.semantic.api.Diagnostic>>): Boolean = size > 32
+    private val checkedLiveDiagnostics =
+        LinkedHashMap<Pair<VirtualPath, String>, List<io.github.dingyi222666.luaparser.semantic.api.Diagnostic>>(16, 0.75f, true)
+
+    private fun rememberCheckedDiagnostics(
+        key: Pair<VirtualPath, String>,
+        value: List<io.github.dingyi222666.luaparser.semantic.api.Diagnostic>
+    ) {
+        synchronized(liveDiagnosticLock) {
+            if (closed) return
+            checkedLiveDiagnostics[key] = value
+            while (checkedLiveDiagnostics.size > 32) {
+                checkedLiveDiagnostics.remove(checkedLiveDiagnostics.keys.first())
+            }
+        }
     }
     internal var onLiveDiagnosticsFileChecked: ((VirtualPath) -> Unit)? = null
 
@@ -764,9 +774,7 @@ class LuaLanguageService(
                             pipeline.finishDiagnostics(checkingSnapshot)
                                 .copy(workspaceContext = semantic.snapshot.workspaceContext).also {
                                 checkLiveAnalysisCurrent()
-                                synchronized(liveDiagnosticLock) {
-                                    if (!closed) checkedLiveDiagnostics[path to semantic.source] = it.checker.diagnostics
-                                }
+                                rememberCheckedDiagnostics(path to semantic.source, it.checker.diagnostics)
                             }
                         }
                         System.err.println(

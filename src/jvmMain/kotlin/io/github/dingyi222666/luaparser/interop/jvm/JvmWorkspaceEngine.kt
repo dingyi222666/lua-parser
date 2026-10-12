@@ -210,6 +210,17 @@ open class JvmWorkspaceEngine(
             // re-applied by SemanticWorkspaceContext.withWorkspaceImportEffects() for this path.
             // Keep activeImports here so current-file analysis already sees both layers.
             importedSymbols = activeImports,
+            // Resolver-free fallbacks: when a consumer nulls the composed resolve* lambdas
+            // (the live-diagnostics checker rebuilds its context against a deferred
+            // resolver), withWorkspaceImportEffects() recomposes from these instead of
+            // losing engine-level JVM resolution — otherwise deferred-shell module types
+            // (dynamic dex imports) can never hydrate their member surfaces.
+            baseResolveImportedSymbol = { name ->
+                lazyImportedSymbol(name, currentFacts, baseConfiguration, resolvedConfiguration)
+            },
+            baseResolveImportTarget = { target ->
+                classModuleProvider.importedSymbolForTarget(target, resolvedConfiguration)
+            },
             resolveImportedSymbol = { name ->
                 activeImports[name] ?: lazyImportedSymbol(
                     name, currentFacts, baseConfiguration, resolvedConfiguration
