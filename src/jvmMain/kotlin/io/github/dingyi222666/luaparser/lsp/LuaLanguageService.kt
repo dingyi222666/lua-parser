@@ -147,6 +147,11 @@ class LuaLanguageService(
 ) {
     private val stateLock = Any()
     @Volatile private var closed = false
+
+    private companion object {
+        /** Burst-edit coalescing window before a deferred live-buffer analysis starts. */
+        private const val LIVE_ANALYSIS_DEBOUNCE_MS = 400L
+    }
     private fun checkConnectionOpen() {
         if (closed) throw java.util.concurrent.CancellationException("Language server closed")
     }
@@ -867,6 +872,22 @@ class LuaLanguageService(
                             return@Thread
                         }
                         documentRefreshPending = false
+                    }
+                    // Burst debounce: programmatic flows (didOpen immediately followed by a
+                    // full-buffer setText) re-set pending within a second; analyzing the
+                    // intermediate content cost the entire cycle on the emulator (the
+                    // 5KB fixture's cold analysis raced the test's own 10s budget). A
+                    // short window lets the newest buffer content win before the analysis
+                    // starts; the existing pending flag re-loops without publishing.
+                    Thread.sleep(LIVE_ANALYSIS_DEBOUNCE_MS)
+                    synchronized(documentRefreshLock) {
+                        if (closed) {
+                            documentRefreshRunning = false
+                            return@Thread
+                        }
+                    }
+                    if (synchronized(documentRefreshLock) { documentRefreshPending }) {
+                        continue
                     }
                     val liveFiles = synchronized(stateLock) {
                         if (snapshotReady) null else openDocuments.toMap()
