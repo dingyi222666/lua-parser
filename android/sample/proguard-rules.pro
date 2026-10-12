@@ -2,6 +2,10 @@
 -keep class androidx.tracing.** { *; }
 -keep class kotlin.** { *; }
 -dontwarn kotlin.Cloneable$DefaultImpls
+# Keep original names in the parser/LSP package so device-side stack samples
+# (the live-diagnostics watchdog prints the checker thread's frames) stay
+# attributable; shrinking and optimization still apply to method bodies.
+-keepnames class io.github.dingyi222666.luaparser.** { *; }
 -keep class io.github.dingyi222666.luaparser.sample.R$* { *; }
 -keep class io.github.dingyi222666.luaparser.sample.** { *; }
 -keep class androidx.lifecycle.** { *; }
