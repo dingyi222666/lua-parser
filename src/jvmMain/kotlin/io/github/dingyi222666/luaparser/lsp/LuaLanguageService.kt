@@ -354,6 +354,13 @@ class LuaLanguageService(
                 io.github.dingyi222666.luaparser.semantic.workspace.std.BuiltinOverlayLoader
                     .compiledRevision(LuaVersion.ANDROLUA_5_3, includeFramework = false)
             }.onFailure { System.err.println("LSP: builtin overlay warmup failed: $it") }
+            // Then pre-assemble the workspace's own Java surfaces: the first check of
+            // a framework-importing document otherwise pays dozens of dex surface
+            // assemblies inside a single client request budget.
+            val sources = synchronized(stateLock) { indexedWorkspaceFiles.values.toList() }
+            val metadata = synchronized(stateLock) { workspaceMetadata.toMap() }
+            runCatching { liveBufferEngine.warmJavaSurfaces(sources, metadata) }
+                .onFailure { System.err.println("LSP: java surface warmup failed: $it") }
         }, "lsp-builtin-warmup").apply { isDaemon = true; start() }
     }
 

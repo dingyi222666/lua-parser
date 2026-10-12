@@ -368,6 +368,38 @@ open class JvmWorkspaceEngine(
         java.util.concurrent.ConcurrentHashMap<TargetMemoKey, java.util.Optional<WorkspaceImportedSymbol>>()
     private var targetMemoSweepCounter = 0
 
+    /**
+     * Pre-assembles the Java surfaces a workspace's own sources reference, OFF the
+     * interactive path. The first live-diagnostics check of a framework-importing
+     * document otherwise assembles dozens of dex class surfaces inside the client's
+     * request budget (device-measured: one 5KB document's first check ran past 10s
+     * in toModuleType/descriptor chains). Called once at service initialize with the
+     * indexed workspace sources; results land in the provider's process-lifetime
+     * caches, so the later check hits them.
+     */
+    internal fun warmJavaSurfaces(sources: Collection<String>, metadata: Map<String, String>) {
+        if (sources.isEmpty()) return
+        val configuration = JvmWorkspaceConfiguration.fromMetadata(metadata).normalized()
+        val targets = linkedSetOf<String>()
+        val classLikes = linkedSetOf<String>()
+        val importRegex = Regex("""import\s*['"]([^'"\n]+)['"]""")
+        val bindClassRegex = Regex("""bindClass\(\s*['"]([A-Za-z_][\w.$]*)['"]""")
+        sources.forEach { source ->
+            importRegex.findAll(source).forEach { targets.add(it.groupValues[1].trim()) }
+            bindClassRegex.findAll(source).forEach { classLikes.add(it.groupValues[1]) }
+        }
+        targets.forEach { target ->
+            runCatching { classModuleProvider.importedSymbolForTarget(target, configuration) }
+        }
+        classLikes.forEach { name ->
+            if (!name.contains('.')) {
+                runCatching { classModuleProvider.implicitClassSymbol(name, configuration) }
+            } else {
+                runCatching { classModuleProvider.importedSymbolForTarget(name, configuration) }
+            }
+        }
+    }
+
     private fun memoizedSymbolForTarget(
         target: String,
         configuration: JvmWorkspaceConfiguration,
