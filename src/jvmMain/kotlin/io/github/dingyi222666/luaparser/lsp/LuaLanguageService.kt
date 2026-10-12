@@ -343,6 +343,12 @@ class LuaLanguageService(
      */
     private fun warmBuiltinOverlay() {
         if (!builtinOverlayWarmed.compareAndSet(false, true)) return
+        // Surface assembly inside the dex adapter must observe the same per-thread
+        // checkpoints as the engines: a framework class surface is assembled from
+        // hundreds of descriptor translations (2-8s per class on the emulator) and
+        // a superseded check assembling it must abort mid-class.
+        io.github.dingyi222666.luaparser.interop.jvm.DexClassModelAdapter.analysisCheckpoint =
+            ::checkLiveAnalysisCurrent
         Thread({
             runCatching {
                 io.github.dingyi222666.luaparser.semantic.workspace.std.BuiltinOverlayLoader

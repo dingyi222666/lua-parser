@@ -184,6 +184,21 @@ object DexClassModelAdapter {
      */
     private fun binaryNameKey(binaryName: String): String = binaryName.replace('/', '.')
 
+    // Interactive cancellation hook for surface assembly: one large framework
+    // class (hundreds of methods, each a descriptor-to-type translation) ran
+    // 2-8s per device stack sample with no cancellation point, letting a
+    // superseded live-diagnostics check outrun every client budget. The LSP
+    // service wires this to its per-thread analysis checkpoint.
+    @Volatile
+    var analysisCheckpoint: () -> Unit = {}
+    private var surfaceAssemblyTicks = 0L
+
+    private fun surfaceAssemblyCheckpoint() {
+        if (++surfaceAssemblyTicks % 16 == 0L) {
+            runCatching { analysisCheckpoint() }
+        }
+    }
+
     private fun javaClassTypeFor(
         cls: DexClass,
         dexByName: Map<String, DexClass>,
@@ -194,6 +209,7 @@ object DexClassModelAdapter {
         if (clsKey in resolving) {
             return typeReferenceForBinaryName(cls.binaryName)
         }
+        surfaceAssemblyCheckpoint()
         val javaName = javaTypeNameFor(cls.binaryName)
         // Members of cls resolve L-descriptors with cls itself on the resolving
         // stack so self-referential fields/methods degrade to shells. In-set
@@ -234,6 +250,7 @@ object DexClassModelAdapter {
         }
 
         groupedVisibleMethods(cls).forEach { (name, overloads) ->
+            surfaceAssemblyCheckpoint()
             val signatures = overloads.map { overload ->
                 functionTypeFor(overload, dexByName, memberResolving, memberDepth)
             }

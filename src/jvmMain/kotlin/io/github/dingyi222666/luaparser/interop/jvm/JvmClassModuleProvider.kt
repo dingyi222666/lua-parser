@@ -1086,6 +1086,7 @@ class JvmClassModuleProvider(
         val resources = runCatching { classLoader.getResources(path) }.getOrNull()
         if (resources != null) {
             while (resources.hasMoreElements()) {
+                analysisCheckpoint()
                 val url = resources.nextElement()
                 when (url.protocol) {
                     "file" -> collectClassesFromDirectory(url.path, packageName, classNames)
