@@ -50,6 +50,25 @@ data class JavaClassType(
     override val displayName: String
         get() = javaName.canonicalName
 
+    // Structural hashCode over a framework-class member graph is O(members) and is
+    // paid by every union/intersection set-add during normalization (device stack
+    // samples: 2-4s of pure hashCode chains per check). The graph is immutable, so
+    // compute it once per instance and reuse; equals stays the data-class
+    // structural comparison, so the contract is unchanged.
+    private val cachedHashCode: Int by lazy(LazyThreadSafetyMode.PUBLICATION) {
+        var h = javaName.hashCode()
+        h = h * 31 + constructors.hashCode()
+        h = h * 31 + staticMembers.hashCode()
+        h = h * 31 + instanceMembers.hashCode()
+        h = h * 31 + innerClasses.hashCode()
+        h = h * 31 + (superClass?.hashCode() ?: 0)
+        h = h * 31 + interfaces.hashCode()
+        h = h * 31 + typeParameters.hashCode()
+        h
+    }
+
+    override fun hashCode(): Int = cachedHashCode
+
     // These maps belong to this immutable type. A process-wide cache retained
     // obsolete workspace graphs indefinitely and collided on identity hashes.
     private val flattenedStatics by lazy { collectStaticMembers(linkedSetOf()) }

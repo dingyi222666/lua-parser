@@ -65,7 +65,22 @@ object WorkspaceDirtySetPlanner {
     ): Set<VirtualPath> {
         val allPaths = previousSnapshots.keys + currentSnapshots.keys
         return allPaths.filterTo(linkedSetOf()) { path ->
-            previousSnapshots[path] != currentSnapshots[path]
+            val previous = previousSnapshots[path]
+            val current = currentSnapshots[path]
+            if (previous === current) return@filterTo false
+            if (previous == null || current == null) return@filterTo true
+            // Whole-FileSnapshot structural equals deep-walks the semantic model
+            // (ModuleType → JavaClassType → hundreds of members) for every provider
+            // path on every update — device-measured seconds of pure equals/hashCode
+            // per update. What distinguishes a changed document for dirty planning is
+            // exactly its source, its public fingerprint and its recovery diagnostics;
+            // identical triples mean an unchanged public surface.
+            previous.semanticFile?.source != current.semanticFile?.source ||
+                previous.cacheKey != current.cacheKey ||
+                previous.factsSignature != current.factsSignature ||
+                previous.publicFingerprint != current.publicFingerprint ||
+                previous.semanticFile?.recoveryDiagnostics != current.semanticFile?.recoveryDiagnostics ||
+                previous.semanticFile?.model?.getDiagnostics() != current.semanticFile?.model?.getDiagnostics()
         }
     }
 
