@@ -124,3 +124,49 @@ Unified lexical/member query index revision passed 2,934 JVM tests and Android E
 `/tmp/lua-query-index-logcat.log` measured incremental completion at 20,234ms and popup at
 10,202ms despite first table completion 5,809ms and warm table 448–808ms. Position-rule
 consolidation removed duplicate scans but cannot support a claim of overall performance success.
+
+## Live-diagnostics cold-path profile — 2026-10-12 (round 2)
+
+Method: release APK on the remote API 28 emulator with temporary server-side timing
+logs (`liveDiagnostics begin/checked`, checker-stage split, slow-expression log ≥200ms).
+Reproduces the two open E2E failures that also fail at clean HEAD
+(`dynamicallyImportedDexCompletesJavaObjectsInsideLuaTables`,
+`openCompleteEditSwitchFormatSaveAndRecreate`).
+
+### Measured chain for a diagnostics-after-edit publication
+
+1. Live analysis after didChange: 1.2–1.5s (release) — healthy.
+2. `scheduleLiveDiagnostics` worker: check of main.lua takes up to **9.0s**
+   (`checked main.lua in 9015ms`); the stage split attributes nearly all of it to
+   `ExpressionUsageChecker.check` (expr=**6,275ms**, sigReturn ≤81ms, decls ≤62).
+3. Each didChange during a 9s check produces a new binder; the obsolete check is
+   dropped (begin-without-checked) and the work restarts, so the 10s client budget
+   expires before any checker warning is published.
+4. Debug builds multiply stage 1 to ~10.2s and fail 5/7 — the timing gates must be
+   judged on release builds only.
+
+### Slow-expression profile (same checker run)
+
+- `D @[141,21]` (Java-instance hydration path): **3,980ms / 2,625ms / 1,913ms /
+  1,177ms / 1,093ms** — the same fixture expressions re-evaluated per distinct
+  lexical `Context`.
+- `F @[84,1]` 3,402ms / 2,889ms; `F @[28,1]` 3,849ms; repeated `j/M @[185,12]`
+  evaluations at 200–1,400ms each.
+- The evaluator caches are per-instance (`expressionTypeCache`,
+  `contextualExpressionTypeCache` keyed by `(node, Context)`, and the AndroLua
+  hydrated-surface caches), and `Context` is a clean data class — so the repeats
+  are per-scope typings, each paying a fresh Java/DEX member-surface hydration
+  that costs seconds on this CPU. The live-diagnostics worker builds a NEW
+  `WorkspaceModuleResolver` + evaluator per work item, so none of that work is
+  reused across checker runs (deliberate cache separation vs. the query resolver).
+
+### Required architecture fix (next round)
+
+Move the expensive Java/DEX member-surface hydration behind a cache owned by the
+**workspace revision** (e.g. on `WorkspaceModuleGraph` / the snapshot's provider
+objects, keyed by class identity and invalidated with the snapshot), so the
+checker's evaluator, the query resolver and completion share one hydration result
+per (class, revision) without sharing mutable caches. Target: checker cold path
+for the fixture workspace ≤2s so a warning publishes within the 10s budget even
+after one invalidation. Same mechanism should cut the dynamic-DEX first
+completion (currently ~5.7s server-side in the failing test).
