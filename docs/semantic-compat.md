@@ -19,25 +19,27 @@ Step 25 makes the semantic pipeline the single implementation path for in-repo s
 
 Workspace-level semantic queries now sit one layer above file-local models through `LuaWorkspaceEngine`, `WorkspaceSnapshot`, and `LuaWorkspaceQueryFacade`.
 
-## Compatibility API
+## Retired compatibility API (2026-10-12)
 
-The following APIs remain for callers that still import the pre-pipeline surface:
+The pre-pipeline legacy surface was retired as part of the architecture refactor. It had no
+in-repo production callers (android/, editors/, and tools/ consume the LSP protocol, not the
+semantic packages), and every consumer path is covered by the pipeline API above.
 
-- `SemanticAnalyzer`
-- `AnalysisResult`
-- legacy `Diagnostic`
-- `semantic.symbol.SymbolTable`
-- `semantic.symbol.GlobalSymbolTable`
-- legacy `semantic.types.*` facades such as `TypeAnnotationParser`
-- bridge types under `semantic.types.bridges`
+Removed:
 
-These compatibility APIs do not run a separate analyzer. They translate pipeline output into legacy shapes.
+- `SemanticAnalyzer` and `AnalysisResult` / legacy `Diagnostic`
+- `semantic.symbol.SymbolTable` and `semantic.symbol.GlobalSymbolTable`
+- legacy `semantic.types.Type` hierarchy and `semantic.types.TypeSyntax`
+- `semantic.types.TypeAnnotationParser` and the `semantic.types.bridges` converters
+- `semantic.types.syntax.toSyntaxAst` / `toLegacySyntax` bridge helpers
 
-## Compatibility guarantees
+Also removed with them: the synthetic "Type X is not assignable to type Y" adapter diagnostic,
+which no production path consumed; type-mismatch reporting is owned by the checker passes
+(`ExpressionUsageChecker` / `CallChecker`).
 
-- diagnostics exposed by `SemanticAnalyzer().analyze(...)` come from pipeline diagnostics, with only documented legacy translation layered on top
-- legacy symbol tables preserve compatibility-oriented scope visibility for existing callers
-- legacy type parsing helpers remain available for callers importing `semantic.types.*`
+Migration: use `SemanticPipeline().analyze(ast)` and read `SemanticAnalysisResult.model`
+(`SemanticModel` diagnostics, completions, scopes, symbols). Scope visibility and shadowing
+behavior is covered by `SemanticPipelinePublicFacadeTddTest` and the binder visibility tests.
 
 ## Removed migration leftovers
 

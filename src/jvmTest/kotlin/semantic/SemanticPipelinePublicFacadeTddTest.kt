@@ -2,7 +2,6 @@ package semantic
 
 import io.github.dingyi222666.luaparser.parser.LuaParser
 import io.github.dingyi222666.luaparser.parser.ast.node.Position
-import io.github.dingyi222666.luaparser.semantic.SemanticAnalyzer
 import io.github.dingyi222666.luaparser.semantic.SemanticPipeline
 import io.github.dingyi222666.luaparser.semantic.api.CompletionItemKind
 import io.github.dingyi222666.luaparser.semantic.model.SemanticAnalysisResult
@@ -18,11 +17,9 @@ import kotlin.test.assertTrue
  * Locks the public entrypoints that external callers / JVM LSP layers depend on:
  * - [SemanticPipeline] default construction and [SemanticPipeline.analyze]
  * - analyze result model completion facade ([SemanticModel.getCompletionsAt])
- * - deprecated [SemanticAnalyzer] still constructs and adapts pipeline output
  *
  * Test-only; product edits are out of scope for this task.
  */
-@Suppress("DEPRECATION")
 class SemanticPipelinePublicFacadeTddTest {
 
     private val parser = LuaParser()
@@ -162,64 +159,6 @@ class SemanticPipelinePublicFacadeTddTest {
 
         assertTrue("alpha" in labelsA)
         assertEquals(labelsA, labelsB)
-    }
-
-    // -------------------------------------------------------------------------
-    // Deprecated SemanticAnalyzer still constructs / adapts
-    // -------------------------------------------------------------------------
-
-    @Test
-    fun deprecatedSemanticAnalyzerStillConstructsWithDefaultPipeline() {
-        val analyzer = SemanticAnalyzer()
-        val result = analyzer.analyze(parser.parse("local value = 1"))
-
-        assertNotNull(result)
-        assertNotNull(result.diagnostics)
-        assertNotNull(result.symbolTable)
-        assertNotNull(result.globalSymbolTable)
-    }
-
-    @Test
-    fun deprecatedSemanticAnalyzerAcceptsInjectedPipelineAndAnalyzes() {
-        val analyzer = SemanticAnalyzer(pipeline = SemanticPipeline())
-        val result = analyzer.analyze(
-            parser.parse(
-                """
-                local outer = 1
-                do
-                    local outer = "x"
-                    local inner = outer
-                end
-                """.trimIndent()
-            )
-        )
-
-        val scope = assertNotNull(result.globalSymbolTable.findTableAtPosition(Position(4, 23)))
-        val visible = scope.getAllVisibleSymbols(Position(4, 23))
-        assertEquals(1, visible.count { it.name == "outer" })
-        assertTrue(visible.any { it.name == "inner" })
-    }
-
-    @Test
-    fun deprecatedAnalyzerDiagnosticsAlignWithPipelineMessagesForSharedCases() {
-        val source = """
-            ---@param first string
-            ---@param missing number
-            ---@return string
-            local function render(first)
-                return 1, 2
-            end
-        """.trimIndent()
-        val chunk = parser.parse(source)
-
-        val pipelineMessages = pipeline.analyze(chunk).model.getDiagnostics().map { it.message }
-        val legacyMessages = SemanticAnalyzer().analyze(chunk).diagnostics.map { it.message }
-
-        assertTrue(pipelineMessages.isNotEmpty(), "Expected pipeline diagnostics for doc/signature case")
-        assertTrue(
-            pipelineMessages.all { message -> legacyMessages.contains(message) },
-            "Legacy analyzer should surface pipeline diagnostics; pipeline=$pipelineMessages legacy=$legacyMessages"
-        )
     }
 
     // -------------------------------------------------------------------------

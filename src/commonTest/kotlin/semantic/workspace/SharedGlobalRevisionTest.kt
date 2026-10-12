@@ -48,7 +48,11 @@ class SharedGlobalRevisionTest {
             VirtualPath.of("provider.lua") to "Unrelated={object=luajava.bindClass('fixture.Expensive')}"
         ))).snapshot
         unrelatedResolutions = 0
-        val selective = LuaWorkspaceQueryFacade(snapshot).completionsMatching(main, Position(1, 1)) {
+        // Caret inside the declared name: the local is visible here (start-inclusive
+        // identifier range) for BOTH the model and facade visibility predicates, so this
+        // query is deterministic in any fork/test ordering. The former Position(1, 1)
+        // preceded the declaration and only passed via unspecified cross-test state.
+        val selective = LuaWorkspaceQueryFacade(snapshot).completionsMatching(main, Position(1, 8)) {
             it.startsWith("rec")
         }.map { it.label }
         assertTrue("receiver" in selective, selective.toString())

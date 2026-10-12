@@ -1,10 +1,5 @@
 package semantic.types.model
 
-import io.github.dingyi222666.luaparser.semantic.types.FunctionType as LegacyFunctionType
-import io.github.dingyi222666.luaparser.semantic.types.GenericType as LegacyGenericType
-import io.github.dingyi222666.luaparser.semantic.types.ParameterType as LegacyParameterType
-import io.github.dingyi222666.luaparser.semantic.types.PrimitiveType as LegacyPrimitiveType
-import io.github.dingyi222666.luaparser.semantic.types.bridges.toModelType
 import io.github.dingyi222666.luaparser.semantic.types.model.AliasType
 import io.github.dingyi222666.luaparser.semantic.types.model.AppliedType
 import io.github.dingyi222666.luaparser.semantic.types.model.ArrayType
@@ -60,33 +55,6 @@ class TypeModelTest {
         assertEquals("number", classType.getAllFields().getValue("id").displayName)
         assertEquals("WidgetAlias", alias.displayName)
         assertEquals("\"ready\"", (union.types.elementAt(1)).displayName)
-    }
-
-    @Test
-    fun bridgesLegacyTypesIntoNewModel() {
-        val legacy = LegacyFunctionType(
-            parameters = listOf(LegacyParameterType("value", LegacyPrimitiveType.STRING)),
-            returnType = LegacyPrimitiveType.NUMBER
-        )
-
-        val converted = assertIs<FunctionType>(legacy.toModelType())
-
-        assertEquals("fun(value: string): number", converted.displayName)
-        assertEquals("string", converted.parameters.single().type.displayName)
-    }
-
-    @Test
-    fun preservesGenericApplicationsInLegacyBridge() {
-        val converted = assertIs<AppliedType>(
-            LegacyGenericType(
-                baseName = "Result",
-                typeParameters = listOf(LegacyPrimitiveType.STRING, LegacyPrimitiveType.NUMBER)
-            ).toModelType()
-        )
-
-        assertEquals("Result", converted.baseName)
-        assertEquals(listOf("string", "number"), converted.typeArguments.map { it.displayName })
-        assertEquals("Result<string, number>", converted.displayName)
     }
 
     @Test

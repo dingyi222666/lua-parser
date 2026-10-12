@@ -446,10 +446,7 @@ class LuaLanguageService(
             // Reconcile edits without holding the request lock. The foreground
             // continues to serve live-buffer queries until publication is atomic.
             result = synchronized(engineLock) {
-                engine.update(result.snapshot, WorkspaceDelta(
-                    upserts = latestFiles.filter { (path, source) -> builtFiles[path] != source },
-                    removals = builtFiles.keys - latestFiles.keys
-                ), reporter = cancellationReporter)
+                engine.update(result.snapshot, workspaceDelta(builtFiles, latestFiles), reporter = cancellationReporter)
             }
             builtFiles = latestFiles
         }
@@ -855,9 +852,8 @@ class LuaLanguageService(
         val (previous, syncedFiles, files) = synchronized(stateLock) {
             Triple(snapshot, lastSyncedFiles, currentWorkspaceFiles())
         }
-        val upserts = files.filter { (path, source) -> syncedFiles[path] != source }
-        val removals = syncedFiles.keys - files.keys
-        if (upserts.isEmpty() && removals.isEmpty()) {
+        val delta = workspaceDelta(syncedFiles, files)
+        if (delta.upserts.isEmpty() && delta.removals.isEmpty()) {
             // Opening an indexed file has no source delta, but its checker may
             // never have run. Closing/reopening also needs the current report.
             val openFiles = synchronized(stateLock) { openDocuments.toMap() }
@@ -865,7 +861,7 @@ class LuaLanguageService(
             return emptyList()
         }
         val result = synchronized(engineLock) {
-            engine.update(previous, WorkspaceDelta(upserts = upserts, removals = removals), reporter = cancellationReporter)
+            engine.update(previous, delta, reporter = cancellationReporter)
         }
         var diagnosticFiles: Map<VirtualPath, String>? = null
         val diagnostics = synchronized(stateLock) {
@@ -916,8 +912,7 @@ class LuaLanguageService(
      */
     fun didChange(params: DidChangeTextDocumentParams): List<PublishDiagnosticsParams> = synchronized(stateLock) {
         val path = pathOf(params.textDocument)
-        val baseSource = openDocuments[path]
-            ?: indexedWorkspaceFiles[path]
+        val baseSource = sourceFor(path)
             ?: snapshot.files[path]?.semanticFile?.source
             ?: ""
         openDocuments[path] = applyContentChanges(baseSource, params.contentChanges)
@@ -1150,23 +1145,29 @@ class LuaLanguageService(
         return resolved
     }
 
+    /**
+     * Single presentation table for completion kinds: (resolve-time detail, display
+     * name). Detail and display deliberately differ only for Method, whose resolve
+     * detail stays "function" while its markdown display reads "method".
+     */
+    private val completionKindPresentation:
+        Map<org.eclipse.lsp4j.CompletionItemKind, Pair<String, String>> = mapOf(
+            org.eclipse.lsp4j.CompletionItemKind.Function to ("function" to "function"),
+            org.eclipse.lsp4j.CompletionItemKind.Method to ("function" to "method"),
+            org.eclipse.lsp4j.CompletionItemKind.Variable to ("variable" to "variable"),
+            org.eclipse.lsp4j.CompletionItemKind.Field to ("field" to "field"),
+            org.eclipse.lsp4j.CompletionItemKind.Property to ("field" to "field"),
+            org.eclipse.lsp4j.CompletionItemKind.Keyword to ("keyword" to "keyword"),
+            org.eclipse.lsp4j.CompletionItemKind.Snippet to ("snippet" to "snippet"),
+            org.eclipse.lsp4j.CompletionItemKind.Module to ("module" to "module"),
+            org.eclipse.lsp4j.CompletionItemKind.Class to ("class" to "class"),
+            org.eclipse.lsp4j.CompletionItemKind.TypeParameter to ("type" to "type"),
+            org.eclipse.lsp4j.CompletionItemKind.Text to ("" to "text")
+        )
+
     private fun defaultDetailForCompletionKind(
         kind: org.eclipse.lsp4j.CompletionItemKind?
-    ): String? {
-        return when (kind) {
-            org.eclipse.lsp4j.CompletionItemKind.Function,
-            org.eclipse.lsp4j.CompletionItemKind.Method -> "function"
-            org.eclipse.lsp4j.CompletionItemKind.Variable -> "variable"
-            org.eclipse.lsp4j.CompletionItemKind.Field,
-            org.eclipse.lsp4j.CompletionItemKind.Property -> "field"
-            org.eclipse.lsp4j.CompletionItemKind.Keyword -> "keyword"
-            org.eclipse.lsp4j.CompletionItemKind.Snippet -> "snippet"
-            org.eclipse.lsp4j.CompletionItemKind.Module -> "module"
-            org.eclipse.lsp4j.CompletionItemKind.Class -> "class"
-            org.eclipse.lsp4j.CompletionItemKind.TypeParameter -> "type"
-            else -> null
-        }
-    }
+    ): String? = kind?.let { completionKindPresentation[it]?.first?.takeIf(String::isNotBlank) }
 
     /**
      * Lightweight markdown for resolve-time docs. Reuses label/kind/detail already on the
@@ -1189,20 +1190,7 @@ class LuaLanguageService(
     }
 
     private fun completionKindDisplayName(kind: org.eclipse.lsp4j.CompletionItemKind): String {
-        return when (kind) {
-            org.eclipse.lsp4j.CompletionItemKind.Function -> "function"
-            org.eclipse.lsp4j.CompletionItemKind.Method -> "method"
-            org.eclipse.lsp4j.CompletionItemKind.Variable -> "variable"
-            org.eclipse.lsp4j.CompletionItemKind.Field,
-            org.eclipse.lsp4j.CompletionItemKind.Property -> "field"
-            org.eclipse.lsp4j.CompletionItemKind.Keyword -> "keyword"
-            org.eclipse.lsp4j.CompletionItemKind.Snippet -> "snippet"
-            org.eclipse.lsp4j.CompletionItemKind.Module -> "module"
-            org.eclipse.lsp4j.CompletionItemKind.Class -> "class"
-            org.eclipse.lsp4j.CompletionItemKind.TypeParameter -> "type"
-            org.eclipse.lsp4j.CompletionItemKind.Text -> "text"
-            else -> kind.name.lowercase()
-        }
+        return completionKindPresentation[kind]?.second ?: kind.name.lowercase()
     }
 
     fun signatureHelp(params: SignatureHelpParams): SignatureHelp? = synchronized(stateLock) {
@@ -1371,7 +1359,7 @@ class LuaLanguageService(
     }
 
     private fun computeSemanticTokensFull(path: VirtualPath): SemanticTokens {
-        val source = openDocuments[path] ?: indexedWorkspaceFiles[path]
+        val source = sourceFor(path)
         if (source.isNullOrEmpty()) {
             semanticTokensCache.remove(path)
             return SemanticTokens(emptyList())
@@ -1395,17 +1383,12 @@ class LuaLanguageService(
     }
 
     /**
-     * TASK-542 — textDocument/codeAction quick-fix surface for published diagnostics.
-     * Returns well-formed CodeAction/Command entries when a deterministic fix is
-     * available; otherwise an empty list. Never throws for empty selection,
-     * inverted/out-of-bounds ranges, or empty diagnostic context.
+     * TASK-542 — textDocument/codeAction surface. There is no deterministic auto-fix
+     * for parse/type diagnostics yet, so the contract is a well-formed zero-action
+     * list (no UnsupportedOperationException) for any params shape.
      */
-    fun codeActions(params: CodeActionParams): List<Either<Command, CodeAction>> = synchronized(stateLock) {
-        try {
-            collectCodeActions(params)
-        } catch (_: Exception) {
-            emptyList()
-        }
+    fun codeActions(params: CodeActionParams): List<Either<Command, CodeAction>> {
+        return emptyList()
     }
 
     /**
@@ -1678,7 +1661,7 @@ class LuaLanguageService(
             return null
         }
         val path = pathOf(document)
-        val source = openDocuments[path] ?: indexedWorkspaceFiles[path] ?: return null
+        val source = sourceFor(path) ?: return null
         val parserPosition = lspPosition.toParserPosition()
         val semanticFile = snapshot.files[path]?.semanticFile
 
@@ -1728,26 +1711,31 @@ class LuaLanguageService(
         )
     }
 
-    private fun renameIdentifierAt(
+    /**
+     * One identifier-at-caret scan shared by rename, highlight and call-hierarchy:
+     * exact start match first, then the identifier covering the caret (inclusive
+     * start) from the public identifiers index.
+     */
+    private fun identifierAt(
         semanticFile: WorkspaceSemanticFile?,
         position: Position
     ): Identifier? {
         if (semanticFile == null) {
             return null
         }
-        // Exact start match first.
         semanticFile.identifiers.firstOrNull { identifier ->
             identifier.range.start.line == position.line &&
                 identifier.range.start.column == position.column
         }?.let { return it }
-
-        // Identifier covering the caret (inclusive start). Uses the public
-        // identifiers index only — WorkspaceSemanticFile.nodeAt is package-internal
-        // and not visible from jvmMain/lsp (TASK-538 compile fix).
         return semanticFile.identifiers.lastOrNull { identifier ->
             rangeContainsHighlight(identifier.range, position)
         }
     }
+
+    private fun renameIdentifierAt(
+        semanticFile: WorkspaceSemanticFile?,
+        position: Position
+    ): Identifier? = identifierAt(semanticFile, position)
 
     /**
      * True when [identifier] resolves to a renamable local-like binding:
@@ -1760,27 +1748,9 @@ class LuaLanguageService(
         identifier: Identifier,
         position: Position
     ): Boolean {
-        // AttributeIdentifier is always a local binding site.
-        if (identifier is io.github.dingyi222666.luaparser.parser.ast.node.AttributeIdentifier) {
-            return true
-        }
-        val parent = identifier.parentOrNull()
-        when (parent) {
-            is LocalStatement -> if (parent.init.any { it === identifier }) return true
-            is ForNumericStatement -> if (parent.variable === identifier) return true
-            is ForGenericStatement -> if (parent.variables.any { it === identifier }) return true
-            is FunctionDeclaration -> {
-                if (parent.params.any { it === identifier }) return true
-                // Local function names are lexical locals; global function names are not
-                // same-file lexical local rename targets.
-                if (functionDeclarationNameIs(parent.identifier, identifier)) {
-                    return parent.isLocal
-                }
-            }
-        }
-
-        // Direct AST local flag on the identifier node (decl site).
-        if (identifier.isLocal) {
+        // AttributeIdentifier / local decl / for-var / param / local function name
+        // all resolve through the shared local-binding-site predicate.
+        if (isLocalBindingSite(identifier)) {
             return true
         }
 
@@ -1820,8 +1790,13 @@ class LuaLanguageService(
         return sameFileReferences(path, position).isNotEmpty()
     }
 
-    /** True when [identifier] is a declaration-site local / param / for-var / local function name. */
-    private fun isLocalBindingIdentifier(identifier: Identifier): Boolean {
+    /**
+     * Shared local-binding-site predicate (single owner for rename eligibility,
+     * document-highlight write kinds and same-file local-binding scans):
+     * attribute identifiers, `local`-flagged declarations, local-statement init
+     * names, for-loop variables, function parameters and local function names.
+     */
+    private fun isLocalBindingSite(identifier: Identifier): Boolean {
         if (identifier.isLocal) {
             return true
         }
@@ -1840,6 +1815,10 @@ class LuaLanguageService(
             else -> false
         }
     }
+
+    /** True when [identifier] is a declaration-site local / param / for-var / local function name. */
+    private fun isLocalBindingIdentifier(identifier: Identifier): Boolean =
+        isLocalBindingSite(identifier)
 
     private fun isValidLuaIdentifier(name: String): Boolean {
         if (name.isEmpty()) {
@@ -2010,7 +1989,7 @@ class LuaLanguageService(
     ): PublishDiagnosticsParams {
         // Publish findings from the current revision. A recoverable syntax error in one
         // region must not hide valid semantic findings elsewhere in the document.
-        val buffer = openDocuments[path] ?: indexedWorkspaceFiles[path]
+        val buffer = sourceFor(path)
         val semanticFile = (checkedFile ?: snapshot.files[path])?.semanticFile
         val bufferAnalyzed = semanticFile?.let { semanticFile ->
             buffer != null && semanticFile.source == buffer
@@ -2110,7 +2089,7 @@ class LuaLanguageService(
      * at the position it actually occurs.
      */
     private fun parseDiagnostics(path: VirtualPath): List<Diagnostic> {
-        val source = openDocuments[path] ?: indexedWorkspaceFiles[path] ?: return emptyList()
+        val source = sourceFor(path) ?: return emptyList()
         val semanticFile = snapshot.files[path]?.semanticFile
         if (semanticFile != null && semanticFile.source == source) {
             return semanticFile.recoveryDiagnostics.map { parseDiagnostic(it.message, it.range) }
@@ -2192,6 +2171,35 @@ class LuaLanguageService(
         }
 
     /** Synchronous notification path for JVM clients; Android uses the deferred worker. */
+    /**
+     * One delta computation shared by the foreground incremental refresh, the
+     * deferred-analysis worker and the background rebuild reconcile loop:
+     * upserts are paths whose source differs from [previous], removals are
+     * paths absent from [files].
+     */
+    /** Open-buffer overlay first, then the indexed workspace source. */
+    private fun sourceFor(path: VirtualPath): String? =
+        openDocuments[path] ?: indexedWorkspaceFiles[path]
+
+    private fun workspaceDelta(
+        previous: Map<VirtualPath, String>,
+        files: Map<VirtualPath, String>
+    ): WorkspaceDelta {
+        val upserts = linkedMapOf<VirtualPath, String>()
+        val removals = linkedSetOf<VirtualPath>()
+        for ((path, source) in files) {
+            if (previous[path] != source) {
+                upserts[path] = source
+            }
+        }
+        for (path in previous.keys) {
+            if (path !in files) {
+                removals += path
+            }
+        }
+        return WorkspaceDelta(upserts = upserts, removals = removals)
+    }
+
     private fun refreshIncremental(): Set<VirtualPath> {
         val files = currentWorkspaceFiles()
         if (!snapshotReady) {
@@ -2207,29 +2215,14 @@ class LuaLanguageService(
         }
         workspaceGeneration += 1
 
-        val upserts = linkedMapOf<VirtualPath, String>()
-        val removals = linkedSetOf<VirtualPath>()
-        for ((path, source) in files) {
-            if (lastSyncedFiles[path] != source) {
-                upserts[path] = source
-            }
-        }
-        for (path in lastSyncedFiles.keys) {
-            if (path !in files) {
-                removals += path
-            }
-        }
-
-        if (upserts.isEmpty() && removals.isEmpty()) {
+        val delta = workspaceDelta(lastSyncedFiles, files)
+        if (delta.upserts.isEmpty() && delta.removals.isEmpty()) {
             return emptySet()
         }
 
         val result = synchronized(engineLock) { engine.update(
             previous = snapshot,
-            delta = WorkspaceDelta(
-                upserts = upserts,
-                removals = removals
-            )
+            delta = delta
         ) }
         incrementalUpdateCount += 1
         applyWorkspaceResult(result, files)
@@ -2619,7 +2612,9 @@ class LuaLanguageService(
         semanticFile: WorkspaceSemanticFile,
         range: Range
     ): Identifier? {
-        // Prefer an exact start match (already identifier-shaped ranges).
+        // Exact start match and covering-identifier stages come from the shared
+        // identifierAt scan; the over-extended-highlight containment stage is
+        // highlight-specific and keeps its original precedence between them.
         semanticFile.identifiers.firstOrNull { identifier ->
             identifier.range.start.line == range.start.line &&
                 identifier.range.start.column == range.start.column
@@ -2632,12 +2627,7 @@ class LuaLanguageService(
                 identifier.range.start.line == range.start.line
         }?.let { return it }
 
-        // Fall back to the innermost identifier covering the highlight start.
-        // Do not call WorkspaceSemanticFile.nodeAt: it is an internal top-level
-        // extension in semantic.workspace and unresolved from jvmMain/lsp.
-        return semanticFile.identifiers.lastOrNull { identifier ->
-            rangeContainsHighlight(identifier.range, range.start)
-        }
+        return identifierAt(semanticFile, range.start)
     }
 
     /**
@@ -2647,23 +2637,22 @@ class LuaLanguageService(
      * Pure uses (reads) stay Read.
      */
     private fun isDocumentHighlightWriteSite(identifier: Identifier): Boolean {
+        // Declaration sites (local / for-var / param / local function name) are writes.
+        if (isLocalBindingSite(identifier)) {
+            return true
+        }
         val parent = identifier.parentOrNull() ?: return false
         return when (parent) {
-            is LocalStatement -> parent.init.any { it === identifier }
             is AssignmentStatement -> parent.init.any { lhs ->
                 lhs === identifier || assignmentLhsContainsIdentifier(lhs, identifier)
             }
-            is FunctionDeclaration -> {
+            is FunctionDeclaration ->
+                // Global function names are write sites too (they assign the global).
                 parent.identifier === identifier ||
-                    parent.params.any { it === identifier } ||
                     functionDeclarationNameIs(parent.identifier, identifier)
-            }
-            is ForGenericStatement -> parent.variables.any { it === identifier }
-            is ForNumericStatement -> parent.variable === identifier
-            is MemberExpression -> {
+            is MemberExpression ->
                 // Member assignment LHS: t.field = ... where highlight is on `field`.
                 parent.identifier === identifier && isAssignmentLhsExpression(parent)
-            }
             else -> false
         }
     }
@@ -2711,13 +2700,8 @@ class LuaLanguageService(
             compareHighlightPositions(position, range.end) <= 0
     }
 
-    private fun compareHighlightPositions(left: Position, right: Position): Int {
-        val lineComparison = left.line.compareTo(right.line)
-        if (lineComparison != 0) {
-            return lineComparison
-        }
-        return left.column.compareTo(right.column)
-    }
+    private fun compareHighlightPositions(left: Position, right: Position): Int =
+        io.github.dingyi222666.luaparser.semantic.binder.comparePositions(left, right)
 
 
     /**
@@ -3156,7 +3140,7 @@ class LuaLanguageService(
         requireSource: Boolean
     ): DocumentContext? {
         val path = pathOf(document)
-        val source = openDocuments[path] ?: indexedWorkspaceFiles[path]
+        val source = sourceFor(path)
         if (source == null || (requireSource && source.isEmpty())) {
             return null
         }
@@ -3220,7 +3204,7 @@ class LuaLanguageService(
             return emptyList()
         }
         val path = pathOf(document)
-        val source = openDocuments[path] ?: indexedWorkspaceFiles[path] ?: return emptyList()
+        val source = sourceFor(path) ?: return emptyList()
         if (source.isEmpty()) {
             // Empty buffer: only a no-op is safe (tests reject non-origin ranges).
             return emptyList()
@@ -3580,17 +3564,7 @@ class LuaLanguageService(
         chunk: ChunkNode,
         position: Position
     ): Identifier? {
-        if (semanticFile != null) {
-            semanticFile.identifiers.firstOrNull { identifier ->
-                identifier.range.start.line == position.line &&
-                    identifier.range.start.column == position.column
-            }?.let { return it }
-
-            // nodeAt is package-internal on WorkspaceSemanticFile; use identifiers + AST index.
-            semanticFile.identifiers.lastOrNull { identifier ->
-                rangeContainsHighlight(identifier.range, position)
-            }?.let { return it }
-        }
+        identifierAt(semanticFile, position)?.let { return it }
 
         // Fallback: walk chunk identifiers via NodePositionIndex when semantic file is thin.
         val index = positionIndexFor(chunk)
@@ -3962,19 +3936,6 @@ class LuaLanguageService(
         if (none { sameLspRange(it, range) }) {
             add(range)
         }
-    }
-
-    /**
-     * Soft code-action collection. The provider has no deterministic auto-fix yet for
-     * parse/type diagnostics, so every path — with or without client `only` filters,
-     * with or without context diagnostics — yields the same well-formed zero actions
-     * (no UnsupportedOperationException). The former kind/diagnostics gates were pure
-     * no-ops (both branches returned empty) and are collapsed into the single contract.
-     */
-    private fun collectCodeActions(
-        @Suppress("UNUSED_PARAMETER") params: CodeActionParams
-    ): List<Either<Command, CodeAction>> {
-        return emptyList()
     }
 
     /**

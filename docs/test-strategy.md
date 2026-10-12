@@ -33,10 +33,12 @@ campaign, but there is no inventory test or lockstep count assertion.
   method that loads and asserts them is the executable coverage.
 - Generated Gradle/build directories and production sources are never treated as
   tests.
-- `src/commonTest/kotlin/parser.common.kt` and
-  `src/jvmTest/kotlin/parser.jvm.kt` are historical annotated smoke files whose
-  names do not follow current discovery conventions. Rename or retire them only
-  in a dedicated change.
+- `src/commonTest/kotlin/parser.common.kt` is a historical annotated smoke file whose
+  name does not follow current discovery conventions. Rename or retire it only
+  in a dedicated change. `src/jvmTest/kotlin/parser.jvm.kt` was rewritten
+  (2026-10-12, legacy-analyzer retirement) as a pipeline-based JVM platform
+  smoke; its legacy analyzer/symbol-table assertions moved to
+  `SemanticPipelinePublicFacadeTddTest` and the binder visibility tests.
 
 ## Verification
 

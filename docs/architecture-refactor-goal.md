@@ -383,3 +383,45 @@ is behaviorally accepted; global lexical enumeration remains an expensive pendin
 Remote `/tmp/lua-query-index-monaco.log` passed the protocol smoke with real table/layout
 completion and advertised capabilities. Downloaded debug APK SHA256:
 `b3e8a345f9315833bb708dfdae8051dd401bfe89320b2692255c072c9dd14039`.
+
+## Round checkpoint — 2026-10-12 (session resume)
+
+- Validated query-index revision committed locally as `9279efb` (was previously uncommitted
+  working-tree state; remote working copy at `dingyi@10.1.1.14:/home/dingyi/projects/lua-parser-android-e2e`
+  verified byte-identical on key files via md5).
+- Production line metric for this session: `.kt` files under `src/commonMain`, `src/jvmMain`,
+  `src/jsMain` (test source sets excluded) = **47,943**. Recorded baseline 53,562; the 7,000-line
+  gate therefore requires ≤ 46,562 by the original metric (android/ `src` counted separately at
+  2,061). Plan: remove ≥ 3,000 lines so the gate holds under either counting variant.
+- Duplication audits running: LSP adapter layer, commonMain query/model layer. Legacy compat
+  surface and workspace/engine/interop audits queued (max 2 agents at a time).
+- Type-grammar consolidation verified already complete: `TypeAnnotationParser` delegates to the
+  single `TypeSyntaxParser`; `DocCommentSyntaxParser` reuses the same grammar helpers.
+- Remote execution paths confirmed: `tools/android-e2e-remote.sh` rsyncs the local tree to the
+  remote host and drives Gradle + API 28 emulator E2E there. No local Gradle.
+
+## Legacy surface retirement — 2026-10-12 (in validation)
+
+- Deleted the retired legacy compatibility closure (~2,279 production lines): `SemanticAnalyzer`,
+  `LegacyAnalysisAdapters`, `symbol/SymbolTable` + `GlobalSymbolTable`, legacy `types/Type`,
+  `types/TypeSyntax`, `types/TypeAnnotationParser`, `types/bridges/*`, `types/syntax/LegacyTypeSyntaxBridge`.
+  Verified zero production callers (android/editors/tools consume the LSP protocol only).
+- Tests updated in the same change: `parser.jvm.kt` rewritten as a pipeline-based JVM platform
+  smoke (legacy symbol-table assertions replaced by model equivalents); `LegacySemanticAnalyzerCompatibilityTest`
+  and `ModuleTypeBridgeTest` deleted; legacy-bridge tests removed from `TypeModelTest`,
+  `TypeSyntaxRendererTest`, `SemanticPipelinePublicFacadeTddTest`. README/`docs/semantic-compat.md`
+  updated with the retirement note and migration path.
+- LSP adapter consolidation (validated: 720 focused `lsp.*` tests green): one identifier-at-caret
+  scan, one local-binding-site predicate (rename/highlight/stripes share it), one completion-kind
+  presentation table, one workspace-delta computation (`refreshIncremental` /
+  `refreshDeferredWorkspace` / background reconcile), one `sourceFor(path)` ladder, delegated
+  `comparePositions`, collapsed always-empty codeAction collector.
+- Facade: removed the verified-dead double walker call behind `resolvedRequireForExportPathRoot`
+  (pure alias of `resolveRequireByWalkingExpressionBases`).
+- Flaky-test honesty: `SharedGlobalRevisionTest.local_member_query_does_not_hydrate_unrelated_workspace_globals`
+  (introduced in `9279efb`) failed under single-fork isolation on clean HEAD — its first query at
+  `Position(1,1)` precedes the declared identifier (`receiver@[1,7]`), contradicting both visibility
+  predicates; the earlier green full-suite evidence therefore did not exercise this assertion
+  deterministically. Fixed the query position to `Position(1,8)` (caret inside the declared name —
+  visible under both predicates); the no-hydration and shared-global assertions are unchanged.
+  The class now passes solo with `-PjvmTestForks=1`.

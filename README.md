@@ -6,7 +6,7 @@ A Lua 5.3 lexer, parser, AST, and semantic-analysis toolkit written in pure Kotl
 
 The current project scope is Lua 5.3 support plus ongoing Android-Lua/LuaJava analysis, JVM reflection interop, and a JVM language-server path. These areas are active work; README examples describe the intended integration surface without claiming final serialized verification has completed.
 
-Semantic analysis now uses the `SemanticPipeline` API. Legacy analyzer entry points remain available as compatibility wrappers over the pipeline.
+Semantic analysis uses the `SemanticPipeline` API; the former legacy analyzer entry points have been retired.
 
 ## Features
 
@@ -49,7 +49,7 @@ Use the `jvm.androidJar` metadata key or `JvmWorkspaceConfiguration.androidJar` 
 - [Java interop model guide](docs/java-interop-model.md): Java type shapes, LuaJava helper mapping, and extension points.
 - [JVM reflection and classloader design](docs/jvm-reflection-classloader-design.md): provider loading, package scanning, Android jar behavior, and limitations.
 - [JVM language-server usage](docs/language-server-usage.md): launch shape, LSP capabilities, settings, and request examples.
-- [Semantic compatibility APIs](docs/semantic-compat.md): pipeline-backed legacy API behavior.
+- [Semantic compatibility policy](docs/semantic-compat.md): retired legacy API surface and migration notes.
 - [Serialized verification workflow](docs/serialized-verification.md): one-at-a-time Gradle/test execution and lock rules.
 - [Test strategy and inventory](docs/test-strategy.md): parser, semantic, workspace, interop, LSP, and TDD inventory accounting.
 
@@ -123,7 +123,7 @@ fun main() {
 
 The returned `SemanticAnalysisResult` exposes the `SemanticModel` plus a lightweight summary.
 
-If you still depend on `SemanticAnalyzer`, `AnalysisResult`, or legacy symbol tables, they are kept as pipeline-backed compatibility APIs. See `docs/semantic-compat.md`.
+The former `SemanticAnalyzer` / `AnalysisResult` / legacy symbol-table API has been retired; `SemanticPipeline` and its `SemanticAnalysisResult` / `SemanticModel` are the single public semantic entry point. See `docs/semantic-compat.md` for the retirement note.
 
 ### JVM workspace interop
 

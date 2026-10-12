@@ -1,8 +1,5 @@
 package semantic.types.syntax
 
-import io.github.dingyi222666.luaparser.semantic.types.FunctionParameterSyntax as LegacyFunctionParameterSyntax
-import io.github.dingyi222666.luaparser.semantic.types.FunctionTypeSyntax as LegacyFunctionTypeSyntax
-import io.github.dingyi222666.luaparser.semantic.types.NamedTypeSyntax as LegacyNamedTypeSyntax
 import io.github.dingyi222666.luaparser.semantic.types.syntax.FunctionParameterSyntax
 import io.github.dingyi222666.luaparser.semantic.types.syntax.FunctionTypeSyntax
 import io.github.dingyi222666.luaparser.semantic.types.syntax.GenericTypeSyntax
@@ -23,7 +20,6 @@ import io.github.dingyi222666.luaparser.semantic.types.syntax.UnionTypeSyntax
 import io.github.dingyi222666.luaparser.semantic.types.syntax.VarargTypeSyntax
 import io.github.dingyi222666.luaparser.semantic.types.syntax.TypeSyntaxParser
 import io.github.dingyi222666.luaparser.semantic.types.syntax.render
-import io.github.dingyi222666.luaparser.semantic.types.syntax.toSyntaxAst
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
@@ -87,18 +83,6 @@ class TypeSyntaxRendererTest {
         assertEquals("[A, B?]", TupleTypeSyntax(listOf(NamedTypeSyntax("A"), NullableTypeSyntax(NamedTypeSyntax("B")))).render())
         assertEquals("A, B", MultiReturnTypeSyntax(listOf(NamedTypeSyntax("A"), NamedTypeSyntax("B"))).render())
         assertEquals("string...", VarargTypeSyntax(NamedTypeSyntax("string")).render())
-    }
-
-    @Test
-    fun normalizesLegacyVarargParameterNamesInBridge() {
-        val legacy = LegacyFunctionTypeSyntax(
-            parameters = listOf(
-                LegacyFunctionParameterSyntax("...", LegacyNamedTypeSyntax("string"), vararg = true)
-            ),
-            returnTypes = listOf(LegacyNamedTypeSyntax("nil"))
-        )
-
-        assertEquals("fun(string...): nil", legacy.toSyntaxAst().render())
     }
 
     @Test

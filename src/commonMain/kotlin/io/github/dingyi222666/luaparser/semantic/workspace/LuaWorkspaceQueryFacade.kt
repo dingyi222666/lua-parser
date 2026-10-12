@@ -83,7 +83,9 @@ class LuaWorkspaceQueryFacade(
         nameFilter: ((String) -> Boolean)?): List<CompletionItem> {
         val semanticFile = snapshot.files[path]?.semanticFile
         if (semanticFile != null) {
-            unterminatedStringCompletions(semanticFile, position)?.let { return it }
+            unterminatedStringCompletions(semanticFile, position)?.let {
+                return it
+            }
         }
         val model = semanticFile?.model
         val baseCompletions = if (model is io.github.dingyi222666.luaparser.semantic.model.DefaultSemanticModel)
@@ -1087,8 +1089,9 @@ class LuaWorkspaceQueryFacade(
         if (exportPath.isEmpty()) {
             return null
         }
-        val resolved = resolvedRequireForExportPathRoot(semanticFile, path, memberInitializer)
-            ?: resolveRequireByWalkingExpressionBases(semanticFile, path, memberInitializer)
+        // Both walkers used to be byte-identical (resolvedRequireForExportPathRoot was
+        // folded into resolveRequireByWalkingExpressionBases), so one call resolves the root.
+        val resolved = resolveRequireByWalkingExpressionBases(semanticFile, path, memberInitializer)
             ?: return null
         val export = resolver.exportedMember(resolved.provider.path, exportPath)
             ?: exportPath.lastOrNull()?.let { leaf ->
@@ -1179,7 +1182,7 @@ class LuaWorkspaceQueryFacade(
         // Keep each branch an expression of ResolvedRequire?. A while-loop block typed as Unit
         // previously made the whole when infer as Any? and failed compileKotlinJvm (TASK-674).
         return when (expression) {
-            is MemberExpression -> resolvedRequireForExportPathRoot(semanticFile, path, expression)
+            is MemberExpression -> resolveRequireByWalkingExpressionBases(semanticFile, path, expression)
             is IndexExpression -> resolveRequireByWalkingExpressionBases(semanticFile, path, expression)
             is Identifier, is CallExpression -> resolvedRequireForWorkspaceMemberReceiver(semanticFile, path, expression)
             else -> null
@@ -1797,7 +1800,7 @@ class LuaWorkspaceQueryFacade(
         // Nested require-alias chains (local second = first.nested; second.value) need the full
         // export path under the provider surface, not only the leaf segment.
         val exportPath = requireBackedExportPath(semanticFile, path, memberExpression) ?: return null
-        val resolved = resolvedRequireForExportPathRoot(semanticFile, path, memberExpression) ?: return null
+        val resolved = resolveRequireByWalkingExpressionBases(semanticFile, path, memberExpression) ?: return null
         return resolver.exportedMember(resolved.provider.path, exportPath)
             ?: resolver.exportedMember(resolved.provider.path, memberName).takeIf { exportPath.size == 1 }
     }
@@ -1859,16 +1862,6 @@ class LuaWorkspaceQueryFacade(
             else -> null
         }
     }
-
-    // resolvedRequireForExportPathRoot was byte-identical to the walker below and is folded
-    // into it: both walked Member/Index bases to a require-backed root with the same
-    // Identifier declaration ladder and CallExpression termination.
-    private fun resolvedRequireForExportPathRoot(
-        semanticFile: WorkspaceSemanticFile,
-        path: VirtualPath,
-        memberExpression: MemberExpression
-    ): WorkspaceModuleResolver.ResolvedRequire? =
-        resolveRequireByWalkingExpressionBases(semanticFile, path, memberExpression)
 
     private fun localInitializerExpression(declaration: BinderDeclaration): ExpressionNode? {
         if (declaration.kind != DeclarationKind.LOCAL || declaration.anchorNode !is Identifier) {
