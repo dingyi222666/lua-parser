@@ -151,6 +151,18 @@ class LuaLanguageService(
     private companion object {
         /** Burst-edit coalescing window before a deferred live-buffer analysis starts. */
         private const val LIVE_ANALYSIS_DEBOUNCE_MS = 400L
+
+        /**
+         * How long a completion issued against a not-yet-republished buffer waits
+         * for the in-flight live analysis. Warm republications land in 0.4–1.5s on
+         * the device, so the grace keeps every interactive edit path fully fresh;
+         * a cold analysis (measured ~11s for one 5KB document on the emulated
+         * host) instead gets served from the last published facade at grace
+         * expiry — an unbounded wait blew the client's whole 10s request budget
+         * AND pinned one of the two completion workers for that entire time.
+         * Polling clients re-request and pick up the publication.
+         */
+        private const val COMPLETION_PUBLICATION_GRACE_MS = 2500L
     }
     private fun checkConnectionOpen() {
         if (closed) throw java.util.concurrent.CancellationException("Language server closed")
@@ -179,6 +191,12 @@ class LuaLanguageService(
     private val completionExecutor = java.util.concurrent.Executors.newFixedThreadPool(2) { task ->
         Thread(task, "lsp-completion").apply { isDaemon = true }
     }
+    // Fires the publication-wait grace deadlines. One shared daemon thread; the
+    // completion workers must never sleep while waiting for a republication.
+    private val publicationGraceScheduler =
+        java.util.concurrent.Executors.newSingleThreadScheduledExecutor { task ->
+            Thread(task, "lsp-completion-grace").apply { isDaemon = true }
+        }
 
     private fun signalQueryPublication() {
         val published = nextQueryPublication
@@ -207,6 +225,7 @@ class LuaLanguageService(
             nextQueryPublication.completeExceptionally(java.util.concurrent.CancellationException("Language server closed"))
         }
         completionExecutor.shutdownNow()
+        publicationGraceScheduler.shutdownNow()
     }
 
     /**
@@ -851,7 +870,12 @@ class LuaLanguageService(
             }
         }, "lsp-live-diagnostics").apply {
             isDaemon = true
-            priority = Thread.MIN_PRIORITY
+            // NORM, not MIN: the emulator's software emulation starves MIN_PRIORITY
+            // threads for tens of seconds under concurrent analysis/completion load
+            // (measured: a 5KB document check took 24.1s and its published warning
+            // missed the client's 10s budget entirely). The checker is interactive
+            // output, not scavenger work — it competes at normal priority and the
+            // content-currency cache keeps repeated runs cheap.
             start()
         }
     }
@@ -1114,7 +1138,26 @@ class LuaLanguageService(
                 }
                 val waiting = revision.third
                 if (waiting != null) {
-                    waiting.thenCompose { completionAsync(path, line, character) }
+                    // Bound the publication wait (see COMPLETION_PUBLICATION_GRACE_MS):
+                    // after the grace window serve the last published facade — the
+                    // client's poll loop re-requests and sees the fresh binding.
+                    val grace = CompletableFuture<Boolean>()
+                    publicationGraceScheduler.schedule(
+                        { grace.complete(false) },
+                        COMPLETION_PUBLICATION_GRACE_MS, TimeUnit.MILLISECONDS
+                    )
+                    waiting.thenApply { true }
+                        .applyToEither(grace) { published -> published }
+                        .thenCompose { published ->
+                            if (published) completionAsync(path, line, character)
+                            else {
+                                synchronized(stateLock) { checkConnectionOpen() }
+                                CompletableFuture.completedFuture(
+                                    completion(revision.first.first, path, line, character,
+                                        revision.second?.let { completionNameFilter(it, line, character) })
+                                )
+                            }
+                        }
                 } else {
                     val result = completion(revision.first.first, path, line, character,
                         revision.second?.let { completionNameFilter(it, line, character) })
