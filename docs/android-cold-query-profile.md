@@ -203,3 +203,30 @@ Next step: coalesce — when a superseding snapshot exists, restart the check ON
 against the newest revision with warm revision-owned caches, and let the refresh
 worker hand its result directly to the diagnostics worker (single publication
 instead of analysis → schedule → re-check). Then re-measure on device.
+
+## Round 4 — content-based diagnostics currency: 6/7
+
+Landed (commit `de7740d` + follow-up): the live-diagnostics worker now keys
+checker-result reuse and currency by document CONTENT (path, source) instead of
+binder identity, storing diagnostic lists only (no stale binder graphs pinned).
+Refresh republications no longer abort valid in-flight checks; rebinds reuse the
+cached report.
+
+Device E2E on the now-idle server: **6/7** (first run after the fix on a loaded
+server: 5/7 with a different failing test — the TCG emulator's ~70× ratio makes
+these gates load-sensitive). The diagnostics checker-warning await now passes;
+visible popup 2,400ms (was ~10,000ms in the last accepted run); first valid
+completion 2,731ms; ActionBar warm 329-576ms.
+
+Also landed this round: DexClassModelAdapter LRU bounds 128 → 512 (a completion
+sweep evicted the checker's hot framework closure; measured 2.4-8.5s re-assembly
+per check) and `largeHeap` for the sample harness.
+
+### Remaining failure (next round)
+
+`dynamicallyImportedDexCompletesJavaObjectsInsideLuaTables` — completion times out
+while the dynamically imported project dex (mounted via `jvm.classpath`) is
+hydrated for the first time on device (same class of cold first-touch as the
+framework dex was). Next: profile the first dynamic-dex completion
+(server-side `CompletionThread` timeout observed), then apply the same
+demand-hydration/cheap-first pattern that fixed the framework surface.
