@@ -514,3 +514,18 @@ just-published activation instead of re-deriving it.
 
 Production Kotlin after this burst: **45,817** (baseline 53,562 → −7,745;
 prior checkpoint 45,502 → +315). The −12,000 target remains open.
+
+## Rounds 25–40 addendum — five-agent investigation + cache/preemption rework — 2026-10-13
+
+Five parallel read-only agents (timeline, activation caching, snapshot/fingerprint cost, delivery chain, docs) converged on the remaining two failures. Landed (commits 6b7aaf6, 168e5a4, e3e4252, 80f35d4, 5606dea):
+
+- **Per-target import-resolution memo** on the engine fallbacks the snapshot captures (negatives included as Optional.empty, keyed by target+deferMembers+normalized config+DexLibraryMounter.mountEpoch so a library mounted after a cached negative re-resolves). The live check previously re-ran candidate generation + classloader miss scans per content version.
+- **Striped-lock surface caches**: `Collections.synchronizedMap.computeIfAbsent` held the map monitor for entire 2-8s surface builds, blocking the diagnostics worker behind completion threads; DexClassModelAdapter now computes per-key under 16 stripes.
+- **Workspace Java surface warmup at initialize**: the indexed workspace sources' import/bindClass targets are resolved at full fidelity (wildcard packages expanded to per-class surfaces) on the warmup thread, so the first interactive check hits the provider's process-lifetime caches.
+- **Name-only type shells cached per binaryName** (per-member JavaTypeName/JavaClassType allocation churn was the dominant per-method cost).
+- **JavaClassType structural hashCode memoized** (immutable graph; equals unchanged) — device samples showed 2-4s of pure hashCode chains per check from union/intersection set-adds.
+- **Cheap dirty-file comparison** in WorkspaceDirtySetPlanner (source, cacheKey, factsSignature, public fingerprint, recovery diagnostics, published diagnostics) replacing whole-FileSnapshot structural equals per provider path per update — contract pinned by its own TDD tests (cacheKey/factsSignature inclusion required by `private_only_change_*`).
+- **Content-diff preemption**: an in-flight checker run is aborted only when its file's content actually changed in the newer work — republications with unchanged content (background rebuild finishing, no-delta refreshes) arrive every few seconds and an aborted check is never cached, so content-blind preemption restarted the same check forever (rel38: five consecutive runs, zero completions).
+
+Measured effect (rel40 device log): the edited-file check now **completes** (`checked mods/dingyi.lua cached=false in 4841ms` after evals 271→995; rel39: 8469ms) — previously no check of this document ever completed inside any window. The neverReadValue warning published **10.9s after the insert — 0.9s over the 10s budget**. Remaining attribution: ~3.7s between the post-edit publication and the check start (the superseded v=2 check finishing in a non-yielding stretch) and 4.8s inside the check (equals chains in `typeOfDeclaration`/`attachVisibleAstMembersToType` — structural type equals remains uncached). Next levers: identity/cheap-key equals fast paths in declaration-type derivation, and forcing a preemption checkpoint into the stale check's remaining non-yielding stretches.
+
