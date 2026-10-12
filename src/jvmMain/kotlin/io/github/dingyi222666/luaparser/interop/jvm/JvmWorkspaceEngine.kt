@@ -390,6 +390,16 @@ open class JvmWorkspaceEngine(
         }
         targets.forEach { target ->
             runCatching { classModuleProvider.importedSymbolForTarget(target, configuration) }
+            // Wildcard packages resolve to a per-class catalog on demand; the CHECK
+            // then hydrates each referenced class's full surface. Pre-assemble the
+            // catalog's classes now so the first interactive check hits the cache.
+            if (target.endsWith(".*")) {
+                runCatching {
+                    classModuleProvider.importedClassNames(target, configuration).forEach { name ->
+                        runCatching { classModuleProvider.importedSymbolForTarget(name, configuration) }
+                    }
+                }
+            }
         }
         classLikes.forEach { name ->
             if (!name.contains('.')) {

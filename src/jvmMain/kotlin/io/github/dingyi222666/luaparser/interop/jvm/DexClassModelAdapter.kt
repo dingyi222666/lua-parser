@@ -210,9 +210,15 @@ object DexClassModelAdapter {
      * Name-only [JavaClassType] shell for a binary name (mirror of the
      * provider's `typeReferenceForJavaClass`): no members, no hierarchy.
      */
-    private fun typeReferenceForBinaryName(binaryName: String): JavaClassType {
-        return JavaClassType(javaName = javaTypeNameFor(binaryName))
-    }
+    // Name-only shells are immutable and referenced for every L-descriptor
+    // parameter/return of every method of every assembled class: caching them by
+    // binaryName removes the per-member JavaTypeName/JavaClassType allocation
+    // churn (measured as the dominant per-method cost on the emulator —
+    // buildJavaBinaryName/buildJavaCanonicalName samples inside checks).
+    private val binaryNameShells = java.util.concurrent.ConcurrentHashMap<String, JavaClassType>()
+
+    private fun typeReferenceForBinaryName(binaryName: String): JavaClassType =
+        binaryNameShells.computeIfAbsent(binaryName) { JavaClassType(javaName = javaTypeNameFor(it)) }
 
     /**
      * Canonical cycle-guard key for a binary name: normalized to dots so the
