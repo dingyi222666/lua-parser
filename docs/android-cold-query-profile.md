@@ -429,3 +429,19 @@ gone; dead textDocumentRequest/nullFuture helpers removed.
 
 Remote validation: lsp suites 724 tests green (lifecycle/shutdown suites included);
 full jvmTest 2,928/0/0.
+
+## Round 9 — burst debounce landed; E2E still 5/7 (same two tests)
+
+The 400ms coalescing window now skips the stale intermediate analysis (validated:
+1,851 focused tests green; incremental completion 3,393ms, popup 2,698ms on device —
+both well within earlier observed ranges). The dynamic-dex and lifecycle tests still
+trip their 10s budgets. The remaining cost per their windows is the FIRST
+analysis+completion cycle against the freshly republished model — the cold
+derivation chain that only the revision-owned cache (or a warm provider surface
+model) removes. Instrumented E2E windows from earlier rounds show the chain:
+didChange → abort stale analysis → new analysis (cold, seconds) → publish →
+completion (lazy derivations, seconds).
+
+Next session: implement the revision-owned derivation cache per the documented
+design, then re-run; if the two tests still race, profile the post-publish first
+completion on device with the established 16M-buffer + marker methodology.
