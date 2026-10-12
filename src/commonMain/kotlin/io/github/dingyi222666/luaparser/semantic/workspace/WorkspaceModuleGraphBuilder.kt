@@ -237,38 +237,7 @@ object WorkspaceModuleGraphBuilder {
         moduleName: String,
         graphFiles: Map<VirtualPath, WorkspaceSnapshot.FileSnapshot>
     ): WorkspaceModuleGraph.ModuleProvider? {
-        if (moduleName.isBlank()) {
-            return null
-        }
-        val dotted = moduleName.replace('\\', '/')
-        val candidates = listOf(
-            "$dotted.aly",
-            "${dotted.replace('.', '/')}.aly"
-        )
-        val match = graphFiles.keys.firstOrNull { path ->
-            val value = path.value
-            if (!value.endsWith(".aly")) {
-                return@firstOrNull false
-            }
-            val pathModule = alyModuleNameFromPath(path)
-            pathModule == moduleName ||
-                candidates.any { candidate ->
-                    value == candidate || value.endsWith("/$candidate")
-                }
-        } ?: return null
-        return WorkspaceModuleGraph.ModuleProvider(
-            moduleName = moduleName,
-            path = match,
-            source = WorkspaceModuleGraph.ProviderSource.VIRTUAL_PATH
-        )
-    }
-
-    private fun alyModuleNameFromPath(path: VirtualPath): String? {
-        val normalized = path.value.replace('\\', '/')
-        if (!normalized.endsWith(".aly")) {
-            return null
-        }
-        return normalized.removeSuffix(".aly").replace('/', '.').ifBlank { null }
+        return findAlyLayoutProviderIn(moduleName, graphFiles.keys)
     }
 
     private fun computeStronglyConnectedComponents(
@@ -369,4 +338,49 @@ object WorkspaceModuleGraphBuilder {
         WorkspaceModuleGraph.ProviderSource.EXTRA_WORKSPACE_PROVIDER -> 2
         WorkspaceModuleGraph.ProviderSource.STANDARD_LIBRARY_OVERLAY -> 3
     }
+}
+
+/**
+ * Shared Android-Lua `.aly` layout-provider recovery for the graph builder's build-time
+ * claim and the workspace resolver's fallback lookup: a `.aly` workspace file whose
+ * path-derived module name (or explicit dotted/flat candidate spellings) matches the
+ * required module. Single owner for [alyModuleNameFromPath]; never fabricates a
+ * non-`.aly` provider path.
+ */
+internal fun findAlyLayoutProviderIn(
+    moduleName: String,
+    paths: Collection<VirtualPath>
+): WorkspaceModuleGraph.ModuleProvider? {
+    if (moduleName.isBlank()) {
+        return null
+    }
+    val dotted = moduleName.replace('\\', '/')
+    val candidates = listOf(
+        "$dotted.aly",
+        "${dotted.replace('.', '/')}.aly"
+    )
+    val match = paths.firstOrNull { path ->
+        val value = path.value
+        if (!value.endsWith(".aly")) {
+            return@firstOrNull false
+        }
+        val pathModule = alyModuleNameFromPath(path)
+        pathModule == moduleName ||
+            candidates.any { candidate ->
+                value == candidate || value.endsWith("/$candidate")
+            }
+    } ?: return null
+    return WorkspaceModuleGraph.ModuleProvider(
+        moduleName = moduleName,
+        path = match,
+        source = WorkspaceModuleGraph.ProviderSource.VIRTUAL_PATH
+    )
+}
+
+internal fun alyModuleNameFromPath(path: VirtualPath): String? {
+    val normalized = path.value.replace('\\', '/')
+    if (!normalized.endsWith(".aly")) {
+        return null
+    }
+    return normalized.removeSuffix(".aly").replace('/', '.').ifBlank { null }
 }

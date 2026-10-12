@@ -1011,44 +1011,11 @@ internal class WorkspaceModuleResolver(
      * Never invents a fabricated `.lua` / JVM / stdlib path: only real workspace `.aly` files.
      */
     private fun findAlyLayoutProvider(moduleName: String): WorkspaceModuleGraph.ModuleProvider? {
-        if (moduleName.isBlank()) {
-            return null
-        }
-        val dotted = moduleName.replace('\\', '/')
-        val candidates = listOf(
-            "$dotted.aly",
-            "${dotted.replace('.', '/')}.aly"
-        )
-        val match = snapshot.files.entries.firstOrNull { (path, _) ->
-            val value = path.value
-            if (!value.endsWith(".aly")) {
-                return@firstOrNull false
-            }
-            val pathModule = alyModuleNameFromPath(path)
-            pathModule == moduleName ||
-                candidates.any { candidate ->
-                    value == candidate || value.endsWith("/$candidate")
-                }
-        } ?: return null
-        return WorkspaceModuleGraph.ModuleProvider(
-            moduleName = moduleName,
-            path = match.key,
-            source = WorkspaceModuleGraph.ProviderSource.VIRTUAL_PATH
-        )
+        // Same `.aly` recovery the graph builder applies at build time; the shared helper
+        // keeps the path-derived module-name rule in one place.
+        return findAlyLayoutProviderIn(moduleName, snapshot.files.keys)
     }
 
-    private fun alyModuleNameFromPath(path: VirtualPath): String? {
-        val normalized = path.value.replace('\\', '/')
-        if (!normalized.endsWith(".aly")) {
-            return null
-        }
-        return normalized.removeSuffix(".aly").replace('/', '.')
-    }
-
-    /**
-     * Synthetic LuaLayoutSpec-like export for free-form `.aly` modules when AST export collection
-     * did not produce a surface (e.g. sparse layout tables with only sequence view-class children).
-     */
     private fun syntheticAlyLayoutSurface(provider: WorkspaceModuleGraph.ModuleProvider): ModuleExportSurface? {
         if (!provider.path.value.endsWith(".aly")) {
             return null
