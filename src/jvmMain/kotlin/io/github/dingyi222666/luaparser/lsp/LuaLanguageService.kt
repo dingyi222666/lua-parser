@@ -649,15 +649,14 @@ class LuaLanguageService(
     private var pendingLiveDiagnostics: LiveDiagnosticWork? = null
     private var liveDiagnosticRunning = false
     private var lastDiagnosticFiles: Map<VirtualPath, String> = emptyMap()
-    // Checker results are pure derivations of the document's own AST: for identical
+    // Checker diagnostics are pure derivations of the document's own AST: for identical
     // source text they stay valid across re-binds (refresh republications produce a
-    // new binder for unchanged content). Key by (path, source) so an unchanged
-    // document's report is reused instead of re-checking after every workspace
-    // republication; bounded because each entry pins its old binder graph.
+    // new binder for unchanged content). Key by (path, source) and store ONLY the
+    // diagnostic list so no stale binder graph is pinned; bounded LRU.
     private val checkedLiveDiagnostics = object : LinkedHashMap<Pair<VirtualPath, String>,
-        io.github.dingyi222666.luaparser.semantic.checker.CheckerPassResult>(16, 0.75f, true) {
+        List<io.github.dingyi222666.luaparser.semantic.api.Diagnostic>>(16, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Pair<VirtualPath, String>,
-            io.github.dingyi222666.luaparser.semantic.checker.CheckerPassResult>): Boolean = size > 32
+            List<io.github.dingyi222666.luaparser.semantic.api.Diagnostic>>): Boolean = size > 32
     }
     internal var onLiveDiagnosticsFileChecked: ((VirtualPath) -> Unit)? = null
 
@@ -711,12 +710,16 @@ class LuaLanguageService(
                                 if (!isCurrent()) throw ObsoleteLiveAnalysis()
                             }
                         }
-                        val cached = synchronized(liveDiagnosticLock) {
+                        val cachedDiagnostics = synchronized(liveDiagnosticLock) {
                             checkedLiveDiagnostics[path to semantic.source]
                         }
-                        val checked = if (cached != null) {
+                        val checked = if (cachedDiagnostics != null) {
                             pipeline.finishDiagnostics(
-                                semantic.snapshot, cached.copy(binder = semantic.snapshot.binder)
+                                semantic.snapshot,
+                                io.github.dingyi222666.luaparser.semantic.checker.CheckerPassResult(
+                                    binder = semantic.snapshot.binder,
+                                    diagnostics = cachedDiagnostics
+                                )
                             )
                         } else {
                             val checkingSnapshot = semantic.snapshot.copy(
@@ -735,12 +738,12 @@ class LuaLanguageService(
                                 .copy(workspaceContext = semantic.snapshot.workspaceContext).also {
                                 checkLiveAnalysisCurrent()
                                 synchronized(liveDiagnosticLock) {
-                                    if (!closed) checkedLiveDiagnostics[path to semantic.source] = it.checker
+                                    if (!closed) checkedLiveDiagnostics[path to semantic.source] = it.checker.diagnostics
                                 }
                             }
                         }
                         System.err.println(
-                            "LSP-DEVICE: liveDiagnostics checked $path cached=${cached != null} " +
+                            "LSP-DEVICE: liveDiagnostics checked $path cached=${cachedDiagnostics != null} " +
                                 "in ${System.currentTimeMillis() - checkStart}ms"
                         )
                         val checkedFile = file.copy(semanticFile = WorkspaceSemanticFile(
@@ -759,7 +762,7 @@ class LuaLanguageService(
                             onDocumentDiagnostics?.invoke(listOf(it))
                             publishedPaths += path
                         }
-                        if (cached == null) onLiveDiagnosticsFileChecked?.invoke(path)
+                        if (cachedDiagnostics == null) onLiveDiagnosticsFileChecked?.invoke(path)
                     }
                     liveAnalysisCheckpoint.remove()
                     val diagnostics = synchronized(stateLock) {
