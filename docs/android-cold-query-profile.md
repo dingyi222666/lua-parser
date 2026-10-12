@@ -406,3 +406,14 @@ weaker in its declaration-chain depth); queued as a dedicated change with its ow
 validation cycle.
 
 Production Kotlin: 45,563 (baseline 53,562; −7,999).
+
+## Rounds 12 — dedup continuation
+
+Landed: one `memberExpressionForNode` helper (the node-or-parent-MemberExpression
+ladder was repeated four times across the facade's export/hover/bindClass/member
+paths). Full remote JVM suite green (2,928/0/0). Deferred with rationale:
+the facade's deep `callArguments` flatten (query audit #4) recurses through nested
+call bases that the parser's `compactCallArguments` does not — replacement would be
+a behavior change pinned by import-string navigation tests, not a pure duplicate.
+
+Production Kotlin: 45,556 (baseline 53,562; −8,006).
