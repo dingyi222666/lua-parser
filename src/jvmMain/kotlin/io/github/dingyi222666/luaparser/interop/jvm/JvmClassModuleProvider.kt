@@ -394,7 +394,9 @@ class JvmClassModuleProvider(
         if (parsed.pathPrefix != null) {
             return null
         }
+        val importStart = System.currentTimeMillis()
         val library = bareDexLibrary(parsed.className)?.let { DexLibraryMounter.libraryFor(it) }
+        val mountMs = System.currentTimeMillis() - importStart
         if (library == null) {
             // Diagnostic for dynamically imported libraries: without the mount the
             // imported module's members can never complete, and the failure is silent.
@@ -406,8 +408,15 @@ class JvmClassModuleProvider(
             }
             return null
         }
+        val registerStart = System.currentTimeMillis()
         registerDexLibrary(library)
         val (providerPath, snapshot) = providerForDexLibrary(library, parsed.className.trim(), deferMembers)
+        val surfaceMs = System.currentTimeMillis() - registerStart
+        if (mountMs > 500 || surfaceMs > 500) {
+            System.err.println(
+                "DEX-PERF: ${parsed.className} mount=${mountMs}ms register+surface=${surfaceMs}ms"
+            )
+        }
         val moduleType = snapshot.moduleExportSurface?.moduleType
         if (moduleType == null) {
             System.err.println(

@@ -25,16 +25,26 @@ class CheckerPass {
 
         // Fresh expression checker per analyze call so diagnostics never accumulate on reuse.
         val expressionChecker = ExpressionUsageChecker(binder, context, evaluator)
+        val expressionStart = System.currentTimeMillis()
         val expressionDiagnostics = expressionChecker.check(chunk)
-        val diagnostics = (declarations
-            .flatMap { declaration ->
-                buildList {
-                    addAll(signatureChecker.checkDeclaration(declaration))
-                    if (declaration.kind == DeclarationKind.FUNCTION || declaration.kind == DeclarationKind.GLOBAL) {
-                        addAll(returnChecker.checkDeclaration(declaration))
-                    }
+        val expressionMs = System.currentTimeMillis() - expressionStart
+        val signatureStart = System.currentTimeMillis()
+        val signatureDiagnostics = declarations.flatMap { declaration ->
+            buildList {
+                addAll(signatureChecker.checkDeclaration(declaration))
+                if (declaration.kind == DeclarationKind.FUNCTION || declaration.kind == DeclarationKind.GLOBAL) {
+                    addAll(returnChecker.checkDeclaration(declaration))
                 }
-            } + expressionDiagnostics)
+            }
+        }
+        val signatureMs = System.currentTimeMillis() - signatureStart
+        if (expressionMs > 1_000 || signatureMs > 1_000) {
+            System.err.println(
+                "CHECKER-PERF: expression=${expressionMs}ms signature=${signatureMs}ms " +
+                    "declarations=${declarations.size} path=${context.currentPath?.value ?: "?"}"
+            )
+        }
+        val diagnostics = (signatureDiagnostics + expressionDiagnostics)
             .distinctBy { diagnostic ->
                 listOf(
                     diagnostic.range?.start?.line,
