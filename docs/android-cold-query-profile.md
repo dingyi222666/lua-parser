@@ -372,3 +372,21 @@ Full remote JVM suite green (lsp suites re-validated after the executor change).
    warm (the decisive fix for both remaining tests).
 2. The dynamic-dex activation path instrumentation on device.
 3. The −12,000-line dedup items.
+
+## Round 10 — dedup: shared access-path descent + facts-driven require verification
+
+Landed (commits `b40a3d8`, `0e96658`):
+- `hasBuiltinRequireCallSite` verifies the query's module name against the collected
+  `RequireFact` ranges through the same `builtinRequireModuleName` un-shadowed test
+  the former ~135-line full-chunk statement/expression walk applied (the walk was a
+  per-query AST traversal duplicating what DocumentFacts already records per edit).
+- One shared `extractAccessPathSegments` descent now feeds both
+  `DocumentFactsCollector` (require alias/module-environment access paths) and
+  `ModuleExportCollector` (export write anchors + alias bindings); `WriteTargetBase`
+  and both bespoke base walkers are deleted.
+
+Remote validation: semantic+lsp 1,851 focused tests green; full jvmTest 2,928/0/0;
+device E2E 5/7 (the two timing-gated tests, unchanged by these refactors — their
+gates are the cold-analysis/derivation costs documented above).
+
+Production Kotlin: **45,582** (baseline 53,562; −7,980; −12,000 target continues).
