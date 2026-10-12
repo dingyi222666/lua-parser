@@ -1371,7 +1371,22 @@ class ExpressionTypeEvaluator internal constructor(
             recursionEpoch++
             return UnknownType
         }
-        declarationValueTypeCache[declaration.id]?.get(context)?.let { return it }
+        // The derivation resolves initializers and members at the DECLARATION's own
+        // scope (localInitializerContext re-derives from the initializer position),
+        // so keying by the caller's lexical scope forced one full member-surface
+        // assembly per referencing scope. Normalizing the cache key + computation to
+        // the declaration scope types each declaration once per (overrides,
+        // exclusions, vararg) shape and reuses it for every referencing scope.
+        // Exception: loadlayout ids sinks bind the layout call visible from the
+        // CALLER's scope, so they keep the caller-scoped derivation.
+        val usesCallerScope = isPotentialLoadlayoutIdsLocal(declaration)
+        val derivationScope = if (usesCallerScope) {
+            context.lexicalScopeId
+        } else {
+            binder.scopeGraph.getDeclarationScope(declaration.id)?.id ?: binder.scopeGraph.rootScope.id
+        }
+        val derivationContext = context.copy(lexicalScopeId = derivationScope)
+        declarationValueTypeCache[declaration.id]?.get(derivationContext)?.let { return it }
         activeDeclarationIds.add(declaration.id)
         val epoch = recursionEpoch
         return try {
@@ -1380,10 +1395,10 @@ class ExpressionTypeEvaluator internal constructor(
             }
             val type = attachVisibleAstMembersToType(
                 declaration,
-                declared ?: deriveDeclarationValueType(declaration, context),
-                context
+                declared ?: deriveDeclarationValueType(declaration, derivationContext),
+                derivationContext
             )
-            if (recursionEpoch == epoch) declarationValueTypeCache.getOrPut(declaration.id) { mutableMapOf() }[context] = type
+            if (recursionEpoch == epoch) declarationValueTypeCache.getOrPut(declaration.id) { mutableMapOf() }[derivationContext] = type
             type
         } finally {
             activeDeclarationIds.remove(declaration.id)
