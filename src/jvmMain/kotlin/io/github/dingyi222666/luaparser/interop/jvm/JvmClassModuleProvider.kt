@@ -351,7 +351,8 @@ class JvmClassModuleProvider(
         // scan runs on the import-activation path of interactive edits.
         val simpleTarget = importText.trim()
         if (simpleTarget.isNotEmpty() && !simpleTarget.contains('.') && !simpleTarget.endsWith(".*")) {
-            dexLibrariesFor(configuration).firstNotNullOfOrNull { dex ->
+            val dexStart = System.currentTimeMillis()
+            val dexSymbol = dexLibrariesFor(configuration).firstNotNullOfOrNull { dex ->
                 dex.classForSimpleAlias(simpleTarget)?.let { cls ->
                     registerDexLibrary(dex)
                     val (providerPath, snapshot) = providerForDexClass(dex, cls, deferMembers)
@@ -363,7 +364,12 @@ class JvmClassModuleProvider(
                         moduleType = moduleType
                     )
                 }
-            }?.let { return it }
+            }
+            val dexMs = System.currentTimeMillis() - dexStart
+            if (dexMs > 300) {
+                System.err.println("DEX-PERF: simple-alias '$simpleTarget' hit=${dexSymbol != null} took ${dexMs}ms")
+            }
+            dexSymbol?.let { return it }
         }
         // Prefer a single class resolution; package-name targets with many classes fall through.
         val loads = resolveClassLoads(
@@ -548,6 +554,7 @@ class JvmClassModuleProvider(
                 resolveDexClassLoad(parsed, target, configuration)?.let { return listOf(it) }
             }
             val asClass = candidateClassNames(target).firstNotNullOfOrNull { candidate ->
+                analysisCheckpoint()
                 loadClassOrNull(candidate, targetClassLoader)
                     ?.name
                     ?.let { listOf(ResolvedClassLoad(it, targetClassLoader)) }
@@ -584,10 +591,17 @@ class JvmClassModuleProvider(
             val shortNameCandidates = shortNameClassCandidates(trimmedPrefix, target)
             if (!configuration.androidDex.isNullOrBlank()) {
                 shortNameCandidates.firstNotNullOfOrNull { candidate ->
+                    analysisCheckpoint()
                     resolveDexClassLoad(parsed, candidate, configuration)
                 }?.let { return@firstNotNullOfOrNull listOf(it) }
             }
             shortNameCandidates.firstNotNullOfOrNull { candidate ->
+                // A classloader miss over the framework dex costs ~100-150ms per
+                // candidate on the emulator; without a checkpoint here a single
+                // prefix scan ran past interactive budgets (measured 4.2s for one
+                // implicit simple-name lookup and a >10s checker stall in the same
+                // resolution family).
+                analysisCheckpoint()
                 loadClassOrNull(candidate, targetClassLoader)
                     ?.name
                     ?.let { listOf(ResolvedClassLoad(it, targetClassLoader)) }
