@@ -394,10 +394,27 @@ class JvmClassModuleProvider(
         if (parsed.pathPrefix != null) {
             return null
         }
-        val library = bareDexLibrary(parsed.className)?.let { DexLibraryMounter.libraryFor(it) } ?: return null
+        val library = bareDexLibrary(parsed.className)?.let { DexLibraryMounter.libraryFor(it) }
+        if (library == null) {
+            // Diagnostic for dynamically imported libraries: without the mount the
+            // imported module's members can never complete, and the failure is silent.
+            if (parsed.className.endsWith(".dex") || parsed.className.endsWith(".apk")) {
+                System.err.println(
+                    "LSP-DEVICE: dex library import did not mount: " + parsed.className +
+                        " (exists=" + java.io.File(parsed.className).exists() + ")"
+                )
+            }
+            return null
+        }
         registerDexLibrary(library)
         val (providerPath, snapshot) = providerForDexLibrary(library, parsed.className.trim(), deferMembers)
-        val moduleType = snapshot.moduleExportSurface?.moduleType ?: return null
+        val moduleType = snapshot.moduleExportSurface?.moduleType
+        if (moduleType == null) {
+            System.err.println(
+                "LSP-DEVICE: dex library mounted without export surface: " + library.cacheIdentity
+            )
+            return null
+        }
         return WorkspaceImportedSymbol(
             alias = moduleType.moduleName,
             moduleName = moduleType.moduleName,
