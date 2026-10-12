@@ -467,7 +467,7 @@ completion and advertised capabilities. Downloaded debug APK SHA256:
 
 ## Session handoff — 2026-10-12 19:35 CST (resume point for the next session)
 
-Commits this session: `9279efb` → `fdb9ce6` (see `git log 9279efb..HEAD`).
+Commits this session: `9279efb` → `9fa3129` (see `git log 9279efb..HEAD`; the latest include the burst debounce `afefc45` and the session-handoff doc).
 All committed; remote working copy `dingyi@10.1.1.14:~/projects/lua-parser-android-e2e`
 synced byte-identical via `tools/android-e2e-remote.sh` (which rsyncs before every run).
 
