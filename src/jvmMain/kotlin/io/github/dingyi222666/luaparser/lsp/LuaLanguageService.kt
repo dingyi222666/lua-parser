@@ -776,6 +776,14 @@ class LuaLanguageService(
                             synchronized(stateLock) {
                                 if (!isCurrent()) throw ObsoleteLiveAnalysis()
                             }
+                            // Newer pending work (a fresh edit republication) preempts this
+                            // in-flight check: on the device a cold 5KB-document check ran
+                            // ~20s and the edited file's warning waited behind it past the
+                            // client's budget. The newer work re-enqueues every live file,
+                            // and unchanged content re-checks hit the currency cache.
+                            synchronized(liveDiagnosticLock) {
+                                if (closed || pendingLiveDiagnostics != null) throw ObsoleteLiveAnalysis()
+                            }
                         }
                         val cachedDiagnostics = synchronized(liveDiagnosticLock) {
                             checkedLiveDiagnostics[path to semantic.source]

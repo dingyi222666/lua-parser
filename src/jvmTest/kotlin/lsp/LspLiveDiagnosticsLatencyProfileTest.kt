@@ -190,4 +190,58 @@ class LspLiveDiagnosticsLatencyProfileTest {
         )
         service.close()
     }
+
+    /**
+     * Device evidence: `finishDiagnostics` on the dex-import document measured
+     * 24.1s on the emulator and hogged the single diagnostics worker (the
+     * checker-warning E2E timed out waiting behind it). Mirror the exact
+     * diagnostics-worker shape here and decompose the cost: import resolution
+     * (mount + module surface) vs the checker pass itself.
+     */
+    @Test
+    fun dynamic_dex_import_checker_cost_decomposition() {
+        val runtimeDex = File(repoRoot, "android/sample/src/androidTest/assets/runtime-greeter.dex")
+        if (!runtimeDex.isFile || deviceConfiguration().isEmpty()) {
+            println("LSP-PROFILE: dynamic-dex fixture unavailable — skipping")
+            return
+        }
+        val service = initializedService(deferred = true)
+        val source = "import '${runtimeDex.absolutePath}'\n" +
+            "local Greeter=luajava.bindClass('fixture.dynamic.Greeter')\nGreeter."
+        open(service, "file:///workspace/dynamic_dex_check.lua", source)
+        service.flushBackgroundRebuild()
+        service.awaitWorkspaceReady()
+
+        val snapshotField = LuaLanguageService::class.java
+            .getDeclaredField("snapshot").apply { isAccessible = true }
+        val snapshot = snapshotField.get(service) as WorkspaceSnapshot
+        val dynamicPath = snapshot.files.keys.first { it.value.endsWith("dynamic_dex_check.lua") }
+        val semantic = assertNotNull(snapshot.files.getValue(dynamicPath).semanticFile)
+        val pipeline = SemanticPipeline()
+
+        repeat(2) { attempt ->
+            // Phase 1: import resolution alone (mount + module export surface).
+            val resolveStarted = System.currentTimeMillis()
+            val resolved = semantic.snapshot.workspaceContext.resolveImportTarget
+                ?.invoke(runtimeDex.absolutePath)
+            val resolveMs = System.currentTimeMillis() - resolveStarted
+            // Phase 2: the full diagnostics-worker check shape.
+            val checkStarted = System.currentTimeMillis()
+            val resolver = WorkspaceModuleResolver(snapshot, deferDependencyGlobals = true)
+            val checking = semantic.snapshot.copy(
+                workspaceContext = semantic.snapshot.workspaceContext.copy(
+                    workspaceResolver = resolver,
+                    resolveImportedSymbol = null,
+                    resolveImportTarget = null
+                ).withWorkspaceImportEffects()
+            )
+            val checked = pipeline.finishDiagnostics(checking)
+            val checkMs = System.currentTimeMillis() - checkStarted
+            System.err.println(
+                "LSP-PROFILE: dex-import-check attempt=$attempt resolve=${resolveMs}ms " +
+                    "resolved=${resolved != null} check=${checkMs}ms diagnostics=${checked.checker.diagnostics.size}"
+            )
+        }
+        service.close()
+    }
 }

@@ -122,11 +122,17 @@ class SemanticPipeline(
         }
         val effectiveContext = context.withWorkspaceImportEffects()
         val attachments = preparedBinder?.commentAttachments ?: comments ?: commentAttachPass.attach(chunk)
+        // Cancellation points INSIDE the front half: interactive engines abort a
+        // superseded document the moment its buffers change instead of after the
+        // full parse+attach+bind+resolve chain (on the emulated device that chain
+        // is ~12s for a 5KB document — longer than a client's whole request budget).
+        effectiveContext.analysisCheckpoint()
         val bound = preparedBinder ?: binderPass.bind(
             chunk,
             attachments,
             builtinGlobals ?: effectiveContext.overlayGlobals
         )
+        effectiveContext.analysisCheckpoint()
         return DocumentAnalysisState(
             context = effectiveContext,
             comments = attachments,
