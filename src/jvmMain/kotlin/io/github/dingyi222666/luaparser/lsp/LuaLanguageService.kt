@@ -856,11 +856,17 @@ class LuaLanguageService(
                     val completedPaths = mutableListOf<VirtualPath>()
                     val publishedPaths = mutableSetOf<VirtualPath>()
                     for (path in work.checkOrder) {
-                        // Newer pending work (a fresh republication) supersedes the
-                        // remaining files of this work item: it re-enqueues every live
-                        // file, so finishing them here would only delay the edit the
-                        // client is actually waiting on.
-                        if (synchronized(liveDiagnosticLock) { closed || pendingLiveDiagnostics != null }) break
+                        // Newer pending work supersedes the remaining files ONLY when
+                        // this file's content changed in it: republications with
+                        // unchanged content (background rebuild finishing, no-delta
+                        // refreshes) arrive every few seconds on the device, and an
+                        // aborted check is never cached — content-blind preemption
+                        // restarted the same check forever without ever publishing
+                        // (measured: five consecutive runs, zero checked lines).
+                        if (synchronized(liveDiagnosticLock) {
+                                val newer = pendingLiveDiagnostics
+                                closed || (newer != null && newer.files[path] != work.files[path])
+                            }) break
                         val checkStart = System.currentTimeMillis()
                         val file = checkedFiles[path] ?: continue
                         val semantic = file.semanticFile ?: continue
@@ -876,13 +882,15 @@ class LuaLanguageService(
                             synchronized(stateLock) {
                                 if (!isCurrent()) throw ObsoleteLiveAnalysis()
                             }
-                            // Newer pending work (a fresh edit republication) preempts this
-                            // in-flight check: on the device a cold 5KB-document check ran
-                            // ~20s and the edited file's warning waited behind it past the
-                            // client's budget. The newer work re-enqueues every live file,
-                            // and unchanged content re-checks hit the currency cache.
+                            // Preempt ONLY when this file's content changed in the newer
+                            // work (see the loop-head note): unchanged republications
+                            // must not abort an in-flight check that can never be
+                            // resumed from cache.
                             synchronized(liveDiagnosticLock) {
-                                if (closed || pendingLiveDiagnostics != null) throw ObsoleteLiveAnalysis()
+                                val newer = pendingLiveDiagnostics
+                                if (closed || (newer != null && newer.files[path] != work.files[path])) {
+                                    throw ObsoleteLiveAnalysis()
+                                }
                             }
                         }
                         val cachedDiagnostics = synchronized(liveDiagnosticLock) {
