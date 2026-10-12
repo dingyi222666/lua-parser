@@ -464,3 +464,36 @@ completion and advertised capabilities. Downloaded debug APK SHA256:
    de-dup ~80 lines; F5 access-path extractor ~50; F4 member flattening ~30)
    and the query-facade items (#1 require-facts walk ~115, #2 LuaJava helper
    dedup ~110) for further reduction under the same remote gates.
+
+## Session handoff — 2026-10-12 19:35 CST (resume point for the next session)
+
+Commits this session: `9279efb` → `fdb9ce6` (see `git log 9279efb..HEAD`).
+All committed; remote working copy `dingyi@10.1.1.14:~/projects/lua-parser-android-e2e`
+synced byte-identical via `tools/android-e2e-remote.sh` (which rsyncs before every run).
+
+### Verified acceptance state
+- Full remote JVM suite: **2,928 tests, 0 failures/errors/skips** (single-fork isolation).
+- Kotlin/JS main+test compilation, debug/release/test APK builds: green.
+- Device E2E (API 28 emulator, TCG `-accel off`, ~70× JVM ratio — see profile doc):
+  **5-6/7**; failing tests vary run to run; both attributed:
+  1. dynamic-dex + lifecycle tests race the cold live-buffer analysis/derivation of
+     the 5KB project fixture (~10s under TCG + GC pressure).
+  2. The completion executor serialization is fixed (2 workers); the remaining cost
+     is the cold derivation of a freshly republished model.
+- Production Kotlin: 45,496 (baseline 53,562; −12,000 target needs ~2,930 more).
+
+### Exact next steps (designs worked out, evidence in profile doc)
+1. **Revision-owned derivation cache** (rounds 3/7/8 design): content-keyed
+   declaration-type derivation cache owned by the workspace revision (or engine),
+   consulted in `typeOfDeclaration` when `localOverrides`/`excludedDeclarations` are
+   empty (plus the loadlayout caller-scope exemption from round 3). Makes
+   abort-and-republish warm — the decisive fix for both E2E gates.
+2. **Dynamic-dex activation path**: round 5 isolated that the runtime dex never
+   mounts on device; the JVM mirror (profile test) passes, so instrument
+   `importedSymbolForTarget` file-target branches + `extraProviders` on device.
+3. **Dedup queue**: LuaJava facade delegation (~110, needs evaluator-internals
+   exposure + parity validation), LSP audit #2 quiet-shape checks, F1 Java
+   member-model mirror (~250), MemberResolver/collectMemberSurface (~200),
+   hover weak-type predicate pair (~25).
+4. **Final acceptance**: 7/7 E2E + Monaco smoke + full gates + the −12,000-line
+   metric, recorded per the acceptance contract.
