@@ -64,6 +64,9 @@ else
 fi
 timeout 90 adb install --no-streaming -r "android/sample/build/outputs/apk/androidTest/$build_type/sample-$build_type-androidTest.apk"
 adb shell dumpsys package dexopt >"$reports_dir/dexopt.log"
+# The default ring buffer evicts early-test lines (System.err-heavy phases);
+# enlarge it so the full run stays inspectable.
+adb logcat -G 16M
 adb logcat -c
 test_result=0
 timeout 360 adb shell am instrument -w -e readyBudgetMs "$ready_budget" \

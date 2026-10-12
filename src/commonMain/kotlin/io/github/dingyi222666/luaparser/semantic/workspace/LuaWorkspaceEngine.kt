@@ -23,6 +23,14 @@ open class LuaWorkspaceEngine(
     private val parserFactory: (LuaVersion) -> LuaParser = { version -> LuaParser(version) }
 ) {
     private val commentAttachPass = CommentAttachPass()
+
+    /**
+     * Cancellation hook fired at per-file analysis boundaries. Interactive
+     * engines (the LSP live-buffer path) override it to abort a stale
+     * in-flight analysis the moment the buffers it is analyzing change;
+     * without it a superseding edit waits for the entire previous analysis.
+     */
+    protected open fun checkAnalysisCancellation() {}
     private val semanticPipeline = SemanticPipeline(commentAttachPass = commentAttachPass)
 
     /**
@@ -82,6 +90,7 @@ open class LuaWorkspaceEngine(
                     totalFiles = totalFiles
                 )
             )
+            checkAnalysisCancellation()
             baseSnapshots[path] = analyzeFile(path, input.files.getValue(path))
             reporter.report(
                 AnalysisProgress(
@@ -183,6 +192,7 @@ open class LuaWorkspaceEngine(
         val nextFiles = previous.files.toMutableMap()
         delta.removals.forEach(nextFiles::remove)
         parsingTargets.forEach { path ->
+            checkAnalysisCancellation()
             nextFiles[path] = analyzeFile(path, delta.upserts.getValue(path))
         }
 

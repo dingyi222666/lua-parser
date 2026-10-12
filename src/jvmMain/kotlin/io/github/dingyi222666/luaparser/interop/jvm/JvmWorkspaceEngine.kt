@@ -30,6 +30,10 @@ open class JvmWorkspaceEngine(
      */
     private val deferWildcardPackageIndex: Boolean = false
 ) : LuaWorkspaceEngine(workspaceParserFactory) {
+    override fun checkAnalysisCancellation() {
+        analysisCheckpoint()
+    }
+
     override fun <T> analysisStage(stage: String, path: VirtualPath?, action: () -> T): T {
         if (System.getProperty("lua.parser.perf") != "true" && System.getenv("LUA_PARSER_PERF") == null) {
             return action()
