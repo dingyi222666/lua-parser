@@ -807,7 +807,18 @@ class LuaLanguageService(
             checkedLiveDiagnostics.keys.retainAll { key -> key.first in files }
             affectedDocuments.forEach { path -> checkedLiveDiagnostics.keys.removeAll { it.first == path } }
             val changed = files.keys.filter { files[it] != lastDiagnosticFiles[it] }
-            pendingLiveDiagnostics = LiveDiagnosticWork(snapshot, files, changed + (files.keys - changed.toSet()))
+            val unchanged = files.keys - changed.toSet()
+            // Size-ascending within each tier: the first schedule counts every file
+            // as "changed" (lastDiagnosticFiles is empty), which degenerated the
+            // changed-first tier to didOpen order — a 5KB cold check with framework
+            // imports queued ahead of small documents' warnings (device timeline:
+            // the edited file's warning waited behind main.lua's multi-second check).
+            // No-change re-enqueues (empty changed) keep a deterministic order too.
+            pendingLiveDiagnostics = LiveDiagnosticWork(
+                snapshot, files,
+                changed.sortedBy { files[it]?.length ?: Int.MAX_VALUE } +
+                    unchanged.sortedBy { files[it]?.length ?: Int.MAX_VALUE }
+            )
             lastDiagnosticFiles = files
             if (liveDiagnosticRunning) return
             liveDiagnosticRunning = true

@@ -63,6 +63,35 @@ object DexClassModelAdapter {
         }
     )
 
+    /**
+     * Per-key atomic compute over a [boundedCache] WITHOUT holding the map monitor
+     * during the (multi-second) computation: `Collections.synchronizedMap.computeIfAbsent`
+     * holds the map lock for the whole build, so a completion thread assembling a
+     * framework-class surface blocked the diagnostics worker (and every other cache
+     * toucher) for its entire duration — measured as monitor contention on the device.
+     * Striped locks serialize same-key builders (single computation preserved) while
+     * different keys build concurrently.
+     */
+    private val cacheStripes = Array(16) { Any() }
+
+    private fun <K, V> boundedCacheComputeOrPut(cache: MutableMap<K, V>, key: K, build: () -> V): V {
+        val existing = cache[key]
+        if (existing != null) return existing
+        val stripe = cacheStripes[kernelHash(key)]
+        synchronized(stripe) {
+            cache[key]?.let { return it }
+            val built = build()
+            cache[key] = built
+            return built
+        }
+    }
+
+    private fun kernelHash(key: Any?): Int {
+        var h = key?.hashCode() ?: 0
+        h = h xor (h ushr 16)
+        return h and (cacheStripes.size - 1)
+    }
+
     private class DexSetKey(val classes: Collection<DexClass>) {
         override fun equals(other: Any?): Boolean = other is DexSetKey && classes === other.classes
         override fun hashCode(): Int = System.identityHashCode(classes)
@@ -100,7 +129,7 @@ object DexClassModelAdapter {
     private val dexIndexes = boundedCache<DexSetKey, DexIndex>(8)
 
     private fun dexIndex(classes: Collection<DexClass>): DexIndex =
-        dexIndexes.computeIfAbsent(DexSetKey(classes)) { DexIndex(classes) }
+        boundedCacheComputeOrPut(dexIndexes, DexSetKey(classes)) { DexIndex(classes) }
     // dalvik/dex access flags (cf. java.lang.reflect.Modifier values they mirror).
     private const val ACC_PUBLIC = 0x0001
     private const val ACC_PROTECTED = 0x0004
@@ -131,7 +160,7 @@ object DexClassModelAdapter {
         fullClassType(cls, dexIndex(dexClasses))
 
     private fun fullClassType(cls: DexClass, index: DexIndex): JavaClassType =
-        index.classTypes.computeIfAbsent(ClassIdentity(cls)) {
+        boundedCacheComputeOrPut(index.classTypes, ClassIdentity(cls)) {
             javaClassTypeFor(cls, index, resolving = emptySet(), referenceDepth = 0)
         }
 

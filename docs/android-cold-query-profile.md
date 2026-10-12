@@ -453,3 +453,64 @@ fun(...): unknown shells, blank/unknown/any, unmodule'd UNKNOWN) had byte-equiva
 copies in ReferenceQueries (resolve preference ranking) and the workspace facade
 (hover fallback choice). One shared internal TypeInfo extension now owns it.
 Full remote JVM suite green (2,928/0/0).
+
+## Rounds 18–24 — device-E2E campaign — 2026-10-13
+
+Method: release APKs on the API 28 TCG emulator, per-round logs
+`/tmp/e2e-rel2*.log` (client await gates + PerfTiming/AndroidE2E markers); the
+live-path stage timing logs added in `98c0ac0`/`1240866` are permanent. All
+Gradle remote on `dingyi@10.1.1.14`.
+
+### E2E progression
+
+| Rounds | Result | Detail |
+| --- | --- | --- |
+| start | 2 failures | dynamic-dex completion + checker warning (both fail at clean HEAD) |
+| rel31 | **1 failure** | dynamic-dex PASSES; checker-warning test (`openCompleteEditSwitchFormatSaveAndRecreate:182`) still times out at 10s |
+| rel32–35 | 2 failures (flaky) | dynamic-dex flips back: "runtime dex static completion" 10,000ms await timeout, run-to-run under emulator load; checker warning still fails |
+
+rel31 evidence: `Tests run: 7, Failures: 1`; rel32–35: `There were 2 failures:`
+with the dex await at `EditorE2eTest:394` and the checker await at `:182`.
+
+### Landed fixes and their measured effect (commit subjects cited)
+
+- Completion publication wait bounded at 2.5s grace + checker thread raised from
+  MIN_PRIORITY to NORM (`9ac96da`): checker check **24.1s → 0.1–2.6s**.
+- In-flight checker preemption when newer work pends + `prepareBinding`
+  mid-front-half cancellation checkpoints (`0fe2ab6`): a superseded check aborts
+  mid-front-half instead of after the ~12s cold parse+attach+bind+resolve chain.
+- Dynamic dex import mount pre-warm at content change (`98c0ac0`): the first
+  resolution no longer lands mid-analysis of the very edit that introduced it
+  (was 4.7s of a 5.2s re-analysis on the emulator).
+- Builtin overlay warm at initialize (`1240866`): the live path's cold builtins
+  stage measured **10.3s** on the emulator and now compiles in the background at
+  initialize.
+- Mounted-dex simple-alias resolution before classloader scans (`d5fedb3`):
+  implicit 'Greeter' simple-name lookup **4.2s → dex-first O(1) alias index**;
+  member-resolution cancellation points added.
+- Classloader-candidate, dex-index and fingerprint-hash checkpoints
+  (`9e4a439`, `1a5a8de`); surface-assembly + wildcard-enumeration checkpoints
+  (`04e4d7e`); `runCatching` no longer swallows the checkpoint's
+  CancellationException (`5a5d5cf`).
+- keepnames for the parser/LSP package in release builds (`01f470f`): device
+  stack samples are attributable (release minifies; frames were empty-after-filter).
+
+### Measured cold chain (5KB project fixture)
+
+- Cold analysis ~11s total: builtins 9.8–10.3s + source-import activation
+  4–5.8s, with the implicit 'Greeter' 4.2s lookup inside the import stage.
+- Checker stage after the priority/preemption fixes: 0.1–2.6s (was 24.1s
+  starved at MIN_PRIORITY).
+
+### Remaining known issue (next round)
+
+The FIRST live-diagnostics check of the project fixture re-assembles dex
+surfaces and re-hydrates lazy imports inside the edited file's 10s budget.
+Watchdog stack samples pin it in `toModuleType`/dexIndex construction,
+`workspaceFingerprintHash`, `resolveWildcardImports` and `loadClassOrNull`.
+Next lever: per-target activation caching across content versions +
+edited-file-first check ordering, so the first check after an edit reuses the
+just-published activation instead of re-deriving it.
+
+Production Kotlin after this burst: **45,817** (baseline 53,562 → −7,745;
+prior checkpoint 45,502 → +315). The −12,000 target remains open.

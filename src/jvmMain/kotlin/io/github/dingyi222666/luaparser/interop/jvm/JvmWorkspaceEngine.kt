@@ -223,7 +223,7 @@ open class JvmWorkspaceEngine(
                 lazyImportedSymbol(name, currentFacts, baseConfiguration, resolvedConfiguration)
             },
             baseResolveImportTarget = { target ->
-                classModuleProvider.importedSymbolForTarget(target, resolvedConfiguration)
+                memoizedSymbolForTarget(target, resolvedConfiguration, deferMembers = false)
             },
             resolveImportedSymbol = { name ->
                 activeImports[name] ?: lazyImportedSymbol(
@@ -233,7 +233,7 @@ open class JvmWorkspaceEngine(
             // Dynamic import()/import "..." targets must resolve even when not yet on the
             // sourceImports activation set for this path (engine-level JVM resolution).
             resolveImportTarget = { target ->
-                classModuleProvider.importedSymbolForTarget(target, resolvedConfiguration)
+                memoizedSymbolForTarget(target, resolvedConfiguration, deferMembers = false)
             },
             unresolvedLuaJavaTargets = collectUnresolvedLuaJavaTargets(
                 currentFacts,
@@ -258,11 +258,11 @@ open class JvmWorkspaceEngine(
             val normalized = target.removePrefix("import ").trim()
             val simple = normalized.substringAfterLast('.').removeSuffix("*")
             if (simple == alias || normalized == alias) {
-                classModuleProvider.importedSymbolForTarget(target, resolvedConfiguration)
+                memoizedSymbolForTarget(target, resolvedConfiguration, deferMembers = false)
                     ?.copy(alias = alias)
             } else if (normalized.endsWith(".*")) {
                 val packageName = normalized.removeSuffix(".*").substringAfter(':')
-                classModuleProvider.importedSymbolForTarget(
+                memoizedSymbolForTarget(
                     "$packageName.$alias", resolvedConfiguration,
                     deferMembers = deferDependencyGlobals
                 )?.copy(alias = alias)
@@ -342,6 +342,51 @@ open class JvmWorkspaceEngine(
     private val importActivations = java.util.LinkedHashMap<ImportActivationKey, Map<String, WorkspaceImportedSymbol>>(16, 0.75f, true)
     internal var onImportActivation: (() -> Unit)? = null
 
+    /**
+     * Per-target symbol memoization shared by the live engine, the authoritative
+     * engine and the live-diagnostics worker (via the `baseResolve*` fallbacks the
+     * snapshot captures). The live check path resolves each queried alias/target
+     * through these fallbacks with NO cache in front, so every content version
+     * re-ran candidate generation + dex/Class.forName miss scans (~100-150ms per
+     * miss on the emulator; a 5KB framework-importing document paid seconds per
+     * check). Key excludes the per-keystroke-volatile class-like name set — the
+     * provider's own caches are keyed by class/loader identity and stay warm.
+     * `deferMembers` and the dex [DexLibraryMounter.mountEpoch] are in the key so
+     * a library mounted AFTER a cached negative re-resolves.
+     */
+    private data class TargetMemoKey(
+        val target: String,
+        val deferMembers: Boolean,
+        val configuration: JvmWorkspaceConfiguration,
+        val dexMountEpoch: Long
+    )
+
+    // ConcurrentHashMap forbids null values: negatives (target not resolvable yet)
+    // are stored as Optional.empty() — they are the entries that matter, since a
+    // pre-mount miss re-scanning per check was the recurring device cost.
+    private val targetMemos =
+        java.util.concurrent.ConcurrentHashMap<TargetMemoKey, java.util.Optional<WorkspaceImportedSymbol>>()
+    private var targetMemoSweepCounter = 0
+
+    private fun memoizedSymbolForTarget(
+        target: String,
+        configuration: JvmWorkspaceConfiguration,
+        deferMembers: Boolean
+    ): WorkspaceImportedSymbol? {
+        val key = TargetMemoKey(
+            target, deferMembers, configuration,
+            io.github.dingyi222666.luaparser.interop.jvm.DexLibraryMounter.mountEpoch.get()
+        )
+        targetMemos[key]?.let { return it.orElse(null) }
+        val resolved = classModuleProvider.importedSymbolForTarget(target, configuration, deferMembers)
+        targetMemos[key] = java.util.Optional.ofNullable(resolved)
+        // Bounded: identifiers from one large corpus sweep must not pin the map.
+        if (targetMemos.size > 512 && ++targetMemoSweepCounter % 64 == 0) {
+            targetMemos.clear()
+        }
+        return resolved
+    }
+
     private fun activateImports(
         targets: List<String>,
         classNames: Set<String>,
@@ -370,8 +415,7 @@ open class JvmWorkspaceEngine(
         targets.forEach { target ->
             if (deferWildcardPackageIndex && isWildcardOrPackageTarget(target)) return@forEach
             val targetStart = System.currentTimeMillis()
-            val symbol = classModuleProvider.importedSymbolForTarget(target, normalized,
-                deferMembers = deferDependencyGlobals)
+            val symbol = memoizedSymbolForTarget(target, normalized, deferDependencyGlobals)
             val targetMs = System.currentTimeMillis() - targetStart
             if (targetMs > 300) {
                 System.err.println("IMPORT-PERF: '$target' symbol=${symbol != null} took ${targetMs}ms")

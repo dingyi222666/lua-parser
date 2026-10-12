@@ -68,6 +68,10 @@ object DexLibraryMounter {
 
     private val mounting = java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.CompletableFuture<DexLibrary?>>()
 
+    /** Monotonic count of newly-mounted libraries; part of target-memo cache keys. */
+    val mountEpoch = java.util.concurrent.atomic.AtomicLong()
+
+
     /** True when [file] is an existing, readable dex/apk library this mounter can load. */
     fun isMountableDexLibrary(file: File): Boolean {
         return file.isFile && file.extension.lowercase() in MOUNTABLE_EXTENSIONS
@@ -94,7 +98,13 @@ object DexLibraryMounter {
             libraryCache[identity]?.let { pending.complete(it); return it }
             val classes = readClasses(file)
             val library = if (classes.isEmpty()) null else DexLibrary(file, identity, classes)
-            if (library != null) libraryCache[identity] = library
+            if (library != null) {
+                libraryCache[identity] = library
+                // Bumped so per-target resolution memos (JvmWorkspaceEngine) that
+                // observed a pre-mount negative can invalidate themselves: a dex
+                // library appearing later must not stay shadowed by its absence.
+                mountEpoch.incrementAndGet()
+            }
             pending.complete(library)
             return library
         } catch (failure: Throwable) {

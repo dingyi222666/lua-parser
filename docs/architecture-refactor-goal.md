@@ -497,3 +497,71 @@ synced byte-identical via `tools/android-e2e-remote.sh` (which rsyncs before eve
    hover weak-type predicate pair (~25).
 4. **Final acceptance**: 7/7 E2E + Monaco smoke + full gates + the −12,000-line
    metric, recorded per the acceptance contract.
+
+## Device-E2E campaign rounds 18–24 — 2026-10-13
+
+### Line-count measurement
+
+- Production Kotlin (`src/commonMain` + `src/jvmMain` + `src/jsMain`): **45,817**
+  (measured 2026-10-13 with `find src/commonMain src/jvmMain src/jsMain -name '*.kt' | xargs wc -l`).
+- Against the recorded baseline 53,562: **−7,745**. Against the prior checkpoint
+  45,502: **+315** — the perf-fix burst this campaign added instrumentation and
+  warm-up wiring, so the count ticked up; the −12,000 target (≤ 41,562) remains
+  open and the queued dedup bank is the path to it.
+
+### E2E progression (device, release builds)
+
+- Campaign start: 2 failures (`dynamicallyImportedDexCompletesJavaObjectsInsideLuaTables`,
+  `openCompleteEditSwitchFormatSaveAndRecreate` — both reproduced at clean HEAD in the
+  earlier controlled stash/rerun).
+- rel31 (`/tmp/e2e-rel31.log`): **1 failure** — the dynamic-dex test now PASSES
+  (dynamicDexCompletion logged; `Tests run: 7, Failures: 1`). The remaining failure is
+  the checker-warning test (`openCompleteEditSwitchFormatSaveAndRecreate:182`,
+  "checker warning delivered to the visible editor" > 10s).
+- rel32–rel35 (`/tmp/e2e-rel32.log` … `/tmp/e2e-rel35.log`): **2 failures (flaky)** —
+  the dynamic-dex test flips back to timing out at "runtime dex static completion"
+  (10,000ms await) run to run under TCG emulator load; the checker-warning test
+  still fails every run. The dex gate is flaky, not fixed.
+
+### Landed fixes (commit subjects, `git log --oneline -15`)
+
+- `9ac96da` — bound completion publication wait (2.5s grace, then serve the last
+  published facade) + de-starve the checker thread (was MIN_PRIORITY; measured
+  24.1s check that missed the budget entirely).
+- `0fe2ab6` — preempt the in-flight checker when newer work pends + cancellation
+  checkpoints inside `prepareBinding` mid-front-half (a superseded analysis no
+  longer runs the ~12s cold parse+attach+bind+resolve chain to completion).
+- `98c0ac0` — warm dynamic dex import mounts at content-change time (deduped per
+  path/mtime/length) + permanent live-path stage timing logs.
+- `1240866` — warm the builtin overlay at initialize (the live path's cold
+  builtins compile measured **10.3s** on the emulator inside the first live
+  analysis) + checker watchdog diagnostics.
+- `ee17f9f`, `be94a87` — checker phase timing over 1s, dex import sub-step timing,
+  watchdog thread-stack printing + IMPORT-PERF per-target activation timing.
+- `d5fedb3` — mounted-dex simple-alias resolution precedes classloader scans
+  (implicit 'Greeter' simple-name lookup measured **4.2s** → dex-first) +
+  member-resolution cancellation points.
+- `9e4a439` — checkpoint every classloader class-load candidate (~100–150ms per
+  framework-dex miss on the emulator).
+- `01f470f` — keepnames for the parser/LSP package in release E2E builds (sample
+  release minifies; stack samples were arriving obfuscated/empty-after-filter).
+- `04e4d7e`, `5a5d5cf`, `1a5a8de` — surface assembly, wildcard enumeration, dex
+  index construction and provider fingerprint hashing observe the analysis
+  checkpoint; the `runCatching` around the surface-assembly hook no longer
+  swallows its own CancellationException.
+
+### Measured device evidence
+
+- Cold analysis of the 5KB project fixture: ~11s total — builtins stage
+  9.8–10.3s + source-import activation 4–5.8s (implicit 'Greeter' 4.2s inside).
+- Checker check of main.lua: **24.1s → 0.1–2.6s** after the NORM-priority and
+  preemption fixes.
+- Live-stage timing logs are now permanent (no longer temporary instrumentation).
+
+### Remaining known issue and next lever
+
+The first live-diagnostics check of the project fixture still re-assembles dex
+surfaces and re-hydrates lazy imports inside the edited file's 10s budget (stack
+samples: `toModuleType`/dexIndex, `workspaceFingerprintHash`,
+`resolveWildcardImports`, `loadClassOrNull`). Next lever: per-target activation
+caching across content versions + edited-file-first check ordering.
