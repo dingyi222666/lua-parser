@@ -353,3 +353,22 @@ the default ring buffer was evicting early-test evidence.
 3. The revision-owned derivation cache (rounds 3/7 design) to make republication
    after abort warm.
 4. The −12,000-line target: ~2,800 lines remain (audit-backed items queued).
+
+## Round 8 addendum — bounded-parallel completion executor
+
+Landed (commit `2aa22f1`): the completion executor now runs 2 workers (read-only
+facade queries; the bound keeps device CPU for analysis workers). The measured
+6.5s queue wait behind a stale in-flight enumeration can no longer delay the
+newest request. Device E2E unchanged at 5/7 this run — the dynamic-dex test's
+first await still races the cold live-buffer analysis of the 5KB project fixture
+(didOpen at T+0, test setText at T+1s, the fresh analysis must abort-and-republish
+within the 10s budget).
+
+Full remote JVM suite green (lsp suites re-validated after the executor change).
+
+### Remaining round-9+ plan (unchanged, evidence above)
+
+1. The revision-owned, content-keyed derivation cache — makes abort-and-republish
+   warm (the decisive fix for both remaining tests).
+2. The dynamic-dex activation path instrumentation on device.
+3. The −12,000-line dedup items.
