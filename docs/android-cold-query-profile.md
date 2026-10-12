@@ -390,3 +390,19 @@ device E2E 5/7 (the two timing-gated tests, unchanged by these refactors — the
 gates are the cold-analysis/derivation costs documented above).
 
 Production Kotlin: **45,582** (baseline 53,562; −7,980; −12,000 target continues).
+
+## Round 11 — single-owner .aly provider recovery
+
+Landed (commit `9a47fff`): `findAlyLayoutProviderIn` / `alyModuleNameFromPath` are now
+one shared internal pair serving the graph builder's build-time claim and the
+resolver's fallback lookup (the resolver only differed in reading snapshot.files vs
+the builder's graph files). Full remote JVM suite green (2,928/0/0).
+
+Deferred with rationale: the facade's LuaJava helper-detection block (query audit #2,
+~110 lines) — delegation to the evaluator's stronger recursive implementation requires
+exposing evaluator internals through the model and re-validating behavior parity for
+navigation targets pinned by the interop suites (the facade copy is deliberately
+weaker in its declaration-chain depth); queued as a dedicated change with its own
+validation cycle.
+
+Production Kotlin: 45,563 (baseline 53,562; −7,999).
