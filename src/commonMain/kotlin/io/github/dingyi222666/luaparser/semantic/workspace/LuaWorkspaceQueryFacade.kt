@@ -31,6 +31,7 @@ import io.github.dingyi222666.luaparser.semantic.types.model.ClassType
 import io.github.dingyi222666.luaparser.semantic.types.model.ModuleType
 import io.github.dingyi222666.luaparser.semantic.types.model.TableType
 import io.github.dingyi222666.luaparser.semantic.types.model.Type
+import io.github.dingyi222666.luaparser.semantic.model.isBareWeakType
 import io.github.dingyi222666.luaparser.semantic.model.isCompletionSite
 import io.github.dingyi222666.luaparser.semantic.model.localDeclarationInitializer
 import io.github.dingyi222666.luaparser.semantic.model.toSymbolHandle
@@ -971,31 +972,7 @@ class LuaWorkspaceQueryFacade(
         }
     }
 
-    private fun isBareWeakHoverType(type: TypeInfo): Boolean {
-        val display = type.displayName
-        // fun(...): unknown is a weak unannotated shell — lose to inferred fun(...): TextView.
-        if (isUnknownReturnOnlyFunctionDisplay(display)) {
-            return true
-        }
-        return display.isBlank() ||
-            display == "unknown" ||
-            display == "any" ||
-            (type.kind == TypeInfoKind.UNKNOWN &&
-                !display.contains("fun(") &&
-                !display.startsWith("Array<") &&
-                type.moduleName.isNullOrBlank())
-    }
-
-    private fun isUnknownReturnOnlyFunctionDisplay(display: String): Boolean {
-        if (!display.contains("fun(") && !display.contains("fun<")) {
-            return false
-        }
-        // Match `: unknown` / `: any` as the sole return (including multi-param forms).
-        return display.endsWith(": unknown") ||
-            display.endsWith(": any") ||
-            display.contains("): unknown") ||
-            display.contains("): any")
-    }
+    private fun isBareWeakHoverType(type: TypeInfo): Boolean = type.isBareWeakType()
 
     private fun isPreferredHoverStructuredKind(kind: TypeInfoKind): Boolean {
         return kind == TypeInfoKind.FUNCTION ||

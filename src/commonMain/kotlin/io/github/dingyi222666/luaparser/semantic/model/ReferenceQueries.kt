@@ -143,26 +143,7 @@ internal class ReferenceQueries(
         }
     }
 
-    private fun isBareWeakType(type: TypeInfo): Boolean {
-        val display = type.displayName
-        // Unannotated fun(...): unknown shells lose to body-inferred returns (TextView, …).
-        if (display.endsWith(": unknown") ||
-            display.endsWith(": any") ||
-            display.contains("): unknown") ||
-            display.contains("): any")
-        ) {
-            if (display.contains("fun(") || display.contains("fun<")) {
-                return true
-            }
-        }
-        return display.isBlank() ||
-            display == "unknown" ||
-            display == "any" ||
-            (type.kind == TypeInfoKind.UNKNOWN &&
-                !display.contains("fun(") &&
-                !display.startsWith("Array<") &&
-                type.moduleName.isNullOrBlank())
-    }
+    private fun isBareWeakType(type: TypeInfo): Boolean = type.isBareWeakType()
 
     /**
      * When a binder declaration only surfaces bare unknown/any, recover declared/inferred
@@ -1503,4 +1484,31 @@ internal class ReferenceQueries(
             else -> null
         }
     }
+}
+
+/**
+ * Shared bare-weak-type predicate (hover/resolve preference ordering): unannotated
+ * `fun(...): unknown` shells, blank/unknown/any displays, and unmodule'd UNKNOWN kinds
+ * lose to body-inferred or structured surfaces. Single owner for the model's
+ * preference ranking and the workspace facade's hover fallback choice.
+ */
+internal fun TypeInfo.isBareWeakType(): Boolean {
+    val display = displayName
+    // Unannotated fun(...): unknown shells lose to body-inferred returns (TextView, ...).
+    if (display.endsWith(": unknown") ||
+        display.endsWith(": any") ||
+        display.contains("): unknown") ||
+        display.contains("): any")
+    ) {
+        if (display.contains("fun(") || display.contains("fun<")) {
+            return true
+        }
+    }
+    return display.isBlank() ||
+        display == "unknown" ||
+        display == "any" ||
+        (kind == TypeInfoKind.UNKNOWN &&
+            !display.contains("fun(") &&
+            !display.startsWith("Array<") &&
+            moduleName.isNullOrBlank())
 }
