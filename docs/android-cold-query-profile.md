@@ -170,3 +170,36 @@ per (class, revision) without sharing mutable caches. Target: checker cold path
 for the fixture workspace ≤2s so a warning publishes within the 10s budget even
 after one invalidation. Same mechanism should cut the dynamic-DEX first
 completion (currently ~5.7s server-side in the failing test).
+
+## Round 3 — declaration-scope type derivation + E2E churn finding
+
+Landed (commit `2a91805`): `typeOfDeclaration` now derives and caches in the
+declaration's OWN scope (loadlayout ids sinks exempted — they bind the layout call
+visible from the caller). JVM profile under the device dex configuration (new
+`lsp.LspLiveDiagnosticsLatencyProfileTest`): warm expression stage 65ms → 50ms;
+hot repeats (68ms/47ms/43ms) collapsed. Full remote JVM suite green (2,925/0/0).
+
+Measurement infrastructure note: the same workload costs 70–102ms on the JVM vs
+6,275–9,015ms on the device — the E2E emulator runs with `-accel off` (TCG
+software emulation, ~70×). Device budget conclusions must account for that ratio;
+a 50ms JVM checker ≈ 3.5s on device.
+
+### Remaining device-side failure mechanism (next round)
+
+Post-optimization release E2E is still 5/7 with the same two tests. Timeline from
+the instrumented earlier run shows the live-diagnostics worker fighting the
+document-refresh worker:
+
+- The awaited edit's check is repeatedly superseded: each live-analysis republication
+  replaces the workspace snapshot with a new binder for the edited file, so the
+  in-flight checker (even when aborted promptly through `analysisCheckpoint`)
+  restarts against churn instead of finishing.
+- The worker also begins stale work items (`begin mods/dingyi.lua` ×3 without
+  `checked`) between the awaited schedule and its final 9s run — cancellation works,
+  but the restart cost is paid in full each time because all evaluator-level caches
+  die with the dropped attempt.
+
+Next step: coalesce — when a superseding snapshot exists, restart the check ONCE
+against the newest revision with warm revision-owned caches, and let the refresh
+worker hand its result directly to the diagnostics worker (single publication
+instead of analysis → schedule → re-check). Then re-measure on device.
