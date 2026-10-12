@@ -437,6 +437,19 @@ class LuaLanguageService(
     ) {
         override val includeAndroidFramework = false
         override val checkDiagnostics = false
+
+        // The live path is the latency-critical one and the emulated device hides
+        // costs that the JVM mirror cannot reproduce (a cold first analysis measured
+        // ~11s whose phase split was unobservable). Always log live stages.
+        override fun <T> analysisStage(stage: String, path: VirtualPath?, action: () -> T): T {
+            val started = System.nanoTime()
+            return try { action() } finally {
+                System.err.println(
+                    "LSP-DEVICE: live-stage $stage path=${path?.value ?: "workspace"} " +
+                        "ms=${(System.nanoTime() - started) / 1_000_000}"
+                )
+            }
+        }
     }
 
     private var liveBufferSnapshot: WorkspaceSnapshot? = null
@@ -573,6 +586,35 @@ class LuaLanguageService(
         workspaceMetadata = metadata.toMap()
         warmUpConfiguredDexLibraries(workspaceMetadata)
         rebuildFull()
+    }
+
+    private val warmedDexImports: MutableSet<String> =
+        java.util.Collections.synchronizedSet(LinkedHashSet())
+
+    /**
+     * Pre-mounts dex/apk libraries referenced by an open buffer's `import '<path>.dex'`
+     * statements on a background thread, at content-change time. The import chain's
+     * first resolution otherwise lands mid-analysis of the very edit that introduced
+     * it (measured 4.7s of a 5.2s re-analysis on the emulator); warming overlaps it
+     * with the still-running analysis of the previous content. Deduped per
+     * (path, mtime, length) — a rewritten library re-warms.
+     */
+    private fun warmDexImportsIn(source: String) {
+        Regex("""import\s*['"]([^'"\n]+)['"]""").findAll(source).forEach { match ->
+            val target = match.groupValues[1].trim()
+            if (!target.endsWith(".dex") && !target.endsWith(".apk")) return@forEach
+            val file = java.io.File(target)
+            if (!file.isFile) return@forEach
+            val key = "${file.absolutePath}#${file.lastModified()}#${file.length()}"
+            if (!warmedDexImports.add(key)) return@forEach
+            Thread({
+                runCatching {
+                    io.github.dingyi222666.luaparser.interop.jvm.DexLibraryMounter.libraryFor(file)
+                }.onFailure {
+                    System.err.println("LSP-DEVICE: dex import warmup failed for ${file.name}: $it")
+                }
+            }, "lsp-dex-import-warmup").apply { isDaemon = true }.start()
+        }
     }
 
     /**
@@ -755,6 +797,10 @@ class LuaLanguageService(
                     pending
                 }
                 try {
+                    System.err.println(
+                        "LSP-DEVICE: liveDiagnostics worker start files=${work.files.size} " +
+                            "order=${work.checkOrder.map { it.value }}"
+                    )
                     val checkedFiles = work.snapshot.files.toMutableMap()
                     // Completion and diagnostics evaluate concurrently. Keep the checker's
                     // provider/global caches separate from the published query resolver.
@@ -771,7 +817,10 @@ class LuaLanguageService(
                         // the report derives from this document's own AST, so only a
                         // content change of THIS buffer (or shutdown) invalidates it.
                         fun isCurrent() = !closed && openDocuments[path] == work.files[path]
-                        if (!synchronized(stateLock) { isCurrent() }) continue
+                        if (!synchronized(stateLock) { isCurrent() }) {
+                            System.err.println("LSP-DEVICE: liveDiagnostics skip ${path.value} (superseded)")
+                            continue
+                        }
                         liveAnalysisCheckpoint.set {
                             synchronized(stateLock) {
                                 if (!isCurrent()) throw ObsoleteLiveAnalysis()
@@ -870,8 +919,12 @@ class LuaLanguageService(
                     }
                     onDocumentDiagnostics?.invoke(diagnostics)
                 } catch (_: ObsoleteLiveAnalysis) {
-                } catch (failure: Exception) {
-                    System.err.println("LSP: live diagnostics failed: ${failure.message}")
+                } catch (failure: Throwable) {
+                    // Throwable, not Exception: a silent Error kill would leave
+                    // liveDiagnosticRunning=true forever and every later republication
+                    // would queue work no thread will ever take (observed on device as
+                    // a window with zero checker activity and zero error lines).
+                    System.err.println("LSP: live diagnostics failed: $failure")
                 } finally {
                     liveAnalysisCheckpoint.remove()
                 }
@@ -1008,6 +1061,7 @@ class LuaLanguageService(
                 return publishDiagnostics(path)
             }
         }
+        warmDexImportsIn(document.text)
         scheduleDocumentRefresh()
         return PublishDiagnosticsParams(document.uri, emptyList())
     }
@@ -1033,6 +1087,8 @@ class LuaLanguageService(
         openDocuments[path] = applyContentChanges(baseSource, params.contentChanges)
         documentUris[path] = params.textDocument.uri
         if (deferDocumentAnalysis) {
+            val changedContent = openDocuments[path]
+            if (changedContent != null) warmDexImportsIn(changedContent)
             scheduleDocumentRefresh()
             return@synchronized emptyList<PublishDiagnosticsParams>()
         }
