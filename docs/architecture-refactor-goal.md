@@ -654,3 +654,13 @@ Protocol upgrade: annotations-13.0.jar on the standalone compiler's JVM classpat
 
 **Lines: 43,633** (baseline 53,562 → −9,929; target ≤41,562, ~2,070 remaining). E2E rel56 = OK (7 tests); all gates green.
 
+## Round 30-31 — paused wave committed + E2E green — 2026-10-14
+
+USER DIRECTIVE (round 31): all agent verification (compile/test) must run REMOTELY — no local kotlinc/Gradle; agents may self-verify via ssh to the remote host, or the parent runs the remote gates at integration.
+
+The round-30 wave was paused mid-flight (4 of 5 agents interrupted); the tree with the delivered LuaParser/AST2Lua third pass (−80, verified byte-identical across 716 differential cases) plus the interrupted agents' partial fifth-pass edits compiled and tested GREEN remotely on the first try (2,929/0/0 + JS) — committed as babcb48.
+
+**Lines: 43,047** (baseline 53,562 → −10,515; target ≤41,562, ~1,485 remaining). **E2E rel57 = OK (7 tests)** on the committed tree.
+
+Protocol going forward: agent exploration/static analysis is unrestricted; any compile/test verification happens REMOTELY (ssh dingyi@10.1.1.14, JAVA_HOME=~/.jdks/temurin-17), either by the agent itself over ssh or by the parent at integration. This also removes the isolated-copy/stub dance — the remote tree is the verification host.
+
