@@ -626,3 +626,17 @@ Verified remotely (JVM 2,929/0/0 + JS compile + **E2E rel54 = OK (7 tests)**):
 
 **Lines: 44,709** (baseline 53,562 → −8,853; target ≤41,562, ~3,150 remaining). E2E rel54 = OK (7 tests) on the reduced tree; all gates green. Collaboration note: with 5 agents editing one worktree, mid-edit compile breakage is expected — the parent fixes cross-agent compile errors at integration (this round: linkedSetOf SAM, prepareBinding named-arg, globals-join typing) and agents increasingly verify in isolated copies.
 
+## Round 28 — five-agent line reduction — 2026-10-13 (5/5)
+
+Verified remotely (JVM 2,929/0/0 + JS compile + **E2E rel55 = OK (7 tests)**):
+
+- LuaLanguageService third pass (−110): semanticTokens legend fold, classifyNameToken merge, lsp4j Range.equals adoption (javap-verified structural equals), workspace-index refresh twins, format destructure, provably-redundant clamps.
+- checker third pass (−97): merged evaluateIdentifier ladder, shared resolveLuaJavaDegradingHelperCall (newInstance/loadLib), FunctionType rebuiltName no-op removal (name default IS the computed value), unified addDiagnostic emitter (7 sites), integral literal-branch collapse (toDouble exactness proof).
+- binder+comments fourth pass (−161): 9 remaining kind-factories → packed positional pass-throughs, BinderPositionQueries comparator chains → takeIf/elvis, parseClassTag reuses parseNamedTypeHeader (splitTopLevelTypeText trim proof), appendDescription copy ladder → in-place mutation (DocTagSyntax descriptions val→var), write-only CollectedCommentBlock.range removed. Equivalence proven by a dump harness: getScopeAt/getDeclarationAt probed at EVERY character position of 6 tag-covered snippets — 1,233-line output byte-identical HEAD vs modified.
+- facade/resolver third pass (−88): preferredHoverType duplicate arms behind isCallableDisplay, positionOrder comparator over 4 sort ladders, sharedGlobalProviders scaffold, importedSymbol factory, builder addResolved, surfaceSymbol.
+- provider third pass (−98): loadedCandidateOrNull (2 identical Class.forName ladders), packageSurfaceProviders(membersOnly), snapshot-call inlining, LRU scaffolding dedup via boundedCache made internal.
+
+Collaboration protocol matured: every agent verified in an ISOLATED COPY (standalone kotlin-compiler-embeddable 2.2.0 from the gradle cache + BuiltinOverlayResourceMirror stub; the real generated mirror crashes standalone codegen even on pristine HEAD — pre-existing). Integration fixed zero compile errors this round (first round with a clean cross-agent tree).
+
+**Lines: 44,155** (baseline 53,562 → −9,407; target ≤41,562, ~2,600 remaining). E2E rel55 = OK (7 tests); all gates green.
+
