@@ -381,10 +381,8 @@ internal class WorkspaceModuleResolver(
         )
     }
 
-    fun exportedMemberByHandle(handle: String): ResolvedExportMember? {
-        val identity = ModuleExportIdentity.parse(handle) ?: return null
-        return exportedMember(identity.providerPath, identity.exportPath)
-    }
+    fun exportedMemberByHandle(handle: String): ResolvedExportMember? =
+        ModuleExportIdentity.parse(handle)?.let { exportedMember(it.providerPath, it.exportPath) }
 
     fun exportAt(path: VirtualPath, position: io.github.dingyi222666.luaparser.parser.ast.node.Position): ResolvedExportMember? {
         val surface = fileSnapshot(path)?.moduleExportSurface ?: return null
@@ -720,19 +718,18 @@ internal class WorkspaceModuleResolver(
 
     fun importTargetSymbolFor(path: VirtualPath, target: String): WorkspaceImportedSymbol? {
         val normalized = normalizeImportTarget(target)
-        val facts = snapshot.files[path]?.documentFacts ?: return null
-        val activeTargets = activeImportTargets(facts)
-        if (normalized !in activeTargets) {
-            // Allow simple-name activation only for targets that this file imported.
-            val matched = activeTargets.firstOrNull { active ->
-                val activeNormalized = normalizeImportTarget(active)
-                activeNormalized == normalized ||
-                    (!activeNormalized.endsWith(".*") &&
-                        activeNormalized.substringAfterLast('.').substringAfterLast('$') == normalized)
-            } ?: return null
-            return importTargetSymbol(matched)
+        val activeTargets = snapshot.files[path]?.documentFacts?.let(::activeImportTargets) ?: return null
+        if (normalized in activeTargets) {
+            return importTargetSymbol(normalized)
         }
-        return importTargetSymbol(normalized)
+        // Allow simple-name activation only for targets that this file imported.
+        val matched = activeTargets.firstOrNull { active ->
+            val activeNormalized = normalizeImportTarget(active)
+            activeNormalized == normalized ||
+                (!activeNormalized.endsWith(".*") &&
+                    activeNormalized.substringAfterLast('.').substringAfterLast('$') == normalized)
+        } ?: return null
+        return importTargetSymbol(matched)
     }
 
     fun importedSymbolsForTarget(target: String): List<WorkspaceImportedSymbol> {
@@ -1040,20 +1037,8 @@ internal class WorkspaceModuleResolver(
             moduleType = moduleType,
             sourceForm = ModuleExportSurface.SourceForm.RETURN_IDENTIFIER,
             members = listOf(
-                ModuleExportSurface.MemberExport(
-                    name = "__call",
-                    exportPath = listOf("__call"),
-                    kind = SymbolKind.FIELD,
-                    type = importType,
-                    range = null
-                ),
-                ModuleExportSurface.MemberExport(
-                    name = "import",
-                    exportPath = listOf("import"),
-                    kind = SymbolKind.METHOD,
-                    type = importType,
-                    range = null
-                )
+                ModuleExportSurface.MemberExport("__call", listOf("__call"), SymbolKind.FIELD, importType, null),
+                ModuleExportSurface.MemberExport("import", listOf("import"), SymbolKind.METHOD, importType, null)
             )
         )
     }
@@ -1077,6 +1062,22 @@ internal class WorkspaceModuleResolver(
     }
 }
 
+/**
+ * Shared `prefix:path:suffix` handle parse: the provider path before the LAST ':', the
+ * suffix after it. Used by the module-export and imported-symbol handle identities.
+ */
+internal fun parseColonPathHandle(handle: String?, prefix: String): Pair<VirtualPath, String>? {
+    if (handle == null || !handle.startsWith(prefix)) {
+        return null
+    }
+    val body = handle.removePrefix(prefix)
+    val separator = body.lastIndexOf(':')
+    if (separator <= 0 || separator >= body.lastIndex) {
+        return null
+    }
+    return VirtualPath.of(body.substring(0, separator)) to body.substring(separator + 1)
+}
+
 internal data class ModuleExportIdentity(
     val providerPath: VirtualPath,
     val exportPath: List<String>
@@ -1087,20 +1088,9 @@ internal data class ModuleExportIdentity(
 
     companion object {
         fun parse(handle: String?): ModuleExportIdentity? {
-            if (handle == null || !handle.startsWith("module-export:")) {
-                return null
-            }
-            val body = handle.removePrefix("module-export:")
-            val separator = body.lastIndexOf(':')
-            if (separator <= 0 || separator >= body.lastIndex) {
-                return null
-            }
-            val path = body.substring(0, separator)
-            val export = body.substring(separator + 1)
-            if (export.isBlank()) {
-                return null
-            }
-            return ModuleExportIdentity(VirtualPath.of(path), export.split('.'))
+            return parseColonPathHandle(handle, "module-export:")
+                ?.takeIf { (_, export) -> export.isNotBlank() }
+                ?.let { (path, export) -> ModuleExportIdentity(path, export.split('.')) }
         }
     }
 }

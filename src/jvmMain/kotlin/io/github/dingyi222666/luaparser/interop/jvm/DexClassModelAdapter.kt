@@ -93,14 +93,10 @@ object DexClassModelAdapter {
         return h and (cacheStripes.size - 1)
     }
 
-    private class DexSetKey(val classes: Collection<DexClass>) {
-        override fun equals(other: Any?): Boolean = other is DexSetKey && classes === other.classes
-        override fun hashCode(): Int = System.identityHashCode(classes)
-    }
-
-    private class ClassIdentity(val cls: DexClass) {
-        override fun equals(other: Any?): Boolean = other is ClassIdentity && cls === other.cls
-        override fun hashCode(): Int = System.identityHashCode(cls)
+    /** Identity (not structural) cache key: the wrapped value instance distinguishes entries. */
+    private class IdentityKey<out T>(private val value: T) {
+        override fun equals(other: Any?): Boolean = other is IdentityKey<*> && value === other.value
+        override fun hashCode(): Int = System.identityHashCode(value)
     }
 
     private class DexIndex(classes: Collection<DexClass>) : Map<String, DexClass> by classes.associateBy(DexClass::binaryName) {
@@ -114,8 +110,8 @@ object DexClassModelAdapter {
         // entries). The former 128-entry bounds let a single completion sweep evict the
         // checker's hot classes, forcing every live-diagnostics check to re-assemble
         // dozens of DEX surfaces (measured 2.4s-7.1s per check on the E2E emulator).
-        val classTypes = boundedCache<ClassIdentity, JavaClassType>(512)
-        val moduleTypes = boundedCache<Pair<ClassIdentity, Boolean>, ModuleType>(512)
+        val classTypes = boundedCache<IdentityKey<DexClass>, JavaClassType>(512)
+        val moduleTypes = boundedCache<Pair<IdentityKey<DexClass>, Boolean>, ModuleType>(512)
 
         init {
             // Index construction over a framework-sized dex (~6k classes) measured 2-4s
@@ -124,10 +120,10 @@ object DexClassModelAdapter {
         }
     }
 
-    private val dexIndexes = boundedCache<DexSetKey, DexIndex>(8)
+    private val dexIndexes = boundedCache<IdentityKey<Collection<DexClass>>, DexIndex>(8)
 
     private fun dexIndex(classes: Collection<DexClass>): DexIndex =
-        boundedCacheComputeOrPut(dexIndexes, DexSetKey(classes)) { DexIndex(classes) }
+        boundedCacheComputeOrPut(dexIndexes, IdentityKey(classes)) { DexIndex(classes) }
     // dalvik/dex access flags (cf. java.lang.reflect.Modifier values they mirror).
     private const val ACC_PUBLIC = 0x0001
     private const val ACC_PROTECTED = 0x0004
@@ -158,7 +154,7 @@ object DexClassModelAdapter {
         fullClassType(cls, dexIndex(dexClasses))
 
     private fun fullClassType(cls: DexClass, index: DexIndex): JavaClassType =
-        boundedCacheComputeOrPut(index.classTypes, ClassIdentity(cls)) {
+        boundedCacheComputeOrPut(index.classTypes, IdentityKey(cls)) {
             javaClassTypeFor(cls, index, resolving = emptySet(), referenceDepth = 0)
         }
 
@@ -336,15 +332,13 @@ object DexClassModelAdapter {
     ): List<JavaConstructorType> {
         val ownerReference = typeReferenceForBinaryName(cls.binaryName)
         return cls.methods.mapNotNull { method ->
-            if (method.name == "<clinit>") {
-                // Class initializer: carries ACC_CONSTRUCTOR in real dex files and can pass
-                // the visibility gate, but reflection never exposes it and scripts can never
-                // call it — it is neither a constructor overload nor a callable member
-                // (groupedVisibleMethods drops it from the method surfaces too).
-                return@mapNotNull null
-            }
-            val isConstructor = method.accessFlags and ACC_CONSTRUCTOR != 0 || method.name == "<init>"
-            if (!isConstructor || !isVisibleMember(method.accessFlags, isMethod = true)) {
+            // <clinit> carries ACC_CONSTRUCTOR in real dex files and can pass the visibility
+            // gate, but reflection never exposes it and scripts can never call it — it is
+            // neither a constructor overload nor a callable member (groupedVisibleMethods
+            // drops it from the method surfaces too).
+            if (method.isClinit() || !method.isConstructorLike() ||
+                !isVisibleMember(method.accessFlags, isMethod = true)
+            ) {
                 return@mapNotNull null
             }
             JavaConstructorType(
@@ -361,7 +355,7 @@ object DexClassModelAdapter {
     }
 
     private fun toModuleType(cls: DexClass, index: DexIndex, includeInnerModules: Boolean): ModuleType {
-        val key = ClassIdentity(cls) to includeInnerModules
+        val key = IdentityKey(cls) to includeInnerModules
         index.moduleTypes[key]?.let { return it }
         val classType = fullClassType(cls, index)
         val fields = linkedMapOf<String, Type>("__class" to JavaInstanceType(classType))
@@ -405,6 +399,12 @@ object DexClassModelAdapter {
         return if (enclosing.isNotBlank() && '$' in classPart) "$enclosing.$simple" else simple
     }
 
+    private fun DexMethod.isClinit(): Boolean = name == "<clinit>"
+
+    /** ACC_CONSTRUCTOR-flagged or `<init>`-named: belongs to the constructor overload set. */
+    private fun DexMethod.isConstructorLike(): Boolean =
+        accessFlags and ACC_CONSTRUCTOR != 0 || name == "<init>"
+
     /**
      * Visibility + artifact filter shared by fields and methods: public or
      * protected only; synthetic (and, for methods, bridge) members are dropped
@@ -432,11 +432,9 @@ object DexClassModelAdapter {
     private fun groupedVisibleMethods(cls: DexClass): Map<String, List<DexMethod>> {
         val grouped = linkedMapOf<String, MutableList<DexMethod>>()
         cls.methods.forEach { method ->
-            if (method.name == "<clinit>") {
-                return@forEach
-            }
-            val isConstructor = method.accessFlags and ACC_CONSTRUCTOR != 0 || method.name == "<init>"
-            if (isConstructor || !isVisibleMember(method.accessFlags, isMethod = true)) {
+            if (method.isClinit() || method.isConstructorLike() ||
+                !isVisibleMember(method.accessFlags, isMethod = true)
+            ) {
                 return@forEach
             }
             grouped.getOrPut(method.name) { mutableListOf() }.add(method)

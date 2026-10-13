@@ -75,7 +75,6 @@ internal class DeclarationBinder(
      */
     override fun visitLocalStatement(node: LocalStatement, value: Unit) {
         val attachment = comments.getAttachment(node)
-        val documentation = attachment?.toDeclarationDocumentation()
         val declaredTypeSyntaxes = positionalDeclaredTypeSyntaxes(
             declaredNameCount = node.init.size,
             inlineTypeText = attachment?.inlineTypeText
@@ -92,11 +91,9 @@ internal class DeclarationBinder(
         node.init.forEachIndexed { index, identifier ->
             builder.addDeclarationWithSymbol(
                 localDeclaration(
-                    id = builder.nextDeclarationId(),
-                    name = identifier.name,
-                    owner = DeclarationOwner.Lexical(currentLexicalOwnerNode()),
-                    anchorNode = identifier,
-                    documentation = documentation,
+                    id = builder.nextDeclarationId(), name = identifier.name,
+                    owner = DeclarationOwner.Lexical(currentLexicalOwnerNode()), anchorNode = identifier,
+                    documentation = attachment?.toDeclarationDocumentation(),
                     declaredTypeSyntax = declaredTypeSyntaxes.getOrNull(index) ?: classValueType
                 ).copy(
                     // Anchor at the end of the initializer expression: the new local is
@@ -159,11 +156,7 @@ internal class DeclarationBinder(
         // fields installed with `owner.name = value`, not only `function owner.name()`.
         val attachment = comments.getAttachment(node)
         val documentation = attachment?.toDeclarationDocumentation()
-        val declaredTypeSyntax = if (node.init.size == 1) {
-            parseTypeSyntax(attachment?.inlineTypeText)
-        } else {
-            null
-        }
+        val declaredTypeSyntax = node.init.singleOrNull()?.let { parseTypeSyntax(attachment?.inlineTypeText) }
         node.init.forEachIndexed { index, target ->
             recordGlobalWrite(target, node)
             when (target) {
@@ -179,13 +172,9 @@ internal class DeclarationBinder(
                     }
                     builder.addDeclarationWithSymbol(
                         BinderDeclaration(
-                            id = builder.nextDeclarationId(),
-                            name = target.identifier.name,
-                            kind = kind,
-                            origin = DeclarationOrigin.AST,
-                            owner = DeclarationOwner.Lexical(currentLexicalOwnerNode()),
-                            anchorNode = target.identifier,
-                            documentation = documentation,
+                            id = builder.nextDeclarationId(), name = target.identifier.name, kind = kind,
+                            origin = DeclarationOrigin.AST, owner = DeclarationOwner.Lexical(currentLexicalOwnerNode()),
+                            anchorNode = target.identifier, documentation = documentation,
                             declaredTypeSyntax = declaredTypeSyntax
                         )
                     )
@@ -199,8 +188,7 @@ internal class DeclarationBinder(
     override fun visitFunctionDeclaration(node: FunctionDeclaration, value: Unit) {
         if (!node.isLocal) node.identifier?.let { recordGlobalWrite(it, node) }
         val attachment = comments.getAttachment(node)
-        val documentation = attachment?.toDeclarationDocumentation()
-        val functionDeclaration = createFunctionDeclaration(node, documentation)
+        val functionDeclaration = createFunctionDeclaration(node, attachment?.toDeclarationDocumentation())
 
         when (val identifier = node.identifier) {
             is MemberExpression -> visitExpressionNode(identifier.base, value)
@@ -221,7 +209,7 @@ internal class DeclarationBinder(
             val owner = functionDeclaration?.let { DeclarationOwner.Declaration(it.id) }
                 ?: DeclarationOwner.Lexical(node.body ?: node)
             node.params.forEach { parameter ->
-                bindParameter(parameter, owner, documentation)
+                bindParameter(parameter, owner, attachment?.toDeclarationDocumentation())
             }
             visitBlockNode(body, value)
         }
@@ -292,10 +280,8 @@ internal class DeclarationBinder(
             // Seed declaredType so hover/type-at participate in normal declaredType path.
             builder.addDeclarationWithSymbol(
                 localDeclaration(
-                    id = builder.nextDeclarationId(),
-                    name = node.variable.name,
-                    owner = DeclarationOwner.Lexical(node.body),
-                    anchorNode = node.variable,
+                    id = builder.nextDeclarationId(), name = node.variable.name,
+                    owner = DeclarationOwner.Lexical(node.body), anchorNode = node.variable,
                     declaredType = PrimitiveType.NUMBER
                 )
             )
@@ -314,10 +300,8 @@ internal class DeclarationBinder(
             node.variables.forEach { identifier ->
                 builder.addDeclarationWithSymbol(
                     localDeclaration(
-                        id = builder.nextDeclarationId(),
-                        name = identifier.name,
-                        owner = DeclarationOwner.Lexical(node.body),
-                        anchorNode = identifier
+                        id = builder.nextDeclarationId(), name = identifier.name,
+                        owner = DeclarationOwner.Lexical(node.body), anchorNode = identifier
                     )
                 )
             }
@@ -384,13 +368,11 @@ internal class DeclarationBinder(
         }
 
         builder.addDeclarationWithSymbol(
+            // origin=AST / owner=Root / range=anchor range are the factory defaults.
             globalDeclaration(
                 id = builder.nextDeclarationId(),
                 name = identifier.name,
-                origin = DeclarationOrigin.AST,
-                owner = DeclarationOwner.Root,
                 anchorNode = identifier,
-                range = identifier.range,
                 documentation = documentation,
                 declaredTypeSyntax = declaredTypeSyntax
             ),
@@ -407,11 +389,8 @@ internal class DeclarationBinder(
             is Identifier -> if (node.isLocal) {
                 builder.addDeclarationWithSymbol(
                     functionDeclaration(
-                        id = builder.nextDeclarationId(),
-                        name = identifier.name,
-                        owner = owner,
-                        anchorNode = identifier,
-                        documentation = documentation
+                        id = builder.nextDeclarationId(), name = identifier.name, owner = owner,
+                        anchorNode = identifier, documentation = documentation
                     )
                 )
             } else {
@@ -419,13 +398,10 @@ internal class DeclarationBinder(
             }
 
             is MemberExpression -> builder.addDeclarationWithSymbol(
+                // origin=AST is explicit: the methodDeclaration factory defaults to DOC_COMMENT.
                 methodDeclaration(
-                    id = builder.nextDeclarationId(),
-                    name = identifier.identifier.name,
-                    origin = DeclarationOrigin.AST,
-                    owner = owner,
-                    anchorNode = identifier.identifier,
-                    documentation = documentation
+                    id = builder.nextDeclarationId(), name = identifier.identifier.name, origin = DeclarationOrigin.AST,
+                    owner = owner, anchorNode = identifier.identifier, documentation = documentation
                 )
             )
 
@@ -456,11 +432,8 @@ internal class DeclarationBinder(
         ) {
             return builder.addDeclarationToExistingSymbol(
                 functionDeclaration(
-                    id = builder.nextDeclarationId(),
-                    name = identifier.name,
-                    owner = owner,
-                    anchorNode = identifier,
-                    documentation = documentation
+                    id = builder.nextDeclarationId(), name = identifier.name, owner = owner,
+                    anchorNode = identifier, documentation = documentation
                 ),
                 existingSymbolId,
                 scopeId = builder.rootScopeId
@@ -474,15 +447,8 @@ internal class DeclarationBinder(
             anchorNode = identifier,
             documentation = documentation
         )
-        return if (
-            existingSymbolId != null &&
-            existing.kind.namespace == DeclarationNamespace.VALUE
-        ) {
-            builder.addDeclarationToExistingSymbol(
-                declaration,
-                existingSymbolId,
-                scopeId = builder.rootScopeId
-            )
+        return if (existingSymbolId != null && existing.kind.namespace == DeclarationNamespace.VALUE) {
+            builder.addDeclarationToExistingSymbol(declaration, existingSymbolId, scopeId = builder.rootScopeId)
         } else {
             builder.addDeclarationWithSymbol(declaration, scopeId = builder.rootScopeId)
         }
@@ -552,11 +518,8 @@ internal class DeclarationBinder(
         tags.filterIsInstance<AliasTagSyntax>().forEach { aliasTag ->
             val aliasDeclaration = builder.addDeclarationWithSymbol(
                 aliasDeclaration(
-                    id = builder.nextDeclarationId(),
-                    name = aliasTag.name,
-                    origin = DeclarationOrigin.DOC_COMMENT,
-                    owner = DeclarationOwner.Root,
-                    range = commentRange(attachment),
+                    id = builder.nextDeclarationId(), name = aliasTag.name,
+                    origin = DeclarationOrigin.DOC_COMMENT, owner = DeclarationOwner.Root, range = commentRange(attachment),
                     documentation = documentationForTags(attachment, listOf(aliasTag)),
                     declaredTypeSyntax = parseTypeSyntax(aliasTag.targetTypeText)
                 ),
@@ -577,11 +540,8 @@ internal class DeclarationBinder(
             val classTag = binding.classTag
             val classDeclaration = builder.addDeclarationWithSymbol(
                 classDeclaration(
-                    id = builder.nextDeclarationId(),
-                    name = classTag.name,
-                    origin = DeclarationOrigin.DOC_COMMENT,
-                    owner = DeclarationOwner.Root,
-                    range = commentRange(attachment),
+                    id = builder.nextDeclarationId(), name = classTag.name,
+                    origin = DeclarationOrigin.DOC_COMMENT, owner = DeclarationOwner.Root, range = commentRange(attachment),
                     documentation = documentationForTags(attachment, listOf(classTag) + binding.tags)
                 ),
                 scopeId = builder.rootScopeId
@@ -633,10 +593,8 @@ internal class DeclarationBinder(
         fieldTags.forEach { fieldTag ->
             builder.addDeclarationWithSymbol(
                 fieldDeclaration(
-                    id = builder.nextDeclarationId(),
-                    name = fieldTag.name,
-                    owner = DeclarationOwner.Declaration(classDeclaration.id),
-                    range = commentRange(attachment),
+                    id = builder.nextDeclarationId(), name = fieldTag.name,
+                    owner = DeclarationOwner.Declaration(classDeclaration.id), range = commentRange(attachment),
                     documentation = documentationForTags(attachment, listOf(fieldTag)),
                     declaredTypeSyntax = parseTypeSyntax(fieldTag.typeText)
                 ),
@@ -647,10 +605,8 @@ internal class DeclarationBinder(
         methodBindings.forEach { methodBinding ->
             builder.addDeclarationWithSymbol(
                 methodDeclaration(
-                    id = builder.nextDeclarationId(),
-                    name = methodBinding.methodTag.name,
-                    owner = DeclarationOwner.Declaration(classDeclaration.id),
-                    range = commentRange(attachment),
+                    id = builder.nextDeclarationId(), name = methodBinding.methodTag.name,
+                    owner = DeclarationOwner.Declaration(classDeclaration.id), range = commentRange(attachment),
                     documentation = documentationForTags(
                         attachment,
                         listOf(methodBinding.methodTag) + methodBinding.overloadTags

@@ -94,12 +94,13 @@ internal class ApiAdapters(
         return if (symbol != null) {
             toSymbol(symbol, declaration)
         } else {
+            val typeInfo = toTypeInfo(declaration.declaredType, declaration)
             Symbol(
                 name = declaration.name,
                 kind = declaration.kind.toSymbolKind(),
                 range = declarationDisplayRange(declaration),
-                type = toTypeInfo(declaration.declaredType, declaration),
-                declaredType = toTypeInfo(declaration.declaredType, declaration),
+                type = typeInfo,
+                declaredType = typeInfo,
                 detail = declaration.declaredType?.displayName,
                 symbolId = "declaration:${declaration.id.value}"
             )

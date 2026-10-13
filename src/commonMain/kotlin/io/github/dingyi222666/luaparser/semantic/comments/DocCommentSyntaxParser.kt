@@ -33,11 +33,11 @@ class DocCommentSyntaxParser {
         var inlineTypeText: String? = null
 
         comments.forEach { comment ->
-            val rawLines = comment.comment.lines()
-            rawLines.map(::normalizeCommentLine).forEachIndexed { index, line ->
+            comment.comment.lines().forEachIndexed { index, rawLine ->
+                val line = normalizeCommentLine(rawLine)
                 val lineInfo = DocLineInfo(
                     sourceLine = comment.range.start.line + index,
-                    rawLine = rawLines.getOrElse(index) { "" },
+                    rawLine = rawLine,
                     normalizedLine = line
                 )
                 if (line.startsWith("@")) {
@@ -272,10 +272,7 @@ class DocCommentSyntaxParser {
     }
 
     private fun looksLikeGenericParameterStart(text: String): Boolean {
-        if (text.isEmpty()) {
-            return false
-        }
-        val first = text.first()
+        val first = text.firstOrNull() ?: return false
         return first == '_' || first.isLetter()
     }
 
@@ -396,14 +393,9 @@ class DocCommentSyntaxParser {
     }
 
     private fun splitMethodTarget(target: String): Pair<String?, String> {
-        val dotIndex = target.lastIndexOf('.')
-        val colonIndex = target.lastIndexOf(':')
-        val separatorIndex = maxOf(dotIndex, colonIndex)
-        return if (separatorIndex == -1) {
-            null to target
-        } else {
-            target.substring(0, separatorIndex) to target.substring(separatorIndex + 1)
-        }
+        val separatorIndex = maxOf(target.lastIndexOf('.'), target.lastIndexOf(':'))
+        return if (separatorIndex == -1) null to target
+        else target.substring(0, separatorIndex) to target.substring(separatorIndex + 1)
     }
 
     private fun splitFirstToken(text: String): Pair<String, String> = splitTopLevelToken(text.trim())

@@ -389,12 +389,7 @@ class LuaLanguageService(
      */
     internal fun awaitWorkspaceReady(timeoutMs: Long = 30_000): Boolean {
         val deadline = System.currentTimeMillis() + timeoutMs
-        while (System.currentTimeMillis() < deadline) {
-            if (snapshotReady) {
-                return true
-            }
-            Thread.sleep(50)
-        }
+        while (!snapshotReady && System.currentTimeMillis() < deadline) Thread.sleep(50)
         return snapshotReady
     }
 
@@ -738,17 +733,12 @@ class LuaLanguageService(
     }
 
     /**
-     * Applies workspace/didChangeWorkspaceFolders add/remove without a process restart.
-     *
-     * Added folders are walked for `.lua`/`.aly` sources via [indexWorkspaceFolder].
-     * Removed folders drop their indexed sources/symbols. Open-document overlays in
+     * Applies workspace/didChangeWorkspaceFolders add/remove without a process restart:
+     * added folders are walked for `.lua`/`.aly` sources via [indexWorkspaceFolder],
+     * removed folders drop their indexed sources/symbols, and open-document overlays in
      * [openDocuments] remain authoritative over disk index entries (same as watched-file
-     * and initialize paths).
-     *
-     * Multi-root relative-path collision remains last-write-wins: each folder indexes
-     * files under a root-relative virtual key (`dep.lua`), so two roots that both
-     * contain the same relative path share one map entry unless a follow-up
-     * disambiguates virtual keys (folder-qualified paths / URI-keyed index).
+     * and initialize paths). Multi-root relative-path collision remains last-write-wins:
+     * each folder indexes files under a root-relative virtual key (`dep.lua`).
      */
     fun applyWorkspaceFolderChanges(
         added: List<WorkspaceFolder>,
@@ -786,11 +776,8 @@ class LuaLanguageService(
 
     private fun folderUriKey(folder: WorkspaceFolder): String? {
         val uri = folder.uri?.takeIf { it.isNotBlank() } ?: return null
-        val absolute = pathFromFileUri(uri)
-        if (absolute != null) {
-            return absolute.toString()
-        }
-        return normalizeLspFileUriPath(uri)?.normalizeWorkspacePathPrefix()
+        return pathFromFileUri(uri)?.toString()
+            ?: normalizeLspFileUriPath(uri)?.normalizeWorkspacePathPrefix()
             ?: uri.trim().trimEnd('/')
     }
 
@@ -1269,12 +1256,10 @@ class LuaLanguageService(
                         }
                         documentRefreshPending = false
                     }
-                    // Burst debounce: programmatic flows (didOpen immediately followed by a
-                    // full-buffer setText) re-set pending within a second; analyzing the
-                    // intermediate content cost the entire cycle on the emulator (the
-                    // 5KB fixture's cold analysis raced the test's own 10s budget). A
-                    // short window lets the newest buffer content win before the analysis
-                    // starts; the existing pending flag re-loops without publishing.
+                    // Burst debounce: programmatic flows (didOpen immediately followed by
+                    // a full-buffer setText) re-set pending within a second; a short
+                    // window lets the newest buffer content win before the analysis
+                    // starts (the existing pending flag re-loops without publishing).
                     Thread.sleep(LIVE_ANALYSIS_DEBOUNCE_MS)
                     synchronized(documentRefreshLock) {
                         if (closed) {
@@ -1379,16 +1364,11 @@ class LuaLanguageService(
 
     /**
      * Applies a didChange and returns the diagnostics to publish, edited document first.
-     *
-     * Ranged edits fold onto the real buffer: an indexed-but-never-opened file used to
-     * start from `openDocuments[path].orEmpty()`, which turned the edit fragment into the
-     * whole overlay. The base is resolved the same way [applyWatchedFileChanges] resolves
-     * sources — open overlay, then the indexed workspace source, then the analyzed snapshot.
-     *
-     * After the incremental refresh, every document the update affected (require
-     * dependents included) is republished, deduped, with the edited path first. Affected
-     * paths without an open document are skipped: closed indexed files stay pull-only
-     * through [diagnostics] / [diagnosticsForUri], matching the open-doc publish policy.
+     * The edit base resolves like [applyWatchedFileChanges] — open overlay, then indexed
+     * source, then analyzed snapshot — so a ranged edit on an indexed-but-never-opened
+     * file cannot turn the edit fragment into the whole overlay. After the refresh, every
+     * affected open document is republished (deduped, edited path first); closed indexed
+     * files stay pull-only through [diagnostics] / [diagnosticsForUri].
      */
     fun didChange(params: DidChangeTextDocumentParams): List<PublishDiagnosticsParams> = synchronized(stateLock) {
         val path = pathOf(params.textDocument)
@@ -1436,8 +1416,8 @@ class LuaLanguageService(
         val queriesNow = queries
         val path = pathOf(params.textDocument)
         val result = queriesNow.hover(path, params.position.toParserPosition()) ?: return null
-        // Prefer collapsed preferredHoverType surface (FunctionType/ClassType/MODULE) over bare
-        // unknown symbol detail so multi-doc Android-Lua import hovers stay non-empty/rich.
+        // Prefer the collapsed preferredHoverType surface (FunctionType/ClassType/MODULE)
+        // over bare unknown symbol detail so import hovers stay non-empty/rich.
         val preferredTypeDisplay = preferredLspHoverTypeDisplay(
             primary = result.callableDisplayName ?: result.typeInfo?.displayName,
             secondary = result.symbol?.declaredType?.displayName ?: result.symbol?.type?.displayName,
@@ -1456,10 +1436,8 @@ class LuaLanguageService(
     }
 
     /**
-     * Completion for [path] at the given text position.
-     *
-     * [line] and [character] are 0-based LSP integers (as sent by LSP clients);
-     * they are converted to the parser's 1-based [Position] internally
+     * Completion for [path] at the given text position. [line] and [character] are
+     * 0-based LSP integers, converted to the parser's 1-based [Position] internally
      * (`Position(line + 1, character + 1)`) before hitting the semantic model.
      */
     fun completion(path: String, line: Int, character: Int): CompletionList {
@@ -1573,13 +1551,11 @@ class LuaLanguageService(
     }
 
     /**
-     * TASK-514 — completionItem/resolve.
-     * Enriches [detail]/[documentation] for local/function/member (and other) labels
-     * using fields already present on the unresolved item plus existing completion-kind
-     * metadata. Never renames the label, never blanks insertText when set, and soft-degrades
-     * to an identity-preserving item on missing/unknown input (no throw).
+     * TASK-514 — completionItem/resolve. Enriches [detail]/[documentation] from fields
+     * already present on the unresolved item; never renames the label, never blanks
+     * insertText when set, and soft-degrades to an identity-preserving item on
+     * missing/unknown input (no throw).
      */
-    // Soft identity: resolve must not hard-fail once advertised.
     fun resolveCompletionItem(item: CompletionItem): CompletionItem = synchronized(stateLock) {
         try {
             enrichResolvedCompletionItem(item)
@@ -1595,10 +1571,9 @@ class LuaLanguageService(
         }
 
         val resolved = CompletionItem(label).apply {
-            // Preserve core identity fields first — never drop label/kind.
+            // Preserve core identity fields first — never drop label/kind. Label
+            // presentation and insert-mode travel with the label.
             kind = item.kind
-            // Label presentation and insert-mode travel with the label: dropping them
-            // on the resolved copy changes how the client renders / indents the item.
             labelDetails = item.labelDetails; insertTextMode = item.insertTextMode
             detail = item.detail; documentation = item.documentation
             insertText = item.insertText; insertTextFormat = item.insertTextFormat
@@ -1615,10 +1590,8 @@ class LuaLanguageService(
         }
 
         // Enrich documentation when absent; keep client-provided docs intact.
-        // toLspMarkdownDoc is the shared blank-guard + markdown-MarkupContent builder.
         // Markdown reuses label/kind/detail already on the item (no new ranking);
-        // the kind display falls back to the enum name lowercased when the
-        // presentation table has no entry.
+        // the kind display falls back to the enum name lowercased.
         if (resolved.documentation == null) {
             resolved.documentation = buildList {
                 add("**${resolved.label}**")
@@ -1677,12 +1650,12 @@ class LuaLanguageService(
     fun definition(params: DefinitionParams): List<Location> = synchronized(stateLock) {
         val path = pathOf(params.textDocument)
         val position = params.position.toParserPosition()
-        // Prefer require-backed module provider when the caret is on a require-local alias
-        // (e.g. `return dep` after `local dep = require("definition-dep")`) or inside a
-        // require() call. Workspace gotoDefinition currently returns the same-file local
-        // binding for true LOCAL/VARIABLE symbols, which yields the consumer file URI
-        // instead of the module file. resolveRequire() still maps the alias to the
-        // provider path; re-route here so LSP Location.uri matches the opened module.
+        // Prefer the require-backed module provider when the caret is on a require-local
+        // alias (e.g. `local dep = require("definition-dep")`) or inside a require() call:
+        // gotoDefinition returns the same-file local binding for LOCAL/VARIABLE symbols,
+        // yielding the consumer file URI instead of the module file; resolveRequire()
+        // maps the alias to the provider path, so re-route to keep Location.uri on the
+        // opened module.
         val requireLookup = queries.resolveRequire(path, position)
         val provider = requireLookup?.provider
         if (provider != null) {
@@ -1728,15 +1701,12 @@ class LuaLanguageService(
         collectFoldingRanges(context.chunk, documentLineCount(context.source))
     }
     /**
-     * TASK-540 — Selection ranges for nested block expand/shrink selection.
-     * Builds a parent chain from the innermost AST node covering each position,
-     * walking only real AST parents (no invented spans). Unknown documents,
-     * empty positions, and out-of-range cursors soft-degrade to an empty list
-     * without throwing.
-     *
-     * Positions that resolve to no AST node are dropped per item rather than kept as
-     * JSON-null slots: `SelectionRange[]` carries no nulls on the wire, and the lsp4j
-     * layer hands the list straight to the client.
+     * TASK-540 — Selection ranges for nested block expand/shrink selection: a parent
+     * chain from the innermost AST node covering each position, walking only real AST
+     * parents (no invented spans). Unknown documents, empty positions, and
+     * out-of-range cursors soft-degrade to an empty list without throwing. Positions
+     * that resolve to no AST node are dropped per item (`SelectionRange[]` carries no
+     * nulls on the wire).
      */
     fun selectionRanges(params: SelectionRangeParams): List<SelectionRange> = synchronized(stateLock) {
         val positions = params.positions.orEmpty()
@@ -1762,12 +1732,10 @@ class LuaLanguageService(
         synchronized(stateLock) { computeSemanticTokensFull(pathOf(params.textDocument)) }
 
     /**
-     * TASK-252 — textDocument/semanticTokens/full/delta.
-     *
-     * When [previousResultId] matches the cached full payload for the document and the
-     * token stream is unchanged, returns an empty-edit [SemanticTokensDelta]. When the
-     * document changed or the id is unknown, re-sends a full [SemanticTokens] payload
-     * (LSP allows Either.left full on the delta request). Soft-degrades without throw.
+     * TASK-252 — textDocument/semanticTokens/full/delta. Empty-edit [SemanticTokensDelta]
+     * when [previousResultId] matches the cached unchanged full payload; otherwise a full
+     * [SemanticTokens] payload (LSP allows Either.left full on the delta request).
+     * Soft-degrades without throw.
      */
     fun semanticTokensFullDelta(
         params: SemanticTokensDeltaParams
@@ -1792,9 +1760,8 @@ class LuaLanguageService(
     }
 
     /**
-     * TASK-274 — textDocument/onTypeFormatting for Lua block keywords (`end` / `then`).
-     *
-     * Reuses the full-document formatting pipeline after typing the final character of
+     * TASK-274 — textDocument/onTypeFormatting for Lua block keywords (`end` / `then`):
+     * reuses the full-document formatting pipeline after typing the final character of
      * `end` / `then` (or newline). Unknown triggers, empty/missing docs, and OOB
      * positions soft-degrade to an empty edit list without throw.
      */
@@ -1836,20 +1803,19 @@ class LuaLanguageService(
     }
 
     /**
-     * TASK-542 — textDocument/codeAction surface. There is no deterministic auto-fix
-     * for parse/type diagnostics yet, so the contract is a well-formed zero-action
-     * list (no UnsupportedOperationException) for any params shape.
+     * TASK-542 — textDocument/codeAction surface: a well-formed zero-action list (no
+     * UnsupportedOperationException) for any params shape — there is no deterministic
+     * auto-fix for parse/type diagnostics yet.
      */
     fun codeActions(params: CodeActionParams): List<Either<Command, CodeAction>> {
         return emptyList()
     }
 
     /**
-     * TASK-543 — textDocument/inlayHint parameter-name surface.
-     * For call arguments of annotated/local (and other signature-help-known) callees,
-     * yields [InlayHintKind.Parameter] labels derived from formal names. Outside-call
-     * ranges, unknown callees, empty/malformed docs soft-degrade to an empty list
-     * without throwing. Reuses SignatureHelp formal metadata (no extra ranking).
+     * TASK-543 — textDocument/inlayHint parameter-name surface: [InlayHintKind.Parameter]
+     * labels for call arguments of signature-help-known callees, derived from formal
+     * names (reuses SignatureHelp formal metadata — no extra ranking). Outside-call
+     * ranges, unknown callees, empty/malformed docs soft-degrade to an empty list.
      */
     fun inlayHints(params: InlayHintParams): List<InlayHint> = synchronized(stateLock) {
         try { collectParameterInlayHints(params) } catch (_: Exception) { emptyList() }
@@ -1875,12 +1841,9 @@ class LuaLanguageService(
     }
 
     /**
-     * TASK-520 — textDocument/prepareCallHierarchy.
-     *
-     * Same-file local-function surface: returns a [CallHierarchyItem] when the caret
-     * sits on a local function name (definition or call site). Non-function positions
-     * (keywords, whitespace, number bindings, free unknowns, empty/malformed buffers)
-     * soft-degrade to an empty list without throw.
+     * TASK-520 — textDocument/prepareCallHierarchy: a [CallHierarchyItem] when the caret
+     * sits on a same-file local function name (definition or call site). Non-function
+     * positions and empty/malformed buffers soft-degrade to an empty list without throw.
      */
     fun prepareCallHierarchy(params: CallHierarchyPrepareParams): List<CallHierarchyItem> =
         synchronized(stateLock) {
@@ -1892,11 +1855,9 @@ class LuaLanguageService(
         }
 
     /**
-     * TASK-520 — callHierarchy/incomingCalls.
-     *
-     * Builds a same-file call-graph subset: callers of the item's local function via
-     * existing references (use sites) + enclosing local function resolution. Unknown
-     * / non-function items yield empty without throw.
+     * TASK-520 — callHierarchy/incomingCalls: same-file callers of the item's local
+     * function via existing references (use sites) + enclosing local function
+     * resolution. Unknown / non-function items yield empty without throw.
      */
     fun callHierarchyIncomingCalls(
         params: CallHierarchyIncomingCallsParams
@@ -1909,11 +1870,9 @@ class LuaLanguageService(
     }
 
     /**
-     * TASK-520 — callHierarchy/outgoingCalls.
-     *
-     * Builds a same-file call-graph subset: callees invoked inside the item's local
-     * function body, resolved through definition/goto when possible. Unknown /
-     * non-function items yield empty without throw.
+     * TASK-520 — callHierarchy/outgoingCalls: same-file callees invoked inside the
+     * item's local function body, resolved through definition/goto when possible.
+     * Unknown / non-function items yield empty without throw.
      */
     fun callHierarchyOutgoingCalls(
         params: CallHierarchyOutgoingCallsParams
@@ -1926,12 +1885,10 @@ class LuaLanguageService(
     }
 
     /**
-     * textDocument/references. Honors [ReferenceParams.context] /
-     * [org.eclipse.lsp4j.ReferenceContext.isIncludeDeclaration]:
-     * - true (default when context absent): declaration site + uses
-     * - false: use sites only (declaration locations from [LuaWorkspaceQueryFacade.declaration]
-     *   / [LuaWorkspaceQueryFacade.gotoDefinition] stripped when present)
-     * Non-symbol / out-of-range / unbound soft-degrade to empty or a short list without throw.
+     * textDocument/references. Honors [org.eclipse.lsp4j.ReferenceContext.isIncludeDeclaration]
+     * (true — the LSP default when context is absent — keeps declaration sites; false
+     * strips them). Non-symbol / out-of-range / unbound soft-degrade to empty or a
+     * short list without throw.
      */
     fun references(params: ReferenceParams): List<Location> = synchronized(stateLock) {
         try {
@@ -1948,14 +1905,11 @@ class LuaLanguageService(
     }
 
     /**
-     * TASK-518 — textDocument/prepareRename.
-     *
-     * Accepts renamable local-like identifiers (locals, params, for-loop names,
-     * local functions, attribute locals) with an identifier-span range + placeholder.
-     * Rejects keywords, literals, operators, comments, free globals without a local
-     * binding, and out-of-range positions by returning null (LSP reject). Soft-accepts
-     * table field / method name identifier spans when the caret is on that NAME token
-     * (multi-file field rename remains limited at [rename]). Never throws.
+     * TASK-518 — textDocument/prepareRename: accepts renamable local-like identifiers
+     * (locals, params, for-loop names, local functions, attribute locals) with an
+     * identifier-span range + placeholder; soft-accepts table field / method NAME spans
+     * on the NAME token. Keywords, literals, operators, comments, free globals without
+     * a local binding, and out-of-range positions reject with null (LSP reject). Never throws.
      */
     fun prepareRename(params: PrepareRenameParams): PrepareRenameResult? = synchronized(stateLock) {
         try {
@@ -1968,12 +1922,10 @@ class LuaLanguageService(
     }
 
     /**
-     * TASK-518 — textDocument/rename.
-     *
-     * Builds a [WorkspaceEdit] of identifier-span TextEdits covering declaration +
-     * references for same-file lexical locals using existing references queries.
-     * Multi-file rename is intentionally limited: only same-file URI edits are
-     * emitted (cross-file module fields soft-empty rather than invent unsafe edits).
+     * TASK-518 — textDocument/rename: a [WorkspaceEdit] of identifier-span TextEdits
+     * covering declaration + references for same-file lexical locals using existing
+     * references queries. Multi-file rename is intentionally limited to same-file URI
+     * edits (cross-file module fields soft-empty rather than invent unsafe edits).
      * Missing / non-renamable positions yield an empty WorkspaceEdit without throw.
      */
     fun rename(params: RenameParams): WorkspaceEdit = synchronized(stateLock) {
@@ -2071,10 +2023,9 @@ class LuaLanguageService(
     private fun referenceLocationKey(location: WorkspaceLocation): String =
         referenceLocationKey(uriFor(location.path), location.range.toLspRange())
 
-    private fun referenceLocationKey(uri: String, range: org.eclipse.lsp4j.Range): String {
-        return "${uri}|${range.start.line}:${range.start.character}|" +
+    private fun referenceLocationKey(uri: String, range: org.eclipse.lsp4j.Range): String =
+        "${uri}|${range.start.line}:${range.start.character}|" +
             "${range.end.line}:${range.end.character}"
-    }
 
     /**
      * Resolve a renamable identifier at [lspPosition]. Returns null for non-identifiers,
@@ -2175,14 +2126,13 @@ class LuaLanguageService(
             ?: semanticFile?.model?.getSymbolAt(identifier.range.start)
 
         when (symbol?.kind) {
+            // Bare MODULE / class aliases are not lexical local renames; fields/methods
+            // are soft-accepted earlier via the MemberExpression parent.
             SemanticSymbolKind.MODULE,
             SemanticSymbolKind.FIELD,
             SemanticSymbolKind.METHOD,
             SemanticSymbolKind.CLASS,
-            SemanticSymbolKind.TYPE_ALIAS ->
-                // Fields/methods are soft-accepted earlier via MemberExpression parent.
-                // Bare MODULE / class aliases are not lexical local renames.
-                return false
+            SemanticSymbolKind.TYPE_ALIAS -> return false
             SemanticSymbolKind.PARAMETER,
             SemanticSymbolKind.LOCAL -> return true
             else -> Unit
@@ -2258,48 +2208,39 @@ class LuaLanguageService(
         if (source.isEmpty()) {
             return null
         }
-        val targetLine = lspPosition.line
-        val targetChar = lspPosition.character
         val lexer = LuaLexer(source)
         try {
             while (true) {
                 val type = lexer.nextToken()
                 if (type == LuaTokenTypes.EOF) {
-                    break
+                    return null
                 }
                 val line0 = (lexer.tokenLine - 1).coerceAtLeast(0)
                 val col0 = lexer.tokenColumn.coerceAtLeast(0)
                 val text = lexer.tokenText.toString()
-                if (text.isEmpty()) {
+                // Only single-line NAME tokens covering the caret are rename targets.
+                if (text.isEmpty() || '\n' in text || '\r' in text) {
                     continue
                 }
-                // Only single-line NAME tokens are rename targets.
-                if (text.indexOf('\n') >= 0 || text.indexOf('\r') >= 0) {
+                if (line0 != lspPosition.line || lspPosition.character < col0 ||
+                    lspPosition.character >= col0 + text.length
+                ) {
                     continue
                 }
-                val endCol = col0 + text.length
-                // NAME tokens covering the caret (already single-line from the check above).
-                if (line0 != targetLine || targetChar < col0 || targetChar >= endCol) {
-                    continue
-                }
-                if (type != LuaTokenTypes.NAME) {
-                    return null
-                }
-                if (!isValidLuaIdentifier(text)) {
+                if (type != LuaTokenTypes.NAME || !isValidLuaIdentifier(text)) {
                     return null
                 }
                 return LexerNameToken(
                     text = text,
                     range = org.eclipse.lsp4j.Range(
                         org.eclipse.lsp4j.Position(line0, col0),
-                        org.eclipse.lsp4j.Position(line0, endCol)
+                        org.eclipse.lsp4j.Position(line0, col0 + text.length)
                     )
                 )
             }
         } catch (_: Exception) {
             return null
         }
-        return null
     }
 
     fun documentSymbols(path: String): List<SymbolInformation> = synchronized(stateLock) {
@@ -2334,16 +2275,13 @@ class LuaLanguageService(
     fun supportsDefinitionLink(): Boolean = synchronized(stateLock) { definitionLinkSupport }
 
     /**
-     * Legacy workspace/symbol surface (Either.left SymbolInformation payloads).
-     *
-     * Wrapper symbol policy (workspace-symbol audit, wave M): both this and
-     * [modernWorkspaceSymbols] delegate to [LuaWorkspaceQueryFacade.workspaceSymbolEntries],
-     * which memoizes the distinct+sorted entry universe per snapshot (one facade per
-     * workspace build/update, so rebuild+full-sort no longer runs per query under
-     * [stateLock]), caps results at 500 AFTER the deterministic sort, excludes body-LOCAL
-     * declarations (only chunk-level locals join globals/functions/classes/fields/methods
-     * and module export surfaces), and drops extraProvider entries whose synthetic
-     * __jvm__ path is not actually indexed (module-graph-claimed or a real workspace file).
+     * Legacy workspace/symbol surface (Either.left SymbolInformation payloads). Both
+     * this and [modernWorkspaceSymbols] delegate to
+     * [LuaWorkspaceQueryFacade.workspaceSymbolEntries], which memoizes the
+     * distinct+sorted entry universe per snapshot, caps results at 500 AFTER the
+     * deterministic sort, excludes body-LOCAL declarations (only chunk-level locals
+     * join globals/functions/classes/fields/methods and module export surfaces), and
+     * drops extraProvider entries whose synthetic __jvm__ path is not actually indexed.
      */
     fun workspaceSymbols(query: String): List<SymbolInformation> = synchronized(stateLock) {
         queries.workspaceSymbolEntries(query).map { toSymbolInformation(it) }
@@ -2406,16 +2344,11 @@ class LuaLanguageService(
         }
         // Bound the payload: a typo-heavy file can produce hundreds of per-site
         // unresolved-global warnings; clients choke on megabyte diagnostic arrays.
-        // Truncation is announced with one trailing Hint (code diagnostics.truncated)
-        // so clients can tell a capped payload from a clean bill of health instead of
-        // silently losing the tail.
+        // Truncation is announced with one trailing Hint (code diagnostics.truncated),
+        // so a capped payload is distinguishable from a clean bill of health.
         val truncatedCount = distinct.size - PUBLISH_DIAGNOSTICS_CAP
         val diagnostics = if (truncatedCount > 0) {
             distinct.take(PUBLISH_DIAGNOSTICS_CAP) +
-                // Synthetic trailing marker published ONLY when the payload exceeded
-                // PUBLISH_DIAGNOSTICS_CAP: reuses the fallback anchor of range-less
-                // diagnostics with a HINT severity + dedicated code so it can never be
-                // mistaken for a real finding.
                 Diagnostic().apply {
                     range = fallbackDiagnosticRange(buffer)
                     severity = org.eclipse.lsp4j.DiagnosticSeverity.Hint
@@ -2430,9 +2363,8 @@ class LuaLanguageService(
 
     /**
      * Fallback anchor for semantic diagnostics without a usable range (null or zero-width):
-     * a 1-character span on the first token of the document's first non-blank line, so
-     * clients render a visible marker instead of a zero-width range at the document head.
-     * Falls back to a 1-character span at the head when no source is available / blank.
+     * a 1-character span on the first token of the document's first non-blank line, or a
+     * 1-character span at the document head when no source is available / blank.
      */
     private fun fallbackDiagnosticRange(source: String?): org.eclipse.lsp4j.Range =
         source.orEmpty().lineSequence()
@@ -2451,12 +2383,9 @@ class LuaLanguageService(
             ?: org.eclipse.lsp4j.Range(org.eclipse.lsp4j.Position(0, 0), org.eclipse.lsp4j.Position(0, 1))
 
     /**
-     * Parse diagnostics for [path], taken from the workspace parse. The strict
-     * re-parse below remains only as a fallback for documents the snapshot has not
-     * analyzed yet. The snapshot parses leniently — recovery anchors stray
-     * top-level terminators (`end`, `else`, `until`, …) at the position they
-     * actually occur instead of the 1:1 anchor a strict throw produced — which is
-     * an improvement over the old per-keystroke strict re-parse, not a regression.
+     * Parse diagnostics for [path], taken from the workspace parse (which recovers
+     * leniently — an improvement over the old per-keystroke strict re-parse). The
+     * strict re-parse remains only as a fallback for not-yet-analyzed documents.
      */
     private fun parseDiagnostics(path: VirtualPath): List<Diagnostic> {
         val source = sourceFor(path) ?: return emptyList()
@@ -2479,12 +2408,9 @@ class LuaLanguageService(
         this.range = range.toLspRange()
     }
 
-    private fun currentWorkspaceFiles(): Map<VirtualPath, String> =
-        // Open overlays are authoritative over disk index entries.
-        linkedMapOf<VirtualPath, String>().apply {
-            putAll(indexedWorkspaceFiles)
-            putAll(openDocuments)
-        }
+    // Open overlays are authoritative over disk index entries (index files first,
+    // then open buffers — same insertion order as the previous hand-built map).
+    private fun currentWorkspaceFiles(): Map<VirtualPath, String> = indexedWorkspaceFiles + openDocuments
 
     private fun applyWorkspaceResult(result: WorkspaceUpdateResult, files: Map<VirtualPath, String>) {
         snapshot = result.snapshot
@@ -2551,21 +2477,12 @@ class LuaLanguageService(
     private fun workspaceDelta(
         previous: Map<VirtualPath, String>,
         files: Map<VirtualPath, String>
-    ): WorkspaceDelta {
-        val upserts = linkedMapOf<VirtualPath, String>()
-        val removals = linkedSetOf<VirtualPath>()
-        for ((path, source) in files) {
-            if (previous[path] != source) {
-                upserts[path] = source
-            }
-        }
-        for (path in previous.keys) {
-            if (path !in files) {
-                removals += path
-            }
-        }
-        return WorkspaceDelta(upserts = upserts, removals = removals)
-    }
+    ): WorkspaceDelta = WorkspaceDelta(
+        // filter / set-difference preserve the maps' iteration order (LinkedHashMap in,
+        // LinkedHashMap out), matching the previous hand-rolled loops.
+        upserts = files.filter { (path, source) -> previous[path] != source },
+        removals = previous.keys - files.keys
+    )
 
     private fun refreshIncremental(): Set<VirtualPath> {
         val files = currentWorkspaceFiles()
@@ -2595,22 +2512,17 @@ class LuaLanguageService(
     }
 
     private fun configuredWorkspaceFolders(params: InitializeParams): List<WorkspaceFolder> {
-        val folders = params.workspaceFolders.orEmpty().toList()
-        if (folders.isNotEmpty()) {
-            return folders
-        }
+        params.workspaceFolders.orEmpty().toList().takeIf { it.isNotEmpty() }?.let { return it }
         // rootUri shares the same WorkspaceFolder + normalization path as workspace folders.
         val rootUri = params.rootUri?.takeIf { it.isNotBlank() } ?: return emptyList()
         return listOf(WorkspaceFolder(rootUri, workspaceFolderName(rootUri)))
     }
 
     /** Runs [action] for every configured folder whose URI resolves to an existing directory. */
-    private inline fun eachIndexedWorkspaceFolderRoot(action: (WorkspaceFolder, Path) -> Unit) {
+    private inline fun eachIndexedWorkspaceFolderRoot(action: (WorkspaceFolder, Path) -> Unit) =
         workspaceFolders.forEach { folder ->
-            val root = workspaceFolderRoot(folder) ?: return@forEach
-            if (Files.isDirectory(root)) action(folder, root)
+            workspaceFolderRoot(folder)?.takeIf(Files::isDirectory)?.let { action(folder, it) }
         }
-    }
 
     private fun refreshWorkspaceFolderIndex() {
         indexedWorkspaceFiles.clear()
@@ -2659,19 +2571,16 @@ class LuaLanguageService(
     private fun workspaceFolderRoot(folder: WorkspaceFolder): Path? =
         folder.uri?.let(::pathFromFileUri)
 
-    private fun workspaceFolderName(uri: String): String {
-        return normalizeLspFileUriPath(uri)
+    private fun workspaceFolderName(uri: String): String =
+        normalizeLspFileUriPath(uri)
             ?.normalizeWorkspacePathPrefix()
             ?.substringAfterLast('/')
             ?.takeIf { it.isNotBlank() }
             ?: "workspace"
-    }
 
     /** Shared `.lua`/`.aly` extension test (case-insensitive) for workspace files and URIs. */
-    private fun hasLuaOrAlyExtension(name: String): Boolean {
-        val lower = name.lowercase()
-        return lower.endsWith(".lua") || lower.endsWith(".aly")
-    }
+    private fun hasLuaOrAlyExtension(name: String): Boolean =
+        name.lowercase().let { it.endsWith(".lua") || it.endsWith(".aly") }
 
     private fun isLuaWorkspaceFile(path: Path): Boolean =
         Files.isRegularFile(path) && hasLuaOrAlyExtension(path.fileName?.toString().orEmpty())
@@ -2703,10 +2612,8 @@ class LuaLanguageService(
     }
 
     private fun readWorkspaceSource(path: Path): String? {
-        // Files.readString is Java 11+/Android API 33+: the android/ module
-        // compiles against the Android SDK classpath where it does not
-        // exist below API 33, so use stream-based reading — available on
-        // every API level, identical semantics here.
+        // Stream-based (not Files.readString): available on every Android API level
+        // the android/ module compiles against; identical semantics here.
         return try {
             Files.newInputStream(path).use { input -> input.readBytes().toString(StandardCharsets.UTF_8) }
         } catch (_: IOException) {
@@ -2753,37 +2660,28 @@ class LuaLanguageService(
             documentHighlightProvider = Either.forLeft(true)
             completionProvider = CompletionOptions().apply {
                 triggerCharacters = listOf(".", ":")
-                // TASK-514: advertise completionItem/resolve once product resolve is live.
                 resolveProvider = true
             }
             signatureHelpProvider = SignatureHelpOptions(listOf("(", ","), listOf(")"))
             documentSymbolProvider = Either.forRight(DocumentSymbolOptions())
             workspaceSymbolProvider = Either.forRight(WorkspaceSymbolOptions())
-            // TASK-539: advertise folding ranges for multi-line functions/tables.
             foldingRangeProvider = Either.forLeft(true)
-            // TASK-540: advertise selection ranges for nested expand/shrink selection.
             selectionRangeProvider = Either.forLeft(true)
             // TASK-541 / TASK-252: full semantic tokens with legend + delta support.
             semanticTokensProvider = SemanticTokensWithRegistrationOptions(
                 SEMANTIC_TOKENS_LEGEND,
                 SemanticTokensServerFull(/* delta = */ true)
             )
-            // TASK-274 onTypeFormatting is intentionally NOT advertised: the handler
-            // reformats the whole document on any 'd'/'n' keystroke (adversarial audit).
-            // TASK-542 codeAction is intentionally NOT advertised: the collector always
-            // returns an empty list (adversarial audit).
-            // TASK-543: advertise parameter-name inlay hints for call arguments.
+            // TASK-274 onTypeFormatting and TASK-542 codeAction are intentionally NOT
+            // advertised (adversarial audit: whole-document reformat on keystroke /
+            // always-empty action list).
             inlayHintProvider = Either.forLeft(true)
-            // TASK-544: advertise full-document and range formatting once product is live.
             documentFormattingProvider = Either.forLeft(true)
             documentRangeFormattingProvider = Either.forLeft(true)
-            // TASK-520: advertise call hierarchy for local function prepare/incoming/outgoing.
             callHierarchyProvider = Either.forLeft(true)
-            // TASK-518: advertise rename with prepareRename once product is live.
-            // prepareProvider=true (lsp4j name for prepareSupport) signals prepareRename.
+            // TASK-518: prepareProvider=true (lsp4j name for prepareSupport) signals prepareRename.
             renameProvider = Either.forRight(RenameOptions(true))
-            // Multi-root: advertise workspace folder support + change notifications so
-            // clients send workspace/didChangeWorkspaceFolders (TASK-516).
+            // Multi-root: advertise workspace folder support + change notifications (TASK-516).
             workspace = WorkspaceServerCapabilities(
                 WorkspaceFoldersOptions().apply {
                     supported = true
@@ -2801,49 +2699,28 @@ class LuaLanguageService(
         symbol: DocumentSymbol,
         uri: String,
         containerName: String?
-    ): List<SymbolInformation> {
-        val current = SymbolInformation(
-            symbol.name,
-            symbol.kind,
-            Location(uri, symbol.selectionRange ?: symbol.range),
-            containerName
-        )
-        val children = symbol.children.orEmpty().flatMap { child ->
-            flattenDocumentSymbol(child, uri, symbol.name)
-        }
-        return listOf(current) + children
-    }
+    ): List<SymbolInformation> =
+        listOf(SymbolInformation(symbol.name, symbol.kind, Location(uri, symbol.selectionRange ?: symbol.range), containerName)) +
+            symbol.children.orEmpty().flatMap { flattenDocumentSymbol(it, uri, symbol.name) }
 
-    private fun toDocumentSymbol(symbol: WorkspaceDocumentSymbol): DocumentSymbol {
-        return DocumentSymbol(
-            symbol.name,
-            symbol.kind.toLspSymbolKind(),
-            symbol.range.toLspRange(),
-            symbol.selectionRange.toLspRange(),
-            symbol.detail,
-            symbol.children.map(::toDocumentSymbol)
-        )
-    }
+    private fun toDocumentSymbol(symbol: WorkspaceDocumentSymbol): DocumentSymbol = DocumentSymbol(
+        symbol.name,
+        symbol.kind.toLspSymbolKind(),
+        symbol.range.toLspRange(),
+        symbol.selectionRange.toLspRange(),
+        symbol.detail,
+        symbol.children.map(::toDocumentSymbol)
+    )
 
     /** Shared workspace-symbol-entry → LSP Location (same URI + range policy for both surfaces). */
     private fun WorkspaceSymbolEntry.toEntryLocation(): Location =
         Location(uriFor(path), range.toLspRange())
 
     private fun toSymbolInformation(entry: WorkspaceSymbolEntry): SymbolInformation =
-        SymbolInformation(
-            entry.name,
-            entry.kind.toLspSymbolKind(),
-            entry.toEntryLocation(),
-            entry.containerName
-        )
+        SymbolInformation(entry.name, entry.kind.toLspSymbolKind(), entry.toEntryLocation(), entry.containerName)
 
     private fun toWorkspaceSymbol(entry: WorkspaceSymbolEntry): WorkspaceSymbol =
-        WorkspaceSymbol(
-            entry.name,
-            entry.kind.toLspSymbolKind(),
-            Either.forLeft(entry.toEntryLocation()),
-            entry.containerName
-        )
+        WorkspaceSymbol(entry.name, entry.kind.toLspSymbolKind(), Either.forLeft(entry.toEntryLocation()), entry.containerName)
 
     private fun pathOf(document: TextDocumentIdentifier): VirtualPath = pathOf(document.uri)
 
@@ -2956,9 +2833,8 @@ class LuaLanguageService(
         semanticFile: WorkspaceSemanticFile,
         range: Range
     ): Identifier? {
-        // Exact start match and covering-identifier stages come from the shared
-        // identifierAt scan; the over-extended-highlight containment stage is
-        // highlight-specific and keeps its original precedence between them.
+        // Exact-start/covering stages come from the shared identifierAt scan; the
+        // over-extended-highlight containment stage is highlight-specific.
         semanticFile.identifiers.firstOrNull { identifier ->
             identifier.range.start.line == range.start.line &&
                 identifier.range.start.column == range.start.column
@@ -3150,8 +3026,7 @@ class LuaLanguageService(
         val functions = linkedSetOf<NameKey>()
         // Resolve each occurrence in its own lexical scope. A name used as a parameter
         // in one function says nothing about a same-named local in another scope.
-        semanticFile.identifiers.forEach { identifier ->
-            when (semanticFile.model.getSymbolAt(identifier.range.start)?.kind) {
+        semanticFile.identifiers.forEach { identifier ->            when (semanticFile.model.getSymbolAt(identifier.range.start)?.kind) {
                 SemanticSymbolKind.PARAMETER -> parameters += nameKey(identifier)
                 SemanticSymbolKind.FUNCTION, SemanticSymbolKind.METHOD -> functions += nameKey(identifier)
                 else -> Unit
@@ -3222,20 +3097,13 @@ class LuaLanguageService(
         var col = startChar
         var index = 0
         while (index < text.length) {
-            var end = index
-            while (end < text.length) {
-                val ch = text[end]
-                if (ch == '\n' || ch == '\r') {
-                    break
-                }
-                end++
-            }
-            val length = end - index
-            if (length > 0) {
+            // Span end = next line break (or end of text).
+            val end = text.indexOfAny(charArrayOf('\n', '\r'), index).takeIf { it >= 0 } ?: text.length
+            if (end > index) {
                 out += AbsoluteSemanticToken(
                     line = line,
                     startChar = col,
-                    length = length,
+                    length = end - index,
                     tokenType = tokenType
                 )
             }
@@ -3243,11 +3111,7 @@ class LuaLanguageService(
                 break
             }
             // Consume newline sequence (LF, CR, or CRLF).
-            if (text[end] == '\r' && end + 1 < text.length && text[end + 1] == '\n') {
-                index = end + 2
-            } else {
-                index = end + 1
-            }
+            index = if (text[end] == '\r' && end + 1 < text.length && text[end + 1] == '\n') end + 2 else end + 1
             line += 1
             col = 0
         }
@@ -3280,13 +3144,10 @@ class LuaLanguageService(
     }
 
     /**
-     * AST for a document the snapshot has not analyzed yet (folding, selection ranges, call
-     * hierarchy, inlay hints — all of which want the tree, not diagnostics).
-     *
-     * Parses leniently to match how the workspace would have parsed the same buffer. Parsing
-     * strictly here meant a document that fell back to this path produced a differently shaped
-     * tree than the identical document once indexed, so e.g. folding ranges could change purely
-     * based on whether indexing had caught up.
+     * AST for a document the snapshot has not analyzed yet (folding, selection ranges,
+     * call hierarchy, inlay hints). Parses leniently to match how the workspace would
+     * have parsed the same buffer — a strict parse here produced a differently shaped
+     * tree than the identical document once indexed.
      */
     private fun parseChunkForFolding(source: String): ChunkNode? {
         return try {
@@ -3347,7 +3208,8 @@ class LuaLanguageService(
      * Build an LSP SelectionRange chain for [position] by walking the AST parent
      * links from the innermost covering node. Only real AST ranges are used;
      * consecutive identical ranges are collapsed; each parent must fully contain
-     * its child (LSP SelectionRange contract).
+     * its child (LSP SelectionRange contract). Nest from outermost down so the
+     * returned root is the leaf selection.
      */
     private fun selectionRangeAt(index: NodePositionIndex, position: Position): SelectionRange? {
         val leaf = index.findInnermost(position) ?: return null
@@ -3371,8 +3233,6 @@ class LuaLanguageService(
         if (chainRanges.isEmpty()) {
             return null
         }
-        // chainRanges[0] = leaf … chainRanges[last] = outermost.
-        // Nest from outermost down so the returned root is the leaf selection.
         var nested: SelectionRange? = null
         for (i in chainRanges.lastIndex downTo 0) {
             nested = SelectionRange(chainRanges[i].toLspRange(), nested)
@@ -3389,11 +3249,7 @@ class LuaLanguageService(
         val chunk: ChunkNode
     )
 
-    /**
-     * Shared visitor base for this service's AST walks: every anonymous visitor
-     * here treated attribute identifiers as a no-op, so that 5-line override
-     * boilerplate is hoisted into one base class.
-     */
+    /** Hoists the anonymous-visitor no-op visitAttributeIdentifier boilerplate into one base class. */
     private open class UnitVisitor : ASTVisitor<Unit> {
         override fun visitAttributeIdentifier(
             identifier: io.github.dingyi222666.luaparser.parser.ast.node.AttributeIdentifier,
@@ -3404,11 +3260,9 @@ class LuaLanguageService(
     /**
      * Shared request preamble for document-scoped features: resolve the virtual path,
      * pick the open-overlay source (falling back to the disk index), take the analyzed
-     * snapshot chunk when present, else parse the source leniently.
-     *
-     * [requireSource] mirrors the two caller shapes the old inline ladders had:
-     * - false (folding/inlay path): unknown documents parse no source and yield no chunk.
-     * - true (selection ranges / call hierarchy): unknown documents degrade immediately.
+     * snapshot chunk when present, else parse the source leniently. [requireSource]
+     * mirrors the two caller shapes: false (folding/inlay) parses no source for unknown
+     * documents; true (selection ranges / call hierarchy) degrades immediately.
      */
     private fun documentContextFor(
         document: TextDocumentIdentifier,
@@ -3434,12 +3288,9 @@ class LuaLanguageService(
     private fun BaseASTNode.parentOrNull(): BaseASTNode? =
         runCatching { parent }.getOrNull()
 
-    private fun isOrderedAstRange(range: Range): Boolean {
-        val start = range.start
-        val end = range.end
-        return start.line >= 1 && start.column >= 1 && end.line >= 1 && end.column >= 1 &&
-            (end.line > start.line || (end.line == start.line && end.column >= start.column))
-    }
+    private fun isOrderedAstRange(range: Range): Boolean =
+        range.start.line >= 1 && range.start.column >= 1 && range.end.line >= 1 && range.end.column >= 1 &&
+            (range.end.line > range.start.line || (range.end.line == range.start.line && range.end.column >= range.start.column))
 
     /**
      * Shared document / range formatting pipeline (TASK-544).
@@ -3498,10 +3349,9 @@ class LuaLanguageService(
      *   formatting passes a substring that has no snapshot entry, so it parses here instead.
      *
      * Guard rail: the AST2Lua surface is re-parsed before it is returned. A printer defect
-     * that drops or invents tokens (the if-statement terminal `end` regression from the
-     * adversarial audit) would otherwise reach the editor as a full-document replacement
-     * that corrupts the buffer. When the re-parse reports any recovery diagnostic, or throws,
-     * no replacement is returned and the original source is preserved.
+     * that drops or invents tokens would otherwise reach the editor as a full-document
+     * replacement that corrupts the buffer; any recovery diagnostic (or throw) returns
+     * null and the original source is preserved.
      */
     private fun formatSourceText(
         source: String,
@@ -3604,16 +3454,14 @@ class LuaLanguageService(
         }
         // documentLineCount is 0 only for an empty source; formatDocument rejects
         // empty buffers before validating, so an all-zero range short-circuit is
-        // unnecessary here.
+        // unnecessary here. Clamp the validated range to document bounds (negatives
+        // were rejected above, so the lower bounds of the coercions hold); return
+        // null when clamping inverts the span.
         val lineCount = documentLineCount(source)
         // Beyond EOF (start past last line) → empty.
         if (start.line >= lineCount) {
             return null
         }
-        // Clamp the validated range to document bounds; lineCount > 0 and
-        // start.line < lineCount hold here (negatives were rejected above, so the
-        // lower bounds of the coercions are already satisfied). Returns null when
-        // clamping inverts the span.
         val endLine = end.line.coerceAtMost(lineCount) // exclusive EOF line allowed
         val startClamped = org.eclipse.lsp4j.Position(
             start.line,
@@ -3680,11 +3528,12 @@ class LuaLanguageService(
         secondary: String?,
         tertiary: String?
     ): String? {
-        fun isQuotedLiteral(value: String): Boolean =
-            value.length >= 2 && value.startsWith('"') && value.endsWith('"')
         val present = sequenceOf(primary, secondary, tertiary)
             .filterNotNull().filter { it.isNotBlank() }.toList()
-        // On an already-non-blank candidate, weak reduces to unknown/any.
+        // On an already-non-blank candidate, weak reduces to unknown/any. A quoted
+        // literal ("...") is any candidate of length >= 2 wrapped in double quotes.
+        fun isQuotedLiteral(value: String) =
+            value.length >= 2 && value.startsWith('"') && value.endsWith('"')
         val strong = present.filter { it != "unknown" && it != "any" }
         strong.firstOrNull { it.startsWith("module ") }?.let { return it }
         strong.firstOrNull { it.contains("fun(") || it.contains("fun<") }?.let { return it }
@@ -4060,10 +3909,11 @@ class LuaLanguageService(
         val calls = mutableListOf<CallExpression>()
         // One hook covers every call shape: the ASTVisitor dispatches String/Table call
         // sugar through visitCallExpression (which routes the subclasses to their own
-        // walkers), so each call node is collected exactly once here.
+        // walkers), so each call node is collected exactly once here. Null request
+        // range (full-document hint request) accepts every call.
         val visitor = object : UnitVisitor() {
             override fun visitCallExpression(node: CallExpression, value: Unit) {
-                if (callIntersectsRequestRange(node, requestRange)) {
+                if (requestRange == null || lspRangesIntersect(node.range.toLspRange(), requestRange)) {
                     calls += node
                 }
                 super.visitCallExpression(node, value)
@@ -4156,17 +4006,6 @@ class LuaLanguageService(
         }
         // Bare identifier formal (no type annotation in the label).
         return trimmed.takeIf { it.matches(Regex("[A-Za-z_][A-Za-z0-9_]*")) }
-    }
-
-    private fun callIntersectsRequestRange(
-        call: CallExpression,
-        requestRange: org.eclipse.lsp4j.Range?
-    ): Boolean {
-        if (requestRange == null) {
-            return true
-        }
-        val callLsp = call.range.toLspRange()
-        return lspRangesIntersect(callLsp, requestRange)
     }
 
     private fun lspRangesIntersect(

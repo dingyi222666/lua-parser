@@ -583,14 +583,6 @@ class LuaParser(
             when (val next = nextSignificant()) {
                 null -> return false
 
-                LuaTokenTypes.LPAREN,
-                LuaTokenTypes.LCURLY,
-                LuaTokenTypes.STRING,
-                LuaTokenTypes.LONG_STRING -> {
-                    lexer.back(backSize)
-                    return true
-                }
-
                 LuaTokenTypes.DOT,
                 LuaTokenTypes.COLON -> {
                     val segment = nextSignificant()
@@ -605,6 +597,10 @@ class LuaParser(
                 }
 
                 else -> {
+                    if (startsFuncargs(next)) {
+                        lexer.back(backSize)
+                        return true
+                    }
                     lexer.back(backSize)
                     return false
                 }
@@ -676,18 +672,19 @@ class LuaParser(
         val implicitArrayField: Boolean,
     )
 
+    /** funcargs starters: `(` call, `{` table call, string / long-string call. */
+    private fun startsFuncargs(tokenTypes: LuaTokenTypes): Boolean = equalsMore(
+        tokenTypes,
+        LuaTokenTypes.LPAREN,
+        LuaTokenTypes.LCURLY,
+        LuaTokenTypes.STRING,
+        LuaTokenTypes.LONG_STRING
+    )
+
     private fun canStartTableArrayField(tokenTypes: LuaTokenTypes): Boolean {
         return binaryPrecedence(tokenTypes) > 0 ||
-                equalsMore(
-                    tokenTypes,
-                    LuaTokenTypes.LPAREN,
-                    LuaTokenTypes.LCURLY,
-                    LuaTokenTypes.STRING,
-                    LuaTokenTypes.LONG_STRING,
-                    LuaTokenTypes.DOT,
-                    LuaTokenTypes.COLON,
-                    LuaTokenTypes.LBRACK
-                )
+                startsFuncargs(tokenTypes) ||
+                equalsMore(tokenTypes, LuaTokenTypes.DOT, LuaTokenTypes.COLON, LuaTokenTypes.LBRACK)
     }
 
     private fun binaryLeftOperand(node: ExpressionNode): ExpressionNode {
@@ -913,7 +910,10 @@ class LuaParser(
                 // external layout rows strict-parse without rewriting sources (TASK-610).
                 peekToken(LuaTokenTypes.LCURLY) && parent is ChunkNode -> {
                     markLocation()
-                    parseTopLevelTableReturn(blockNode)
+                    ReturnStatement().apply stmt@{
+                        this.parent = blockNode
+                        arguments.add(parseExp(this@stmt))
+                    }
                 }
 
                 else -> {
@@ -1443,20 +1443,14 @@ class LuaParser(
      */
     private fun drainSameLineLeftoverFuncargsAfterGotoTarget() {
         while (!hasLineBreakBeforeNextSignificantToken()) {
-            when (peek()) {
-                LuaTokenTypes.LPAREN,
-                LuaTokenTypes.LCURLY,
-                LuaTokenTypes.STRING,
-                LuaTokenTypes.LONG_STRING -> {
-                    // Throwaway base: parseCallExpression reparents its base; do not pass
-                    // the real goto Identifier or its parent link is stolen.
-                    val dummy = Identifier()
-                    val discarded = parseCallExpression(dummy, dummy)
-                    finishNodeSpanning(discarded, dummy.range.start)
-                }
-
-                else -> return
+            if (!startsFuncargs(peek())) {
+                return
             }
+            // Throwaway base: parseCallExpression reparents its base; do not pass
+            // the real goto Identifier or its parent link is stolen.
+            val dummy = Identifier()
+            val discarded = parseCallExpression(dummy, dummy)
+            finishNodeSpanning(discarded, dummy.range.start)
         }
     }
 
@@ -1558,14 +1552,13 @@ class LuaParser(
     }
 
     // target ::= Name | prefixexp '.' Name | prefixexp '[' exp ']'
-    private fun isCompoundAssignmentTarget(expression: ExpressionNode): Boolean {
-        return expression is Identifier ||
-                expression is MemberExpression ||
-                expression is IndexExpression
-    }
-
-    private fun isAssignmentTarget(expression: ExpressionNode): Boolean =
-        expression !in parenthesizedExpressions &&
+    // Compound-assignment desugar checks the plain shape (allowParenthesized);
+    // plain assignment additionally rejects parenthesized expressions.
+    private fun isAssignmentTarget(
+        expression: ExpressionNode,
+        allowParenthesized: Boolean = false
+    ): Boolean =
+        (allowParenthesized || expression !in parenthesizedExpressions) &&
             (expression is Identifier || expression is MemberExpression || expression is IndexExpression)
 
     /**
@@ -1654,7 +1647,7 @@ class LuaParser(
         val peekToken = peek()
 
         val compoundOperator = compoundAssignmentOperator(peekToken)
-        if (compoundOperator != null && isCompoundAssignmentTarget(suffix)) {
+        if (compoundOperator != null && isAssignmentTarget(suffix, allowParenthesized = true)) {
             // The lexer emits *_ASSIGN tokens for every dialect, but the desugar is an
             // AndroLua-only extension: without this gate strict LUA_5_3/5_4 silently
             // accepted `n += 2` where the pre-desugar parser rejected it with
@@ -1776,20 +1769,16 @@ class LuaParser(
         if (peek() != LuaTokenTypes.NAME) {
             return false
         }
-        val afterName = peekN(2)
-        if (equalsMore(afterName, LuaTokenTypes.ASSIGN, LuaTokenTypes.COMMA)) {
-            return false
-        }
-        if (equalsMore(
-                afterName,
-                LuaTokenTypes.DOT,
-                LuaTokenTypes.COLON,
-                LuaTokenTypes.LBRACK
-            )
-        ) {
-            return false
-        }
-        return true
+        // Recover unless the token after the NAME can continue the varlist
+        // (`=`, `,`) or a member/index suffix (`.`, `:`, `[`).
+        return !equalsMore(
+            peekN(2),
+            LuaTokenTypes.ASSIGN,
+            LuaTokenTypes.COMMA,
+            LuaTokenTypes.DOT,
+            LuaTokenTypes.COLON,
+            LuaTokenTypes.LBRACK
+        )
     }
 
     // do block end |
@@ -2221,33 +2210,30 @@ class LuaParser(
         val result = mutableListOf<TableKey>()
 
         var index = 1
-        skipCommentTokens()
-        val firstField = parseField(parent, index)
-        if (firstField == null) {
-            skipCommentTokens()
-            consume { equalsMore(it, LuaTokenTypes.COMMA, LuaTokenTypes.SEMI) }
-            return result
-        }
-        if (firstField.implicitArrayField) {
-            index++
-        }
-        result.add(finishNode(firstField.field))
-
         while (true) {
-            // , / ; with optional comments before/after the separator
-            skipCommentTokens()
-            if (!equalsMore(peek(), LuaTokenTypes.COMMA, LuaTokenTypes.SEMI)) {
-                break
+            // First field needs no separator; later fields require , / ; with optional
+            // comments before/after the separator. parseField skips its own leading
+            // comments, so no extra skipCommentTokens() is needed before it here.
+            if (result.isNotEmpty()) {
+                skipCommentTokens()
+                if (!equalsMore(peek(), LuaTokenTypes.COMMA, LuaTokenTypes.SEMI)) {
+                    break
+                }
+                advance()
             }
-            advance()
-            skipCommentTokens()
-            val fieldValue = parseField(parent, index) ?: break
-            if (fieldValue.implicitArrayField) {
+            // It is possible to encounter '}' / EOF / ')'; since we cannot tell if the
+            // token starts an expression, parseField returns null to end the list.
+            val field = parseField(parent, index) ?: break
+            if (field.implicitArrayField) {
                 index++
             }
-            result.add(finishNode(fieldValue.field))
+            result.add(finishNode(field.field))
         }
 
+        // [fieldsep] + trailing comments are trivia. (After a null first field the
+        // current token is EOF/RCURLY/RPAREN — parseField already skipped its leading
+        // comments — so both trailing skips are no-ops there, matching the historical
+        // early return that omitted them.)
         skipCommentTokens()
         consume { equalsMore(it, LuaTokenTypes.COMMA, LuaTokenTypes.SEMI) }
         skipCommentTokens()
@@ -2300,17 +2286,6 @@ class LuaParser(
         result.value = parseExpressionOrMissing(result)
 
         return ParsedTableField(result, implicitArrayField = true)
-    }
-
-    /**
-     * Bare top-level table constructor (AndroLua `.aly` layout form).
-     * Equivalent to the runtime `return <table>` wrap performed by alyloader.
-     */
-    private fun parseTopLevelTableReturn(parent: BaseASTNode): ReturnStatement {
-        val result = ReturnStatement()
-        result.parent = parent
-        result.arguments.add(parseExp(result))
-        return result
     }
 
     //  ‘[’ exp ‘]’ ‘=’ exp
@@ -2600,10 +2575,10 @@ class LuaParser(
             }
         }
 
+        // recoverToken only returns false under errorRecovery (strict mode errors), so
+        // the historical inner errorRecovery gate was redundant.
         if (!recoverToken(LuaTokenTypes.RPAREN) { rparenExpectedNearToken }) {
-            if (errorRecovery) {
-                result.bad = true
-            }
+            result.bad = true
         }
 
         return result
@@ -2662,13 +2637,7 @@ class LuaParser(
                         nextAfterName = n
                         break
                     }
-                    afterNameIsStatementStart = equalsMore(
-                        nextAfterName,
-                        LuaTokenTypes.LPAREN,
-                        LuaTokenTypes.LCURLY,
-                        LuaTokenTypes.STRING,
-                        LuaTokenTypes.LONG_STRING
-                    )
+                    afterNameIsStatementStart = startsFuncargs(nextAfterName)
                 }
             }
         }

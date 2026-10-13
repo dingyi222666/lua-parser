@@ -146,11 +146,11 @@ open class JvmWorkspaceEngine(
         val packageProviders = classModuleProvider.packageProvidersFor(packageTargets, resolvedConfiguration)
         val packageMemberClassProviders = classModuleProvider.packageMemberClassProvidersFor(packageTargets, resolvedConfiguration)
         // Bare `import "libs/classes.dex"` library mounts (library module + per-class
-        // providers) fed from configured imports, document source imports and AST targets.
-        // The provider re-filters to bare existing dex/apk paths; nothing mounts by
-        // directory scan alone.
+        // providers) fed from configured imports, document source imports and AST targets
+        // (allImportTargets). The provider re-filters to bare existing dex/apk paths;
+        // nothing mounts by directory scan alone.
         val dexLibraryProviders = classModuleProvider.dexLibraryProvidersFor(
-            collectDexLibraryImportTargets(baseConfiguration, documentFacts),
+            allImportTargets(baseConfiguration, documentFacts).toCollection(linkedSetOf()),
             resolvedConfiguration,
             deferMembers = deferDependencyGlobals
         )
@@ -301,9 +301,8 @@ open class JvmWorkspaceEngine(
                 // symbol proves the package enumerated zero classes.
                 facts.sourceImports
                     .asSequence()
-                    // Dead wildcard/package imports only: `pkg.*` whose package enumeration
-                    // mounted no provider (typo, case mismatch, absent jar). Non-wildcard
-                    // targets keep their existing diagnostic policy.
+                    // Wildcard targets only; non-wildcard targets keep their existing
+                    // diagnostic policy.
                     .filter { importFact ->
                         val target = importFact.target.removePrefix("import ").trim()
                         target.endsWith(".*") && workspaceResolver.importTargetSymbol(target) == null
@@ -543,10 +542,8 @@ open class JvmWorkspaceEngine(
             return false
         }
         val first = name.first()
-        if (!first.isUpperCase() || !first.isLetter()) {
-            return false
-        }
-        return name.all { ch -> ch.isLetterOrDigit() || ch == '_' }
+        return first.isUpperCase() && first.isLetter() &&
+            name.all { ch -> ch.isLetterOrDigit() || ch == '_' }
     }
 
     private fun isWildcardOrPackageTarget(importText: String): Boolean {
@@ -568,16 +565,6 @@ open class JvmWorkspaceEngine(
         documentFacts.values.asSequence().flatMap { facts ->
             facts.sourceImports.asSequence().map { importFact -> importFact.target }
         }
-
-    /**
-     * Candidate import targets for dex library mounts (`import "libs/classes.dex"`):
-     * configured imports, document source imports and AST import targets. The provider
-     * re-filters to bare, existing dex/apk paths — this set is only the candidate pool.
-     */
-    private fun collectDexLibraryImportTargets(
-        configuration: JvmWorkspaceConfiguration,
-        documentFacts: Map<VirtualPath, DocumentFacts>
-    ): Set<String> = allImportTargets(configuration, documentFacts).toCollection(linkedSetOf())
 
     /**
      * Mount package module providers for:
@@ -680,10 +667,8 @@ open class JvmWorkspaceEngine(
         if (target.isBlank() || target.endsWith(".*") || '.' !in target) {
             return null
         }
+        // ('.' in target) already guarantees >= 2 split segments.
         val segments = target.split('.')
-        if (segments.size < 2) {
-            return null
-        }
         // Package segments are lowercase-leading (android / widget / util); class simple names
         // are UpperCamelCase and must not mount as package modules.
         val packageLike = segments.all { segment ->

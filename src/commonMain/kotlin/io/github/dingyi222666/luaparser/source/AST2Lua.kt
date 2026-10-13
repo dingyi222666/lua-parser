@@ -378,33 +378,9 @@ class AST2Lua : ASTVisitor<StringBuilder> {
         value.append("...")
     }
 
-    private fun operatorToLua(operator: ExpressionOperator): String {
-        return when (operator) {
-            ExpressionOperator.NOT -> "not"
-            ExpressionOperator.AND -> "and"
-            ExpressionOperator.OR -> "or"
-            ExpressionOperator.EQ -> "=="
-            ExpressionOperator.NE -> "~="
-            ExpressionOperator.LT -> "<"
-            ExpressionOperator.LE -> "<="
-            ExpressionOperator.GT -> ">"
-            ExpressionOperator.GE -> ">="
-            ExpressionOperator.ADD -> "+"
-            ExpressionOperator.MINUS -> "-"
-            ExpressionOperator.MULT -> "*"
-            ExpressionOperator.DIV -> "/"
-            ExpressionOperator.MOD -> "%"
-            ExpressionOperator.DOUBLE_DIV -> "//"
-            ExpressionOperator.BIT_AND -> "&"
-            ExpressionOperator.BIT_OR -> "|"
-            ExpressionOperator.BIT_TILDE -> "~"
-            ExpressionOperator.BIT_LT -> "<<"
-            ExpressionOperator.BIT_GT -> ">>"
-            ExpressionOperator.BIT_EXP -> "^"
-            ExpressionOperator.CONCAT -> ".."
-            ExpressionOperator.GETLEN -> "#"
-        }
-    }
+    // Operator spellings: ExpressionOperator.value already carries the exact Lua
+    // source text for every operator (NOT="not", AND="and", NE="~=", BIT_LT="<<", …),
+    // so rendering reads it directly — no parallel spelling table to keep in sync.
 
     override fun visitAttributeIdentifier(identifier: AttributeIdentifier, value: StringBuilder) {
         value.append(identifier.name)
@@ -438,39 +414,19 @@ class AST2Lua : ASTVisitor<StringBuilder> {
         when (expression) {
             is BinaryExpression -> {
                 val precedence = expressionPrecedence(expression)
-                expression.left?.let {
-                    appendExpression(
-                        value = value,
-                        expression = it,
-                        parentPrecedence = precedence,
-                        parentOperator = expression.operator,
-                        isRightChild = false
-                    )
-                }
-                value.append(" ${operatorToLua(expression.operator)} ")
-                expression.right?.let {
-                    appendExpression(
-                        value = value,
-                        expression = it,
-                        parentPrecedence = precedence,
-                        parentOperator = expression.operator,
-                        isRightChild = true
-                    )
-                }
+                val operator = expression.operator
+                expression.left?.let { appendExpression(value, it, precedence, operator, false) }
+                value.append(" ${operator.value} ")
+                expression.right?.let { appendExpression(value, it, precedence, operator, true) }
             }
 
             is UnaryExpression -> {
-                value.append(operatorToLua(expression.operator))
-                if (expression.operator == ExpressionOperator.NOT) {
+                val operator = expression.operator
+                value.append(operator.value)
+                if (operator == ExpressionOperator.NOT) {
                     value.append(" ")
                 }
-                appendExpression(
-                    value = value,
-                    expression = expression.arg,
-                    parentPrecedence = expressionPrecedence(expression),
-                    parentOperator = expression.operator,
-                    isRightChild = true
-                )
+                appendExpression(value, expression.arg, expressionPrecedence(expression), operator, true)
             }
 
             is StringCallExpression, is TableCallExpression -> {
@@ -557,23 +513,18 @@ class AST2Lua : ASTVisitor<StringBuilder> {
         if (precedence == Int.MAX_VALUE) {
             return false
         }
-        if (precedence < parentPrecedence) {
-            return true
-        }
-        if (precedence > parentPrecedence) {
-            return false
+        // Different precedence decides directly; equal precedence re-associates only
+        // when the child sits on the fold side of a right-associative parent or the
+        // right side of a left-associative one.
+        if (precedence != parentPrecedence) {
+            return precedence < parentPrecedence
         }
 
-        return when (expression) {
-            is BinaryExpression -> when {
-                parentOperator == null -> false
-                isRightAssociative(parentOperator) && !isRightChild -> true
-                !isRightAssociative(parentOperator) && isRightChild -> true
-                else -> false
-            }
-
-            else -> false
-        }
+        // Equal precedence re-associates only a binary child sitting on the fold side
+        // of a right-associative parent or the right side of a left-associative one;
+        // every other node type stays unparenthesized.
+        return expression is BinaryExpression && parentOperator != null &&
+                isRightAssociative(parentOperator) != isRightChild
     }
 
     private fun expressionPrecedence(expression: ExpressionNode): Int {

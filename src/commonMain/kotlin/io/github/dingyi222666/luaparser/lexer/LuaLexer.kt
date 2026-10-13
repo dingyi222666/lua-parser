@@ -59,21 +59,11 @@ class LuaLexer @JvmOverloads constructor(
     fun nextToken(): LuaTokenTypes {
         var r = false
         for (i in offset..<offset + tokenLength) {
-            val ch = source[i]
-            if (ch == '\r') {
-                r = true
-                tokenLine++
-                tokenColumn = 0
-            } else if (ch == '\n') {
-                if (r) {
-                    r = false
-                    continue
-                }
-                tokenLine++
-                tokenColumn = 0
-            } else {
-                r = false
-                tokenColumn++
+            when (val ch = source[i]) {
+                '\r' -> { r = true; tokenLine++; tokenColumn = 0 }
+                // CRLF pairs count as one logical newline.
+                '\n' -> if (r) r = false else { tokenLine++; tokenColumn = 0 }
+                else -> { r = false; tokenColumn++ }
             }
         }
 
@@ -114,14 +104,12 @@ class LuaLexer @JvmOverloads constructor(
             ch == '(' -> LuaTokenTypes.LPAREN
             ch == ')' -> LuaTokenTypes.RPAREN
             ch == '[' -> {
-                val next = chatAtOrNull() ?: return LuaTokenTypes.LBRACK
-
-                if (next != '=' && next != '[') {
-                    return LuaTokenTypes.LBRACK
+                val next = chatAtOrNull()
+                if (next == '=' || next == '[') {
+                    scanLongBracket(offset, LuaTokenTypes.LONG_STRING, LuaTokenTypes.LBRACK)
+                } else {
+                    LuaTokenTypes.LBRACK
                 }
-
-                return scanLongString()
-
             }
 
             ch == ']' -> LuaTokenTypes.RBRACK
@@ -147,29 +135,24 @@ class LuaLexer @JvmOverloads constructor(
             ch == '>' -> scanAngleOperator(LuaTokenTypes.GT, LuaTokenTypes.GE, LuaTokenTypes.BIT_RTRT, '>')
             ch == '<' -> scanAngleOperator(LuaTokenTypes.LT, LuaTokenTypes.LE, LuaTokenTypes.BIT_LTLT, '<')
 
-            ch == '.' -> {
-                val next = chatAtOrNull() ?: return LuaTokenTypes.DOT
-
-                when {
-                    next == '.' -> {
-                        if (chatAtOrNull(offset + tokenLength + 1) == '.') {
-                            tokenLength += 2
-                            LuaTokenTypes.ELLIPSIS
-                        } else {
-                            tokenLength++
-                            LuaTokenTypes.CONCAT
-                        }
+            ch == '.' -> when {
+                chatAtOrNull() == '.' -> when (chatAtOrNull(offset + tokenLength + 1)) {
+                    '.' -> {
+                        tokenLength += 2
+                        LuaTokenTypes.ELLIPSIS
                     }
-
-                    isPrimeDigit(next) -> {
-                        scanDigits { isPrimeDigit(it) }
-                        if (scanDecimalExponentIfPresent()) LuaTokenTypes.NUMBER else LuaTokenTypes.BAD_CHARACTER
+                    else -> {
+                        tokenLength++
+                        LuaTokenTypes.CONCAT
                     }
-
-                    else -> LuaTokenTypes.DOT
                 }
 
+                chatAtOrNull()?.let { isPrimeDigit(it) } == true -> {
+                    scanDigits { isPrimeDigit(it) }
+                    if (scanDecimalExponentIfPresent()) LuaTokenTypes.NUMBER else LuaTokenTypes.BAD_CHARACTER
+                }
 
+                else -> LuaTokenTypes.DOT
             }
 
             ch == '"' || ch == '\'' -> scanString(ch)
@@ -190,21 +173,18 @@ class LuaLexer @JvmOverloads constructor(
             }
             ch == ':' -> scanTwoOperator(LuaTokenTypes.COLON, LuaTokenTypes.DOUBLE_COLON, ':')
 
-            ch == '-' -> {
-                val next = chatAtOrNull() ?: return LuaTokenTypes.MINUS
-                when (next) {
-                    '-' -> {
-                        tokenLength++
-                        scanComment()
-                    }
-
-                    '=' -> {
-                        tokenLength++
-                        LuaTokenTypes.SUB_ASSIGN
-                    }
-
-                    else -> LuaTokenTypes.MINUS
+            ch == '-' -> when (chatAtOrNull()) {
+                '-' -> {
+                    tokenLength++
+                    scanComment()
                 }
+
+                '=' -> {
+                    tokenLength++
+                    LuaTokenTypes.SUB_ASSIGN
+                }
+
+                else -> LuaTokenTypes.MINUS
             }
 
             else -> LuaTokenTypes.BAD_CHARACTER
@@ -350,7 +330,7 @@ class LuaLexer @JvmOverloads constructor(
             '[' -> {
                 val longBracketStart = offset + tokenLength
                 if (longBracketEqualsCount(longBracketStart) >= 0) {
-                    return scanLongBracket(longBracketStart, LuaTokenTypes.BLOCK_COMMENT)
+                    return scanLongBracket(longBracketStart, LuaTokenTypes.BLOCK_COMMENT, LuaTokenTypes.BAD_CHARACTER)
                 }
                 return scanShortComment()
             }
@@ -392,18 +372,12 @@ class LuaLexer @JvmOverloads constructor(
         }
     }
 
-    private fun scanLongString(): LuaTokenTypes {
-        if (longBracketEqualsCount(offset) < 0) {
-            return LuaTokenTypes.LBRACK
-        }
-
-        return scanLongBracket(offset, LuaTokenTypes.LONG_STRING)
-    }
-
-    private fun scanLongBracket(longBracketStart: Int, tokenType: LuaTokenTypes): LuaTokenTypes {
+    private fun scanLongBracket(longBracketStart: Int, tokenType: LuaTokenTypes, notLongBracket: LuaTokenTypes): LuaTokenTypes {
         val equalsCount = longBracketEqualsCount(longBracketStart)
         if (equalsCount < 0) {
-            return LuaTokenTypes.BAD_CHARACTER
+            // [longBracketStart] is `[` but not followed by `=`*[` — a plain LBRACK from
+            // the token dispatch, or the comment opener falling back to a short comment.
+            return notLongBracket
         }
 
         var cursor = longBracketStart + equalsCount + 2
@@ -490,41 +464,27 @@ class LuaLexer @JvmOverloads constructor(
         return pos
     }
 
-    private fun scanDIV(): LuaTokenTypes {
-        val next = chatAtOrNull() ?: return LuaTokenTypes.DIV
-
-        return when (next) {
-            '=' -> {
-                tokenLength++
-                LuaTokenTypes.DIV_ASSIGN
-            }
-
-            '/' -> {
-                tokenLength++
-                scanTwoOperator(
-                    LuaTokenTypes.DOUBLE_DIV,
-                    LuaTokenTypes.DOUBLE_DIV_ASSIGN, '='
-                )
-            }
-
-            else -> LuaTokenTypes.DIV
-
+    private fun scanDIV(): LuaTokenTypes = when (chatAtOrNull()) {
+        '=' -> {
+            tokenLength++
+            LuaTokenTypes.DIV_ASSIGN
         }
+
+        '/' -> {
+            tokenLength++
+            scanTwoOperator(LuaTokenTypes.DOUBLE_DIV, LuaTokenTypes.DOUBLE_DIV_ASSIGN, '=')
+        }
+
+        else -> LuaTokenTypes.DIV
     }
 
     private fun scanTwoOperator(
         first: LuaTokenTypes, second: LuaTokenTypes, operator: Char
     ): LuaTokenTypes {
-        if (tokenLength + offset == bufferLen) {
-            // The operator is the last token in the buffer
-            return first
-        }
-
-        if (charAt() == operator) {
+        if (chatAtOrNull() == operator) {
             tokenLength++
             return second
         }
-
         return first
     }
 
@@ -533,24 +493,18 @@ class LuaLexer @JvmOverloads constructor(
         assign: LuaTokenTypes,
         repeated: LuaTokenTypes,
         operator: Char
-    ): LuaTokenTypes {
-        if (tokenLength + offset == bufferLen) {
-            return single
+    ): LuaTokenTypes = when (chatAtOrNull()) {
+        '=' -> {
+            tokenLength++
+            assign
         }
 
-        return when (charAt()) {
-            '=' -> {
-                tokenLength++
-                assign
-            }
-
-            operator -> {
-                tokenLength++
-                repeated
-            }
-
-            else -> single
+        operator -> {
+            tokenLength++
+            repeated
         }
+
+        else -> single
     }
 
     @Suppress("SameReturnValue")
@@ -565,11 +519,8 @@ class LuaLexer @JvmOverloads constructor(
                 trailingDigits = scanDigits { isHexDigit(it) }
             }
 
-            if (leadingDigits + trailingDigits == 0) {
-                return LuaTokenTypes.BAD_CHARACTER
-            }
-
-            return if (scanHexExponentIfPresent()) LuaTokenTypes.NUMBER else LuaTokenTypes.BAD_CHARACTER
+            return if (leadingDigits + trailingDigits != 0 && scanHexExponentIfPresent()) LuaTokenTypes.NUMBER
+            else LuaTokenTypes.BAD_CHARACTER
         }
 
         scanDigits { isPrimeDigit(it) }

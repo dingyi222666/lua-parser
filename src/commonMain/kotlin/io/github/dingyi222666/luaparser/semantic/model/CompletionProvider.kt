@@ -32,36 +32,36 @@ internal class CompletionProvider(
         val visibleItems = referenceQueries.visibleValueDeclarations(position, nameFilter)
             .mapNotNull { visible ->
                 // Prefer declaredType-backed detail/kind for ambient binder builtins
-                // (activity/service VARIABLE, load* FUNCTION, luajava MODULE).
-                val declared = visible.declaration.declaredType
-                val kind = visible.declaration.kind
+                // (activity/service VARIABLE, load* FUNCTION, luajava MODULE). Callable
+                // declarations resolve an override type (declared when its signatures
+                // carry concrete returns, else the evaluator's value type) and enrich
+                // the item with the callable detail; other rows keep the default symbol.
+                val declaration = visible.declaration
+                val kind = declaration.kind
+                val declared = declaration.declaredType
                 val isCallableDeclaration = kind == DeclarationKind.FUNCTION || kind == DeclarationKind.GLOBAL ||
                     kind == DeclarationKind.METHOD || declared is CallableType
-                if (!isCallableDeclaration) {
-                    val symbol = adapters.toDeclarationSymbol(visible.declaration)
-                    buildCompletionItem(symbol, lexicalCompletionKind(symbol), categoryPrefix(symbol), visible.lexicalDepth)
-                } else {
-                    val type = declared.takeIf { candidate ->
+                val type = if (isCallableDeclaration) {
+                    declared.takeIf { candidate ->
                         candidate is CallableType && candidate.callSignatures.all { it.returnType.displayName != "unknown" }
-                    } ?: evaluator.declarationValueType(visible.declaration)
-                    adapters.toDeclarationSymbol(visible.declaration, typeOverride = type).let { symbol ->
-                        val expression = (node as? Identifier)?.takeIf { it.name == symbol.name }
-                        buildCompletionItem(symbol, lexicalCompletionKind(symbol), categoryPrefix(symbol), visible.lexicalDepth).copy(
-                            detail = signatures.callableDetail(type, expression, position, visible.declaration)
-                        )
-                    }
-                }
+                    } ?: evaluator.declarationValueType(declaration)
+                } else null
+                val symbol = if (type == null) adapters.toDeclarationSymbol(declaration)
+                else adapters.toDeclarationSymbol(declaration, typeOverride = type)
+                val item = buildCompletionItem(symbol, lexicalCompletionKind(symbol), categoryPrefix(symbol), visible.lexicalDepth)
+                if (type == null) item else item.copy(
+                    detail = signatures.callableDetail(
+                        type, (node as? Identifier)?.takeIf { it.name == symbol.name }, position, declaration
+                    )
+                )
             }
         val lazyImportItem = (node as? Identifier)
             ?.let { identifier -> referenceQueries.importedCompletionSymbol(identifier.name, position) }
             ?.let { symbol ->
                 val item = buildCompletionItem(symbol, lexicalCompletionKind(symbol), categoryPrefix(symbol), 0)
                 val importedType = adapters.typeByKey(symbol.declaredType?.typeKey ?: symbol.type?.typeKey)
-                if (importedType is CallableType) {
-                    item.copy(detail = signatures.callableDetail(importedType, null, position))
-                } else {
-                    item
-                }
+                if (importedType is CallableType) item.copy(detail = signatures.callableDetail(importedType, null, position))
+                else item
             }
         return (visibleItems + listOfNotNull(lazyImportItem).filter { nameFilter?.invoke(it.label) != false })
             .distinctBy(CompletionItem::label)
@@ -120,13 +120,6 @@ internal class CompletionProvider(
         }
     }
 
-    /**
-     * Member-surface completions (table/module/Java class members) must expose field-like
-     * symbols as [CompletionItemKind.FIELD], including Java static fields from
-     * `luajava.bindClass` targets and conservative JavaBean property aliases. Backing
-     * declarations sometimes arrive as value kinds (LOCAL/VARIABLE); hover still reports
-     * [SymbolKind.FIELD] via member resolution.
-     */
     /** Shared item construction; lexical and member surfaces differ only in kind mapping. */
     private fun buildCompletionItem(
         symbol: Symbol,
@@ -144,6 +137,13 @@ internal class CompletionProvider(
         )
     }
 
+    /**
+     * Member-surface completions (table/module/Java class members) must expose field-like
+     * symbols as [CompletionItemKind.FIELD], including Java static fields from
+     * `luajava.bindClass` targets and conservative JavaBean property aliases. Backing
+     * declarations sometimes arrive as value kinds (LOCAL/VARIABLE); hover still reports
+     * [SymbolKind.FIELD] via member resolution.
+     */
     private fun memberCompletionKind(symbol: Symbol): CompletionItemKind {
         val display = symbol.declaredType?.displayName ?: symbol.type?.displayName
         return when (symbol.kind) {

@@ -67,7 +67,7 @@ class LuaWorkspaceQueryFacade(
     }
 
     fun resolveRequire(path: VirtualPath, position: Position): WorkspaceModuleLookupResult? {
-        requireCallSite(path, position)?.let { return workspaceModuleLookup(path, it.moduleName) }
+        requireCallSite(path, position)?.let { return workspaceModuleLookup(path, it) }
         // Position-based resolve is also restricted to real builtin require form:
         // require-backed locals only count when their initializer is an unshadowed
         // builtin require("...") call (requiredModuleNameForDeclaration / builtinRequireModuleName).
@@ -155,18 +155,12 @@ class LuaWorkspaceQueryFacade(
             // Prefer import-call / require-alias MODULE typing (carries moduleName) over coarse
             // node types. Always run preferredHoverType so structural table literals collapse
             // to "table" even when the symbol surface has a null type and only nodeType is available.
+            val primaryCandidate = importCallLocal?.type ?: requireLocal?.type ?: exportType
+                ?: declaredOrInferred ?: symbol?.type ?: memberType ?: nodeType
+            val secondaryCandidate = exportType ?: requireLocal?.type ?: memberType ?: nodeType
+                ?: symbol?.type ?: declaredOrInferred
             preferredHoverType(
-                preferredHoverType(
-                    importCallLocal?.type
-                        ?: requireLocal?.type
-                        ?: exportType
-                        ?: declaredOrInferred
-                        ?: symbol?.type
-                        ?: memberType
-                        ?: nodeType,
-                    exportType ?: requireLocal?.type ?: memberType ?: nodeType
-                        ?: symbol?.type ?: declaredOrInferred
-                ),
+                preferredHoverType(primaryCandidate, secondaryCandidate),
                 declaredOrInferred
             )
         }
@@ -261,7 +255,7 @@ class LuaWorkspaceQueryFacade(
             ?.let { return listOf(it) }
         requireCallDefinition(path, position)?.let { return listOf(it) }
         memberExport?.let { return listOf(exportLocation(it)) }
-        navigationExportForMember(path, position, node, symbol)?.let { return listOf(exportLocation(it)) }
+        navigationExportForMember(path, position, symbol)?.let { return listOf(exportLocation(it)) }
         // On require-backed member access, never invent a definition from the provider module
         // root / local range when the export member itself is missing (TASK-664).
         if (memberAccess != null && semanticFile != null) {
@@ -304,7 +298,7 @@ class LuaWorkspaceQueryFacade(
 
         importedSymbolDefinitionLocation(symbol, importedAt)?.let { return listOf(it) }
 
-        navigationExportForMember(path, position, node, symbol)?.let { return listOf(exportLocation(it)) }
+        navigationExportForMember(path, position, symbol)?.let { return listOf(exportLocation(it)) }
 
         requireCallDefinition(path, position)?.let { return listOf(it) }
 
@@ -615,9 +609,6 @@ class LuaWorkspaceQueryFacade(
                 )
             )
             .toList()
-        if (members.isEmpty()) {
-            return emptyList()
-        }
 
         data class MutableSymbol(
             val name: String,
@@ -853,19 +844,6 @@ class LuaWorkspaceQueryFacade(
         return symbol?.kind
             ?.takeIf { it == io.github.dingyi222666.luaparser.semantic.api.SymbolKind.FIELD || it == io.github.dingyi222666.luaparser.semantic.api.SymbolKind.METHOD }
             ?.let { model.getTypeAt(memberExpression.base) }
-    }
-
-    private fun exportFromMemberBase(
-        node: BaseASTNode?,
-        symbol: io.github.dingyi222666.luaparser.semantic.api.Symbol?
-    ): WorkspaceModuleResolver.ResolvedExportMember? {
-        val memberExpression = memberExpressionForNode(node) ?: return null
-        if (memberExpression.base !== node && node !is MemberExpression) {
-            return null
-        }
-        val symbolId = symbol?.symbolId ?: return null
-        val identity = ModuleExportIdentity.parse(symbolId) ?: return null
-        return resolver.exportedMemberByHandle(identity.asHandle())
     }
 
     private fun requireBackedDefinition(
@@ -1178,8 +1156,7 @@ class LuaWorkspaceQueryFacade(
     }
 
     private fun requireCallDefinition(path: VirtualPath, position: Position): WorkspaceLocation? {
-        val callSite = requireCallSite(path, position) ?: return null
-        return requireBackedLocation(path, callSite.moduleName)
+        return requireBackedLocation(path, requireCallSite(path, position) ?: return null)
     }
 
     /** Provider-path location at the synthetic module range for a resolved require/import module. */
@@ -1216,6 +1193,10 @@ class LuaWorkspaceQueryFacade(
             ?.stringOf()
     }
 
+    /** Shared import-target ladder: this file's path-scoped import first, then the global surface. */
+    private fun importTarget(path: VirtualPath, target: String): WorkspaceImportedSymbol? =
+        resolver.importTargetSymbolFor(path, target) ?: resolver.importTargetSymbol(target)
+
     private fun importTargetDefinition(
         path: VirtualPath,
         semanticFile: WorkspaceSemanticFile,
@@ -1237,9 +1218,7 @@ class LuaWorkspaceQueryFacade(
             return null
         }
         val target = constant.stringOf()
-        val imported = resolver.importTargetSymbolFor(path, target)
-            ?: resolver.importTargetSymbol(target)
-            ?: return null
+        val imported = importTarget(path, target) ?: return null
         return WorkspaceLocation(imported.providerPath, syntheticModuleRange(imported.alias))
     }
 
@@ -1302,28 +1281,21 @@ class LuaWorkspaceQueryFacade(
 
     private fun callArguments(call: CallExpression): List<io.github.dingyi222666.luaparser.parser.ast.node.ExpressionNode> {
         // Flatten nested string/table-call bases so outer CallExpression(import "X") and
-        // the nested StringCallExpression both surface the string argument.
+        // the nested StringCallExpression both surface the string argument. String/Table
+        // calls recurse into any base; plain calls only into nested string/table bases.
         return buildList {
             fun appendFrom(expression: io.github.dingyi222666.luaparser.parser.ast.node.ExpressionNode) {
-                when (expression) {
-                    is io.github.dingyi222666.luaparser.parser.ast.node.StringCallExpression -> {
-                        appendFrom(expression.base)
-                        addAll(expression.arguments)
-                    }
-                    is io.github.dingyi222666.luaparser.parser.ast.node.TableCallExpression -> {
-                        appendFrom(expression.base)
-                        addAll(expression.arguments)
-                    }
-                    is CallExpression -> {
-                        val nestedBase = expression.base
-                        if (nestedBase is io.github.dingyi222666.luaparser.parser.ast.node.StringCallExpression ||
-                            nestedBase is io.github.dingyi222666.luaparser.parser.ast.node.TableCallExpression
-                        ) {
-                            appendFrom(nestedBase)
-                        }
-                        addAll(expression.arguments)
-                    }
+                if (expression !is CallExpression) return
+                if (expression is io.github.dingyi222666.luaparser.parser.ast.node.StringCallExpression ||
+                    expression is io.github.dingyi222666.luaparser.parser.ast.node.TableCallExpression
+                ) {
+                    appendFrom(expression.base)
+                } else {
+                    (expression.base as? io.github.dingyi222666.luaparser.parser.ast.node.StringCallExpression
+                        ?: expression.base as? io.github.dingyi222666.luaparser.parser.ast.node.TableCallExpression)
+                        ?.let(::appendFrom)
                 }
+                addAll(expression.arguments)
             }
             appendFrom(call)
         }
@@ -1403,16 +1375,19 @@ class LuaWorkspaceQueryFacade(
             ?: importedAt?.let { WorkspaceLocation(it.providerPath, syntheticModuleRange(it.alias)) }
     }
 
-    /** Shared export-member navigation ladder: handle → caret export → member-base export. */
+    /**
+     * Shared export-member navigation ladder: handle → caret export. The former third arm
+     * (`exportFromMemberBase`) re-derived `resolver.exportedMemberByHandle` from the same
+     * `symbol.symbolId` — `parse(symbolId)!!.asHandle()` round-trips to `symbolId` itself —
+     * so it could never yield a value the handle arm had not already returned.
+     */
     private fun navigationExportForMember(
         path: VirtualPath,
         position: Position,
-        node: BaseASTNode?,
         symbol: io.github.dingyi222666.luaparser.semantic.api.Symbol?
     ): WorkspaceModuleResolver.ResolvedExportMember? {
         return symbol?.symbolId?.let(resolver::exportedMemberByHandle)
             ?: resolver.exportAt(path, position)
-            ?: exportFromMemberBase(node, symbol)
     }
 
     private fun importedSymbolReferences(symbolId: String): List<WorkspaceLocation> {
@@ -1463,11 +1438,9 @@ class LuaWorkspaceQueryFacade(
         val callType = resolved.exportSurface?.moduleType?.fields?.get("__call") ?: return null
         // Normalize Android-Lua import callable display regardless of vararg name formatting
         // (the exact normalized form itself also matches the second arm's predicate).
-        val displayName = when {
-            callType.displayName.contains("any...") || callType.displayName.startsWith("fun(") ->
-                "fun(...: any...): any"
-            else -> callType.displayName
-        }
+        val rawDisplay = callType.displayName
+        val displayName =
+            if (rawDisplay.contains("any...") || rawDisplay.startsWith("fun(")) "fun(...: any...): any" else rawDisplay
         return surfaceSymbol(
             name = "import",
             kind = SymbolKind.FUNCTION,
@@ -1789,9 +1762,7 @@ class LuaWorkspaceQueryFacade(
         if (targets.size != 1) {
             return null
         }
-        val imported = resolver.importTargetSymbolFor(path, targets.single())
-            ?: resolver.importTargetSymbol(targets.single())
-            ?: return null
+        val imported = importTarget(path, targets.single()) ?: return null
         return imported.moduleType.moduleName.takeIf { it.isNotBlank() }
     }
 
@@ -1836,9 +1807,7 @@ class LuaWorkspaceQueryFacade(
         if (targets.isEmpty()) {
             return null
         }
-        val imported = targets.mapNotNull { target ->
-            resolver.importTargetSymbolFor(path, target) ?: resolver.importTargetSymbol(target)
-        }
+        val imported = targets.mapNotNull { importTarget(path, it) }
         if (imported.isEmpty()) {
             return null
         }
@@ -1897,9 +1866,7 @@ class LuaWorkspaceQueryFacade(
                     // Member access: resolve receiver local alias (Locale.getDefault -> Locale).
                     null
                 } else {
-                    localDeclarationForSymbol(semanticFile, symbol?.symbolId)
-                        ?: exactLocalDeclarationForIdentifier(semanticFile, identifier)
-                        ?: visibleLocalValueDeclaration(semanticFile, identifier.name, identifier.range.start)
+                    localDeclarationForSymbolOrIdentifier(semanticFile, symbol?.symbolId, identifier)
                 }
             }
             else -> localDeclarationForSymbol(semanticFile, symbol?.symbolId)
@@ -1918,9 +1885,7 @@ class LuaWorkspaceQueryFacade(
             val member = memberAccess ?: return null
             val receiver = member.base as? Identifier ?: return null
             val receiverSymbol = semanticFile.model.getSymbolAt(receiver.range.start)
-            localDeclarationForSymbol(semanticFile, receiverSymbol?.symbolId)
-                ?: exactLocalDeclarationForIdentifier(semanticFile, receiver)
-                ?: visibleLocalValueDeclaration(semanticFile, receiver.name, receiver.range.start)
+            localDeclarationForSymbolOrIdentifier(semanticFile, receiverSymbol?.symbolId, receiver)
                 ?: return null
         }
         val moduleName = bindClassTargetModuleName(
@@ -1954,9 +1919,7 @@ class LuaWorkspaceQueryFacade(
         }
         val initializer = requireInitializerForLocal(declaration) ?: return null
         val target = luaJavaClassLoadTarget(semanticFile, initializer, preferredMemberName) ?: return null
-        val imported = resolver.importTargetSymbolFor(path, target)
-            ?: resolver.importTargetSymbol(target)
-            ?: return null
+        val imported = importTarget(path, target) ?: return null
         return imported.moduleType.moduleName.takeIf { it.isNotBlank() }
             ?: imported.alias.takeIf { it.isNotBlank() }
     }
@@ -2480,15 +2443,14 @@ class LuaWorkspaceQueryFacade(
         }
     }
 
-    private fun requireCallSite(path: VirtualPath, position: Position): RequireCallSite? {
+    private fun requireCallSite(path: VirtualPath, position: Position): String? {
         val semanticFile = snapshot.files[path]?.semanticFile ?: return null
         val node = semanticFile.nodeAt(position)
         // Prefer parent-linked call, then recover string-call shape when ConstantNode.parent is unset.
         val call = enclosingCallExpression(node)
             ?: (node as? ConstantNode)?.let { importStringCallContaining(semanticFile, it) }
             ?: return null
-        val moduleName = builtinRequireModuleName(semanticFile, call) ?: return null
-        return RequireCallSite(moduleName)
+        return builtinRequireModuleName(semanticFile, call)
     }
 
     private fun enclosingCallExpression(node: BaseASTNode?): CallExpression? {
@@ -2502,28 +2464,14 @@ class LuaWorkspaceQueryFacade(
         return null
     }
 
-    private data class RequireCallSite(
-        val moduleName: String
-    )
-
     private data class ImportedSymbolIdentity(
         val providerPath: VirtualPath,
         val alias: String
     ) {
         companion object {
             fun parse(handle: String?): ImportedSymbolIdentity? {
-                if (handle == null || !handle.startsWith("imported:")) {
-                    return null
-                }
-                val body = handle.removePrefix("imported:")
-                val separator = body.lastIndexOf(':')
-                if (separator <= 0 || separator >= body.lastIndex) {
-                    return null
-                }
-                return ImportedSymbolIdentity(
-                    providerPath = VirtualPath.of(body.substring(0, separator)),
-                    alias = body.substring(separator + 1)
-                )
+                return parseColonPathHandle(handle, "imported:")
+                    ?.let { (path, alias) -> ImportedSymbolIdentity(path, alias) }
             }
         }
     }

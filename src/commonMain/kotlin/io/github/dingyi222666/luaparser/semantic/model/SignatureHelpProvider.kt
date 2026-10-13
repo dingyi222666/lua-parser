@@ -165,13 +165,12 @@ internal class SignatureHelpProvider(
         }
         callResolution.selectedSignatureIndex?.takeIf { it in signatures.indices }?.let { return it }
         val selected = callResolution.selectedSignature ?: return 0
-        signatures.indexOf(selected).takeIf { it >= 0 }?.let { return it }
-        signatures.indexOfFirst { candidate ->
-            candidate.displayName == selected.displayName || candidate.name == selected.name
-        }.takeIf { it >= 0 }?.let { return it }
-        return signatures.indexOfFirst { candidate ->
-            signatureShapeMatches(candidate, selected)
-        }.takeIf { it >= 0 } ?: 0
+        // Exact identity/equality, then label/name, then parameter shape; 0 when nothing discriminates.
+        return listOf(
+            signatures.indexOf(selected),
+            signatures.indexOfFirst { it.displayName == selected.displayName || it.name == selected.name },
+            signatures.indexOfFirst { signatureShapeMatches(it, selected) }
+        ).firstOrNull { it >= 0 } ?: 0
     }
 
     private fun signatureShapeMatches(left: FunctionType, right: FunctionType): Boolean =
@@ -218,10 +217,8 @@ internal class SignatureHelpProvider(
     private fun activeParameterIndex(call: CallExpression, position: Position): Int {
         val arguments = callArguments(call)
         val receiverOffset = receiverOffset(call)
-        if (arguments.isEmpty()) {
-            return receiverOffset
-        }
-        if (comparePositions(position, arguments.first().range.start) < 0) {
+        // No arguments, or the cursor sits before the first argument: the receiver slot.
+        if (arguments.isEmpty() || comparePositions(position, arguments.first().range.start) < 0) {
             return receiverOffset
         }
 

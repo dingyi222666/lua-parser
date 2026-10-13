@@ -40,15 +40,10 @@ data class WorkspacePublicFingerprint(
             )
         }
 
-        private fun serializeSurface(surface: ModuleExportSurface): String = buildString {
-            append(surface.sourceForm.name)
-            append('#')
-            append(surface.hasSeeAllFallback)
-            append('#')
-            append(surface.moduleEnvironmentMode?.name.orEmpty())
-            append('#')
-            append(serializeModuleType(surface.moduleType, linkedSetOf()))
-        }
+        private fun serializeSurface(surface: ModuleExportSurface): String =
+            "${surface.sourceForm.name}#${surface.hasSeeAllFallback}" +
+                "#${surface.moduleEnvironmentMode?.name.orEmpty()}" +
+                "#${serializeModuleType(surface.moduleType, linkedSetOf())}"
 
         /** Shared `fields=…;methods=…;index=…` payload segment (module and table serialization). */
         private fun serializeFieldMethodIndex(
@@ -56,16 +51,12 @@ data class WorkspacePublicFingerprint(
             methods: Map<String, Type>,
             indexSignature: Pair<Type, Type>?,
             javaClassStack: MutableSet<String>
-        ): String = buildString {
-            append("fields=")
-            append(serializeTypeMap(fields, javaClassStack))
-            append(";methods=")
-            append(serializeTypeMap(methods, javaClassStack))
-            append(";index=")
-            append(indexSignature?.let {
-                "${serializeType(it.first, javaClassStack)}->${serializeType(it.second, javaClassStack)}"
-            }.orEmpty())
-        }
+        ): String =
+            "fields=${serializeTypeMap(fields, javaClassStack)}" +
+                ";methods=${serializeTypeMap(methods, javaClassStack)}" +
+                ";index=${indexSignature?.let {
+                    "${serializeType(it.first, javaClassStack)}->${serializeType(it.second, javaClassStack)}"
+                }.orEmpty()}"
 
         private fun serializeTypeMap(
             entries: Map<String, Type>,
@@ -74,19 +65,13 @@ data class WorkspacePublicFingerprint(
             "$name:${serializeType(type, javaClassStack)}"
         }
 
-        private fun serializeModuleType(moduleType: ModuleType, javaClassStack: MutableSet<String>): String = buildString {
-            append("name=")
-            append(moduleType.moduleName)
-            append(';')
-            append(
-                serializeFieldMethodIndex(
-                    moduleType.fields,
-                    moduleType.methods,
-                    moduleType.indexSignature?.let { it.keyType to it.valueType },
-                    javaClassStack
-                )
-            )
-        }
+        private fun serializeModuleType(moduleType: ModuleType, javaClassStack: MutableSet<String>): String =
+            "name=${moduleType.moduleName};${serializeFieldMethodIndex(
+                moduleType.fields,
+                moduleType.methods,
+                moduleType.indexSignature?.let { it.keyType to it.valueType },
+                javaClassStack
+            )}"
 
         private fun serializeTypeParameters(
             typeParameters: List<TypeParameterType>,
@@ -95,84 +80,44 @@ data class WorkspacePublicFingerprint(
 
         private fun serializeType(type: Type, javaClassStack: MutableSet<String>): String = when (type) {
             is ModuleType -> "module(${serializeModuleType(type, javaClassStack)})"
-            is TableType -> buildString {
-                append("table(")
-                append(
-                    serializeFieldMethodIndex(
-                        type.fields,
-                        type.methods,
-                        type.indexSignature?.let { it.keyType to it.valueType },
-                        javaClassStack
-                    )
-                )
-                append(')')
-            }
+            is TableType -> "table(${serializeFieldMethodIndex(
+                type.fields,
+                type.methods,
+                type.indexSignature?.let { it.keyType to it.valueType },
+                javaClassStack
+            )})"
 
             is LiteralType -> "literal(${type.baseType.name}:${type.value})"
-            is FunctionType -> buildString {
-                append("fun(typeParameters=")
-                append(serializeTypeParameters(type.typeParameters, javaClassStack))
-                append(";parameters=")
-                append(type.parameters.joinToString("|") { parameter ->
-                    buildString {
-                        append(parameter.name)
-                        append(':')
-                        append(serializeType(parameter.type, javaClassStack))
-                        append(':')
-                        append(parameter.optional)
-                        append(':')
-                        append(parameter.vararg)
-                    }
-                })
-                append(")->")
-                append(serializeType(type.returnType, javaClassStack))
-            }
+            is FunctionType ->
+                "fun(typeParameters=${serializeTypeParameters(type.typeParameters, javaClassStack)}" +
+                    ";parameters=${type.parameters.joinToString("|") { parameter ->
+                        "${parameter.name}:${serializeType(parameter.type, javaClassStack)}" +
+                            ":${parameter.optional}:${parameter.vararg}"
+                    }})->${serializeType(type.returnType, javaClassStack)}"
 
             is OverloadedFunctionType -> "overload(${type.callSignatures.joinToString("|") { serializeType(it, javaClassStack) }})"
             is JavaClassType -> serializeJavaClassType(type, javaClassStack)
-            is JavaInstanceType -> buildString {
-                append("javaInstance(name=")
-                append(serializeJavaTypeName(type.javaName))
-                append(";class=")
-                append(serializeJavaClassType(type.classType, javaClassStack))
-                append(";typeArguments=")
-                append(type.typeArguments.joinToString("|") { serializeType(it, javaClassStack) })
-                append(')')
-            }
-            is JavaConstructorType -> buildString {
-                append("javaConstructor(owner=")
-                append(serializeJavaTypeName(type.owner))
-                append(";visibility=")
-                append(type.visibility.name)
-                append(";signature=")
-                append(serializeType(type.signature, javaClassStack))
-                append(')')
-            }
+            is JavaInstanceType ->
+                "javaInstance(name=${serializeJavaTypeName(type.javaName)}" +
+                    ";class=${serializeJavaClassType(type.classType, javaClassStack)}" +
+                    ";typeArguments=${type.typeArguments.joinToString("|") { serializeType(it, javaClassStack) }})"
+            is JavaConstructorType ->
+                "javaConstructor(owner=${serializeJavaTypeName(type.owner)}" +
+                    ";visibility=${type.visibility.name}" +
+                    ";signature=${serializeType(type.signature, javaClassStack)})"
             // JavaMemberType is sealed with exactly these two subtypes; they serialize
             // identically apart from the discriminator label.
-            is JavaMemberType -> buildString {
-                append(if (type is JavaStaticMemberType) "javaStaticMember(" else "javaInstanceMember(")
-                append("owner=")
-                append(serializeJavaTypeName(type.owner))
-                append(";name=")
-                append(type.memberName)
-                append(";kind=")
-                append(type.memberKind.name)
-                append(";visibility=")
-                append(type.visibility.name)
-                append(";type=")
-                append(serializeType(type.valueType, javaClassStack))
-                append(')')
-            }
-            is JavaOverloadType -> buildString {
-                append("javaOverload(name=")
-                append(serializeJavaTypeName(type.javaName))
-                append(";overloadName=")
-                append(type.overloadName)
-                append(";signatures=")
-                append(type.callSignatures.joinToString("|") { serializeType(it, javaClassStack) })
-                append(')')
-            }
+            is JavaMemberType ->
+                "${if (type is JavaStaticMemberType) "javaStaticMember" else "javaInstanceMember"}" +
+                    "(owner=${serializeJavaTypeName(type.owner)}" +
+                    ";name=${type.memberName}" +
+                    ";kind=${type.memberKind.name}" +
+                    ";visibility=${type.visibility.name}" +
+                    ";type=${serializeType(type.valueType, javaClassStack)})"
+            is JavaOverloadType ->
+                "javaOverload(name=${serializeJavaTypeName(type.javaName)}" +
+                    ";overloadName=${type.overloadName}" +
+                    ";signatures=${type.callSignatures.joinToString("|") { serializeType(it, javaClassStack) }})"
             is JavaPrimitiveType -> "javaPrimitive(${type.kind.name}:${type.name})"
             is JavaArrayType -> "javaArray(${type.dimensions}:${serializeType(type.elementType, javaClassStack)})"
             is CallableType -> "callable(${type.callSignatures.joinToString("|") { serializeType(it, javaClassStack) }})"
@@ -182,25 +127,15 @@ data class WorkspacePublicFingerprint(
             is MultiReturnType -> "multi(${type.types.joinToString("|") { serializeType(it, javaClassStack) }})"
             is VarargType -> "vararg(${serializeType(type.elementType, javaClassStack)})"
             is ArrayType -> "array(${serializeType(type.elementType, javaClassStack)})"
-            is ClassType -> buildString {
-                append("class(")
-                append(type.name)
-                append(";superClass=")
-                append(type.superClass?.let { serializeType(it, javaClassStack) }.orEmpty())
-                append(";superType=")
-                append(type.superType?.let { serializeType(it, javaClassStack) }.orEmpty())
-                append(";typeParameters=")
-                append(serializeTypeParameters(type.typeParameters, javaClassStack))
-                append(";alias=")
-                append(type.alias?.let { serializeType(it, javaClassStack) }.orEmpty())
-                append(";javaClass=")
-                append(type.javaClassName.orEmpty())
-                append(";fields=")
-                append(serializeTypeMap(type.fields, javaClassStack))
-                append(";methods=")
-                append(serializeTypeMap(type.methods, javaClassStack))
-                append(')')
-            }
+            is ClassType ->
+                "class(${type.name}" +
+                    ";superClass=${type.superClass?.let { serializeType(it, javaClassStack) }.orEmpty()}" +
+                    ";superType=${type.superType?.let { serializeType(it, javaClassStack) }.orEmpty()}" +
+                    ";typeParameters=${serializeTypeParameters(type.typeParameters, javaClassStack)}" +
+                    ";alias=${type.alias?.let { serializeType(it, javaClassStack) }.orEmpty()}" +
+                    ";javaClass=${type.javaClassName.orEmpty()}" +
+                    ";fields=${serializeTypeMap(type.fields, javaClassStack)}" +
+                    ";methods=${serializeTypeMap(type.methods, javaClassStack)})"
 
             is AliasType -> "alias(${type.name}:${serializeType(type.target, javaClassStack)})"
             is TypeParameterType -> "typeparam(${type.name}:${type.constraint?.let { serializeType(it, javaClassStack) }.orEmpty()}:${type.defaultType?.let { serializeType(it, javaClassStack) }.orEmpty()})"
@@ -219,27 +154,16 @@ data class WorkspacePublicFingerprint(
             }
 
             return try {
-                buildString {
-                    append("javaClass(name=")
-                    append(serializeJavaTypeName(type.javaName))
-                    append(";constructors=")
-                    append(type.constructors.overloads.joinToString("|") { serializeType(it, javaClassStack) })
-                    append(";staticMembers=")
-                    append(serializeTypeMap(type.staticMembers, javaClassStack))
-                    append(";instanceMembers=")
-                    append(serializeTypeMap(type.instanceMembers, javaClassStack))
-                    append(";innerClasses=")
-                    append(sortedEntries(type.innerClasses).joinToString("|") { (name, innerClass) ->
+                "javaClass(name=${serializeJavaTypeName(type.javaName)}" +
+                    ";constructors=${type.constructors.overloads.joinToString("|") { serializeType(it, javaClassStack) }}" +
+                    ";staticMembers=${serializeTypeMap(type.staticMembers, javaClassStack)}" +
+                    ";instanceMembers=${serializeTypeMap(type.instanceMembers, javaClassStack)}" +
+                    ";innerClasses=${sortedEntries(type.innerClasses).joinToString("|") { (name, innerClass) ->
                         "$name:${serializeJavaClassType(innerClass, javaClassStack)}"
-                    })
-                    append(";superClass=")
-                    append(type.superClass?.let { serializeJavaClassType(it, javaClassStack) }.orEmpty())
-                    append(";interfaces=")
-                    append(type.interfaces.map { serializeJavaClassType(it, javaClassStack) }.sorted().joinToString("|"))
-                    append(";typeParameters=")
-                    append(serializeTypeParameters(type.typeParameters, javaClassStack))
-                    append(')')
-                }
+                    }}" +
+                    ";superClass=${type.superClass?.let { serializeJavaClassType(it, javaClassStack) }.orEmpty()}" +
+                    ";interfaces=${type.interfaces.map { serializeJavaClassType(it, javaClassStack) }.sorted().joinToString("|")}" +
+                    ";typeParameters=${serializeTypeParameters(type.typeParameters, javaClassStack)})"
             } finally {
                 javaClassStack.remove(stackKey)
             }
