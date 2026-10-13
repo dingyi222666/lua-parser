@@ -86,6 +86,19 @@ object BuiltinOverlayLoader {
     internal var parallelOverlayCompile:
         ((count: Int, compute: (Int) -> BuiltinOverlaySnapshot.ProviderModuleSnapshot) -> List<BuiltinOverlaySnapshot.ProviderModuleSnapshot>)? = null
 
+    /**
+     * Optional hook overlapping the globals-document analysis with the per-module
+     * compile. The hook receives a self-contained [unit] (full parse + bind + facts
+     * collection for the concatenated _G document; it reads no per-module state) and
+     * must start it on a worker immediately, returning a join function that yields the
+     * unit's snapshot. loadInternal calls the join only after the per-module loop,
+     * because the globals surface merge needs providerModuleTypes. The sequential
+     * default (null) defers the unit until that join — the exact previous tail order,
+     * so JS/sequential hosts are unchanged.
+     */
+    internal var parallelGlobalsAnalyze:
+        ((unit: () -> WorkspaceSnapshot.FileSnapshot) -> (() -> WorkspaceSnapshot.FileSnapshot))? = null
+
     private fun loadInternal(
         version: LuaVersion,
         includeAndroidFramework: Boolean,
@@ -131,6 +144,18 @@ object BuiltinOverlayLoader {
             }
             return BuiltinOverlaySnapshot.ProviderModuleSnapshot(moduleName = input.moduleName, file = file)
         }
+        val globalsPath = overlayGlobalsPath(catalog.versionSegment)
+        val globalsSource = globalsSource(catalog)
+        // The globals-document analysis is the dominant sequential TAIL after the
+        // per-module loop (one large concatenated _G document). It does not read any
+        // per-module snapshot, so a wired pool starts it here, overlapping it with the
+        // parallel module compile; the memoized default below keeps the exact previous
+        // sequential order (analyze after the loop) when no pool is wired.
+        var deferredGlobalsFile: WorkspaceSnapshot.FileSnapshot? = null
+        val globalsFileJoin: () -> WorkspaceSnapshot.FileSnapshot =
+            parallelGlobalsAnalyze
+                ?.invoke { analyze(globalsPath, globalsSource) }
+                ?: { deferredGlobalsFile ?: analyze(globalsPath, globalsSource).also { deferredGlobalsFile = it } }
         val compiled = parallelOverlayCompile
             ?.invoke(orderedInputs.size, ::computeModule)
             ?: orderedInputs.indices.map(::computeModule)
@@ -142,10 +167,11 @@ object BuiltinOverlayLoader {
                 providerModules[path] = provider
             }
         }
-        val globalsPath = overlayGlobalsPath(catalog.versionSegment)
-        val globalsSource = globalsSource(catalog)
+        // Order-sensitive: providerModuleTypes keeps providerModules' insertion order
+        // (LinkedHashMap) and only extracts the already-computed module types — no
+        // recompute, so it stays on the caller thread after the loop.
         val providerModuleTypes = documentedGlobalProviderModuleTypes(providerModules)
-        val globalsFile = analyze(globalsPath, globalsSource).let { snapshot ->
+        val globalsFile = globalsFileJoin().let { snapshot ->
             snapshot.copy(
                 moduleExportSurface = documentedGlobalsSurface(
                     resourceText = globalsSource,

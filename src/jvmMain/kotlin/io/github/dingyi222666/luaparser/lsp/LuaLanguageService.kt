@@ -219,6 +219,7 @@ class LuaLanguageService(
         synchronized(documentRefreshLock) { documentRefreshPending = false }
         synchronized(liveDiagnosticLock) {
             pendingLiveDiagnostics = null
+            pendingEditedCheck = null
             checkedLiveDiagnostics.clear()
             lastDiagnosticFiles = emptyMap()
         }
@@ -362,6 +363,28 @@ class LuaLanguageService(
                     pool.shutdown()
                 }
             }
+        }
+        // The globals-document analysis is the dominant sequential tail after the
+        // per-module loop: one ~21KB concatenated _G document (lua53 global.lua +
+        // androlua _G.lua + compat) paying a full parse + bind + facts pass, then a
+        // per-global type evaluation during the surface merge. It reads no per-module
+        // state, so run it on its own daemon worker concurrently with the 4-worker
+        // module pool and join after the loop (the surface merge still needs
+        // providerModuleTypes, so it stays on the caller thread).
+        io.github.dingyi222666.luaparser.semantic.workspace.std.BuiltinOverlayLoader
+            .parallelGlobalsAnalyze = { unit ->
+            val task = java.util.concurrent.FutureTask(java.util.concurrent.Callable { unit() })
+            Thread(task, "lsp-overlay-globals").apply { isDaemon = true; start() }
+            val join: () -> WorkspaceSnapshot.FileSnapshot = {
+                try {
+                    task.get()
+                } catch (e: java.util.concurrent.ExecutionException) {
+                    // Preserve the sequential path's failure semantics: surface the root
+                    // cause so warmup's runCatching logs the real error, not a wrapper.
+                    throw e.cause ?: e
+                }
+            }
+            join
         }
         // Surface assembly inside the dex adapter must observe the same per-thread
         // checkpoints as the engines: a framework class surface is assembled from
@@ -802,6 +825,15 @@ class LuaLanguageService(
     private val liveDiagnosticLock = Any()
     private var pendingLiveDiagnostics: LiveDiagnosticWork? = null
     private var liveDiagnosticRunning = false
+    // Edited-file fast lane, bounded to ONE thread. Head-of-line blocking happens
+    // ACROSS work items: the content-diff preemption only fires at checkpoints
+    // INSIDE the in-flight check, so an earlier work item's multi-second check
+    // (e.g. a 5KB main.lua with framework imports) occupies the single worker
+    // while a newer schedule containing the edited file waits in
+    // pendingLiveDiagnostics. This latest-wins slot holds ONLY changed-content
+    // files for a dedicated one-shot lane.
+    private var pendingEditedCheck: LiveDiagnosticWork? = null
+    private var editedCheckRunning = false
     private var lastDiagnosticFiles: Map<VirtualPath, String> = emptyMap()
     // Checker diagnostics are pure derivations of the document's own AST: for identical
     // source text they stay valid across re-binds (refresh republications produce a
@@ -829,6 +861,7 @@ class LuaLanguageService(
         files: Map<VirtualPath, String>,
         affectedDocuments: Set<VirtualPath>
     ) {
+        var spawnEditedLane = false
         synchronized(liveDiagnosticLock) {
             if (closed) return
             checkedLiveDiagnostics.keys.retainAll { key -> key.first in files }
@@ -847,227 +880,63 @@ class LuaLanguageService(
                     unchanged.sortedBy { files[it]?.length ?: Int.MAX_VALUE }
             )
             lastDiagnosticFiles = files
+            // Edited-file fast lane: when the slow lane is busy with an earlier work
+            // item (head-of-line blocking ACROSS work items — the content-diff
+            // preemption only fires at checkpoints inside the in-flight check, so a
+            // check stuck in a non-yielding stretch delays the edit), park the
+            // changed-content files in the latest-wins fast slot and run them on a
+            // dedicated one-shot lane. The slow lane's pending work above keeps the
+            // full changed+unchanged set: an idle slow lane behaves exactly as
+            // before (no fast lane is spawned), and the currency cache makes the
+            // slow lane's eventual re-check of a file the fast lane already checked
+            // a cheap cache hit. Only changed files enter the fast slot — unchanged
+            // files cannot produce a fresh report for the edited-file latency
+            // budget and would only duplicate slow-lane work.
+            if (changed.isNotEmpty() && liveDiagnosticRunning) {
+                pendingEditedCheck = LiveDiagnosticWork(
+                    snapshot, files,
+                    changed.sortedBy { files[it]?.length ?: Int.MAX_VALUE }
+                )
+                if (!editedCheckRunning) {
+                    editedCheckRunning = true
+                    spawnEditedLane = true
+                }
+            }
             if (liveDiagnosticRunning) return
             liveDiagnosticRunning = true
         }
+        if (spawnEditedLane) {
+            // Spawned after the lock is released, like the slow lane below;
+            // editedCheckRunning was already set under the lock, so no second
+            // fast-lane thread can be started concurrently.
+            spawnLiveDiagnosticsWorker(
+                threadName = "lsp-live-diagnostics-edited",
+                laneTag = "edited",
+                takeWork = { takeEditedLaneWork() },
+                supersededFor = { work -> editedLaneSupersededFor(work) },
+                clearLaneRunning = { synchronized(liveDiagnosticLock) { editedCheckRunning = false } }
+            )
+        }
+        spawnLiveDiagnosticsWorker(
+            threadName = "lsp-live-diagnostics",
+            laneTag = "all",
+            takeWork = { takeSlowLaneWork() },
+            supersededFor = { work -> slowLaneSupersededFor(work) },
+            clearLaneRunning = { synchronized(liveDiagnosticLock) { liveDiagnosticRunning = false } }
+        )
+    }
+
+    /** Spawns ONE daemon worker thread for a diagnostics lane ("all" or "edited"). */
+    private fun spawnLiveDiagnosticsWorker(
+        threadName: String,
+        laneTag: String,
+        takeWork: () -> LiveDiagnosticWork?,
+        supersededFor: (LiveDiagnosticWork) -> (VirtualPath) -> Boolean,
+        clearLaneRunning: () -> Unit
+    ) {
         Thread({
-            val pipeline = io.github.dingyi222666.luaparser.semantic.SemanticPipeline()
-            while (true) {
-                // Single-worker invariant: liveDiagnosticRunning==true implies THIS
-                // thread is alive and will take pending work at the top of this loop;
-                // a spawner that sees the flag set never starts a second thread, and
-                // the flag is cleared here under the same lock only when pending is
-                // empty and the thread is returning. So at most one thread is ever
-                // inside the per-file check loop, and a preempted item hands off to
-                // the newer pending work on the very next iteration below.
-                val work = try {
-                    synchronized(liveDiagnosticLock) {
-                        val pending = if (closed) null else pendingLiveDiagnostics
-                        if (pending == null) {
-                            liveDiagnosticRunning = false
-                            return@Thread
-                        }
-                        pendingLiveDiagnostics = null
-                        pending
-                    }
-                } catch (t: Throwable) {
-                    // This section sits outside the per-work try below; a crash here
-                    // would otherwise leave liveDiagnosticRunning=true forever and
-                    // every later republication would queue work no thread will ever
-                    // take. Reset the flag so the next schedule can spawn a worker.
-                    synchronized(liveDiagnosticLock) { liveDiagnosticRunning = false }
-                    System.err.println("LSP: live diagnostics worker died taking work: $t")
-                    return@Thread
-                }
-                try {
-                    System.err.println(
-                        "LSP-DEVICE: liveDiagnostics worker start files=${work.files.size} " +
-                            "order=${work.checkOrder.map { it.value }}"
-                    )
-                    val checkedFiles = work.snapshot.files.toMutableMap()
-                    // Completion and diagnostics evaluate concurrently. Keep the checker's
-                    // provider/global caches separate from the published query resolver.
-                    val diagnosticResolver = io.github.dingyi222666.luaparser.semantic.workspace.WorkspaceModuleResolver(
-                        work.snapshot, deferDependencyGlobals = true
-                    )
-                    val completedPaths = mutableListOf<VirtualPath>()
-                    val publishedPaths = mutableSetOf<VirtualPath>()
-                    for (path in work.checkOrder) {
-                        // Newer pending work supersedes the remaining files ONLY when
-                        // this file's content changed in it: republications with
-                        // unchanged content (background rebuild finishing, no-delta
-                        // refreshes) arrive every few seconds on the device, and an
-                        // aborted check is never cached — content-blind preemption
-                        // restarted the same check forever without ever publishing
-                        // (measured: five consecutive runs, zero checked lines).
-                        if (synchronized(liveDiagnosticLock) {
-                                val newer = pendingLiveDiagnostics
-                                closed || (newer != null && newer.files[path] != work.files[path])
-                            }) break
-                        val checkStart = System.currentTimeMillis()
-                        val file = checkedFiles[path] ?: continue
-                        val semantic = file.semanticFile ?: continue
-                        // An unrelated edit need not discard a checker already running:
-                        // the report derives from this document's own AST, so only a
-                        // content change of THIS buffer (or shutdown) invalidates it.
-                        fun isCurrent() = !closed && openDocuments[path] == work.files[path]
-                        if (!synchronized(stateLock) { isCurrent() }) {
-                            System.err.println("LSP-DEVICE: liveDiagnostics skip ${path.value} (superseded)")
-                            continue
-                        }
-                        liveAnalysisCheckpoint.set {
-                            synchronized(stateLock) {
-                                if (!isCurrent()) throw ObsoleteLiveAnalysis()
-                            }
-                            // Preempt ONLY when this file's content changed in the newer
-                            // work (see the loop-head note): unchanged republications
-                            // must not abort an in-flight check that can never be
-                            // resumed from cache.
-                            synchronized(liveDiagnosticLock) {
-                                val newer = pendingLiveDiagnostics
-                                if (closed || (newer != null && newer.files[path] != work.files[path])) {
-                                    throw ObsoleteLiveAnalysis()
-                                }
-                            }
-                        }
-                        val cachedDiagnostics = synchronized(liveDiagnosticLock) {
-                            checkedLiveDiagnostics[path to semantic.source]
-                        }
-                        val checked = if (cachedDiagnostics != null) {
-                            pipeline.finishDiagnostics(
-                                semantic.snapshot,
-                                io.github.dingyi222666.luaparser.semantic.checker.CheckerPassResult(
-                                    binder = semantic.snapshot.binder,
-                                    diagnostics = cachedDiagnostics
-                                )
-                            )
-                        } else {
-                            // Watchdog: the emulated device once hid a >14s check with no
-                            // observable progress; this attributes the time (evaluation
-                            // counter vs elapsed) on the device log itself.
-                            val evaluations = java.util.concurrent.atomic.AtomicLong()
-                            val checkerThread = Thread.currentThread()
-                            val watchdog = Thread({
-                                var ticks = 0
-                                while (!closed) {
-                                    try { Thread.sleep(2000) } catch (_: InterruptedException) { return@Thread }
-                                    ticks++
-                                    val stack = checkerThread.stackTrace
-                                        .filter { it.className.contains("luaparser") }
-                                        .take(8)
-                                        .joinToString(" <- ") { it.methodName }
-                                    System.err.println(
-                                        "LSP-DEVICE: liveDiagnostics checking ${path.value} " +
-                                            "ms=${System.currentTimeMillis() - checkStart} evals=${evaluations.get()} " +
-                                            "at=[$stack]"
-                                    )
-                                    if (ticks >= 10) return@Thread
-                                }
-                            }, "lsp-check-watchdog").apply { isDaemon = true }
-                            watchdog.start()
-                            val checkingSnapshot = semantic.snapshot.copy(
-                                workspaceContext = semantic.snapshot.workspaceContext.copy(
-                                    workspaceResolver = diagnosticResolver,
-                                    resolveImportedSymbol = null,
-                                    resolveImportTarget = null,
-                                    // Every evaluate() entry must ALSO test the live
-                                    // checkpoint, not only count for the watchdog:
-                                    // between expression-evaluation checkpoints a
-                                    // superseded check otherwise grinds through a
-                                    // non-yielding stretch (measured ~3.7s on device
-                                    // between a newer schedule and the next
-                                    // member-resolution / class-load site). Throwing
-                                    // ObsoleteLiveAnalysis from here propagates up
-                                    // through evaluate() exactly like the
-                                    // analysisCheckpoint throw, so the worker loop
-                                    // takes the newer pending work immediately.
-                                    onExpressionEvaluation = {
-                                        evaluations.incrementAndGet()
-                                        checkLiveAnalysisCurrent()
-                                    },
-                                    analysisCheckpoint = {
-                                        checkLiveAnalysisCurrent()
-                                        semantic.snapshot.workspaceContext.analysisCheckpoint()
-                                        checkLiveAnalysisCurrent()
-                                    }
-                                ).withWorkspaceImportEffects()
-                            )
-                            try {
-                                pipeline.finishDiagnostics(checkingSnapshot)
-                            } finally {
-                                watchdog.interrupt()
-                            }
-                                .copy(workspaceContext = semantic.snapshot.workspaceContext).also {
-                                checkLiveAnalysisCurrent()
-                                rememberCheckedDiagnostics(path to semantic.source, it.checker.diagnostics)
-                            }
-                        }
-                        System.err.println(
-                            "LSP-DEVICE: liveDiagnostics checked $path cached=${cachedDiagnostics != null} " +
-                                "in ${System.currentTimeMillis() - checkStart}ms"
-                        )
-                        val checkedFile = file.copy(semanticFile = WorkspaceSemanticFile(
-                            path, semantic.source, semantic.chunk, checked.model, checked, semantic.recoveryDiagnostics
-                        ))
-                        checkedFiles[path] = checkedFile
-                        completedPaths += path
-                        // Keep query publication atomic, but do not make a fresh document
-                        // warning wait for every other open document's checker.
-                        val diagnostic = synchronized(stateLock) {
-                            if (isCurrent()) {
-                                publishDiagnostics(path, checkedFile = checkedFile)
-                            } else null
-                        }
-                        diagnostic?.let {
-                            onDocumentDiagnostics?.invoke(listOf(it))
-                            publishedPaths += path
-                        }
-                        if (cachedDiagnostics == null) onLiveDiagnosticsFileChecked?.invoke(path)
-                    }
-                    liveAnalysisCheckpoint.remove()
-                    val diagnostics = synchronized(stateLock) {
-                        if (!closed) {
-                            // Merge each valid checker result into the CURRENT workspace.
-                            // Unrelated edits can publish a new workspace while an unchanged
-                            // document is checking; that must neither discard its report nor
-                            // replace the newly edited file with an older semantic snapshot.
-                            val merged = this.snapshot.files.toMutableMap()
-                            val mergedPaths = completedPaths.filter { path ->
-                                val checkedFile = checkedFiles[path] ?: return@filter false
-                                val checkedSemantic = checkedFile.semanticFile ?: return@filter false
-                                val currentFile = merged[path] ?: return@filter false
-                                val currentSemantic = currentFile.semanticFile ?: return@filter false
-                                if (openDocuments[path] != work.files[path] ||
-                                    currentSemantic.source != checkedSemantic.source) return@filter false
-                                val checked = pipeline.finishDiagnostics(
-                                    currentSemantic.snapshot,
-                                    checkedSemantic.snapshot.checker.copy(binder = currentSemantic.snapshot.binder)
-                                )
-                                merged[path] = currentFile.copy(semanticFile = WorkspaceSemanticFile(
-                                    path, currentSemantic.source, currentSemantic.chunk,
-                                    checked.model, checked,
-                                    currentSemantic.recoveryDiagnostics
-                                ))
-                                true
-                            }
-                            this.snapshot = this.snapshot.copy(files = merged)
-                            queries = LuaWorkspaceQueryFacade(this.snapshot)
-                            mergedPaths.filterNot { it in publishedPaths }.map { publishDiagnostics(it) }
-                        } else emptyList()
-                    }
-                    onDocumentDiagnostics?.invoke(diagnostics)
-                } catch (_: ObsoleteLiveAnalysis) {
-                } catch (failure: Throwable) {
-                    // Throwable, not Exception: a silent Error kill would leave
-                    // liveDiagnosticRunning=true forever and every later republication
-                    // would queue work no thread will ever take (observed on device as
-                    // a window with zero checker activity and zero error lines).
-                    System.err.println("LSP: live diagnostics failed: $failure")
-                } finally {
-                    liveAnalysisCheckpoint.remove()
-                }
-            }
-        }, "lsp-live-diagnostics").apply {
+            runLiveDiagnosticsWorker(laneTag, takeWork, supersededFor, clearLaneRunning)
+        }, threadName).apply {
             isDaemon = true
             // NORM, not MIN: the emulator's software emulation starves MIN_PRIORITY
             // threads for tens of seconds under concurrent analysis/completion load
@@ -1077,6 +946,326 @@ class LuaLanguageService(
             // content-currency cache keeps repeated runs cheap.
             start()
         }
+    }
+
+    /**
+     * Shared worker loop for both diagnostic lanes. Exactly one thread runs per
+     * lane at any time: the lane's running flag is set by the spawner under
+     * [liveDiagnosticLock] and cleared only inside the lane's take-work section
+     * under the same lock when no work remains — so a spawner that sees the flag
+     * set never starts a second thread, and a preempted item hands off to the
+     * newer pending work on the very next loop iteration below.
+     */
+    private fun runLiveDiagnosticsWorker(
+        laneTag: String,
+        takeWork: () -> LiveDiagnosticWork?,
+        supersededFor: (LiveDiagnosticWork) -> (VirtualPath) -> Boolean,
+        clearLaneRunning: () -> Unit
+    ) {
+        try {
+            // Completion and diagnostics evaluate concurrently. Keep the checker's
+            // provider/global caches separate from the published query resolver.
+            val pipeline = io.github.dingyi222666.luaparser.semantic.SemanticPipeline()
+            while (true) {
+                val work = takeWork() ?: return
+                try {
+                    System.err.println(
+                        "LSP-DEVICE: liveDiagnostics worker start lane=$laneTag files=${work.files.size} " +
+                            "order=${work.checkOrder.map { it.value }}"
+                    )
+                    val checkedFiles = work.snapshot.files.toMutableMap()
+                    val diagnosticResolver = io.github.dingyi222666.luaparser.semantic.workspace.WorkspaceModuleResolver(
+                        work.snapshot, deferDependencyGlobals = true
+                    )
+                    val completedPaths = mutableListOf<VirtualPath>()
+                    val publishedPaths = mutableSetOf<VirtualPath>()
+                    val superseded = supersededFor(work)
+                    for (path in work.checkOrder) {
+                        // Newer pending work supersedes the remaining files ONLY when
+                        // this file's content changed in it: republications with
+                        // unchanged content (background rebuild finishing, no-delta
+                        // refreshes) arrive every few seconds on the device, and an
+                        // aborted check is never cached — content-blind preemption
+                        // restarted the same check forever without ever publishing
+                        // (measured: five consecutive runs, zero checked lines).
+                        if (superseded(path)) break
+                        checkLiveDiagnosticsFile(
+                            work, path, checkedFiles, completedPaths, publishedPaths,
+                            pipeline, diagnosticResolver, superseded
+                        )
+                    }
+                    liveAnalysisCheckpoint.remove()
+                    finishLiveDiagnosticsWork(work, checkedFiles, completedPaths, publishedPaths, pipeline)
+                } catch (_: ObsoleteLiveAnalysis) {
+                } catch (failure: Throwable) {
+                    // Throwable, not Exception: a silent Error kill would leave
+                    // the lane flag set forever and every later republication
+                    // would queue work no thread will ever take (observed on device as
+                    // a window with zero checker activity and zero error lines).
+                    System.err.println("LSP: live diagnostics failed: $failure")
+                } finally {
+                    liveAnalysisCheckpoint.remove()
+                }
+            }
+        } catch (t: Throwable) {
+            // Last-resort guard: only the pipeline construction sits outside the
+            // per-work try; a crash there must not leave the lane flag set forever
+            // with queued work no thread will ever take.
+            System.err.println("LSP: live diagnostics $laneTag lane worker died: $t")
+            clearLaneRunning()
+        }
+    }
+
+    /**
+     * Slow-lane take: drains the full pending work slot. Returns null (and clears
+     * liveDiagnosticRunning under [liveDiagnosticLock]) when the lane should exit.
+     */
+    private fun takeSlowLaneWork(): LiveDiagnosticWork? = try {
+        synchronized(liveDiagnosticLock) {
+            val pending = if (closed) null else pendingLiveDiagnostics
+            if (pending == null) {
+                liveDiagnosticRunning = false
+                null
+            } else {
+                pendingLiveDiagnostics = null
+                pending
+            }
+        }
+    } catch (t: Throwable) {
+        // This section sits outside the per-work try; a crash here would otherwise
+        // leave liveDiagnosticRunning=true forever and every later republication
+        // would queue work no thread will ever take. Reset the flag so the next
+        // schedule can spawn a worker.
+        synchronized(liveDiagnosticLock) { liveDiagnosticRunning = false }
+        System.err.println("LSP: live diagnostics worker died taking work: $t")
+        null
+    }
+
+    /** Fast-lane take: latest-wins edited slot; null (and flag clear) exits the lane. */
+    private fun takeEditedLaneWork(): LiveDiagnosticWork? = try {
+        synchronized(liveDiagnosticLock) {
+            val pending = if (closed) null else pendingEditedCheck
+            if (pending == null) {
+                editedCheckRunning = false
+                null
+            } else {
+                pendingEditedCheck = null
+                pending
+            }
+        }
+    } catch (t: Throwable) {
+        // Same Throwable-hardened take as the slow lane: a crash here must not
+        // leave editedCheckRunning=true forever.
+        synchronized(liveDiagnosticLock) { editedCheckRunning = false }
+        System.err.println("LSP: live diagnostics edited lane worker died taking work: $t")
+        null
+    }
+
+    /**
+     * Slow-lane preemption predicate: the newest content for this path in EITHER
+     * pending slot (the full work OR the edited fast lane's work) differing from
+     * the work in flight means a newer buffer is waiting; shutdown supersedes all.
+     */
+    private fun slowLaneSupersededFor(work: LiveDiagnosticWork): (VirtualPath) -> Boolean = { path ->
+        synchronized(liveDiagnosticLock) {
+            val full = pendingLiveDiagnostics
+            val edited = pendingEditedCheck
+            closed ||
+                (full != null && full.files[path] != work.files[path]) ||
+                (edited != null && edited.files[path] != work.files[path])
+        }
+    }
+
+    /** Fast-lane preemption predicate: only a newer edited-lane work (or shutdown) supersedes. */
+    private fun editedLaneSupersededFor(work: LiveDiagnosticWork): (VirtualPath) -> Boolean = { path ->
+        synchronized(liveDiagnosticLock) {
+            val edited = pendingEditedCheck
+            closed || (edited != null && edited.files[path] != work.files[path])
+        }
+    }
+
+    /**
+     * Checks ONE file of a work item and publishes its diagnostics; shared by BOTH
+     * lanes, so the fast lane runs the exact same per-file logic (cache lookup,
+     * watchdog/checkpoint wiring, per-file publish) as the slow lane. Returns true
+     * when the file completed; false when it was skipped (no snapshot / stale
+     * buffer). Throws [ObsoleteLiveAnalysis] on content-diff preemption, which the
+     * caller's per-work catch swallows so the next loop iteration takes the newer
+     * pending work.
+     */
+    private fun checkLiveDiagnosticsFile(
+        work: LiveDiagnosticWork,
+        path: VirtualPath,
+        checkedFiles: MutableMap<VirtualPath, WorkspaceSnapshot.FileSnapshot>,
+        completedPaths: MutableList<VirtualPath>,
+        publishedPaths: MutableSet<VirtualPath>,
+        pipeline: io.github.dingyi222666.luaparser.semantic.SemanticPipeline,
+        diagnosticResolver: io.github.dingyi222666.luaparser.semantic.workspace.WorkspaceModuleResolver,
+        superseded: (VirtualPath) -> Boolean
+    ): Boolean {
+        val checkStart = System.currentTimeMillis()
+        val file = checkedFiles[path] ?: return false
+        val semantic = file.semanticFile ?: return false
+        // An unrelated edit need not discard a checker already running:
+        // the report derives from this document's own AST, so only a
+        // content change of THIS buffer (or shutdown) invalidates it.
+        fun isCurrent() = !closed && openDocuments[path] == work.files[path]
+        if (!synchronized(stateLock) { isCurrent() }) {
+            System.err.println("LSP-DEVICE: liveDiagnostics skip ${path.value} (superseded)")
+            return false
+        }
+        liveAnalysisCheckpoint.set {
+            synchronized(stateLock) {
+                if (!isCurrent()) throw ObsoleteLiveAnalysis()
+            }
+            // Preempt ONLY when this file's content changed in the newer
+            // work (see the loop-head note): unchanged republications
+            // must not abort an in-flight check that can never be
+            // resumed from cache.
+            if (superseded(path)) {
+                throw ObsoleteLiveAnalysis()
+            }
+        }
+        val cachedDiagnostics = synchronized(liveDiagnosticLock) {
+            checkedLiveDiagnostics[path to semantic.source]
+        }
+        val checked = if (cachedDiagnostics != null) {
+            pipeline.finishDiagnostics(
+                semantic.snapshot,
+                io.github.dingyi222666.luaparser.semantic.checker.CheckerPassResult(
+                    binder = semantic.snapshot.binder,
+                    diagnostics = cachedDiagnostics
+                )
+            )
+        } else {
+            // Watchdog: the emulated device once hid a >14s check with no
+            // observable progress; this attributes the time (evaluation
+            // counter vs elapsed) on the device log itself.
+            val evaluations = java.util.concurrent.atomic.AtomicLong()
+            val checkerThread = Thread.currentThread()
+            val watchdog = Thread({
+                var ticks = 0
+                while (!closed) {
+                    try { Thread.sleep(2000) } catch (_: InterruptedException) { return@Thread }
+                    ticks++
+                    val stack = checkerThread.stackTrace
+                        .filter { it.className.contains("luaparser") }
+                        .take(8)
+                        .joinToString(" <- ") { it.methodName }
+                    System.err.println(
+                        "LSP-DEVICE: liveDiagnostics checking ${path.value} " +
+                            "ms=${System.currentTimeMillis() - checkStart} evals=${evaluations.get()} " +
+                            "at=[$stack]"
+                    )
+                    if (ticks >= 10) return@Thread
+                }
+            }, "lsp-check-watchdog").apply { isDaemon = true }
+            watchdog.start()
+            val checkingSnapshot = semantic.snapshot.copy(
+                workspaceContext = semantic.snapshot.workspaceContext.copy(
+                    workspaceResolver = diagnosticResolver,
+                    resolveImportedSymbol = null,
+                    resolveImportTarget = null,
+                    // Every evaluate() entry must ALSO test the live
+                    // checkpoint, not only count for the watchdog:
+                    // between expression-evaluation checkpoints a
+                    // superseded check otherwise grinds through a
+                    // non-yielding stretch (measured ~3.7s on device
+                    // between a newer schedule and the next
+                    // member-resolution / class-load site). Throwing
+                    // ObsoleteLiveAnalysis from here propagates up
+                    // through evaluate() exactly like the
+                    // analysisCheckpoint throw, so the worker loop
+                    // takes the newer pending work immediately.
+                    onExpressionEvaluation = {
+                        evaluations.incrementAndGet()
+                        checkLiveAnalysisCurrent()
+                    },
+                    analysisCheckpoint = {
+                        checkLiveAnalysisCurrent()
+                        semantic.snapshot.workspaceContext.analysisCheckpoint()
+                        checkLiveAnalysisCurrent()
+                    }
+                ).withWorkspaceImportEffects()
+            )
+            try {
+                pipeline.finishDiagnostics(checkingSnapshot)
+            } finally {
+                watchdog.interrupt()
+            }
+                .copy(workspaceContext = semantic.snapshot.workspaceContext).also {
+                checkLiveAnalysisCurrent()
+                rememberCheckedDiagnostics(path to semantic.source, it.checker.diagnostics)
+            }
+        }
+        System.err.println(
+            "LSP-DEVICE: liveDiagnostics checked $path cached=${cachedDiagnostics != null} " +
+                "in ${System.currentTimeMillis() - checkStart}ms"
+        )
+        val checkedFile = file.copy(semanticFile = WorkspaceSemanticFile(
+            path, semantic.source, semantic.chunk, checked.model, checked, semantic.recoveryDiagnostics
+        ))
+        checkedFiles[path] = checkedFile
+        completedPaths += path
+        // Keep query publication atomic, but do not make a fresh document
+        // warning wait for every other open document's checker.
+        val diagnostic = synchronized(stateLock) {
+            if (isCurrent()) {
+                publishDiagnostics(path, checkedFile = checkedFile)
+            } else null
+        }
+        diagnostic?.let {
+            onDocumentDiagnostics?.invoke(listOf(it))
+            publishedPaths += path
+        }
+        if (cachedDiagnostics == null) onLiveDiagnosticsFileChecked?.invoke(path)
+        return true
+    }
+
+    /**
+     * Per-work-item merge epilogue, run by BOTH lanes at the end of each work item.
+     * It validates every completed result against the CURRENT buffer content before
+     * merging/publishing, so concurrent lanes publishing under [stateLock] cannot
+     * interleave stale semantic snapshots into the live workspace.
+     */
+    private fun finishLiveDiagnosticsWork(
+        work: LiveDiagnosticWork,
+        checkedFiles: Map<VirtualPath, WorkspaceSnapshot.FileSnapshot>,
+        completedPaths: List<VirtualPath>,
+        publishedPaths: Set<VirtualPath>,
+        pipeline: io.github.dingyi222666.luaparser.semantic.SemanticPipeline
+    ) {
+        val diagnostics = synchronized(stateLock) {
+            if (!closed) {
+                // Merge each valid checker result into the CURRENT workspace.
+                // Unrelated edits can publish a new workspace while an unchanged
+                // document is checking; that must neither discard its report nor
+                // replace the newly edited file with an older semantic snapshot.
+                val merged = this.snapshot.files.toMutableMap()
+                val mergedPaths = completedPaths.filter { path ->
+                    val checkedFile = checkedFiles[path] ?: return@filter false
+                    val checkedSemantic = checkedFile.semanticFile ?: return@filter false
+                    val currentFile = merged[path] ?: return@filter false
+                    val currentSemantic = currentFile.semanticFile ?: return@filter false
+                    if (openDocuments[path] != work.files[path] ||
+                        currentSemantic.source != checkedSemantic.source) return@filter false
+                    val checked = pipeline.finishDiagnostics(
+                        currentSemantic.snapshot,
+                        checkedSemantic.snapshot.checker.copy(binder = currentSemantic.snapshot.binder)
+                    )
+                    merged[path] = currentFile.copy(semanticFile = WorkspaceSemanticFile(
+                        path, currentSemantic.source, currentSemantic.chunk,
+                        checked.model, checked,
+                        currentSemantic.recoveryDiagnostics
+                    ))
+                    true
+                }
+                this.snapshot = this.snapshot.copy(files = merged)
+                queries = LuaWorkspaceQueryFacade(this.snapshot)
+                mergedPaths.filterNot { it in publishedPaths }.map { publishDiagnostics(it) }
+            } else emptyList()
+        }
+        onDocumentDiagnostics?.invoke(diagnostics)
     }
 
     private fun scheduleDocumentRefresh() {

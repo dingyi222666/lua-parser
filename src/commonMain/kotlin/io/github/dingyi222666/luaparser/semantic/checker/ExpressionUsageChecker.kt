@@ -33,7 +33,7 @@ import io.github.dingyi222666.luaparser.semantic.binder.DeclarationNamespace
 import io.github.dingyi222666.luaparser.semantic.binder.DeclarationOrigin
 import io.github.dingyi222666.luaparser.semantic.binder.Scope
 import io.github.dingyi222666.luaparser.semantic.binder.ScopeId
-import io.github.dingyi222666.luaparser.semantic.binder.comparePositions
+import io.github.dingyi222666.luaparser.semantic.binder.isVisibleAtPosition
 import io.github.dingyi222666.luaparser.semantic.types.model.ClassType
 import io.github.dingyi222666.luaparser.semantic.types.model.IntersectionType
 import io.github.dingyi222666.luaparser.semantic.types.model.JavaArrayType
@@ -519,7 +519,7 @@ internal class ExpressionUsageChecker(
                 .firstOrNull { candidate ->
                     candidate.kind.namespace == DeclarationNamespace.VALUE &&
                         candidate.name == name &&
-                        isVisibleAt(candidate, position)
+                        candidate.isVisibleAtPosition(position)
                 }
             if (declaration != null) {
                 return declaration
@@ -527,23 +527,6 @@ internal class ExpressionUsageChecker(
             scope = scope.parentId?.let(binder.scopeGraph::getScope)
         }
         return null
-    }
-
-    private fun isVisibleAt(declaration: BinderDeclaration, position: Position): Boolean {
-        // AST-invented chunk globals are position-independent (environment-table semantics):
-        // `cfg = { ... }` after a function resolves `cfg` reads inside that function.
-        // DOC_COMMENT / SYNTHETIC / BUILTIN origins keep their existing gating.
-        if (declaration.kind == DeclarationKind.GLOBAL && declaration.origin == DeclarationOrigin.AST) {
-            return true
-        }
-        val range = declaration.range ?: return true
-        if (comparePositions(range.start, position) <= 0 && comparePositions(position, range.end) < 0) {
-            return true
-        }
-        // Locals become visible after their whole LocalStatement (`visibleFrom`), so reads
-        // in `local x = x + 1` bind to the outer x, not the still-uninitialized new local.
-        val visibleFrom = declaration.visibleFrom ?: range.start
-        return comparePositions(visibleFrom, position) <= 0
     }
 
     private fun isLoopControlLocal(declaration: BinderDeclaration): Boolean {

@@ -1255,11 +1255,25 @@ class JvmClassModuleProvider(
     }
 
     private fun collectClassesFromJrt(packagePath: String, output: MutableSet<String>) {
+        // Gate: only a real JDK exposes the jrt module filesystem. On Android hosts
+        // (dex-derived classloaders) the provider lookup fails every call; skipping the
+        // probe keeps wildcard resolution off the 18s main.lua check-stack path.
+        if (!jrtModulesFileSystemAvailable) {
+            return
+        }
+        // Process-wide result cache (positive AND negative): the module walk depends
+        // only on (packagePath, JDK modules), both process-constant, and the instance
+        // wildcardClassNameCache dies with each per-workspace-update provider.
+        jrtPackageClassesCache[packagePath]?.let { cached ->
+            output += cached
+            return
+        }
         val root = runCatching { Paths.get(URI.create("jrt:/modules")) }.getOrNull() ?: return
         if (!Files.isDirectory(root)) {
             return
         }
-        runCatching {
+        val found = linkedSetOf<String>()
+        val walk = runCatching {
             Files.list(root).use { modules ->
                 modules.forEach { module ->
                     val packageDir = module.resolve(packagePath)
@@ -1273,7 +1287,7 @@ class JvmClassModuleProvider(
                                 .forEach { entry ->
                                     val fileName = entry.fileName.toString().removeSuffix(".class")
                                     if ('$' !in fileName && fileName.isNotEmpty()) {
-                                        output += "${packagePath.replace('/', '.')}.$fileName"
+                                        found += "${packagePath.replace('/', '.')}.$fileName"
                                     }
                                 }
                         }
@@ -1281,6 +1295,14 @@ class JvmClassModuleProvider(
                 }
             }
         }
+        // Cache only a fully-successful walk: a failed scan may hold partial results
+        // (previously committed straight to the caller's output set) and must not be
+        // pinned process-wide as the durable answer.
+        val resolved = found.toList()
+        if (walk.isSuccess) {
+            jrtPackageClassesCache[packagePath] = resolved
+        }
+        output += resolved
     }
 
     /**
@@ -1429,6 +1451,18 @@ class JvmClassModuleProvider(
         cls: DexClass,
         deferMembers: Boolean = false
     ): Pair<VirtualPath, WorkspaceSnapshot.FileSnapshot> {
+        // Process-wide snapshot cache (dex-first activation perf): provider instances
+        // are recreated per workspace update, so the instance caches below missed on
+        // every content version and this call re-ran the full snapshot assembly —
+        // library.moduleTypeFor (first build: full descriptor-to-type surface expand),
+        // moduleMembers(__class) → classMembers instance/static expand and the
+        // workspaceFingerprintHash member-by-member payload — measured 3.4s per
+        // simple-alias 'Greeter' hit on the device for a tiny runtime dex. After the
+        // first build for a (library revision, class, deferMembers) triple this is a
+        // map lookup. library.cacheIdentity embeds path#lastModified#length, so
+        // rewriting the dex file changes the identity and busts stale entries.
+        val processKey = "dex#${library.cacheIdentity}#${cls.binaryName}#$deferMembers"
+        dexProviderSnapshotCache[processKey]?.let { return it }
         val cacheKey = "dex#${library.cacheIdentity}#${cls.binaryName}"
         fullClassProviderCache[cacheKey]?.let { return it }
         if (deferMembers) shallowClassProviderCache[cacheKey]?.let { return it }
@@ -1440,6 +1474,7 @@ class JvmClassModuleProvider(
             providedModuleNames = linkedSetOf(moduleType.moduleName),
             moduleType = moduleType
         )
+        dexProviderSnapshotCache[processKey] = provider
         if (!deferMembers) fullClassProviderCache[cacheKey] = provider
         shallowClassProviderCache[cacheKey] = provider
         return provider
@@ -1457,6 +1492,11 @@ class JvmClassModuleProvider(
         deferMembers: Boolean
     ): Pair<VirtualPath, WorkspaceSnapshot.FileSnapshot> {
         val cacheKey = "dexlib#${library.cacheIdentity}#$target#$deferMembers"
+        // Process-wide snapshot (see providerForDexClass): the library module rebuilds
+        // every class member wrapper + surface + fingerprint per provider instance
+        // otherwise. Deterministic providerPath (pure function of target) and
+        // revision-keyed by library.cacheIdentity (path#lastModified#length).
+        dexProviderSnapshotCache[cacheKey]?.let { return it }
         packageProviderCache[cacheKey]?.let { return it }
         val moduleAlias = File(target).nameWithoutExtension.ifBlank { target }
         val members = linkedMapOf<String, Type>()
@@ -1480,6 +1520,7 @@ class JvmClassModuleProvider(
             moduleType = moduleType
         )
         packageProviderCache[cacheKey] = provider
+        dexProviderSnapshotCache[cacheKey] = provider
         return provider
     }
 
@@ -2283,6 +2324,65 @@ class JvmClassModuleProvider(
 
     companion object {
         private const val MAX_REFLECTED_INNER_CLASS_DEPTH = 1
+
+        /**
+         * Process-wide dex provider snapshot cache (DEX-PERF: device sample measured
+         * `simple-alias 'Greeter' hit=true took 3425ms` because provider instances are
+         * recreated per workspace update and every content version re-assembled the
+         * dex snapshot: DexClassModelAdapter module surface (first build), the
+         * moduleMembers(__class) expand and the workspaceFingerprintHash member
+         * payload). Keyed by (library cacheIdentity, class binaryName, deferMembers)
+         * for class providers and (cacheIdentity, target, deferMembers) for library
+         * module providers; LRU-bounded because entries hold full member surfaces.
+         *
+         * Staleness: `DexLibraryMounter.DexLibrary.cacheIdentity` embeds
+         * `path#lastModified#length`, so rewriting a dex library produces a new
+         * identity → new keys → the stale entry is never consulted (old keys age out
+         * through the LRU bound). The providerPath (`__jvm__/classes/<binaryName>.lua`,
+         * `__jvm__/dex/<target>.lua`) is a pure function of the key, so cached
+         * snapshots stay path-deterministic.
+         */
+        private const val MAX_DEX_PROVIDER_SNAPSHOTS = 64
+        private val dexProviderSnapshotCache: MutableMap<String, Pair<VirtualPath, WorkspaceSnapshot.FileSnapshot>> =
+            java.util.Collections.synchronizedMap(
+                object : LinkedHashMap<String, Pair<VirtualPath, WorkspaceSnapshot.FileSnapshot>>(16, 0.75f, true) {
+                    override fun removeEldestEntry(
+                        eldest: MutableMap.MutableEntry<String, Pair<VirtualPath, WorkspaceSnapshot.FileSnapshot>>?
+                    ): Boolean = size > MAX_DEX_PROVIDER_SNAPSHOTS
+                }
+            )
+
+        /**
+         * True only on a real JDK with the `jrt` module filesystem mounted.
+         *
+         * `collectClassesFromJrt` is meaningful only there; on Android hosts (dex-derived
+         * classloaders) no jrt filesystem provider exists, so probing it per wildcard
+         * resolution was pure overhead in the measured 18s main.lua check stacks.
+         * Computed once per process — the JDK module graph cannot change mid-process.
+         */
+        private val jrtModulesFileSystemAvailable: Boolean by lazy {
+            runCatching {
+                java.nio.file.FileSystems.getFileSystem(java.net.URI.create("jrt:/modules")).isOpen
+            }.getOrDefault(false)
+        }
+
+        /**
+         * Process-wide jrt package class-listing cache (positive AND negative). The
+         * per-module `Files.list` walk over `jrt:/modules` is expensive on a JDK and its
+         * result depends only on (packagePath, JDK modules) — both process-constant.
+         * Caching the empty result here makes the wildcard-resolution negative durable
+         * across provider instances (per workspace update), not just within one.
+         */
+        private const val MAX_JRT_PACKAGE_ENTRIES = 256
+        private val jrtPackageClassesCache: MutableMap<String, List<String>> =
+            java.util.Collections.synchronizedMap(
+                object : LinkedHashMap<String, List<String>>(16, 0.75f, true) {
+                    override fun removeEldestEntry(
+                        eldest: MutableMap.MutableEntry<String, List<String>>?
+                    ): Boolean = size > MAX_JRT_PACKAGE_ENTRIES
+                }
+            )
+
 
         /**
          * Process-wide single extraction of the bundled runtime jar.
