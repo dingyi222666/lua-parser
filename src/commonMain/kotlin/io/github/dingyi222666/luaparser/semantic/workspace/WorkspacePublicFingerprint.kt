@@ -22,7 +22,6 @@ data class WorkspacePublicFingerprint(
             publicTypeAnnotations: String = ""
         ): WorkspacePublicFingerprint {
             val providedModuleNames = providedModuleNamesForFacts(documentFacts)
-                .toList()
                 .sorted()
                 .toCollection(linkedSetOf())
             val payload = buildString {

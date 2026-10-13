@@ -197,15 +197,13 @@ class DocCommentSyntaxParser {
             }
 
             val colonIndex = indexOfTopLevelChar(trimmed, ':')
-            if (colonIndex == -1) {
-                GenericParameterSyntax(name = trimmed, range = tokenRange(lineInfo, trimmed))
-            } else {
-                GenericParameterSyntax(
-                    name = trimmed.substring(0, colonIndex).trim(),
-                    constraintText = trimmed.substring(colonIndex + 1).trim().ifBlank { null },
-                    range = tokenRange(lineInfo, trimmed.substring(0, colonIndex).trim())
-                )
-            }
+            val name = if (colonIndex == -1) trimmed else trimmed.substring(0, colonIndex).trim()
+            GenericParameterSyntax(
+                name = name,
+                constraintText = trimmed.substring(colonIndex + 1).trim().ifBlank { null }
+                    .takeIf { colonIndex != -1 },
+                range = tokenRange(lineInfo, name)
+            )
         }
 
         return GenericTagSyntax(parameters = parameters, range = lineRange(lineInfo))
@@ -218,10 +216,9 @@ class DocCommentSyntaxParser {
 
         val parts = mutableListOf<String>()
         val current = StringBuilder()
-        var angleDepth = 0
-        var braceDepth = 0
-        var bracketDepth = 0
-        var parenDepth = 0
+        // Open/close delimiter pairs by ASCII offset (< >, { }, [ ], ( ) all differ by 2),
+        // tracked per opener so a comma inside any open region never splits.
+        val depths = mutableMapOf<Char, Int>()
         var inString = false
         var stringChar = '\u0000'
 
@@ -247,25 +244,24 @@ class DocCommentSyntaxParser {
                     inString = true
                     stringChar = char
                 }
-                '<' -> angleDepth++
-                '>' -> angleDepth = (angleDepth - 1).coerceAtLeast(0)
-                '{' -> braceDepth++
-                '}' -> braceDepth = (braceDepth - 1).coerceAtLeast(0)
-                '[' -> bracketDepth++
-                ']' -> bracketDepth = (bracketDepth - 1).coerceAtLeast(0)
-                '(' -> parenDepth++
-                ')' -> parenDepth = (parenDepth - 1).coerceAtLeast(0)
+                in "<{[(" -> depths[char] = (depths[char] ?: 0) + 1
+                in ">}])" -> {
+                    val opener = (char.code - 2).toChar()
+                    depths[opener] = ((depths[opener] ?: 0) - 1).coerceAtLeast(0)
+                }
                 ',' -> {
                     val nextParameter = text.substring(index + 1).trimStart()
+                    // Only braces/brackets/parens hard-block a split; an open `<` region
+                    // still splits when the next chunk looks like a parameter start.
                     val shouldSplit = when {
-                        braceDepth > 0 || bracketDepth > 0 || parenDepth > 0 -> false
-                        angleDepth == 0 -> true
+                        (depths['{'] ?: 0) > 0 || (depths['['] ?: 0) > 0 || (depths['('] ?: 0) > 0 -> false
+                        (depths['<'] ?: 0) == 0 -> true
                         else -> looksLikeGenericParameterStart(nextParameter)
                     }
                     if (shouldSplit) {
                         current.setLength(current.length - 1)
                         flush()
-                        angleDepth = 0
+                        depths['<'] = 0
                     }
                 }
             }

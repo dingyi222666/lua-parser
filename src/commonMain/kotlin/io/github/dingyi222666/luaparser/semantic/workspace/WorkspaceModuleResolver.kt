@@ -109,9 +109,7 @@ internal class WorkspaceModuleResolver(
         if (moduleName.isBlank()) {
             return null
         }
-        if (moduleName in activeProviderCache) {
-            return activeProviderCache[moduleName]
-        }
+        if (moduleName in activeProviderCache) return activeProviderCache[moduleName]
         // Dotted stdlib overlay recovery (e.g. AndroLua socket.url): keep dotted module names
         // even when graph activeProviders missed or only recorded a slash alias.
         // Extra JVM providers are claimed by moduleName during graph build; if a claim was lost
@@ -620,12 +618,8 @@ internal class WorkspaceModuleResolver(
         // Path-scoped bare-name recovery: only when this file actively imported a matching target.
         val facts = snapshot.files[path]?.documentFacts ?: return null
         val match = activeImportTargets(facts).firstOrNull { target ->
-                val normalized = normalizeImportTarget(target)
-                if (normalized.endsWith(".*")) {
-                    false
-                } else {
-                    explicitImportSimpleName(normalized) == alias || normalized == alias
-                }
+            val normalized = normalizeImportTarget(target)
+            !normalized.endsWith(".*") && (explicitImportSimpleName(normalized) == alias || normalized == alias)
         } ?: return null
         return importTargetSymbol(match)?.copy(alias = alias)
     }
@@ -829,11 +823,7 @@ internal class WorkspaceModuleResolver(
             return null
         }
         val surface = exportSurface(provider) ?: return null
-        val alias = normalized
-            .replace('\\', '/')
-            .substringAfterLast('/')
-            .substringAfterLast('.')
-            .ifBlank { return null }
+        val alias = normalized.replace('\\', '/').substringAfterLast('/').substringAfterLast('.').ifBlank { return null }
         return importedSymbol(alias, resolvedModuleType(provider.path, surface), provider.path)
     }
 
@@ -939,12 +929,9 @@ internal class WorkspaceModuleResolver(
         if (moduleName.isBlank()) {
             return null
         }
-        val graphMatch = snapshot.graph.providersByModuleName[moduleName]
-            .orEmpty()
+        snapshot.graph.providersByModuleName[moduleName].orEmpty()
             .firstOrNull { it.source == WorkspaceModuleGraph.ProviderSource.STANDARD_LIBRARY_OVERLAY }
-        if (graphMatch != null) {
-            return graphMatch
-        }
+            ?.let { return it }
         // Match by explicit overlay moduleName first (keeps dotted names like socket.url).
         snapshot.builtinOverlay.providerModules.entries.firstOrNull { (_, provider) ->
             provider.moduleName == moduleName
@@ -1021,21 +1008,14 @@ internal class WorkspaceModuleResolver(
         if (normalized.isBlank() || normalized.endsWith(".*")) {
             return emptyList()
         }
-        val simpleName = normalized.substringAfterLast('.').substringAfterLast('$')
-        return buildList {
-            add(simpleName)
-            val underscoreAlias = normalized.substringAfterLast('_')
-            if (underscoreAlias != simpleName) {
-                add(underscoreAlias)
-            }
-            val binaryAlias = normalized.substringAfterLast('$')
-            if (binaryAlias != simpleName && binaryAlias != underscoreAlias) {
-                add(binaryAlias)
-            }
-            if (normalized !in this) {
-                add(normalized)
-            }
-        }.filter(String::isNotBlank)
+        // Candidate spellings in priority order (distinct keeps the first occurrence):
+        // dotted/binary simple name, underscore alias, dollar alias, full normalized target.
+        return listOf(
+            normalized.substringAfterLast('.').substringAfterLast('$'),
+            normalized.substringAfterLast('_'),
+            normalized.substringAfterLast('$'),
+            normalized
+        ).filter(String::isNotBlank).distinct()
     }
 
     private fun syntheticImportSurface(): ModuleExportSurface {

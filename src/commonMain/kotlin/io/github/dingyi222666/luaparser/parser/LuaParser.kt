@@ -1047,14 +1047,11 @@ class LuaParser(
                 LuaTokenTypes.DEFAULT,
                 LuaTokenTypes.END
             )
-            if (!optionalDoOk) {
-                if (!errorRecovery) {
-                    error(missingDoExpectedNearToken)
-                }
-                warning(missingDoExpectedNearToken)
-            } else if (errorRecovery) {
-                // Compact AndroLua switch is legal under strict; recovery still records
-                // the historical missing-do diagnostic for inventory determinism.
+            // warning() is the shared strict/recovery gate: under strict mode it hard-errors
+            // with the same message the direct error() call produced, and under recovery it
+            // records the diagnostic. So `!optionalDoOk` must always reach it, and the legal
+            // compact form records the historical missing-do warning under recovery only.
+            if (!optionalDoOk || errorRecovery) {
                 warning(missingDoExpectedNearToken)
             }
         }
@@ -1161,12 +1158,9 @@ class LuaParser(
 
         result.ifCause = parseExpStatement(result)
 
-        if (!consumeToken(LuaTokenTypes.ELSE)) {
-            result.range = Range(startMark, currentEndPosition())
-            return result
+        if (consumeToken(LuaTokenTypes.ELSE)) {
+            result.elseCause = parseExpStatement(result)
         }
-
-        result.elseCause = parseExpStatement(result)
 
         result.range = Range(startMark, currentEndPosition())
         return result
@@ -2184,9 +2178,8 @@ class LuaParser(
                 recoverToken(LuaTokenTypes.GT) { "'=>' expected near ${lexerText()}" }
                 return@run
             }
-            if (!errorRecovery) {
-                error(colonExpectedNearToken)
-            }
+            // warning() hard-errors under strict mode, records under recovery — the
+            // historical explicit strict error(recoverToken-style) pair collapses onto it.
             warning(colonExpectedNearToken)
         }
 
@@ -2528,22 +2521,16 @@ class LuaParser(
         // CallExpression range is finished by the caller via finishNodeSpanning(base.range.start).
         // Do not markLocation() here — that would leave a dangling stack entry.
         // consume
-        val isOnlyExpList = when (peek()) {
-            LuaTokenTypes.STRING, LuaTokenTypes.LONG_STRING -> {
-                result.base = parseStringCallExpression(result, base).let { stringCall ->
-                    finishNodeSpanning(stringCall, base.range.start)
-                }
-                false
-            }
-
-            LuaTokenTypes.LCURLY -> {
-                result.base = parseTableCallExpression(result, base).let { tableCall ->
-                    finishNodeSpanning(tableCall, base.range.start)
-                }
-                false
-            }
-
-            else -> true
+        // String / table compact calls wrap the base in StringCallExpression /
+        // TableCallExpression and never take a parenthesized argument list.
+        val compactCallConstructor: ((BaseASTNode, ExpressionNode) -> ExpressionNode)? = when (peek()) {
+            LuaTokenTypes.STRING, LuaTokenTypes.LONG_STRING -> ::parseStringCallExpression
+            LuaTokenTypes.LCURLY -> ::parseTableCallExpression
+            else -> null
+        }
+        val isOnlyExpList = compactCallConstructor == null
+        compactCallConstructor?.let { constructor ->
+            result.base = finishNodeSpanning(constructor(result, base), base.range.start)
         }
 
         val findLeft = consume { it == LuaTokenTypes.LPAREN }
@@ -2701,47 +2688,18 @@ class LuaParser(
      * intact.
      */
     private fun parseCallArgumentList(parent: BaseASTNode): List<ExpressionNode> {
-        val result = mutableListOf<ExpressionNode>()
-
-        result.add(
-            parseExpressionOrMissing(
-                parent,
-                recoverStatementStartAfterLineBreak = true
-            )
-        )
-
-        while (consumeToken(LuaTokenTypes.COMMA)) {
-            val hasLineBreakBeforeNextExpression = hasLineBreakBeforeNextSignificantToken()
-            val nextExpressionToken = peek()
-
-            if (errorRecovery) {
-                // Trailing comma immediately before `)` / terminator / EOF: stop and let
-                // the caller emit `')' expected` (or consume `)`).
-                if (nextExpressionToken == LuaTokenTypes.RPAREN ||
-                    isExpressionTerminator(nextExpressionToken) ||
-                    nextExpressionToken == LuaTokenTypes.EOF
-                ) {
-                    break
-                }
-
-                // `foo(a,\nprint(x))` / `foo(a,\nlocal x = 1)`: do not absorb the next
-                // statement as a call argument.
-                if (hasLineBreakBeforeNextExpression &&
-                    shouldRecoverStatementStartAsMissingExpression(nextExpressionToken)
-                ) {
-                    break
-                }
-            }
-
-            result.add(
-                parseExpressionOrMissing(
-                    parent,
-                    recoverStatementStartAfterLineBreak = false
-                )
-            )
+        // RPAREN / EOF are covered by isExpressionTerminator (RPAREN via the equalsMore
+        // list, EOF via isBlockTerminator), so the historical
+        // `token == RPAREN || isExpressionTerminator(token) || token == EOF` stop set
+        // collapses onto isExpressionTerminator alone.
+        return parseCommaSeparatedExpList(
+            parent,
+            recoverFirstStatementLineBreak = true,
+            addMissingPlaceholder = false
+        ) { hasLineBreak, token ->
+            isExpressionTerminator(token) ||
+                    (hasLineBreak && shouldRecoverStatementStartAsMissingExpression(token))
         }
-
-        return result
     }
 
     private fun parseTableCallExpression(parent: BaseASTNode, base: ExpressionNode): TableCallExpression {
@@ -2872,9 +2830,20 @@ class LuaParser(
     //
     // WrapperLuaLexer.hasLineBreakBeforeNextSignificantToken looks before a pushbacked
     // next token so peeks no longer desync linebreak detection past a NAME RHS.
-    private fun parseExpList(
+    /**
+     * Shared comma-separated expression-list skeleton ([parseExpList] /
+     * [parseCallArgumentList]): the first term uses the call-site
+     * [recoverFirstStatementLineBreak] policy; after each comma, the recovery-only
+     * [shouldStopAfterComma] predicate may end the list — [addMissingPlaceholder] picks
+     * whether a missing-expression placeholder is appended before the break (explist
+     * appends one; call args leave the token for the caller's `')' expected` recovery).
+     * Later terms never use first-RHS statement-start recovery (TASK-546/553).
+     */
+    private inline fun parseCommaSeparatedExpList(
         parent: BaseASTNode,
-        recoverFirstStatementLineBreak: Boolean = RECOVER_FIRST_RHS_STATEMENT_LINE_BREAK_DEFAULT
+        recoverFirstStatementLineBreak: Boolean,
+        addMissingPlaceholder: Boolean,
+        shouldStopAfterComma: (hasLineBreakBefore: Boolean, token: LuaTokenTypes) -> Boolean
     ): List<ExpressionNode> {
         val result = mutableListOf<ExpressionNode>()
 
@@ -2889,18 +2858,31 @@ class LuaParser(
             val hasLineBreakBeforeNextExpression = hasLineBreakBeforeNextSignificantToken()
             val nextExpressionToken = peek()
             if (errorRecovery &&
-                hasLineBreakBeforeNextExpression &&
-                isKeywordStatementStart(nextExpressionToken)
+                shouldStopAfterComma(hasLineBreakBeforeNextExpression, nextExpressionToken)
             ) {
-                // True gap after comma: next line starts a new statement (not a NAME RHS).
-                result.add(missingExpression(parent))
+                if (addMissingPlaceholder) {
+                    result.add(missingExpression(parent))
+                }
                 break
             }
-            // Later terms: never use first-RHS statement-start recovery (TASK-546/553).
             result.add(parseExpressionOrMissing(parent, recoverStatementStartAfterLineBreak = false))
         }
 
         return result
+    }
+
+    private fun parseExpList(
+        parent: BaseASTNode,
+        recoverFirstStatementLineBreak: Boolean = RECOVER_FIRST_RHS_STATEMENT_LINE_BREAK_DEFAULT
+    ): List<ExpressionNode> {
+        return parseCommaSeparatedExpList(
+            parent,
+            recoverFirstStatementLineBreak,
+            addMissingPlaceholder = true
+        ) { hasLineBreak, token ->
+            // True gap after comma: next line starts a new statement (not a NAME RHS).
+            hasLineBreak && isKeywordStatementStart(token)
+        }
     }
 
     // local namelist [‘=’ explist] (lua 5.3)

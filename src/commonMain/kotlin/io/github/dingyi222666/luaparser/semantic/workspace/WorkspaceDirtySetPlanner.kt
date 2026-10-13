@@ -156,8 +156,8 @@ object WorkspaceDirtySetPlanner {
         }
 
         publicSurfaceChangedFiles.forEach { path ->
-            seedFiles += reverseDependentsOf(path, previous.graph)
-            seedFiles += reverseDependentsOf(path, current.graph)
+            seedFiles += previous.graph.reverseDependencies[path].orEmpty()
+            seedFiles += current.graph.reverseDependencies[path].orEmpty()
             seedFiles += currentExtraProviderConsumers(path, current)
             val before = previous.files[path]?.publicFingerprint
             val after = current.files[path]?.publicFingerprint
@@ -174,8 +174,8 @@ object WorkspaceDirtySetPlanner {
         val reverseEdges = linkedMapOf<VirtualPath, Set<VirtualPath>>()
         (previous.graph.reverseDependencies.keys + current.graph.reverseDependencies.keys +
             previous.files.keys + current.files.keys).forEach { path ->
-            reverseEdges[path] = reverseDependentsOf(path, previous.graph) + reverseDependentsOf(path, current.graph) +
-                sharedGlobalDependents(path)
+            reverseEdges[path] = previous.graph.reverseDependencies[path].orEmpty() +
+                current.graph.reverseDependencies[path].orEmpty() + sharedGlobalDependents(path)
         }
 
         val queue = ArrayDeque(seedFiles)
@@ -205,9 +205,6 @@ object WorkspaceDirtySetPlanner {
             .keys
             .toCollection(linkedSetOf())
     }
-
-    private fun reverseDependentsOf(path: VirtualPath, graph: WorkspaceModuleGraph): Set<VirtualPath> =
-        graph.reverseDependencies[path].orEmpty()
 
     private fun consumersOfModule(moduleName: String, graph: WorkspaceModuleGraph): Set<VirtualPath> {
         return graph.resolvedDependencies.values

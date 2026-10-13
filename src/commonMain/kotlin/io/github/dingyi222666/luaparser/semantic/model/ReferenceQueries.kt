@@ -93,13 +93,11 @@ internal class ReferenceQueries(
         importTargetStringSymbolAt(node)?.let { return it }
         // One ordered fallback ladder for declaration-backed symbols; each probe is a pure
         // query, so first-non-null short-circuiting preserves the original precedence.
-        val declarationSymbol = listOf(
-            { resolveDeclarationTokenStartAt(position) },
-            { resolveExactNodeDeclaration(node) },
-            { resolveExactDocDeclaration(position) },
-            { resolveDeclarationAtPosition(position) },
-            { binder.positionQueries.getDeclarationAt(position) }
-        ).firstNotNullOfOrNull { it() }
+        val declarationSymbol = (resolveDeclarationTokenStartAt(position)
+            ?: resolveExactNodeDeclaration(node)
+            ?: resolveExactDocDeclaration(position)
+            ?: resolveDeclarationAtPosition(position)
+            ?: binder.positionQueries.getDeclarationAt(position))
             ?.let { adapters.toDeclarationSymbol(it) }
             ?: binder.positionQueries.getSymbolAt(position)
                 ?.let(adapters::toSymbol)
@@ -127,10 +125,9 @@ internal class ReferenceQueries(
                 memberIdentifierBase(node)?.let { return resolveMemberUsage(it) }
                 importedSymbol?.let(::toImportedSymbol)
                     ?: findNearestVisibleValueDeclaration(node.name, position)?.let { declaration ->
-                        preferDeclaredOrInferredSymbolType(
-                            adapters.toDeclarationSymbol(declaration),
-                            node
-                        ) ?: adapters.toDeclarationSymbol(declaration)
+                        adapters.toDeclarationSymbol(declaration).let {
+                            preferDeclaredOrInferredSymbolType(it, node) ?: it
+                        }
                     }
             }
 
@@ -145,11 +142,9 @@ internal class ReferenceQueries(
      */
     private fun preferDeclaredOrInferredSymbolType(symbol: Symbol, node: BaseASTNode?): Symbol? {
         val current = symbol.type
-        val needsUpgrade = current == null ||
-            current.isBareWeakType() ||
+        val needsUpgrade = current == null || current.isBareWeakType() ||
             (current.kind == TypeInfoKind.UNKNOWN &&
-                !current.displayName.contains("fun(") &&
-                !current.displayName.contains("fun<"))
+                !current.displayName.contains("fun(") && !current.displayName.contains("fun<"))
         if (!needsUpgrade) {
             return null
         }
@@ -169,12 +164,9 @@ internal class ReferenceQueries(
             if (!preferredInfo.displayName.contains("fun(") &&
                 !preferredInfo.displayName.contains("fun<") &&
                 preferredInfo.moduleName.isNullOrBlank() &&
-                preferredType !is ClassType &&
-                preferredType !is JavaClassType &&
-                preferredType !is JavaInstanceType &&
-                preferredType !is FunctionType &&
-                preferredType !is OverloadedFunctionType &&
-                preferredType !is ModuleType
+                preferredType !is ClassType && preferredType !is JavaClassType &&
+                preferredType !is JavaInstanceType && preferredType !is FunctionType &&
+                preferredType !is OverloadedFunctionType && preferredType !is ModuleType
             ) {
                 return null
             }
@@ -226,9 +218,11 @@ internal class ReferenceQueries(
             is JavaClassType,
             is JavaInstanceType,
             is ModuleType -> true
+            // Any non-blank display other than the bare unknown/any markers counts as rich;
+            // `fun(`/`fun<` displays always satisfy that, so no explicit callable check is
+            // needed in this branch.
             else -> type.displayName.let { display ->
-                display.contains("fun(") || display.contains("fun<") ||
-                    (display.isNotBlank() && display != "unknown" && display != "any")
+                display.isNotBlank() && display != "unknown" && display != "any"
             }
         }
     }
@@ -651,32 +645,28 @@ internal class ReferenceQueries(
                                 (
                                     existing.accessKind != MemberAccessKind.METHOD &&
                                         surface.accessKind == MemberAccessKind.METHOD
-                                    ) -> {
-                                put(
-                                    name,
-                                    surface.copy(
-                                        syntheticHandle = surface.syntheticHandle
-                                            ?: "java:${classType.javaName.binaryName}:static:$name"
-                                    )
+                                    ) -> put(
+                                name,
+                                surface.copy(
+                                    syntheticHandle = surface.syntheticHandle
+                                        ?: "java:${classType.javaName.binaryName}:static:$name"
                                 )
-                            }
+                            )
                             // Keep module-table FIELD when reflection also reports FIELD, but
                             // upgrade synthetic handles / declared types from the static surface
                             // so goto/hover stay on the binary provider for System.out/err etc.
                             existing.accessKind == MemberAccessKind.FIELD &&
-                                surface.accessKind == MemberAccessKind.FIELD -> {
-                                put(
-                                    name,
-                                    surface.copy(
-                                        syntheticHandle = surface.syntheticHandle
-                                            ?: existing.syntheticHandle
-                                            ?: "java:${classType.javaName.binaryName}:static:$name",
-                                        // Prefer richer reflected type when module table only has a shell.
-                                        type = surface.type,
-                                        declaredType = surface.declaredType ?: surface.type
-                                    )
+                                surface.accessKind == MemberAccessKind.FIELD -> put(
+                                name,
+                                surface.copy(
+                                    syntheticHandle = surface.syntheticHandle
+                                        ?: existing.syntheticHandle
+                                        ?: "java:${classType.javaName.binaryName}:static:$name",
+                                    // Prefer richer reflected type when module table only has a shell.
+                                    type = surface.type,
+                                    declaredType = surface.declaredType ?: surface.type
                                 )
-                            }
+                            )
                             // Never demote an existing METHOD to FIELD.
                             else -> Unit
                         }
@@ -1085,12 +1075,7 @@ internal class ReferenceQueries(
     private fun importedVisibleDeclarations(position: Position, nameFilter: ((String) -> Boolean)?): List<VisibleDeclaration> {
         return (importedSymbolsAt(position, nameFilter).values + sharedWorkspaceGlobals(position, nameFilter))
             .sortedBy { it.alias }
-            .map { imported ->
-                VisibleDeclaration(
-                    declaration = importedDeclaration(imported),
-                    lexicalDepth = 0
-                )
-            }
+            .map { imported -> VisibleDeclaration(importedDeclaration(imported), lexicalDepth = 0) }
     }
 
     private fun importedDeclaration(imported: WorkspaceImportedSymbol): BinderDeclaration {
@@ -1144,12 +1129,13 @@ internal class ReferenceQueries(
     }
 
     private fun toImportedSymbol(imported: WorkspaceImportedSymbol): Symbol {
+        val typeInfo = adapters.toTypeInfo(imported.valueType)
         return Symbol(
             name = imported.alias,
             kind = imported.kind,
             range = null,
-            type = adapters.toTypeInfo(imported.valueType),
-            declaredType = adapters.toTypeInfo(imported.valueType),
+            type = typeInfo,
+            declaredType = typeInfo,
             detail = imported.valueType.displayName,
             symbolId = importedSymbolHandle(imported)
         )
@@ -1285,9 +1271,7 @@ internal class ReferenceQueries(
                     if (!branchExposesJavaMember(branch, memberName)) continue
                     javaMemberFallbackSymbolId(branch, memberName)?.let { return it }
                 }
-                return baseType.types.firstNotNullOfOrNull { branch ->
-                    javaMemberFallbackSymbolId(branch, memberName)
-                }
+                return baseType.types.firstNotNullOfOrNull { javaMemberFallbackSymbolId(it, memberName) }
             }
             is UnionType -> {
                 val handles = baseType.types.mapNotNull { branch ->

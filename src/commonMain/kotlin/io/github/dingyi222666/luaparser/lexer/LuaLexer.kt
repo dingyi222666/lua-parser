@@ -57,32 +57,25 @@ class LuaLexer @JvmOverloads constructor(
     }
 
     fun nextToken(): LuaTokenTypes {
-        return nextTokenInternal()
-    }
-
-    private fun nextTokenInternal(): LuaTokenTypes {
-        run {
-            var r = false
-            for (i in offset..<offset + tokenLength) {
-                val ch = charAt(i)
-                if (ch == '\r') {
-                    r = true
-                    tokenLine++
-                    tokenColumn = 0
-                } else if (ch == '\n') {
-                    if (r) {
-                        r = false
-                        continue
-                    }
-                    tokenLine++
-                    tokenColumn = 0
-                } else {
+        var r = false
+        for (i in offset..<offset + tokenLength) {
+            val ch = source[i]
+            if (ch == '\r') {
+                r = true
+                tokenLine++
+                tokenColumn = 0
+            } else if (ch == '\n') {
+                if (r) {
                     r = false
-                    tokenColumn++
+                    continue
                 }
+                tokenLine++
+                tokenColumn = 0
+            } else {
+                r = false
+                tokenColumn++
             }
         }
-
 
         index += tokenLength
         offset += tokenLength
@@ -137,57 +130,22 @@ class LuaLexer @JvmOverloads constructor(
             ch == ',' -> LuaTokenTypes.COMMA
             // AndroLua / Android-Lua accept C-style `!=` as inequality (main2.lua).
             // Bare `!` remains unary NOT (shebang mid-file splits, C-style not).
-            ch == '!' -> scanTwoOperator(
-                LuaTokenTypes.NOT,
-                LuaTokenTypes.NE, '='
-            )
-            ch == '+' -> scanTwoOperator(
-                LuaTokenTypes.PLUS,
-                LuaTokenTypes.ADD_ASSIGN, '='
-            )
-
-            ch == '*' -> scanTwoOperator(
-                LuaTokenTypes.MULT,
-                LuaTokenTypes.MUL_ASSIGN, '='
-            )
-
+            ch == '!' -> scanTwoOperator(LuaTokenTypes.NOT, LuaTokenTypes.NE, '=')
+            ch == '+' -> scanTwoOperator(LuaTokenTypes.PLUS, LuaTokenTypes.ADD_ASSIGN, '=')
+            ch == '*' -> scanTwoOperator(LuaTokenTypes.MULT, LuaTokenTypes.MUL_ASSIGN, '=')
             ch == '/' -> scanDIV()
-            ch == '=' -> scanTwoOperator(
-                LuaTokenTypes.ASSIGN,
-                LuaTokenTypes.EQ, '='
-            )
-
+            ch == '=' -> scanTwoOperator(LuaTokenTypes.ASSIGN, LuaTokenTypes.EQ, '=')
             ch == '^' -> LuaTokenTypes.EXP
             ch == '%' -> LuaTokenTypes.MOD
-            ch == '~' -> scanTwoOperator(
-                LuaTokenTypes.BIT_TILDE,
-                LuaTokenTypes.NE, '='
-            )
+            ch == '~' -> scanTwoOperator(LuaTokenTypes.BIT_TILDE, LuaTokenTypes.NE, '=')
             // AndroLua / Android-Lua accept C-style `&&` as logical and (file.lua).
             // Bare `&` remains bitwise AND.
-            ch == '&' -> scanTwoOperator(
-                LuaTokenTypes.BIT_AND,
-                LuaTokenTypes.AND, '&'
-            )
+            ch == '&' -> scanTwoOperator(LuaTokenTypes.BIT_AND, LuaTokenTypes.AND, '&')
             // AndroLua / Android-Lua accept C-style `||` as logical or.
             // Bare `|` remains bitwise OR.
-            ch == '|' -> scanTwoOperator(
-                LuaTokenTypes.BIT_OR,
-                LuaTokenTypes.OR, '|'
-            )
-            ch == '>' -> scanAngleOperator(
-                single = LuaTokenTypes.GT,
-                assign = LuaTokenTypes.GE,
-                repeated = LuaTokenTypes.BIT_RTRT,
-                operator = '>'
-            )
-
-            ch == '<' -> scanAngleOperator(
-                single = LuaTokenTypes.LT,
-                assign = LuaTokenTypes.LE,
-                repeated = LuaTokenTypes.BIT_LTLT,
-                operator = '<'
-            )
+            ch == '|' -> scanTwoOperator(LuaTokenTypes.BIT_OR, LuaTokenTypes.OR, '|')
+            ch == '>' -> scanAngleOperator(LuaTokenTypes.GT, LuaTokenTypes.GE, LuaTokenTypes.BIT_RTRT, '>')
+            ch == '<' -> scanAngleOperator(LuaTokenTypes.LT, LuaTokenTypes.LE, LuaTokenTypes.BIT_LTLT, '<')
 
             ch == '.' -> {
                 val next = chatAtOrNull() ?: return LuaTokenTypes.DOT
@@ -203,7 +161,10 @@ class LuaLexer @JvmOverloads constructor(
                         }
                     }
 
-                    isPrimeDigit(next) -> scanNumberStartingWithDot()
+                    isPrimeDigit(next) -> {
+                        scanDigits { isPrimeDigit(it) }
+                        if (scanDecimalExponentIfPresent()) LuaTokenTypes.NUMBER else LuaTokenTypes.BAD_CHARACTER
+                    }
 
                     else -> LuaTokenTypes.DOT
                 }
@@ -227,10 +188,7 @@ class LuaLexer @JvmOverloads constructor(
                     LuaTokenTypes.GETN
                 }
             }
-            ch == ':' -> scanTwoOperator(
-                LuaTokenTypes.COLON,
-                LuaTokenTypes.DOUBLE_COLON, ':'
-            )
+            ch == ':' -> scanTwoOperator(LuaTokenTypes.COLON, LuaTokenTypes.DOUBLE_COLON, ':')
 
             ch == '-' -> {
                 val next = chatAtOrNull() ?: return LuaTokenTypes.MINUS
@@ -258,7 +216,7 @@ class LuaLexer @JvmOverloads constructor(
         var ch = char
         var n: TrieTree.Node<LuaTokenTypes>? = keywords.root.map.get(ch)
         while (offset + tokenLength < bufferLen && isIdentifierPart(
-                charAt(offset + tokenLength).also { ch = it })
+                source[offset + tokenLength].also { ch = it })
         ) {
             tokenLength++
             n = n?.map?.get(ch)
@@ -306,13 +264,10 @@ class LuaLexer @JvmOverloads constructor(
                 true
             }
 
-            '\n' -> {
-                tokenLength += if (nextOffset + 1 < bufferLen && source[nextOffset + 1] == '\r') 3 else 2
-                true
-            }
-
-            '\r' -> {
-                tokenLength += if (nextOffset + 1 < bufferLen && source[nextOffset + 1] == '\n') 3 else 2
+            '\n', '\r' -> {
+                // `\` followed by a line terminator: CRLF pairs are one logical escape.
+                val paired = if (next == '\n') '\r' else '\n'
+                tokenLength += if (nextOffset + 1 < bufferLen && source[nextOffset + 1] == paired) 3 else 2
                 true
             }
 
@@ -410,8 +365,9 @@ class LuaLexer @JvmOverloads constructor(
                 while (offset + tokenLength < bufferLen) {
                     var pos = offset + tokenLength
 
-                    // Skip whitespace at start of line
-                    while (pos < bufferLen && source[pos] != '\n' && source[pos] != '\r' && isNotNewLineWhiteSpace(source[pos])) {
+                    // Skip whitespace at start of line (`isNotNewLineWhiteSpace` already
+                    // excludes the line terminators).
+                    while (pos < bufferLen && isNotNewLineWhiteSpace(source[pos])) {
                         pos++
                     }
 
@@ -629,11 +585,6 @@ class LuaLexer @JvmOverloads constructor(
         return if (scanDecimalExponentIfPresent()) LuaTokenTypes.NUMBER else LuaTokenTypes.BAD_CHARACTER
     }
 
-    private fun scanNumberStartingWithDot(): LuaTokenTypes {
-        scanDigits { isPrimeDigit(it) }
-        return if (scanDecimalExponentIfPresent()) LuaTokenTypes.NUMBER else LuaTokenTypes.BAD_CHARACTER
-    }
-
     /** Consume the maximal run of digits accepted by [isDigit] at the cursor; returns the count. */
     private fun scanDigits(isDigit: (Char) -> Boolean): Int {
         var count = 0
@@ -687,7 +638,7 @@ class LuaLexer @JvmOverloads constructor(
      * Field mapping (one assignment each, no logic):
      * - [index] -> [index] and -> [offset]. The `offset == index` invariant holds
      *   because both start at 0 and are only ever advanced together by
-     *   `+= tokenLength` in [nextTokenInternal]; every field a restore needs is
+     *   `+= tokenLength` in [nextToken]; every field a restore needs is
      *   therefore captured by the [index]/[tokenLength]/[line]/[column] tuple
      *   (the same tuple a `LexerState` snapshot stores).
      * - [tokenLength] -> [tokenLength], [line] -> [tokenLine], [column] -> [tokenColumn].
@@ -709,15 +660,11 @@ class LuaLexer @JvmOverloads constructor(
     }
 
     private fun scanNewline() {
-        if (offset + tokenLength < bufferLen && charAt(offset + tokenLength) == '\n') {
+        if (offset + tokenLength < bufferLen && source[offset + tokenLength] == '\n') {
             tokenLength++
         }
     }
 
-
-    private fun charAt(i: Int): Char {
-        return source[i]
-    }
 
     private fun charAt(): Char {
         return source[offset + tokenLength]
@@ -738,37 +685,24 @@ class LuaLexer @JvmOverloads constructor(
         private val keywords = TrieTree<LuaTokenTypes>()
 
         init {
-            run {
-                keywords.put("and", LuaTokenTypes.AND)
-                keywords.put("or", LuaTokenTypes.OR)
-                keywords.put("default", LuaTokenTypes.DEFAULT)
-                keywords.put("switch", LuaTokenTypes.SWITCH)
-                keywords.put("if", LuaTokenTypes.IF)
-                keywords.put("break", LuaTokenTypes.BREAK)
-                keywords.put("else", LuaTokenTypes.ELSE)
-                keywords.put("while", LuaTokenTypes.WHILE)
-                keywords.put("do", LuaTokenTypes.DO)
-                keywords.put("return", LuaTokenTypes.RETURN)
-                keywords.put("for", LuaTokenTypes.FOR)
-                keywords.put("function", LuaTokenTypes.FUNCTION)
-                keywords.put("local", LuaTokenTypes.LOCAL)
-                keywords.put("true", LuaTokenTypes.TRUE)
-                keywords.put("false", LuaTokenTypes.FALSE)
-                keywords.put("nil", LuaTokenTypes.NIL)
-                keywords.put("continue", LuaTokenTypes.CONTINUE)
-                keywords.put("not", LuaTokenTypes.NOT)
-                keywords.put("in", LuaTokenTypes.IN)
-                keywords.put("then", LuaTokenTypes.THEN)
-                keywords.put("end", LuaTokenTypes.END)
-                keywords.put("repeat", LuaTokenTypes.REPEAT)
-                keywords.put("elseif", LuaTokenTypes.ELSEIF)
-                keywords.put("until", LuaTokenTypes.UNTIL)
-                keywords.put("goto", LuaTokenTypes.GOTO)
-                keywords.put("case", LuaTokenTypes.CASE)
-                keywords.put("when", LuaTokenTypes.WHEN)
-                keywords.put("lambda", LuaTokenTypes.LAMBDA)
-            }
-
+            // (spelling, token) pairs keep the keyword table dense; TrieTree insertion
+            // order (and therefore prefix resolution) is unchanged.
+            listOf(
+                "and" to LuaTokenTypes.AND, "or" to LuaTokenTypes.OR,
+                "default" to LuaTokenTypes.DEFAULT, "switch" to LuaTokenTypes.SWITCH,
+                "if" to LuaTokenTypes.IF, "break" to LuaTokenTypes.BREAK,
+                "else" to LuaTokenTypes.ELSE, "while" to LuaTokenTypes.WHILE,
+                "do" to LuaTokenTypes.DO, "return" to LuaTokenTypes.RETURN,
+                "for" to LuaTokenTypes.FOR, "function" to LuaTokenTypes.FUNCTION,
+                "local" to LuaTokenTypes.LOCAL, "true" to LuaTokenTypes.TRUE,
+                "false" to LuaTokenTypes.FALSE, "nil" to LuaTokenTypes.NIL,
+                "continue" to LuaTokenTypes.CONTINUE, "not" to LuaTokenTypes.NOT,
+                "in" to LuaTokenTypes.IN, "then" to LuaTokenTypes.THEN,
+                "end" to LuaTokenTypes.END, "repeat" to LuaTokenTypes.REPEAT,
+                "elseif" to LuaTokenTypes.ELSEIF, "until" to LuaTokenTypes.UNTIL,
+                "goto" to LuaTokenTypes.GOTO, "case" to LuaTokenTypes.CASE,
+                "when" to LuaTokenTypes.WHEN, "lambda" to LuaTokenTypes.LAMBDA,
+            ).forEach { (spelling, tokenType) -> keywords.put(spelling, tokenType) }
         }
 
         private fun isHexDigit(c: Char): Boolean {

@@ -143,22 +143,18 @@ object WorkspaceModuleGraphBuilder {
             .filter { it.source == DocumentFacts.ModuleNameCandidateSource.VIRTUAL_PATH }
             .map { it.moduleName }
             .distinct()
+            // Both the dotted and slash alias spellings of the virtual path claim the file.
             .flatMap { moduleName ->
-                virtualPathModuleAliases(moduleName).map { alias ->
+                sequenceOf(moduleName, moduleName.replace('.', '/')).map { alias ->
                     WorkspaceModuleGraph.ModuleProvider(alias, path, WorkspaceModuleGraph.ProviderSource.VIRTUAL_PATH)
                 }
             }
 
-        val fromFacts = (explicit + derived).toList()
         // Keep fact-derived claims and also merge any path-only `.aly` aliases so layout
         // modules remain require()-able under their full virtual-path module name; when facts
         // omitted VIRTUAL_PATH candidates the merged list is exactly the path-derived `.aly`
         // claim.
-        return (fromFacts + alyPathProviders(path)).distinctBy { it.moduleName to it.path }
-    }
-
-    private fun virtualPathModuleAliases(moduleName: String): Sequence<String> {
-        return sequenceOf(moduleName, moduleName.replace('.', '/')).distinct()
+        return (explicit + derived + alyPathProviders(path)).distinctBy { it.moduleName to it.path }.toList()
     }
 
     private fun alyPathProviders(path: VirtualPath): List<WorkspaceModuleGraph.ModuleProvider> {

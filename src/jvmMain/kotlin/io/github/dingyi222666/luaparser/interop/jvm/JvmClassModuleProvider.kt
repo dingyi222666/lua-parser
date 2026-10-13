@@ -1160,7 +1160,9 @@ class JvmClassModuleProvider(
         val connection = runCatching { url.openConnection() as JarURLConnection }.getOrNull() ?: return
         // Do NOT close connection.jarFile — it may be cached/shared by the URLClassLoader.
         val jarFile = runCatching { connection.jarFile }.getOrNull() ?: return
-        collectClassesFromJarEntries(jarFile, packagePath, output)
+        // Reuse indexJarPackageClasses so the fallback path and the cached-index path share
+        // the identical filters (no directories, .class only, no '$' nested simple names).
+        output += indexJarPackageClasses(jarFile)[packagePath].orEmpty()
     }
 
     /**
@@ -1217,13 +1219,6 @@ class JvmClassModuleProvider(
             packages.getOrPut(packagePath) { mutableListOf() }.add(name.replace('/', '.'))
         }
         return packages.mapValues { (_, names) -> names.toList() }
-    }
-
-    private fun collectClassesFromJarEntries(jar: JarFile, packagePath: String, output: MutableSet<String>) {
-        // Same filters as indexJarPackageClasses (no directories, .class only, no '$' nested
-        // simple names); reuse it so the fallback path and the cached-index path can never
-        // drift apart. Output membership is identical for this package.
-        output += indexJarPackageClasses(jar)[packagePath].orEmpty()
     }
 
     private fun collectClassesFromJrt(packagePath: String, output: MutableSet<String>) {
@@ -1331,14 +1326,10 @@ class JvmClassModuleProvider(
         return classLoaderFor(configuration, cacheKeyKind = "package")
     }
 
-    private fun classLoaderFor(configuration: JvmWorkspaceConfiguration): ClassLoader {
-        return classLoaderFor(configuration, cacheKeyKind = "class")
-    }
-
     /** Shared loader construction behind [classLoaderFor] / [classLoaderForPackageEnumeration]. */
     private fun classLoaderFor(
         configuration: JvmWorkspaceConfiguration,
-        cacheKeyKind: String
+        cacheKeyKind: String = "class"
     ): ClassLoader {
         val parent = configuration.classLoader ?: baseClassLoader
         val entries = reflectiveClasspathFiles(configuration)
@@ -2089,11 +2080,10 @@ class JvmClassModuleProvider(
         }
     }
 
-    private fun javaTypeToType(type: ReflectType): Type {
-        return javaTypeToType(type, emptySet())
-    }
-
-    private fun javaTypeToType(type: ReflectType, resolvingTypeParameters: Set<String>): Type {
+    private fun javaTypeToType(
+        type: ReflectType,
+        resolvingTypeParameters: Set<String> = emptySet()
+    ): Type {
         return when (type) {
             is Class<*> -> javaClassToType(type, resolvingTypeParameters)
             is ParameterizedType -> javaParameterizedTypeToType(type, resolvingTypeParameters)
@@ -2140,28 +2130,19 @@ class JvmClassModuleProvider(
         return firstOrNull { it != Any::class.java }?.let { javaTypeToType(it, resolvingTypeParameters) }
     }
 
+    /**
+     * Type-parameter reference with cycle guard: the parameter's own name joins the
+     * resolving set before its bounds resolve, so a self-referential bound degrades to null.
+     */
     private fun javaTypeParameterFor(parameter: TypeVariable<*>): TypeParameterType {
-        return javaTypeParameterFor(parameter, emptySet())
-    }
-
-    private fun javaTypeParameterFor(
-        parameter: TypeVariable<*>,
-        resolvingTypeParameters: Set<String>
-    ): TypeParameterType {
-        val nextResolvingTypeParameters = resolvingTypeParameters + parameter.name
         return TypeParameterType(
             name = parameter.name,
-            constraint = if (parameter.name in resolvingTypeParameters) {
-                null
-            } else {
-                parameter.bounds.firstKnownBoundType(nextResolvingTypeParameters)
-            }
+            constraint = parameter.bounds.firstKnownBoundType(setOf(parameter.name))
         )
     }
 
-    private fun typeReferenceForJavaClass(type: Class<*>): JavaClassType {
-        classReferenceCache[type]?.let { return it }
-        return classReferenceCache.computeIfAbsent(type) { clazz ->
+    private fun typeReferenceForJavaClass(type: Class<*>): JavaClassType =
+        classReferenceCache.computeIfAbsent(type) { clazz ->
             // Name-only references deliberately omit bounds to break recursive
             // generic edges. Full class surfaces carry the resolved bounds.
             JavaClassType(
@@ -2169,12 +2150,9 @@ class JvmClassModuleProvider(
                 typeParameters = clazz.typeParameters.map { TypeParameterType(name = it.name) }
             )
         }
-    }
 
-    private fun javaTypeNameFor(type: Class<*>): JavaTypeName {
-        javaTypeNameCache[type]?.let { return it }
-        return javaTypeNameCache.computeIfAbsent(type, ::buildJavaTypeName)
-    }
+    private fun javaTypeNameFor(type: Class<*>): JavaTypeName =
+        javaTypeNameCache.computeIfAbsent(type, ::buildJavaTypeName)
 
     private fun buildJavaTypeName(type: Class<*>): JavaTypeName {
         val packageName = type.`package`?.name.orEmpty()
