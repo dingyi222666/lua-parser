@@ -664,3 +664,17 @@ The round-30 wave was paused mid-flight (4 of 5 agents interrupted); the tree wi
 
 Protocol going forward: agent exploration/static analysis is unrestricted; any compile/test verification happens REMOTELY (ssh dingyi@10.1.1.14, JAVA_HOME=~/.jdks/temurin-17), either by the agent itself over ssh or by the parent at integration. This also removes the isolated-copy/stub dance — the remote tree is the verification host.
 
+## Round 32 — five-agent line reduction — 2026-10-14 (7/7 waves)
+
+Verified remotely before the outage (JVM 2,929/0/0 + JS compile; the parser-corpus 738 and interop suites were greened by the owning agents in their own remote verify dirs):
+
+- LuaLanguageService sixth pass (−134): the semanticTokensFullDelta cached-vs-full comparison was TAUTOLOGICAL (computeSemanticTokensFull writes the cache before returning) — collapsed to a resultId match; pathFromClientPath dedup; flatMap/collect tails; lsp4j wildcard import consolidation (flagged revertible).
+- LuaParser/AST2Lua third+fourth (−72): a shared LexerScan inner class replaced three hand-rolled raw-lexer probe walks (EOF/newline/back semantics verified exit-by-exit); parseCommaSeparatedExpList scaffold; UpstreamLuaparseCorpusTest 738 green.
+- facade/resolver fifth (−86): shared callableUpgradedCompletionKind (FIELD-policy gated at the import site), stringConstantOf, positional compactions; resolution-order zone untouched.
+- interop third (−62): dead normalized() call, implicitClassSymbol delegate, unreachable protocol arms, L-descriptor name-set ladder, functionTypeFor inline.
+- evaluator sixth + SignatureHelpProvider (−56): shared argumentSlotAt (inclusive vs half-open containment proven per caller), layout wrapper inlines, loadlayout cache-first reorder (provably equivalent, slightly faster hot path).
+
+**Lines: 42,637** (baseline 53,562 → −10,925; target ≤41,562, ~1,075 remaining). Commit 4ad3bb3 (JVM+JS green pre-outage).
+
+**BLOCKER at round close:** remote host 10.1.1.14 unreachable (SSH banner timeout) since 03:24 local — the pending E2E rel58 (7/7 confirmation on the round-32 tree) and all further verification are blocked until the host returns. All round-32 code work is committed; JVM/JS gates were green before the outage.
+
