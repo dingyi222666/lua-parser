@@ -185,10 +185,7 @@ class LuaWorkspaceQueryFacade(
     fun gotoDefinition(path: VirtualPath, position: Position): List<WorkspaceLocation> {
         val semanticFile = snapshot.files[path]?.semanticFile
         val node = semanticFile?.nodeAt(position)
-        val importTargetDefinition = semanticFile?.let { importTargetDefinition(path, it, node) }
-        if (importTargetDefinition != null) {
-            return listOf(importTargetDefinition)
-        }
+        importTargetDefinitionAt(path, semanticFile, node)?.let { return it }
         val modelSymbol = semanticFile?.model?.getSymbolAt(position)
         val importedAt = semanticFile?.let { importedSymbolAt(path, position, node, it) }
         // Prefer path-scoped imported MODULE aliases over weak free-global VARIABLE symbols so
@@ -244,8 +241,7 @@ class LuaWorkspaceQueryFacade(
         if (memberAccess == null && semanticFile != null) {
             val freeId = node as? Identifier
             if (freeId != null) {
-                val parent = runCatching { freeId.parent }.getOrNull()
-                val onMemberSelector = parent is MemberExpression && parent.identifier === freeId
+                val onMemberSelector = isMemberAccessIdentifier(freeId)
                 if (!onMemberSelector) {
                     val visibleLocal = visibleLocalValueDeclaration(
                         semanticFile,
@@ -323,10 +319,7 @@ class LuaWorkspaceQueryFacade(
     fun declaration(path: VirtualPath, position: Position): List<WorkspaceLocation> {
         val semanticFile = snapshot.files[path]?.semanticFile
         val node = semanticFile?.nodeAt(position)
-        val importTargetDefinition = semanticFile?.let { importTargetDefinition(path, it, node) }
-        if (importTargetDefinition != null) {
-            return listOf(importTargetDefinition)
-        }
+        importTargetDefinitionAt(path, semanticFile, node)?.let { return it }
         val importedAt = semanticFile?.let { importedSymbolAt(path, position, node, it) }
         val symbol = semanticFile?.model?.getSymbolAt(position)
             ?: importedAt?.let(::importedSymbol)
@@ -466,11 +459,7 @@ class LuaWorkspaceQueryFacade(
         val byId = declarations.associateBy(BinderDeclaration::id)
         val childrenByOwner = linkedMapOf<DeclarationId, MutableList<BinderDeclaration>>()
         val roots = mutableListOf<BinderDeclaration>()
-        val declarationSourceOrder = compareBy<BinderDeclaration>(
-            { it.range?.start?.line ?: Int.MAX_VALUE },
-            { it.range?.start?.column ?: Int.MAX_VALUE },
-            { it.name }
-        )
+        val declarationSourceOrder = positionOrder(BinderDeclaration::range, BinderDeclaration::name)
 
         declarations.forEach { declaration ->
             val ownerId = (declaration.owner as? DeclarationOwner.Declaration)?.declarationId
@@ -565,12 +554,10 @@ class LuaWorkspaceQueryFacade(
                 addAll(fileSymbolEntries(path, file))
             }
         }
-        // Same key shape as workspaceSymbolEntryKey + the container suffix; the inline copy
-        // duplicated that helper field-for-field.
+        // Same key shape as workspaceSymbolEntryKey + the container suffix.
         return entries
             .distinctBy { entry ->
-                workspaceSymbolEntryKey(entry.path, entry.name, entry.kind, entry.range) +
-                    ":${entry.containerName.orEmpty()}"
+                workspaceSymbolEntryKey(entry, ":${entry.containerName.orEmpty()}")
             }
             .sortedWith(
                 compareBy<WorkspaceSymbolEntry>(
@@ -587,15 +574,9 @@ class LuaWorkspaceQueryFacade(
         file: WorkspaceSnapshot.FileSnapshot
     ): List<WorkspaceSymbolEntry> {
         val semanticFile = file.semanticFile
-        val declarations = if (semanticFile != null) {
-            declarationWorkspaceSymbolEntries(
-                path,
-                semanticFile.snapshot.binder.declarationIndex.declarations,
-                semanticFile.chunk.body
-            )
-        } else {
-            emptyList()
-        }
+        val declarations = semanticFile
+            ?.let { declarationWorkspaceSymbolEntries(path, it.snapshot.binder.declarationIndex.declarations, it.chunk.body) }
+            ?: emptyList()
         val exports = moduleExportWorkspaceSymbolEntries(path, file, declarations)
         return declarations + exports
     }
@@ -647,7 +628,7 @@ class LuaWorkspaceQueryFacade(
         val moduleName = surface.moduleType.moduleName.takeIf { it.isNotBlank() }
         val declarationKeys = existingDeclarations
             .asSequence()
-            .map { workspaceSymbolEntryKey(it.path, it.name, it.kind, it.range) }
+            .map(::workspaceSymbolEntryKey)
             .toSet()
 
         return surface.members
@@ -663,7 +644,7 @@ class LuaWorkspaceQueryFacade(
                     containerName = moduleName
                 )
             }
-            .filterNot { workspaceSymbolEntryKey(it.path, it.name, it.kind, it.range) in declarationKeys }
+            .filterNot { workspaceSymbolEntryKey(it) in declarationKeys }
             .toList()
     }
 
@@ -694,13 +675,7 @@ class LuaWorkspaceQueryFacade(
         ) {
             fun toDocumentSymbol(): WorkspaceDocumentSymbol {
                 val childSymbols = children.values
-                    .sortedWith(
-                        compareBy(
-                            { it.range.start.line },
-                            { it.range.start.column },
-                            { it.name }
-                        )
-                    )
+                    .sortedWith(positionOrder(MutableSymbol::range, MutableSymbol::name))
                     .map { it.toDocumentSymbol() }
                 return WorkspaceDocumentSymbol(
                     name = name,
@@ -744,13 +719,7 @@ class LuaWorkspaceQueryFacade(
         }
 
         return roots.values
-            .sortedWith(
-                compareBy(
-                    { it.range.start.line },
-                    { it.range.start.column },
-                    { it.name }
-                )
-            )
+            .sortedWith(positionOrder(MutableSymbol::range, MutableSymbol::name))
             .map { it.toDocumentSymbol() }
     }
 
@@ -764,7 +733,6 @@ class LuaWorkspaceQueryFacade(
         if (declarations.isEmpty()) {
             return exports
         }
-
         val byName = linkedMapOf<String, WorkspaceDocumentSymbol>()
         declarations.forEach { byName[it.name] = it }
 
@@ -781,31 +749,29 @@ class LuaWorkspaceQueryFacade(
         }
 
         return byName.values
-            .sortedWith(
-                compareBy(
-                    { it.range.start.line },
-                    { it.range.start.column },
-                    { it.name }
-                )
-            )
-            .toList()
+            .sortedWith(positionOrder(WorkspaceDocumentSymbol::range, WorkspaceDocumentSymbol::name))
     }
 
-    private fun preferredDocumentSymbolKind(left: SymbolKind, right: SymbolKind): SymbolKind {
-        val rank = listOf(
-            SymbolKind.MODULE,
-            SymbolKind.CLASS,
-            SymbolKind.METHOD,
-            SymbolKind.FUNCTION,
-            SymbolKind.FIELD,
-            SymbolKind.TYPE_ALIAS,
-            SymbolKind.LOCAL,
-            SymbolKind.VARIABLE,
-            SymbolKind.PARAMETER,
-            SymbolKind.UNKNOWN
+    // Highest-priority kind first; shared by every document/workspace-symbol kind merge.
+    private val symbolKindRank = listOf(
+        SymbolKind.MODULE, SymbolKind.CLASS, SymbolKind.METHOD, SymbolKind.FUNCTION,
+        SymbolKind.FIELD, SymbolKind.TYPE_ALIAS, SymbolKind.LOCAL, SymbolKind.VARIABLE,
+        SymbolKind.PARAMETER, SymbolKind.UNKNOWN
+    )
+
+    /** Deterministic (line, column, name) order shared by export-tree and merged-root sorting. */
+    private fun <T> positionOrder(range: (T) -> Range?, name: (T) -> String): Comparator<T> =
+        compareBy(
+            { range(it)?.start?.line ?: Int.MAX_VALUE },
+            { range(it)?.start?.column ?: Int.MAX_VALUE },
+            { name(it) }
         )
-        return listOf(left, right).minBy { rank.indexOf(it).takeIf { index -> index >= 0 } ?: Int.MAX_VALUE }
-    }
+
+    /** Kotlin callable display (`fun(...)` / `fun<T>`), shared by hover and completion-kind rules. */
+    private fun String.isCallableDisplay(): Boolean = contains("fun(") || contains("fun<")
+
+    private fun preferredDocumentSymbolKind(left: SymbolKind, right: SymbolKind): SymbolKind =
+        listOf(left, right).minBy { symbolKindRank.indexOf(it).takeIf { index -> index >= 0 } ?: Int.MAX_VALUE }
 
     private fun isNavigableDocumentSymbolDeclaration(declaration: BinderDeclaration): Boolean {
         if (declaration.name.isBlank() || declaration.range == null) {
@@ -853,34 +819,24 @@ class LuaWorkspaceQueryFacade(
         return declarationsById[ownerId]?.name?.takeIf { it.isNotBlank() }
     }
 
+    /** Dedup key "path:name:kind:line:column" (plus the optional container suffix). */
     private fun workspaceSymbolEntryKey(
-        path: VirtualPath,
-        name: String,
-        kind: SymbolKind,
-        range: Range
-    ): String {
-        return listOf(
-            path.value,
-            name,
-            kind.name,
-            range.start.line.toString(),
-            range.start.column.toString()
-        ).joinToString(":")
-    }
+        entry: WorkspaceSymbolEntry,
+        containerSuffix: String = ""
+    ): String =
+        "${entry.path.value}:${entry.name}:${entry.kind.name}:${entry.range.start.line}:${entry.range.start.column}$containerSuffix"
 
-    private fun DeclarationKind.toWorkspaceSymbolKind(): SymbolKind {
-        return when (this) {
-            DeclarationKind.LOCAL,
-            DeclarationKind.GLOBAL -> SymbolKind.VARIABLE
-            DeclarationKind.PARAMETER -> SymbolKind.PARAMETER
-            DeclarationKind.FUNCTION -> SymbolKind.FUNCTION
-            DeclarationKind.MODULE -> SymbolKind.MODULE
-            DeclarationKind.CLASS -> SymbolKind.CLASS
-            DeclarationKind.TYPE_ALIAS -> SymbolKind.TYPE_ALIAS
-            DeclarationKind.TYPE_PARAMETER -> SymbolKind.TYPE_ALIAS
-            DeclarationKind.FIELD -> SymbolKind.FIELD
-            DeclarationKind.METHOD -> SymbolKind.METHOD
-        }
+    private fun DeclarationKind.toWorkspaceSymbolKind(): SymbolKind = when (this) {
+        DeclarationKind.LOCAL,
+        DeclarationKind.GLOBAL -> SymbolKind.VARIABLE
+        DeclarationKind.PARAMETER -> SymbolKind.PARAMETER
+        DeclarationKind.FUNCTION -> SymbolKind.FUNCTION
+        DeclarationKind.MODULE -> SymbolKind.MODULE
+        DeclarationKind.CLASS -> SymbolKind.CLASS
+        DeclarationKind.TYPE_ALIAS -> SymbolKind.TYPE_ALIAS
+        DeclarationKind.TYPE_PARAMETER -> SymbolKind.TYPE_ALIAS
+        DeclarationKind.FIELD -> SymbolKind.FIELD
+        DeclarationKind.METHOD -> SymbolKind.METHOD
     }
 
 
@@ -903,14 +859,13 @@ class LuaWorkspaceQueryFacade(
             primary.displayName.endsWith("[]") &&
                 fallback?.displayName?.startsWith("Array<") == true -> fallback
             // Bare unknown/any must lose to any richer fallback (FunctionType/ClassType/MODULE/fun).
+            // The structured-kind/fun/moduleName clauses also cover non-bare fallbacks, so the
+            // two former bare-weak arms collapse into one condition (arm 1 ∪ arm 2).
             primary.isBareWeakType() &&
                 fallback != null &&
-                !fallback.isBareWeakType() -> fallback
-            primary.isBareWeakType() &&
-                fallback != null &&
-                (isPreferredHoverStructuredKind(fallback.kind) ||
-                    fallback.displayName.contains("fun(") ||
-                    fallback.displayName.contains("fun<") ||
+                (!fallback.isBareWeakType() ||
+                    isPreferredHoverStructuredKind(fallback.kind) ||
+                    fallback.displayName.isCallableDisplay() ||
                     !fallback.moduleName.isNullOrBlank()) -> fallback
             // Dynamic import() locals often evaluate as unknown/any at the node while the
             // symbol surface already carries the resolved MODULE type (moduleName / fun(...)).
@@ -924,10 +879,8 @@ class LuaWorkspaceQueryFacade(
                     } ?: fallback.detail
                 )
             }
-            !primary.displayName.contains("fun(") &&
-                fallback?.displayName?.contains("fun(") == true -> fallback
-            !primary.displayName.contains("fun(") &&
-                fallback?.displayName?.contains("fun<") == true -> fallback
+            !primary.displayName.isCallableDisplay() &&
+                fallback?.displayName?.isCallableDisplay() == true -> fallback
             // Prefer declared/inferred CLASS/FUNCTION kinds when primary is only UNKNOWN.
             primary.kind == TypeInfoKind.UNKNOWN &&
                 fallback != null &&
@@ -936,11 +889,8 @@ class LuaWorkspaceQueryFacade(
         }
     }
 
-    private fun isPreferredHoverStructuredKind(kind: TypeInfoKind): Boolean {
-        return kind == TypeInfoKind.FUNCTION ||
-            kind == TypeInfoKind.CLASS ||
-            kind == TypeInfoKind.MODULE
-    }
+    private fun isPreferredHoverStructuredKind(kind: TypeInfoKind): Boolean =
+        kind == TypeInfoKind.FUNCTION || kind == TypeInfoKind.CLASS || kind == TypeInfoKind.MODULE
 
     private fun memberReceiverType(
         model: io.github.dingyi222666.luaparser.semantic.model.SemanticModel,
@@ -1253,20 +1203,27 @@ class LuaWorkspaceQueryFacade(
     ): List<WorkspaceLocation> {
         val declaration = localDeclarationForSymbol(semanticFile, symbol?.symbolId) ?: return emptyList()
         val locations = linkedMapOf<String, WorkspaceLocation>()
-
         declarationReferenceLocation(path, declaration)?.let { locations.putLocation(it) }
+        locations.putIdentifierUsages(semanticFile, path, declaration.name, symbol?.symbolId)
+        return locations.values.toList()
+    }
 
+    /** Identifier usages whose model symbol resolves to [symbolId], appended as locations. */
+    private fun MutableMap<String, WorkspaceLocation>.putIdentifierUsages(
+        semanticFile: WorkspaceSemanticFile,
+        path: VirtualPath,
+        name: String,
+        symbolId: String?
+    ) {
         semanticFile.identifiers
             .asSequence()
-            .filter { it.name == declaration.name }
+            .filter { it.name == name }
             .forEach { identifier ->
                 val usage = semanticFile.model.getSymbolAt(identifier.range.start) ?: return@forEach
-                if (usage.symbolId == symbol?.symbolId) {
-                    locations.putLocation(WorkspaceLocation(path, identifier.range))
+                if (usage.symbolId == symbolId) {
+                    putLocation(WorkspaceLocation(path, identifier.range))
                 }
             }
-
-        return locations.values.toList()
     }
 
     private fun declarationReferenceLocation(
@@ -1310,6 +1267,14 @@ class LuaWorkspaceQueryFacade(
             ?.takeIf { it.constantType == ConstantNode.TYPE.STRING }
             ?.stringOf()
     }
+
+    /** Non-null single-element list when the caret sits on an import target string literal. */
+    private fun importTargetDefinitionAt(
+        path: VirtualPath,
+        semanticFile: WorkspaceSemanticFile?,
+        node: BaseASTNode?
+    ): List<WorkspaceLocation>? =
+        semanticFile?.let { importTargetDefinition(path, it, node) }?.let(::listOf)
 
     private fun importTargetDefinition(
         path: VirtualPath,
@@ -1385,15 +1350,11 @@ class LuaWorkspaceQueryFacade(
                 if (!visitCallLike(node)) super.visitStringCallExpression(node, value)
             }
 
-            override fun visitIdentifier(node: Identifier, value: Unit) = Unit
             override fun visitAttributeIdentifier(
                 identifier: io.github.dingyi222666.luaparser.parser.ast.node.AttributeIdentifier,
                 value: Unit
             ) = Unit
-            override fun visitCommentStatement(
-                commentStatement: io.github.dingyi222666.luaparser.parser.ast.node.CommentStatement,
-                value: Unit
-            ) = Unit
+            // visitIdentifier / visitCommentStatement keep their (empty) interface defaults.
         }
         visitor.visitChunkNode(semanticFile.chunk, Unit)
         return match
@@ -1486,11 +1447,6 @@ class LuaWorkspaceQueryFacade(
         return aliasResolvesToImportCallable(semanticFile, initExpression, hopExclusions, visited)
     }
 
-    private fun importedSymbolLocation(symbolId: String): WorkspaceLocation? {
-        val identity = ImportedSymbolIdentity.parse(symbolId) ?: return null
-        return WorkspaceLocation(identity.providerPath, syntheticModuleRange(identity.alias))
-    }
-
     /**
      * Shared imported-alias definition ladder: symbol-handle location first, else the
      * provider site of the resolved import under the caret. [importedAt] must be the
@@ -1501,7 +1457,9 @@ class LuaWorkspaceQueryFacade(
         symbol: io.github.dingyi222666.luaparser.semantic.api.Symbol?,
         importedAt: WorkspaceImportedSymbol?
     ): WorkspaceLocation? {
-        return symbol?.symbolId?.let(::importedSymbolLocation)
+        return symbol?.symbolId
+            ?.let { ImportedSymbolIdentity.parse(it) }
+            ?.let { WorkspaceLocation(it.providerPath, syntheticModuleRange(it.alias)) }
             ?: importedAt?.let { WorkspaceLocation(it.providerPath, syntheticModuleRange(it.alias)) }
     }
 
@@ -1524,25 +1482,13 @@ class LuaWorkspaceQueryFacade(
 
         snapshot.files.values
             .mapNotNull { it.semanticFile }
-            .forEach { file ->
-                file.identifiers
-                    .asSequence()
-                    .filter { it.name == identity.alias }
-                    .forEach { identifier ->
-                        val usage = file.model.getSymbolAt(identifier.range.start) ?: return@forEach
-                        if (usage.symbolId == symbolId) {
-                            locations.putLocation(WorkspaceLocation(file.path, identifier.range))
-                        }
-                    }
-            }
+            .forEach { file -> locations.putIdentifierUsages(file, file.path, identity.alias, symbolId) }
 
         return locations.values.toList()
     }
 
 
-    private fun isImportedSymbolHandle(symbolId: String): Boolean {
-        return ImportedSymbolIdentity.parse(symbolId) != null
-    }
+    private fun isImportedSymbolHandle(symbolId: String): Boolean = ImportedSymbolIdentity.parse(symbolId) != null
 
     private fun workspaceModuleLookup(path: VirtualPath, moduleName: String): WorkspaceModuleLookupResult? {
         val resolved = resolveWorkspaceRequire(path, moduleName) ?: return null
@@ -1812,12 +1758,12 @@ class LuaWorkspaceQueryFacade(
         }
     }
 
-    private fun localInitializerExpression(declaration: BinderDeclaration): ExpressionNode? {
+    private fun localInitializerExpression(declaration: BinderDeclaration): ExpressionNode? =
         if (declaration.kind != DeclarationKind.LOCAL || declaration.anchorNode !is Identifier) {
-            return null
+            null
+        } else {
+            localDeclarationInitializer(declaration)
         }
-        return localDeclarationInitializer(declaration)
-    }
 
     private fun resolvedRequireForWorkspaceMemberReceiver(
         semanticFile: WorkspaceSemanticFile,
@@ -2294,29 +2240,24 @@ class LuaWorkspaceQueryFacade(
         val before = prefix.substring(0, openIndex).trimEnd()
         return when {
             moduleCallBeforeQuote.containsMatchIn(before) ->
-                resolver.completionModuleNames().map { name ->
-                    CompletionItem(
-                        label = name,
-                        kind = CompletionItemKind.MODULE,
-                        insertText = name,
-                        sortText = name
-                    )
-                }
+                resolver.completionModuleNames().map { plainCompletionItem(it, CompletionItemKind.MODULE) }
 
             else -> {
                 val key = tableKeyBeforeQuote.find(before)?.groupValues?.get(1)
-                val values = key?.let { LuaLayoutValueDomains.forKey(it) }.orEmpty()
-                values.map { value ->
-                    CompletionItem(
-                        label = value,
-                        kind = CompletionItemKind.KEYWORD,
-                        insertText = value,
-                        sortText = value
-                    )
-                }.ifEmpty { null }
+                key?.let { LuaLayoutValueDomains.forKey(it) }.orEmpty()
+                    .map { plainCompletionItem(it, CompletionItemKind.KEYWORD) }
+                    .ifEmpty { null }
             }
         }
     }
+
+    /** Completion item whose label, insert text and sort text all carry [name]. */
+    private fun plainCompletionItem(name: String, kind: CompletionItemKind) = CompletionItem(
+        label = name,
+        kind = kind,
+        insertText = name,
+        sortText = name
+    )
 
     /** True when [identifier] is the member selector of `base.name`, not a standalone variable reference. */
     private fun isMemberAccessIdentifier(identifier: Identifier): Boolean {
@@ -2358,24 +2299,20 @@ class LuaWorkspaceQueryFacade(
         return memberExpression.takeIf { it.isCompletionSite(position) }
     }
 
-    private fun SymbolKind.toCompletionItemKind(): CompletionItemKind {
-        return when (this) {
-            SymbolKind.FUNCTION -> CompletionItemKind.FUNCTION
-            SymbolKind.METHOD -> CompletionItemKind.METHOD
-            SymbolKind.FIELD -> CompletionItemKind.FIELD
-            SymbolKind.CLASS -> CompletionItemKind.CLASS
-            SymbolKind.TYPE_ALIAS -> CompletionItemKind.TYPE_ALIAS
-            SymbolKind.MODULE -> CompletionItemKind.MODULE
-            SymbolKind.PARAMETER -> CompletionItemKind.PARAMETER
-            SymbolKind.LOCAL,
-            SymbolKind.VARIABLE -> CompletionItemKind.VARIABLE
-            SymbolKind.UNKNOWN -> CompletionItemKind.TEXT
-        }
+    private fun SymbolKind.toCompletionItemKind(): CompletionItemKind = when (this) {
+        SymbolKind.FUNCTION -> CompletionItemKind.FUNCTION
+        SymbolKind.METHOD -> CompletionItemKind.METHOD
+        SymbolKind.FIELD -> CompletionItemKind.FIELD
+        SymbolKind.CLASS -> CompletionItemKind.CLASS
+        SymbolKind.TYPE_ALIAS -> CompletionItemKind.TYPE_ALIAS
+        SymbolKind.MODULE -> CompletionItemKind.MODULE
+        SymbolKind.PARAMETER -> CompletionItemKind.PARAMETER
+        SymbolKind.LOCAL,
+        SymbolKind.VARIABLE -> CompletionItemKind.VARIABLE
+        SymbolKind.UNKNOWN -> CompletionItemKind.TEXT
     }
 
-    private fun isUserFacingExportName(name: String): Boolean {
-        return name.isNotBlank() && !name.startsWith("__")
-    }
+    private fun isUserFacingExportName(name: String): Boolean = name.isNotBlank() && !name.startsWith("__")
 
     private fun importCompletions(
         path: VirtualPath,
@@ -2446,16 +2383,29 @@ class LuaWorkspaceQueryFacade(
         return resolver.importedSymbolFor(path, identifier.name)
     }
 
-    private fun importedSymbol(imported: WorkspaceImportedSymbol): io.github.dingyi222666.luaparser.semantic.api.Symbol {
-        val typeInfo = importedTypeInfo(imported.valueType)
+    private fun importedSymbol(imported: WorkspaceImportedSymbol): io.github.dingyi222666.luaparser.semantic.api.Symbol =
+        surfaceSymbol(imported.alias, imported.kind, null, importedTypeInfo(imported.valueType), imported.valueType.displayName, importedSymbolHandle(imported))
+
+    /**
+     * Shared api.Symbol assembly for hover/definition surfaces: type and declaredType always
+     * carry the same TypeInfo, and detail mirrors the display value.
+     */
+    private fun surfaceSymbol(
+        name: String,
+        kind: SymbolKind,
+        range: Range?,
+        typeInfo: TypeInfo,
+        detail: String?,
+        symbolId: String
+    ): io.github.dingyi222666.luaparser.semantic.api.Symbol {
         return io.github.dingyi222666.luaparser.semantic.api.Symbol(
-            name = imported.alias,
-            kind = imported.kind,
-            range = null,
+            name = name,
+            kind = kind,
+            range = range,
             type = typeInfo,
             declaredType = typeInfo,
-            detail = imported.valueType.displayName,
-            symbolId = importedSymbolHandle(imported)
+            detail = detail,
+            symbolId = symbolId
         )
     }
 
@@ -2568,26 +2518,15 @@ class LuaWorkspaceQueryFacade(
         )
     }
 
-    private fun exportSymbol(export: WorkspaceModuleResolver.ResolvedExportMember): io.github.dingyi222666.luaparser.semantic.api.Symbol {
-        val typeInfo = exportTypeInfo(export)
-        return io.github.dingyi222666.luaparser.semantic.api.Symbol(
-            name = export.member.name,
-            kind = export.member.kind,
-            range = export.member.range,
-            type = typeInfo,
-            declaredType = typeInfo,
-            detail = export.type.displayName,
-            symbolId = export.handle
-        )
-    }
+    private fun exportSymbol(export: WorkspaceModuleResolver.ResolvedExportMember): io.github.dingyi222666.luaparser.semantic.api.Symbol =
+        surfaceSymbol(export.member.name, export.member.kind, export.member.range, exportTypeInfo(export), export.type.displayName, export.handle)
 
     private fun exportTypeInfo(export: WorkspaceModuleResolver.ResolvedExportMember): TypeInfo {
         val memberType = export.type
         val moduleType = memberType as? ModuleType
         val isFunctionLike = export.member.kind == SymbolKind.FUNCTION ||
             export.member.kind == SymbolKind.METHOD ||
-            memberType.displayName.contains("fun(") ||
-            memberType.displayName.contains("fun<")
+            memberType.displayName.isCallableDisplay()
         return TypeInfo(
             displayName = memberType.displayName,
             detail = memberType.displayName,
@@ -2622,18 +2561,10 @@ class LuaWorkspaceQueryFacade(
         // at fact-lookup cost instead of an AST traversal per query.
         return facts.requires.any { fact ->
             fact.moduleName == moduleName &&
-                requireCallAt(semanticFile, fact.range)
+                semanticFile.nodeAt(fact.range.start)
+                    ?.let(::enclosingCallExpression)
                     ?.let { builtinRequireModuleName(semanticFile, it) == moduleName } == true
         }
-    }
-
-    /** The call enclosing the start of a collected [DocumentFacts.RequireFact] range. */
-    private fun requireCallAt(
-        semanticFile: WorkspaceSemanticFile,
-        range: Range
-    ): io.github.dingyi222666.luaparser.parser.ast.node.CallExpression? {
-        val node = semanticFile.nodeAt(range.start) ?: return null
-        return enclosingCallExpression(node)
     }
 
     private fun requireCallSite(path: VirtualPath, position: Position): RequireCallSite? {

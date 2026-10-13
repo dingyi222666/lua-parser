@@ -57,7 +57,8 @@ import io.github.dingyi222666.luaparser.semantic.types.model.UnknownType
  * [toJavaClassType]'s `dexClasses` parameter) — everything else stays a shell.
  */
 object DexClassModelAdapter {
-    private fun <K, V> boundedCache(limit: Int): MutableMap<K, V> = java.util.Collections.synchronizedMap(
+    /** Synchronized access-ordered LRU map bounded at [limit] entries (shared with [JvmClassModuleProvider]). */
+    internal fun <K, V> boundedCache(limit: Int): MutableMap<K, V> = java.util.Collections.synchronizedMap(
         object : LinkedHashMap<K, V>(16, 0.75f, true) {
             override fun removeEldestEntry(eldest: MutableMap.MutableEntry<K, V>?): Boolean = size > limit
         }
@@ -119,10 +120,7 @@ object DexClassModelAdapter {
         init {
             // Index construction over a framework-sized dex (~6k classes) measured 2-4s
             // per device stack sample; yield to the interactive checkpoint mid-build.
-            var visited = 0
-            classes.forEach {
-                if (++visited % 256 == 0) surfaceAssemblyCheckpoint()
-            }
+            classes.forEachIndexed { index, _ -> if (index % 256 == 255) surfaceAssemblyCheckpoint() }
         }
     }
 
@@ -277,19 +275,9 @@ object DexClassModelAdapter {
             }
             val valueType = descriptorToType(field.typeDescriptor, dexByName, memberResolving, memberDepth)
             if (field.accessFlags and ACC_STATIC != 0) {
-                staticMembers[field.name] = JavaStaticMemberType(
-                    owner = javaName,
-                    memberName = field.name,
-                    valueType = valueType,
-                    memberKind = JavaMemberKind.FIELD
-                )
+                staticMembers[field.name] = JavaStaticMemberType(javaName, field.name, valueType)
             } else {
-                instanceMembers[field.name] = JavaInstanceMemberType(
-                    owner = javaName,
-                    memberName = field.name,
-                    valueType = valueType,
-                    memberKind = JavaMemberKind.FIELD
-                )
+                instanceMembers[field.name] = JavaInstanceMemberType(javaName, field.name, valueType)
             }
         }
 
@@ -299,33 +287,17 @@ object DexClassModelAdapter {
                 functionTypeFor(overload, dexByName, memberResolving, memberDepth)
             }
             val signatureMetadata = overloads.map(::signatureMetadataFor)
-            val member = if (signatures.size == 1) {
+            val member: Type = if (signatures.size == 1) {
                 signatures.single()
             } else {
-                JavaOverloadType(
-                    javaName = javaName,
-                    overloadName = name,
-                    callSignatures = signatures,
-                    signatureMetadata = signatureMetadata
-                )
+                JavaOverloadType(javaName, name, signatures, signatureMetadata)
             }
-            val isStatic = overloads.first().accessFlags and ACC_STATIC != 0
-            if (isStatic) {
-                staticMembers[name] = JavaStaticMemberType(
-                    owner = javaName,
-                    memberName = name,
-                    valueType = member,
-                    memberKind = JavaMemberKind.METHOD,
-                    signatureMetadata = signatureMetadata
-                )
+            if (overloads.first().accessFlags and ACC_STATIC != 0) {
+                staticMembers[name] = JavaStaticMemberType(javaName, name, member, JavaMemberKind.METHOD,
+                    signatureMetadata = signatureMetadata)
             } else {
-                instanceMembers[name] = JavaInstanceMemberType(
-                    owner = javaName,
-                    memberName = name,
-                    valueType = member,
-                    memberKind = JavaMemberKind.METHOD,
-                    signatureMetadata = signatureMetadata
-                )
+                instanceMembers[name] = JavaInstanceMemberType(javaName, name, member, JavaMemberKind.METHOD,
+                    signatureMetadata = signatureMetadata)
             }
         }
 
@@ -580,7 +552,8 @@ object DexClassModelAdapter {
         resolving: Set<String>,
         referenceDepth: Int
     ): Type {
-        when (binaryNameKey(binaryName)) {
+        val key = binaryNameKey(binaryName)
+        when (key) {
             "java.lang.Boolean" -> return PrimitiveType.BOOLEAN
             "java.lang.Character",
             "java.lang.String",
@@ -598,11 +571,11 @@ object DexClassModelAdapter {
             "java.math.BigDecimal" -> return PrimitiveType.NUMBER
         }
         val shell = typeReferenceForBinaryName(binaryName)
-        if (binaryNameKey(binaryName) in resolving) {
+        if (key in resolving) {
             return JavaInstanceType(shell)
         }
         val dexClass = dexByName[binaryName]
-            ?: dexByName[binaryNameKey(binaryName)]
+            ?: dexByName[key]
             ?: dexByName[binaryName.replace('.', '/')]
             ?: return JavaInstanceType(shell)
         // Direct same-dex-set references carry their member surface. Deeper references get
@@ -613,7 +586,7 @@ object DexClassModelAdapter {
             return JavaInstanceType(shell)
         }
         val referenceType = if (dexByName is DexIndex) {
-            dexByName.referenceTypes.computeIfAbsent(binaryNameKey(binaryName)) {
+            dexByName.referenceTypes.computeIfAbsent(key) {
                 javaClassTypeFor(cls = dexClass, dexByName = dexByName,
                     resolving = emptySet(), referenceDepth = 1)
             }

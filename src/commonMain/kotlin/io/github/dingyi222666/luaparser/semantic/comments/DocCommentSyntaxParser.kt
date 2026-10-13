@@ -155,22 +155,13 @@ class DocCommentSyntaxParser {
 
     private fun parseClassTag(content: String, lineInfo: DocLineInfo): ClassTagSyntax {
         val colonIndex = indexOfTopLevelChar(content, ':')
-        val nameSegment = if (colonIndex == -1) content.trim() else content.substring(0, colonIndex).trim()
-        val parentName = if (colonIndex == -1) null else content.substring(colonIndex + 1).trim().ifBlank { null }
-        val genericStart = nameSegment.indexOf('<')
-        val name = if (genericStart == -1) nameSegment else nameSegment.substring(0, genericStart).trim()
-        val declaredTypeParameters = if (genericStart == -1 || !nameSegment.endsWith(">")) {
-            emptyList()
-        } else {
-            splitTopLevelTypeText(
-                nameSegment.substring(genericStart + 1, nameSegment.length - 1),
-                ','
-            ).map { it.trim() }
-        }
-
+        val (name, declaredTypeParameters) = parseNamedTypeHeader(
+            if (colonIndex == -1) content.trim() else content.substring(0, colonIndex).trim()
+        )
         return ClassTagSyntax(
             name = name,
-            parentName = parentName,
+            parentName = colonIndex.takeIf { it != -1 }
+                ?.let { content.substring(it + 1).trim().ifBlank { null } },
             declaredTypeParameters = declaredTypeParameters,
             range = tokenRange(lineInfo, name)
         )
@@ -312,14 +303,9 @@ class DocCommentSyntaxParser {
             return trimmed to emptyList()
         }
 
-        val name = trimmed.substring(0, genericStart).trim()
-        val parameters = splitTopLevelTypeText(
-            trimmed.substring(genericStart + 1, trimmed.length - 1),
-            ','
-        ).mapNotNull { part ->
-            part.trim().takeIf(String::isNotEmpty)
-        }
-        return name to parameters
+        // splitTopLevelTypeText already trims each part and drops blanks.
+        return trimmed.substring(0, genericStart).trim() to
+            splitTopLevelTypeText(trimmed.substring(genericStart + 1, trimmed.length - 1), ',')
     }
 
     private fun parseMethodTag(content: String, lineInfo: DocLineInfo): MethodTagSyntax {
@@ -350,20 +336,10 @@ class DocCommentSyntaxParser {
     }
 
     private fun appendDescription(tag: DocTagSyntax, extra: String): DocTagSyntax {
-        val mergedDescription = listOf(tag.description, extra).filter(String::isNotBlank).joinToString("\n")
-        return when (tag) {
-            is AliasTagSyntax -> tag.copy(description = mergedDescription)
-            is ClassTagSyntax -> tag.copy(description = mergedDescription)
-            is FieldTagSyntax -> tag.copy(description = mergedDescription)
-            is GenericTagSyntax -> tag.copy(description = mergedDescription)
-            is JavaClassTagSyntax -> tag.copy(description = mergedDescription)
-            is MethodTagSyntax -> tag.copy(description = mergedDescription)
-            is OverloadTagSyntax -> tag.copy(description = mergedDescription)
-            is ParamTagSyntax -> tag.copy(description = mergedDescription)
-            is ReturnTagSyntax -> tag.copy(description = mergedDescription)
-            is TypeTagSyntax -> tag.copy(description = mergedDescription)
-            is UnknownTagSyntax -> tag.copy(description = mergedDescription)
-        }
+        // Tags are built fresh inside a single parse and are not shared or hashed, so the
+        // continuation lines can be merged in place instead of copying per concrete tag type.
+        tag.description = listOf(tag.description, extra).filter(String::isNotBlank).joinToString("\n")
+        return tag
     }
 
     private fun parseTypePrefix(text: String): ParsedTypeText? {
@@ -434,14 +410,7 @@ class DocCommentSyntaxParser {
         }
     }
 
-    private fun splitFirstToken(text: String): Pair<String, String> {
-        val trimmed = text.trim()
-        if (trimmed.isEmpty()) {
-            return "" to ""
-        }
-
-        return splitTopLevelToken(trimmed)
-    }
+    private fun splitFirstToken(text: String): Pair<String, String> = splitTopLevelToken(text.trim())
 
     /** Shared tag-tail rule: the parsed type's description, else the unconsumed remainder text. */
     private fun fallbackDescription(parsedType: ParsedTypeText?, remainder: String): String {

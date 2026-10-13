@@ -218,14 +218,8 @@ class CommentCollector(
         return trailingTarget ?: forward?.takeIf { target -> isAdjacentTo(target) }
     }
 
-    private fun CollectedCommentBlock.toAttachment(target: BaseASTNode?): CommentAttachment {
-        return CommentAttachment(
-            comments = comments,
-            target = target,
-            docComment = docComment,
-            inlineTypeText = inlineTypeText
-        )
-    }
+    private fun CollectedCommentBlock.toAttachment(target: BaseASTNode?): CommentAttachment =
+        CommentAttachment(comments = comments, target = target, docComment = docComment, inlineTypeText = inlineTypeText)
 }
 
 internal class CommentScanResult(

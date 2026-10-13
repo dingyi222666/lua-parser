@@ -31,30 +31,19 @@ class BinderPositionQueries(
         declarationIndex.declarations.mapIndexed { index, declaration -> declaration.id to index }.toMap()
     }
 
-    private val scopeIndex by lazy { PositionRangeIndex(
-        scopeGraph.scopes.mapIndexed { index, scope ->
-            PositionRangeIndex.Entry(
-                range = scope.range,
-                payload = scope,
-                stableOrder = index
-            )
-        }
-    ) }
-
-    private val declarationIndexByPosition by lazy { PositionRangeIndex(
-        declarationIndex.declarations.mapIndexed { index, declaration ->
-            PositionRangeIndex.Entry(
-                range = declaration.range,
-                payload = declaration,
-                stableOrder = index
-            )
-        }
-    ) }
-
-    fun getScopeAt(position: Position): Scope? {
-        return scopeIndex.query(position)
-            .minWithOrNull(::compareScopesAtPosition)
+    private val scopeIndex by lazy {
+        PositionRangeIndex(scopeGraph.scopes.mapIndexed { index, scope ->
+            PositionRangeIndex.Entry(scope.range, scope, index)
+        })
     }
+
+    private val declarationIndexByPosition by lazy {
+        PositionRangeIndex(declarationIndex.declarations.mapIndexed { index, declaration ->
+            PositionRangeIndex.Entry(declaration.range, declaration, index)
+        })
+    }
+
+    fun getScopeAt(position: Position): Scope? = scopeIndex.query(position).minWithOrNull(::compareScopesAtPosition)
 
     /**
      * Scope-chain entry for free-position queries (completion enumeration, bare-name
@@ -117,10 +106,9 @@ class BinderPositionQueries(
         return scope
     }
 
-    fun getDeclarationsAt(position: Position): List<BinderDeclaration> {
-        return declarationIndexByPosition.query(position)
+    fun getDeclarationsAt(position: Position): List<BinderDeclaration> =
+        declarationIndexByPosition.query(position)
             .sortedWith { a, b -> compareDeclarationsAtPosition(a, b, position) }
-    }
 
     fun getDeclarationAt(position: Position): BinderDeclaration? {
         val matches = getDeclarationsAt(position)
@@ -138,32 +126,18 @@ class BinderPositionQueries(
         return declarationIndex.getSymbol(symbolId)
     }
 
-    private fun compareScopesAtPosition(a: Scope, b: Scope): Int {
-        val specificity = compareRangeSpecificity(a.range, b.range)
-        if (specificity != 0) {
-            return specificity
-        }
-
-        val depthComparison = scopeDepths.getValue(b.id).compareTo(scopeDepths.getValue(a.id))
-        if (depthComparison != 0) {
-            return depthComparison
-        }
-
-        return b.id.value.compareTo(a.id.value)
-    }
+    private fun compareScopesAtPosition(a: Scope, b: Scope): Int =
+        compareRangeSpecificity(a.range, b.range).takeIf { it != 0 }
+            ?: scopeDepths.getValue(b.id).compareTo(scopeDepths.getValue(a.id)).takeIf { it != 0 }
+            ?: b.id.value.compareTo(a.id.value)
 
     private fun compareDeclarationsAtPosition(
         a: BinderDeclaration,
         b: BinderDeclaration,
         position: Position
-    ): Int {
-        val precedence = compareDeclarationPrecedence(a, b, position)
-        if (precedence != 0) {
-            return precedence
-        }
-
-        return declarationOrders.getValue(a.id).compareTo(declarationOrders.getValue(b.id))
-    }
+    ): Int =
+        compareDeclarationPrecedence(a, b, position).takeIf { it != 0 }
+            ?: declarationOrders.getValue(a.id).compareTo(declarationOrders.getValue(b.id))
 
     private fun compareDeclarationPrecedence(
         a: BinderDeclaration,
@@ -187,16 +161,12 @@ class BinderPositionQueries(
      * parents to the pushed scope, and the root is pushed before any binding), so the tree
      * walk from the root covers all scopes and compareScopesAtPosition's `getValue` is total.
      */
-    private fun buildScopeDepths(scopeGraph: ScopeGraph): Map<ScopeId, Int> {
-        val depths = mutableMapOf<ScopeId, Int>()
-
+    private fun buildScopeDepths(scopeGraph: ScopeGraph): Map<ScopeId, Int> = buildMap<ScopeId, Int> {
         fun visit(scope: Scope, depth: Int) {
-            depths[scope.id] = depth
+            put(scope.id, depth)
             scopeGraph.getChildren(scope.id).forEach { child -> visit(child, depth + 1) }
         }
 
         visit(scopeGraph.rootScope, 0)
-
-        return depths
     }
 }

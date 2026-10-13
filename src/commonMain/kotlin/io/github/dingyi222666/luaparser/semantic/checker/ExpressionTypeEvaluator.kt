@@ -291,16 +291,16 @@ class ExpressionTypeEvaluator internal constructor(
         val declaration = findVisibleValueDeclaration(node.name, node.range.start, context)
         // A source declaration shadows imports. Resolve it before consulting
         // workspace globals, which can evaluate other documents on demand.
-        if (declaration?.origin == DeclarationOrigin.AST) {
-            return luaJavaLocalInitializerType(declaration, context)
-                ?: typeOfDeclaration(declaration, context)
+        val imported = if (declaration?.origin != DeclarationOrigin.AST) {
+            workspaceContext.importedSymbols[node.name]
+                ?: workspaceContext.resolveImportedSymbol?.invoke(node.name)
+        } else {
+            null
         }
-        val imported = workspaceContext.importedSymbols[node.name]
-            ?: workspaceContext.resolveImportedSymbol?.invoke(node.name)
         if (declaration != null) {
             luaJavaLocalInitializerType(declaration, context)?.let { return it }
             val declarationType = typeOfDeclaration(declaration, context)
-            return if (declaration.origin != DeclarationOrigin.AST && imported?.extendsExistingGlobal == true) {
+            return if (imported?.extendsExistingGlobal == true) {
                 mergeWorkspaceGlobalExtension(declarationType, imported.valueType)
             } else {
                 declarationType
@@ -414,11 +414,14 @@ class ExpressionTypeEvaluator internal constructor(
         return ANDROID_VIEW_NAME_SUFFIXES.any(name::endsWith) || name in KNOWN_ANDROID_VIEW_SIMPLE_NAMES
     }
 
+    /** Hydrated member/index resolution result; unknown when nothing resolved. */
+    private fun MemberResolution.hydratedType(): Type = type?.hydrateWorkspaceProviderType() ?: UnknownType
+
     private fun evaluateMemberExpression(node: MemberExpression, context: Context): Type {
         val baseType = evaluateReferenceBaseType(node.base, context).hydrateWorkspaceProviderType()
-        return memberResolver.resolveMember(baseType, node.identifier.name, node.indexer == ":", context.lexicalScopeId).type
-            ?.hydrateWorkspaceProviderType()
-            ?: UnknownType
+        return memberResolver
+            .resolveMember(baseType, node.identifier.name, node.indexer == ":", context.lexicalScopeId)
+            .hydratedType()
     }
 
     private fun evaluateIndexExpression(node: IndexExpression, context: Context): Type {
@@ -431,9 +434,9 @@ class ExpressionTypeEvaluator internal constructor(
         }
         val baseType = evaluateReferenceBaseType(node.base, context).hydrateWorkspaceProviderType()
         val indexType = evaluate(node.index, context)
-        return memberResolver.resolveIndex(baseType, node.index, indexType, context.lexicalScopeId).type
-            ?.hydrateWorkspaceProviderType()
-            ?: UnknownType
+        return memberResolver
+            .resolveIndex(baseType, node.index, indexType, context.lexicalScopeId)
+            .hydratedType()
     }
 
     private fun evaluateCallExpression(node: CallExpression, context: Context): Type {
@@ -443,18 +446,15 @@ class ExpressionTypeEvaluator internal constructor(
         // dead-end every fluent chain through a table argument
         // (`animator.addListener{...}.start()`). Delegate to the inner call instead.
         if (node.arguments.isEmpty() && !node.bad) {
-            val tableCallBase = node.base as? TableCallExpression
-            if (tableCallBase != null) {
-                return evaluateCallExpression(tableCallBase, context)
-            }
+            (node.base as? TableCallExpression)?.let { return evaluateCallExpression(it, context) }
         }
         resolveBuiltinRequire(node, context)?.let { return it }
         resolveDynamicImportCall(node, context)?.let { return it }
         resolveLuaJavaHelperColonCall(node, context)?.let { return it }
         resolveBindClassCall(node, context)?.let { return it }
-        resolveNewInstanceCall(node, context)?.let { return it }
+        resolveLuaJavaDegradingHelperCall(node, context, "newInstance")?.let { return it }
         resolveCreateProxyCall(node, context)?.let { return it }
-        resolveLoadLibCall(node, context)?.let { return it }
+        resolveLuaJavaDegradingHelperCall(node, context, "loadLib")?.let { return it }
         resolveLuaJavaArrayCall(node, context)?.let { return it }
         resolveJvmConstructorCall(node, context)?.let { return it }
         // The runtime host context retains its complete documented helper surface.
@@ -572,14 +572,23 @@ class ExpressionTypeEvaluator internal constructor(
         return PrimitiveType.UNKNOWN
     }
 
-    private fun resolveNewInstanceCall(node: CallExpression, context: Context): Type? {
-        if (!isLuaJavaCallBase(effectiveCallBase(node), context, "newInstance")) {
+    /**
+     * Shared probe for the degrading direct LuaJava helper calls (newInstance / loadLib):
+     * a recognized helper with missing/dynamic string targets degrades to unknown instead
+     * of null — dynamic class names must not inherit the JavaObject stub return from
+     * newInstance overlays (TASK-682), and invalid loadLib args must not keep a silent
+     * static-member surface (TASK-593).
+     */
+    private fun resolveLuaJavaDegradingHelperCall(
+        node: CallExpression,
+        context: Context,
+        helperName: String
+    ): Type? {
+        if (!isLuaJavaCallBase(effectiveCallBase(node), context, helperName)) {
             return null
         }
-        // Dynamic / non-literal class names must not inherit the JavaObject stub return from
-        // luajava.newInstance overlays (TASK-682). Keep unknown without inventing providers.
         val target = stringCallTarget(node) ?: return UnknownType
-        return luaJavaHelperCallReturn("newInstance", node, target, context) ?: UnknownType
+        return luaJavaHelperCallReturn(helperName, node, target, context) ?: UnknownType
     }
 
     /** The module's reflected constructor surface (`__call`), hydrated for Java providers. */
@@ -597,21 +606,14 @@ class ExpressionTypeEvaluator internal constructor(
         context: Context
     ): Boolean {
         val constructorType = moduleType.constructorSurface() ?: return false
+        // Constructor arguments are everything after the class-name string; the helper
+        // call is not a colon-method, so no implicit receiver is injected.
         return callChecker.checkCallValues(
             constructorType,
-            newInstanceConstructorArgumentSequences(node, context),
+            callArgumentSequences(callArguments(node).drop(1), context),
             context.lexicalScopeId
         ).isSuccess
     }
-
-    /**
-     * Constructor arguments for LuaJava newInstance are everything after the class-name string.
-     * The helper call itself is not a colon-method, so no implicit receiver is injected.
-     */
-    private fun newInstanceConstructorArgumentSequences(
-        node: CallExpression,
-        context: Context
-    ): List<ValueSequence> = callArgumentSequences(callArguments(node).drop(1), context)
 
     /**
      * Positional argument materialization shared by the call checker and the newInstance
@@ -642,17 +644,6 @@ class ExpressionTypeEvaluator internal constructor(
         }
         return if (interfaceTypes.isEmpty()) UnknownType else intersectionTypeOf(interfaceTypes)
     }
-
-    private fun resolveLoadLibCall(node: CallExpression, context: Context): Type? {
-        if (!isLuaJavaCallBase(effectiveCallBase(node), context, "loadLib")) {
-            return null
-        }
-        // TASK-593: recognized loadLib with missing/invalid args must not keep a silent
-        // static-member surface — degrade to unknown and let checker emit structured diagnostics.
-        val target = stringCallTarget(node) ?: return UnknownType
-        return luaJavaHelperCallReturn("loadLib", node, target, context)
-    }
-
 
     private fun resolveLuaJavaArrayCall(node: CallExpression, context: Context): Type? {
         val helperName = luaJavaArrayHelperName(node, context) ?: return null
@@ -748,26 +739,16 @@ class ExpressionTypeEvaluator internal constructor(
      */
     private fun hasValidLoadLibArguments(node: CallExpression): Boolean {
         val arguments = callArguments(node)
-        if (arguments.size != 2) {
-            return false
-        }
-        // Documented (className, memberName): both must be non-empty string literals.
-        return arguments.all { !stringLiteralOf(it).isNullOrEmpty() }
+        // Documented (className, memberName): exactly two non-empty string literals.
+        return arguments.size == 2 && arguments.all { !stringLiteralOf(it).isNullOrEmpty() }
     }
 
 
     private fun luaJavaArrayHelperName(node: CallExpression, context: Context): String? {
         val base = effectiveCallBase(node)
         return when (base) {
-            is MemberExpression -> {
-                if (base.identifier.name in luaJavaArrayHelperNames &&
-                    isLuaJavaHelperMember(base, context, base.identifier.name)
-                ) {
-                    base.identifier.name
-                } else {
-                    null
-                }
-            }
+            is MemberExpression -> base.identifier.name
+                .takeIf { it in luaJavaArrayHelperNames && isLuaJavaHelperMember(base, context, it) }
 
             is Identifier -> {
                 val declaration = callableDeclaration(base, context)
@@ -790,22 +771,17 @@ class ExpressionTypeEvaluator internal constructor(
      * dimensions are treated as invalid for typing purposes and force unknown[].
      */
     private fun hasValidNewArrayDimensions(node: CallExpression, context: Context): Boolean {
-        val arguments = callArguments(node)
         // class + at least one dimension
-        if (arguments.size < 2) {
-            return false
-        }
-        return arguments.drop(1).all { isValidNewArrayDimension(it, context) }
+        val arguments = callArguments(node)
+        return arguments.size >= 2 && arguments.drop(1).all { isValidNewArrayDimension(it, context) }
     }
 
     private fun isValidNewArrayDimension(expression: ExpressionNode, context: Context): Boolean {
         return when (expression) {
             is ConstantNode -> isPositiveNumericConstantDimension(expression)
-            is UnaryExpression -> {
-                // `-n` is always non-positive for array allocation; other unaries
-                // are not valid dimension expressions either.
-                false
-            }
+            // `-n` is always non-positive for array allocation; other unaries
+            // are not valid dimension expressions either.
+            is UnaryExpression -> false
             else -> isPositiveNumberLikeDimensionType(evaluate(expression, context))
         }
     }
@@ -852,12 +828,10 @@ class ExpressionTypeEvaluator internal constructor(
 
     private fun isPositiveNumberLiteral(value: Any?): Boolean {
         return when (value) {
-            is Int -> value > 0
-            is Long -> value > 0L
-            is Short -> value > 0
-            is Byte -> value > 0
             is Double -> value > 0.0 && !value.isNaN() && value == value.toLong().toDouble()
             is Float -> value > 0f && !value.isNaN() && value == value.toLong().toFloat()
+            // Integral literals (Int/Long/Short/Byte): toDouble() is never NaN, so the
+            // bare positivity check matches the former per-branch `value > 0` ladder.
             is Number -> {
                 val d = value.toDouble()
                 d > 0.0 && !d.isNaN()
@@ -997,16 +971,11 @@ class ExpressionTypeEvaluator internal constructor(
     ): Context {
         val scopeId = binder.positionQueries.getScopeAt(initializer.range.start)?.id ?: fallback.lexicalScopeId
         val localStatement = declaration.anchorNode?.parent as? LocalStatement ?: return fallback.copy(lexicalScopeId = scopeId)
-        val statementDeclarationIds = localStatement.init.mapNotNull { identifier ->
-            binder.declarationIndex.getDeclarations(identifier)
-                .firstOrNull { it.kind == DeclarationKind.LOCAL }
-                ?.id
-        }
         return fallback.copy(
             lexicalScopeId = scopeId,
             excludedDeclarations = fallback.excludedDeclarations.filterTo(linkedSetOf()) { id ->
                 binder.declarationIndex.getDeclaration(id)?.let { isVisibleAt(it, initializer.range.start) } == true
-            } + statementDeclarationIds
+            } + localStatementDeclarationIds(declaration)
         )
     }
 
@@ -1035,13 +1004,10 @@ class ExpressionTypeEvaluator internal constructor(
         if (!isLuaJavaCallBase(effectiveCallBase(node), context, "getContext")) {
             return null
         }
-        return androidLuaContextSurface()
-    }
-
-    private fun androidLuaContextSurface(): Type =
-        androidLuaHydratedSurfaceCache.getOrPut("AndroidLuaContext") {
+        return androidLuaHydratedSurfaceCache.getOrPut("AndroidLuaContext") {
             resolveDocumentedAndroidLuaContextType() ?: UnknownType
         }
+    }
 
     private fun resolveDocumentedAndroidLuaContextType(): Type? {
         val preferredNames = listOf("activity", "this", "service", "context")
@@ -1090,8 +1056,7 @@ class ExpressionTypeEvaluator internal constructor(
                 "Drawable" -> "android.graphics.drawable.Drawable"
                 else -> return@getOrPut UnknownType
             }
-            val imported = workspaceContext.resolveImportTarget?.invoke(fqcn)
-                ?: workspaceContext.workspaceResolver?.importTargetSymbol(fqcn)
+            val imported = resolveLuaJavaImportTarget(fqcn)
             imported?.moduleType?.javaInstanceSurface() ?: UnknownType
         }
 
@@ -1127,14 +1092,10 @@ class ExpressionTypeEvaluator internal constructor(
     }
 
     private fun createProxyTargets(node: CallExpression): List<String> {
-        val arguments = callArguments(node)
-        if (arguments.isEmpty()) {
-            return emptyList()
-        }
         // Interface list is the leading string args (comma-lists allowed). Stop at the first
         // non-string argument (implementation table/function) so trailing junk never becomes a target.
         val targets = mutableListOf<String>()
-        for (argument in arguments) {
+        for (argument in callArguments(node)) {
             val literal = stringLiteralOf(argument) ?: break
             targets += splitCreateProxyTargetList(literal)
         }
@@ -1212,13 +1173,9 @@ class ExpressionTypeEvaluator internal constructor(
 
     private fun resolveLoadLibMemberType(target: String, memberName: String, context: Context): Type {
         val moduleType = resolveLuaJavaImportTarget(target)?.moduleType ?: return UnknownType
-        val memberResolution = memberResolver.resolveMember(
-            baseType = moduleType.hydrateLuaJavaProviderType(),
-            memberName = memberName,
-            preferMethod = true,
-            lexicalScopeId = context.lexicalScopeId
-        )
-        return memberResolution.type
+        return memberResolver
+            .resolveMember(moduleType.hydrateLuaJavaProviderType(), memberName, preferMethod = true, context.lexicalScopeId)
+            .type
             ?.hydrateLuaJavaProviderType()
             ?: UnknownType
     }
@@ -1271,13 +1228,7 @@ class ExpressionTypeEvaluator internal constructor(
         val documentedParameterTypes = ownedDeclaration?.documentation?.resolvedParameterTypes.orEmpty()
         val documentedReturnType = ownedDeclaration?.documentation?.resolvedReturnTypes
             ?.takeIf { it.isNotEmpty() }
-            ?.let { returnTypes ->
-                if (returnTypes.size == 1) {
-                    returnTypes.single()
-                } else {
-                    MultiReturnType(returnTypes)
-                }
-            }
+            ?.let { if (it.size == 1) it.single() else MultiReturnType(it) }
 
         val functionScopeId = functionScope?.id ?: context.lexicalScopeId
         val parameterDeclarations = functionScope
@@ -1319,15 +1270,11 @@ class ExpressionTypeEvaluator internal constructor(
         // Prefer declared/owned @generic type parameters so value types keep fun<T> labels
         // even when body inference only rebuilds parameters/return (TASK-670).
         val typeParameters = declaredSignature?.typeParameters.orEmpty().ifEmpty {
-            ownedDeclaration?.let { declaration ->
-                binder.declarationIndex
-                    .getOwnedDeclarations(DeclarationOwner.Declaration(declaration.id))
-                    .filter { it.kind == DeclarationKind.TYPE_PARAMETER }
-                    .map { parameterDeclaration ->
-                        (parameterDeclaration.declaredType as? TypeParameterType)
-                            ?: TypeParameterType(name = parameterDeclaration.name)
-                    }
-            }.orEmpty()
+            ownedDeclaration
+                ?.let { binder.declarationIndex.getOwnedDeclarations(DeclarationOwner.Declaration(it.id)) }
+                .orEmpty()
+                .filter { it.kind == DeclarationKind.TYPE_PARAMETER }
+                .map { (it.declaredType as? TypeParameterType) ?: TypeParameterType(name = it.name) }
         }
         return FunctionType(
             parameters = parameters,
@@ -1509,10 +1456,9 @@ class ExpressionTypeEvaluator internal constructor(
      * reliably set on call arguments, so the historical parent-chain block walk silently
      * returned null (Delegates.notNull parent throws on unset access).
      */
-    private fun localTableInitializerFor(name: String, from: BaseASTNode, context: Context): TableConstructorExpression? {
-        val declaration = findVisibleValueDeclaration(name, from.range.start, context)
-        return declaration?.let { localDeclarationInitializer(it) } as? TableConstructorExpression
-    }
+    private fun localTableInitializerFor(name: String, from: BaseASTNode, context: Context): TableConstructorExpression? =
+        findVisibleValueDeclaration(name, from.range.start, context)
+            ?.let(::localDeclarationInitializer) as? TableConstructorExpression
 
     /**
      * `loadlayout("layout/main")` — resolve the workspace `.aly` file alyloader would load
@@ -1525,12 +1471,10 @@ class ExpressionTypeEvaluator internal constructor(
     }
 
     /** `.aly` layout chunks parse as `return <table>` (alyloader's bare-table wrap). */
-    private fun topLevelLayoutTable(chunk: ChunkNode): TableConstructorExpression? {
-        val returnStatement = chunk.body.returnStatement
-            ?: chunk.body.statements.filterIsInstance<ReturnStatement>().firstOrNull()
-            ?: return null
-        return returnStatement.arguments.filterIsInstance<TableConstructorExpression>().firstOrNull()
-    }
+    private fun topLevelLayoutTable(chunk: ChunkNode): TableConstructorExpression? =
+        (chunk.body.returnStatement
+            ?: chunk.body.statements.filterIsInstance<ReturnStatement>().firstOrNull())
+            ?.arguments?.filterIsInstance<TableConstructorExpression>()?.firstOrNull()
 
     /**
      * `loadlayout(addTab(...), nil, ...)` — the layout spec is the callee's first returned
@@ -1744,15 +1688,10 @@ class ExpressionTypeEvaluator internal constructor(
      * Parser assigns ConstantNode.INTERGER keys for implicit array positions; named
      * `id =` / `text =` fields use TableKeyString / Identifier keys and are not array fields.
      */
-    private fun isLayoutArrayField(field: TableKey, keyName: String?): Boolean {
-        if (field is TableKeyString) {
-            return false
-        }
-        if (keyName == null) {
-            return true
-        }
-        val key = field.key
-        return key is ConstantNode && key.constantType == ConstantNode.TYPE.INTERGER
+    private fun isLayoutArrayField(field: TableKey, keyName: String?): Boolean = when {
+        field is TableKeyString -> false
+        keyName == null -> true
+        else -> (field.key as? ConstantNode)?.constantType == ConstantNode.TYPE.INTERGER
     }
 
     /**
@@ -1761,11 +1700,9 @@ class ExpressionTypeEvaluator internal constructor(
      * identifier that looks like a view class becomes the current class for the table and its
      * nested tables. Returns null when [target] is unreachable from [root].
      */
-    fun layoutPropertyClassAt(root: TableConstructorExpression, target: TableConstructorExpression): LuaLayoutClassMatch? {
-        val row = layoutRows(root).firstOrNull { it.table === target } ?: return null
-        val name = row.className ?: return null
-        return LuaLayoutClassMatch(name, resolveLayoutViewClassType(name))
-    }
+    fun layoutPropertyClassAt(root: TableConstructorExpression, target: TableConstructorExpression): LuaLayoutClassMatch? =
+        layoutRows(root).firstOrNull { it.table === target }?.className
+            ?.let { LuaLayoutClassMatch(it, resolveLayoutViewClassType(it)) }
 
     /** A view-class identifier that resolves for layout completions: known view names or embedder-extended classes. */
     private fun isLayoutClassIdentifier(name: String): Boolean {
@@ -1816,18 +1753,10 @@ class ExpressionTypeEvaluator internal constructor(
         }
         result += LuaLayoutPropertySuggestion("style", LAYOUT_STYLE_DETAIL)
         result += LuaLayoutPropertySuggestion("onClick", LAYOUT_ON_CLICK_DETAIL)
-        suggestions.forEach { (label, detail) ->
-            result += LuaLayoutPropertySuggestion(label, detail)
-        }
+        suggestions.mapTo(result) { (label, detail) -> LuaLayoutPropertySuggestion(label, detail) }
         val known = result.mapTo(hashSetOf()) { it.label }
-        layoutPropertyExtensionEntries(match).forEach { extension ->
-            if (extension.label !in known) {
-                result += extension
-            }
-        }
-        LAYOUT_PARAM_SUGGESTIONS.forEach { (label, detail) ->
-            result += LuaLayoutPropertySuggestion(label, detail)
-        }
+        layoutPropertyExtensionEntries(match).filterTo(result) { it.label !in known }
+        result += LAYOUT_PARAM_SUGGESTIONS.map { (label, detail) -> LuaLayoutPropertySuggestion(label, detail) }
         // allInstanceMembers() walks the full reflected hierarchy; cache the derived list
         // per class so repeated keystrokes do not re-enumerate it.
         layoutSuggestionsCache[match.sourceName] = result
@@ -1883,10 +1812,8 @@ class ExpressionTypeEvaluator internal constructor(
             "android.view.$className"
         )
         for (candidate in candidates) {
-            val imported = workspaceContext.resolveImportTarget?.invoke(candidate)
-                ?: workspaceContext.workspaceResolver?.importTargetSymbol(candidate)
             // Reuse cached instance surface; never deep-hydrate member signatures.
-            val surface = imported?.moduleType?.javaInstanceSurface()
+            val surface = resolveLuaJavaImportTarget(candidate)?.moduleType?.javaInstanceSurface()
             if (surface != null && surface != UnknownType) {
                 layoutViewClassTypeCache[className] = surface
                 return surface
@@ -2035,12 +1962,8 @@ class ExpressionTypeEvaluator internal constructor(
 
     private fun luaJavaHelperCallType(call: CallExpression, target: String, context: Context): Type? {
         val base = effectiveCallBase(call)
-        for (helperName in luaJavaHelperCallNames) {
-            if (isLuaJavaCallBase(base, context, helperName)) {
-                return luaJavaHelperCallReturn(helperName, call, target, context)
-            }
-        }
-        return null
+        return luaJavaHelperCallNames.firstOrNull { isLuaJavaCallBase(base, context, it) }
+            ?.let { luaJavaHelperCallReturn(it, call, target, context) }
     }
 
     /**
@@ -2533,12 +2456,8 @@ class ExpressionTypeEvaluator internal constructor(
         // that body inference omitted; otherwise offset is 0 and this is a plain positional merge.
         val mergedParameters = inferredSignature.parameters.mapIndexed { index, parameter ->
             val declaredParameter = declaredSignature.parameters.getOrNull(index + declaredParameterOffset)
-            val parameterType = when {
-                declaredParameter == null -> parameter.type
-                parameter.type == UnknownType -> declaredParameter.type
-                declaredParameter.type == UnknownType -> parameter.type
-                else -> declaredParameter.type
-            }
+            // Declared wins over inferred unless it is missing or unknown-typed.
+            val parameterType = declaredParameter?.type?.takeIf { it != UnknownType } ?: parameter.type
             parameter.copy(
                 type = parameterType,
                 optional = declaredParameter?.optional ?: parameter.optional,
@@ -2555,16 +2474,10 @@ class ExpressionTypeEvaluator internal constructor(
         val typeParameters = declaredSignature.typeParameters.ifEmpty {
             inferredSignature.typeParameters
         }
-        val rebuiltName = FunctionType(
-            parameters = mergedParameters,
-            returnType = returnType,
-            typeParameters = typeParameters
-        ).name
         val mergedSignature = FunctionType(
             parameters = mergedParameters,
             returnType = returnType,
-            typeParameters = typeParameters,
-            name = rebuiltName
+            typeParameters = typeParameters
         )
         val signatures = listOf(mergedSignature) + declared.callSignatures.drop(1)
         val merged = if (signatures.size == 1) mergedSignature else OverloadedFunctionType(signatures)

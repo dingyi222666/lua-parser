@@ -125,12 +125,9 @@ class JvmClassModuleProvider(
             // load — or that a configured/imported dex library actually declares (dex
             // classes cannot load reflectively; they mount through DexClassModelAdapter).
             val provider = request.dexLibrary
-                ?.let { dex ->
-                    dex.classForBinaryName(request.className.replace('.', '/'))
-                        ?.let { cls -> providerForDexClass(dex, cls, deferMembers) }
-                }
-                ?: loadClassOrNull(request.className, request.classLoader)
-                    ?.let { clazz -> providerForClass(clazz, deferMembers) }
+                ?.let { dex -> dex.classForBinaryName(request.className.replace('.', '/'))
+                    ?.let { cls -> providerForDexClass(dex, cls, deferMembers) } }
+                ?: loadClassOrNull(request.className, request.classLoader)?.let { providerForClass(it, deferMembers) }
             provider?.let { (path, snapshot) -> providers[path] = snapshot }
         }
         // Bare `import "libs/classes.dex"` targets mount the library module plus a
@@ -194,26 +191,8 @@ class JvmClassModuleProvider(
     internal fun packageProvidersFor(
         importTargets: Collection<String>,
         configuration: JvmWorkspaceConfiguration
-    ): Map<VirtualPath, WorkspaceSnapshot.FileSnapshot> {
-        val normalized = configuration.normalized(defaultImportPrefixes)
-        // Always prefer a reflective classpath loader for package wildcards so host
-        // android.jar enumeration is not blocked by a caller-supplied ClassLoader that
-        // cannot see the configured jar. Caller classLoader is used only as the parent.
-        val classLoader = classLoaderForPackageEnumeration(normalized)
-        val providers = linkedMapOf<VirtualPath, WorkspaceSnapshot.FileSnapshot>()
-        val visitedPackages = linkedSetOf<String>()
-        importTargets.forEach { importText ->
-            // Wildcard-only listing: `android.widget.*` / `java.util.concurrent.*`.
-            // Package-name aliases and class FQCNs stay off the package-list key set.
-            val packageName = wildcardPackageName(importText) ?: return@forEach
-            if (!visitedPackages.add(packageName)) {
-                return@forEach
-            }
-            val packageProvider = packageProviderFor(packageName, normalized, classLoader) ?: return@forEach
-            providers[packageProvider.first] = packageProvider.second
-        }
-        return providers
-    }
+    ): Map<VirtualPath, WorkspaceSnapshot.FileSnapshot> =
+        packageSurfaceProviders(importTargets, configuration, membersOnly = false)
 
     /**
      * Shallow class providers for members of wildcard package targets.
@@ -225,24 +204,44 @@ class JvmClassModuleProvider(
     internal fun packageMemberClassProvidersFor(
         importTargets: Collection<String>,
         configuration: JvmWorkspaceConfiguration
+    ): Map<VirtualPath, WorkspaceSnapshot.FileSnapshot> =
+        packageSurfaceProviders(importTargets, configuration, membersOnly = true)
+
+    /**
+     * Shared package-enumeration walk behind both package surfaces ([membersOnly] picks
+     * shallow class modules over the package-list module). Both always prefer a reflective
+     * classpath loader for package wildcards so host android.jar enumeration is not blocked
+     * by a caller-supplied ClassLoader that cannot see the configured jar; the caller
+     * loader is used only as the parent. Wildcard-only listing for [membersOnly = false]:
+     * package-name aliases and class FQCNs stay off the package-list key set.
+     */
+    private fun packageSurfaceProviders(
+        importTargets: Collection<String>,
+        configuration: JvmWorkspaceConfiguration,
+        membersOnly: Boolean
     ): Map<VirtualPath, WorkspaceSnapshot.FileSnapshot> {
         val normalized = configuration.normalized(defaultImportPrefixes)
         val classLoader = classLoaderForPackageEnumeration(normalized)
         val providers = linkedMapOf<VirtualPath, WorkspaceSnapshot.FileSnapshot>()
         val visitedPackages = linkedSetOf<String>()
         importTargets.forEach { importText ->
-            // Accept both `pkg.*` wildcards and package-name aliases so engine-normalized
-            // targets and raw alias forms both mount shallow class modules.
             val packageName = wildcardPackageName(importText)
-                ?: packageNameFromImport(importText, normalized, classLoader)
+                ?: (if (membersOnly) packageNameFromImport(importText, normalized, classLoader) else null)
                 ?: return@forEach
             if (!visitedPackages.add(packageName)) {
                 return@forEach
             }
-            resolvedPackageClasses(packageName, classLoader, normalized).forEach { clazz ->
-                analysisCheckpoint()
-                providerForClass(clazz, deferMembers = true)?.let { (path, snapshot) ->
-                    providers.putIfAbsent(path, snapshot)
+            if (!membersOnly) {
+                val packageProvider = packageProviderFor(packageName, normalized, classLoader) ?: return@forEach
+                providers[packageProvider.first] = packageProvider.second
+            } else {
+                // Accept both `pkg.*` wildcards and package-name aliases so engine-normalized
+                // targets and raw alias forms both mount shallow class modules.
+                resolvedPackageClasses(packageName, classLoader, normalized).forEach { clazz ->
+                    analysisCheckpoint()
+                    providerForClass(clazz, deferMembers = true)?.let { (path, snapshot) ->
+                        providers.putIfAbsent(path, snapshot)
+                    }
                 }
             }
         }
@@ -495,7 +494,11 @@ class JvmClassModuleProvider(
         if (classes.isEmpty()) {
             return null
         }
-        val provider = providerForPackage(packageName, packageModuleTypeFor(packageName, classes))
+        val moduleType = packageModuleTypeFor(packageName, classes)
+        val provider = moduleProviderSnapshot(
+            VirtualPath.of("__jvm__/packages/${packageName.replace('.', '/')}.lua"), "package",
+            packageName, linkedSetOf(moduleType.moduleName), moduleType
+        )
         packageProviderCache[cacheKey] = provider
         return provider
     }
@@ -533,12 +536,7 @@ class JvmClassModuleProvider(
             if (parsed.pathPrefix != null || !configuration.androidDex.isNullOrBlank()) {
                 resolveDexClassLoad(parsed, target, configuration)?.let { return listOf(it) }
             }
-            val asClass = candidateClassNames(target).firstNotNullOfOrNull { candidate ->
-                analysisCheckpoint()
-                loadClassOrNull(candidate, targetClassLoader)
-                    ?.name
-                    ?.let { listOf(ResolvedClassLoad(it, targetClassLoader)) }
-            }
+            val asClass = loadedCandidateOrNull(candidateClassNames(target), targetClassLoader)
             if (asClass != null) {
                 return asClass
             }
@@ -575,23 +573,27 @@ class JvmClassModuleProvider(
                     resolveDexClassLoad(parsed, candidate, configuration)
                 }?.let { return@firstNotNullOfOrNull listOf(it) }
             }
-            shortNameCandidates.firstNotNullOfOrNull { candidate ->
-                // A classloader miss over the framework dex costs ~100-150ms per
-                // candidate on the emulator; without a checkpoint here a single
-                // prefix scan ran past interactive budgets (measured 4.2s for one
-                // implicit simple-name lookup and a >10s checker stall in the same
-                // resolution family).
-                analysisCheckpoint()
-                loadClassOrNull(candidate, targetClassLoader)
-                    ?.name
-                    ?.let { listOf(ResolvedClassLoad(it, targetClassLoader)) }
-            }
+            // The trailing Class.forName ladder is [loadedCandidateOrNull] (shared with the
+            // dotted-target branch above); a classloader miss over the framework dex costs
+            // ~100-150ms per candidate on the emulator, so the shared helper keeps the
+            // per-candidate analysisCheckpoint() (measured 4.2s for one implicit
+            // simple-name lookup and a >10s checker stall in the same resolution family).
+            loadedCandidateOrNull(shortNameCandidates, targetClassLoader)
         }.orEmpty().ifEmpty {
             // Dex simple-name fallback for short AndroLua names (`bindClass("Greeter")`
             // after `import "libs/classes.dex"`): unambiguous bare aliases only, never
             // Lua std module names.
             listOfNotNull(resolveDexSimpleNameLoad(target, configuration))
         }
+    }
+
+    /** First [Class.forName]-loadable candidate, as a single-element load list (null = all miss). */
+    private fun loadedCandidateOrNull(
+        candidates: Sequence<String>,
+        classLoader: ClassLoader
+    ): List<ResolvedClassLoad>? = candidates.firstNotNullOfOrNull { candidate ->
+        analysisCheckpoint()
+        loadClassOrNull(candidate, classLoader)?.name?.let { listOf(ResolvedClassLoad(it, classLoader)) }
     }
 
     /**
@@ -908,11 +910,7 @@ class JvmClassModuleProvider(
         }
         val separator = normalized.lastIndexOf(':')
         if (separator <= 0 || separator == normalized.lastIndex) {
-            return ImportTarget(
-                original = normalized,
-                pathPrefix = null,
-                className = normalized
-            )
+            return ImportTarget(original = normalized, pathPrefix = null, className = normalized)
         }
         return ImportTarget(
             original = normalized,
@@ -1384,7 +1382,10 @@ class JvmClassModuleProvider(
         if (deferMembers) shallowClassProviderCache[cacheKey]?.let { return it }
         val moduleType = if (deferMembers) reflectMetadataOrNull(clazz) { shallowModuleTypeFor(clazz) }
         else moduleTypeFor(clazz)
-        val provider = classProviderSnapshot(clazz, moduleType ?: return null)
+        val provider = moduleProviderSnapshot(
+            VirtualPath.of("__jvm__/classes/${clazz.name.replace('.', '/')}.lua"), "class",
+            clazz.name, reflectedClassProviderModuleNames(clazz), moduleType ?: return null
+        )
         if (!deferMembers) fullClassProviderCache[cacheKey] = provider
         // Full providers supersede shallow ones for the same reflected class identity.
         shallowClassProviderCache[cacheKey] = provider
@@ -1419,11 +1420,8 @@ class JvmClassModuleProvider(
         if (deferMembers) shallowClassProviderCache[cacheKey]?.let { return it }
         val moduleType = if (deferMembers) DexClassModelAdapter.shellModuleType(cls) else library.moduleTypeFor(cls)
         val provider = moduleProviderSnapshot(
-            providerPath = VirtualPath.of("__jvm__/classes/${cls.binaryName}.lua"),
-            providerKind = "dex class",
-            claimName = cls.binaryName.replace('/', '.'),
-            providedModuleNames = linkedSetOf(moduleType.moduleName),
-            moduleType = moduleType
+            VirtualPath.of("__jvm__/classes/${cls.binaryName}.lua"), "dex class",
+            cls.binaryName.replace('/', '.'), linkedSetOf(moduleType.moduleName), moduleType
         )
         dexProviderSnapshotCache[processKey] = provider
         if (!deferMembers) fullClassProviderCache[cacheKey] = provider
@@ -1464,25 +1462,12 @@ class JvmClassModuleProvider(
             indexSignature = ModuleType.IndexSignature(PrimitiveType.STRING, UnknownType)
         )
         val provider = moduleProviderSnapshot(
-            providerPath = VirtualPath.of("__jvm__/dex/$target.lua"),
-            providerKind = "dex library",
-            claimName = target,
-            providedModuleNames = linkedSetOf(moduleAlias),
-            moduleType = moduleType
+            VirtualPath.of("__jvm__/dex/$target.lua"), "dex library",
+            target, linkedSetOf(moduleAlias), moduleType
         )
         packageProviderCache[cacheKey] = provider
         dexProviderSnapshotCache[cacheKey] = provider
         return provider
-    }
-
-    private fun classProviderSnapshot(clazz: Class<*>, moduleType: ModuleType): Pair<VirtualPath, WorkspaceSnapshot.FileSnapshot> {
-        return moduleProviderSnapshot(
-            providerPath = VirtualPath.of("__jvm__/classes/${clazz.name.replace('.', '/')}.lua"),
-            providerKind = "class",
-            claimName = clazz.name,
-            providedModuleNames = reflectedClassProviderModuleNames(clazz),
-            moduleType = moduleType
-        )
     }
 
     /**
@@ -1510,27 +1495,13 @@ class JvmClassModuleProvider(
      * path recovery; they are not fingerprint claims. Never invents names outside reflection.
      */
     private fun reflectedClassProviderModuleNames(clazz: Class<*>): Set<String> {
-        val simple = clazz.simpleName.takeIf { it.isNotBlank() }
-            ?: clazz.name.substringAfterLast('$').substringAfterLast('.')
+        val simple = clazz.simpleName.ifBlank { clazz.name.substringAfterLast('$').substringAfterLast('.') }
         return simple.takeIf { it.isNotBlank() }?.let { linkedSetOf(it) } ?: emptySet()
     }
 
-    private fun providerForPackage(
-        packageName: String,
-        moduleType: ModuleType
-    ): Pair<VirtualPath, WorkspaceSnapshot.FileSnapshot> {
-        return moduleProviderSnapshot(
-            providerPath = VirtualPath.of("__jvm__/packages/${packageName.replace('.', '/')}.lua"),
-            providerKind = "package",
-            claimName = packageName,
-            providedModuleNames = linkedSetOf(moduleType.moduleName),
-            moduleType = moduleType
-        )
-    }
-
     /**
-     * Shared reflected-provider snapshot builder behind [classProviderSnapshot] and
-     * [providerForPackage]: identical ModuleExportSurface shape, fingerprint payload
+     * Shared reflected-provider snapshot builder behind the class, package, dex class and
+     * dex library providers: identical ModuleExportSurface shape, fingerprint payload
      * (`claimName + displayName + sorted member triplets`) and cacheKey derivation;
      * only the virtual-path prefix, source comment, claim name and advertised module
      * names differ.
@@ -2017,15 +1988,19 @@ class JvmClassModuleProvider(
         ).also { signatureMetadataCache[executable] = it }
     }
 
-    /** Shared top-level module member export ([moduleMembers] field/method shape). */
-    private fun memberExport(name: String, type: Type, kind: io.github.dingyi222666.luaparser.semantic.api.SymbolKind) =
-        ModuleExportSurface.MemberExport(
-            name = name,
-            exportPath = listOf(name),
-            kind = kind,
-            type = type,
-            range = null
-        )
+    /** Shared module member export ([moduleMembers] field/method shape; [classMembers] supplies its own export path). */
+    private fun memberExport(
+        name: String,
+        type: Type,
+        kind: io.github.dingyi222666.luaparser.semantic.api.SymbolKind,
+        exportPath: List<String> = listOf(name)
+    ) = ModuleExportSurface.MemberExport(
+        name = name,
+        exportPath = exportPath,
+        kind = kind,
+        type = type,
+        range = null
+    )
 
     private fun moduleMembers(moduleType: ModuleType): List<ModuleExportSurface.MemberExport> {
         val output = mutableListOf<ModuleExportSurface.MemberExport>()
@@ -2054,13 +2029,7 @@ class JvmClassModuleProvider(
             if (!exportedPaths.add(exportPath)) {
                 return
             }
-            output += ModuleExportSurface.MemberExport(
-                name = name,
-                exportPath = exportPath,
-                kind = kind,
-                type = memberType,
-                range = null
-            )
+            output += memberExport(name, memberType, kind, exportPath)
         }
         when (type) {
             is JavaInstanceType -> appendClassExports(type.classType, type.allInstanceMembers(), ::addExport)
@@ -2244,13 +2213,7 @@ class JvmClassModuleProvider(
          */
         private const val MAX_DEX_PROVIDER_SNAPSHOTS = 64
         private val dexProviderSnapshotCache: MutableMap<String, Pair<VirtualPath, WorkspaceSnapshot.FileSnapshot>> =
-            java.util.Collections.synchronizedMap(
-                object : LinkedHashMap<String, Pair<VirtualPath, WorkspaceSnapshot.FileSnapshot>>(16, 0.75f, true) {
-                    override fun removeEldestEntry(
-                        eldest: MutableMap.MutableEntry<String, Pair<VirtualPath, WorkspaceSnapshot.FileSnapshot>>?
-                    ): Boolean = size > MAX_DEX_PROVIDER_SNAPSHOTS
-                }
-            )
+            DexClassModelAdapter.boundedCache(MAX_DEX_PROVIDER_SNAPSHOTS)
 
         /**
          * True only on a real JDK with the `jrt` module filesystem mounted.
@@ -2275,13 +2238,7 @@ class JvmClassModuleProvider(
          */
         private const val MAX_JRT_PACKAGE_ENTRIES = 256
         private val jrtPackageClassesCache: MutableMap<String, List<String>> =
-            java.util.Collections.synchronizedMap(
-                object : LinkedHashMap<String, List<String>>(16, 0.75f, true) {
-                    override fun removeEldestEntry(
-                        eldest: MutableMap.MutableEntry<String, List<String>>?
-                    ): Boolean = size > MAX_JRT_PACKAGE_ENTRIES
-                }
-            )
+            DexClassModelAdapter.boundedCache(MAX_JRT_PACKAGE_ENTRIES)
 
         /**
          * Process-wide single extraction of the bundled runtime jar.
@@ -2330,13 +2287,8 @@ class JvmClassModuleProvider(
         const val IMPORTS_METADATA_KEY = "androlua.imports"
 
         val DEFAULT_IMPORT_PREFIXES: List<String> = listOf(
-            "java.lang",
-            "java.util",
-            "java.io",
-            "android.app",
-            "android.content",
-            "android.view",
-            "android.widget",
+            "java.lang", "java.util", "java.io",
+            "android.app", "android.content", "android.view", "android.widget",
             "com.androlua"
         )
     }

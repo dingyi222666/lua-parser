@@ -53,6 +53,15 @@ object WorkspaceModuleGraphBuilder {
 
             val resolved = mutableListOf<WorkspaceModuleGraph.ResolvedDependency>()
             val unresolved = mutableListOf<WorkspaceModuleGraph.UnresolvedRequire>()
+            // Shared edge registration: resolved dependencies always feed the reverse index.
+            fun addResolved(
+                moduleName: String,
+                provider: WorkspaceModuleGraph.ModuleProvider,
+                range: io.github.dingyi222666.luaparser.parser.ast.node.Range
+            ) {
+                resolved += WorkspaceModuleGraph.ResolvedDependency(path, moduleName, provider, range)
+                reverseDependencies.getOrPut(provider.path) { linkedSetOf() } += path
+            }
             facts.requires.forEach { requireFact ->
                 // Prefer activeProviders (includes path-derived `.aly` claims). Fall back to a
                 // workspace `.aly` path match so layout requires still form graph edges even if
@@ -67,27 +76,14 @@ object WorkspaceModuleGraphBuilder {
                         range = requireFact.range
                     )
                 } else {
-                    resolved += WorkspaceModuleGraph.ResolvedDependency(
-                        consumerPath = path,
-                        moduleName = requireFact.moduleName,
-                        provider = provider,
-                        range = requireFact.range
-                    )
-                    reverseDependencies.getOrPut(provider.path) { linkedSetOf() } += path
+                    addResolved(requireFact.moduleName, provider, requireFact.range)
                 }
             }
 
             facts.sourceImports.forEach { importFact ->
-                val provider = activeProviders[importFact.target]
-                if (provider != null && provider.path in files) {
-                    resolved += WorkspaceModuleGraph.ResolvedDependency(
-                        consumerPath = path,
-                        moduleName = importFact.target,
-                        provider = provider,
-                        range = importFact.range
-                    )
-                    reverseDependencies.getOrPut(provider.path) { linkedSetOf() } += path
-                }
+                activeProviders[importFact.target]
+                    ?.takeIf { it.path in files }
+                    ?.let { addResolved(importFact.target, it, importFact.range) }
             }
 
             if (resolved.isNotEmpty()) {

@@ -8,175 +8,95 @@ import io.github.dingyi222666.luaparser.semantic.types.syntax.TypeSyntax
 /**
  * Kind-specialized factories over the single [BinderDeclaration] constructor. They exist so
  * binding sites read as `localDeclaration(...)` / `functionDeclaration(...)` instead of
- * `BinderDeclaration(kind = DeclarationKind.LOCAL, ...)`; all defaults mirror the
- * constructor's own defaults, so the two layers cannot drift.
+ * `BinderDeclaration(kind = DeclarationKind.LOCAL, ...)`; every parameter list mirrors the
+ * constructor's parameter order and defaults positionally, so the two layers cannot drift.
  */
 fun localDeclaration(
-    id: DeclarationId,
-    name: String,
-    origin: DeclarationOrigin = DeclarationOrigin.AST,
-    owner: DeclarationOwner = DeclarationOwner.Root,
-    anchorNode: BaseASTNode? = null,
-    range: Range? = anchorNode?.range,
-    documentation: DeclarationDocumentation? = null,
-    declaredTypeSyntax: TypeSyntax? = null,
-    declaredType: Type? = null,
-    symbolId: SymbolId? = null
+    id: DeclarationId, name: String, origin: DeclarationOrigin = DeclarationOrigin.AST, owner: DeclarationOwner = DeclarationOwner.Root,
+    anchorNode: BaseASTNode? = null, range: Range? = anchorNode?.range, documentation: DeclarationDocumentation? = null,
+    declaredTypeSyntax: TypeSyntax? = null, declaredType: Type? = null, symbolId: SymbolId? = null
 ): BinderDeclaration = BinderDeclaration(
-    id = id, name = name, kind = DeclarationKind.LOCAL, origin = origin, owner = owner,
-    anchorNode = anchorNode, range = range, documentation = documentation,
-    declaredTypeSyntax = declaredTypeSyntax, declaredType = declaredType, symbolId = symbolId
+    id, name, DeclarationKind.LOCAL, origin, owner, anchorNode, range,
+    documentation, declaredTypeSyntax, declaredType, symbolId
 )
 
 fun functionDeclaration(
-    id: DeclarationId,
-    name: String,
-    origin: DeclarationOrigin = DeclarationOrigin.AST,
-    owner: DeclarationOwner = DeclarationOwner.Root,
-    anchorNode: BaseASTNode? = null,
-    range: Range? = anchorNode?.range,
-    documentation: DeclarationDocumentation? = null,
-    declaredTypeSyntax: TypeSyntax? = null,
-    declaredType: Type? = null,
-    symbolId: SymbolId? = null
+    id: DeclarationId, name: String, origin: DeclarationOrigin = DeclarationOrigin.AST, owner: DeclarationOwner = DeclarationOwner.Root,
+    anchorNode: BaseASTNode? = null, range: Range? = anchorNode?.range, documentation: DeclarationDocumentation? = null,
+    declaredTypeSyntax: TypeSyntax? = null, declaredType: Type? = null, symbolId: SymbolId? = null
 ): BinderDeclaration = BinderDeclaration(
-    id = id, name = name, kind = DeclarationKind.FUNCTION, origin = origin, owner = owner,
-    anchorNode = anchorNode, range = range, documentation = documentation,
-    declaredTypeSyntax = declaredTypeSyntax, declaredType = declaredType, symbolId = symbolId
+    id, name, DeclarationKind.FUNCTION, origin, owner, anchorNode, range,
+    documentation, declaredTypeSyntax, declaredType, symbolId
 )
 
 fun moduleDeclaration(
-    id: DeclarationId,
-    name: String,
-    origin: DeclarationOrigin = DeclarationOrigin.AST,
-    owner: DeclarationOwner = DeclarationOwner.Root,
-    anchorNode: BaseASTNode? = null,
-    range: Range? = anchorNode?.range,
-    documentation: DeclarationDocumentation? = null,
-    declaredTypeSyntax: TypeSyntax? = null,
-    declaredType: Type? = null,
-    symbolId: SymbolId? = null
+    id: DeclarationId, name: String, origin: DeclarationOrigin = DeclarationOrigin.AST, owner: DeclarationOwner = DeclarationOwner.Root,
+    anchorNode: BaseASTNode? = null, range: Range? = anchorNode?.range, documentation: DeclarationDocumentation? = null,
+    declaredTypeSyntax: TypeSyntax? = null, declaredType: Type? = null, symbolId: SymbolId? = null
 ): BinderDeclaration = BinderDeclaration(
-    id = id, name = name, kind = DeclarationKind.MODULE, origin = origin, owner = owner,
-    anchorNode = anchorNode, range = range, documentation = documentation,
-    declaredTypeSyntax = declaredTypeSyntax, declaredType = declaredType, symbolId = symbolId
+    id, name, DeclarationKind.MODULE, origin, owner, anchorNode, range,
+    documentation, declaredTypeSyntax, declaredType, symbolId
 )
 
 fun globalDeclaration(
-    id: DeclarationId,
-    name: String,
-    origin: DeclarationOrigin = DeclarationOrigin.AST,
-    owner: DeclarationOwner = DeclarationOwner.Root,
-    anchorNode: BaseASTNode? = null,
-    range: Range? = anchorNode?.range,
-    documentation: DeclarationDocumentation? = null,
-    declaredTypeSyntax: TypeSyntax? = null,
-    declaredType: Type? = null,
-    symbolId: SymbolId? = null
+    id: DeclarationId, name: String, origin: DeclarationOrigin = DeclarationOrigin.AST, owner: DeclarationOwner = DeclarationOwner.Root,
+    anchorNode: BaseASTNode? = null, range: Range? = anchorNode?.range, documentation: DeclarationDocumentation? = null,
+    declaredTypeSyntax: TypeSyntax? = null, declaredType: Type? = null, symbolId: SymbolId? = null
 ): BinderDeclaration = BinderDeclaration(
-    id = id, name = name, kind = DeclarationKind.GLOBAL, origin = origin, owner = owner,
-    anchorNode = anchorNode, range = range, documentation = documentation,
-    declaredTypeSyntax = declaredTypeSyntax, declaredType = declaredType, symbolId = symbolId
+    id, name, DeclarationKind.GLOBAL, origin, owner, anchorNode, range,
+    documentation, declaredTypeSyntax, declaredType, symbolId
 )
 
 fun parameterDeclaration(
-    id: DeclarationId,
-    name: String,
-    origin: DeclarationOrigin = DeclarationOrigin.AST,
-    owner: DeclarationOwner,
-    anchorNode: BaseASTNode? = null,
-    range: Range? = anchorNode?.range,
-    documentation: DeclarationDocumentation? = null,
-    declaredTypeSyntax: TypeSyntax? = null,
-    declaredType: Type? = null,
-    symbolId: SymbolId? = null
+    id: DeclarationId, name: String, origin: DeclarationOrigin = DeclarationOrigin.AST, owner: DeclarationOwner,
+    anchorNode: BaseASTNode? = null, range: Range? = anchorNode?.range, documentation: DeclarationDocumentation? = null,
+    declaredTypeSyntax: TypeSyntax? = null, declaredType: Type? = null, symbolId: SymbolId? = null
 ): BinderDeclaration = BinderDeclaration(
-    id = id, name = name, kind = DeclarationKind.PARAMETER, origin = origin, owner = owner,
-    anchorNode = anchorNode, range = range, documentation = documentation,
-    declaredTypeSyntax = declaredTypeSyntax, declaredType = declaredType, symbolId = symbolId
+    id, name, DeclarationKind.PARAMETER, origin, owner, anchorNode, range,
+    documentation, declaredTypeSyntax, declaredType, symbolId
 )
 
 fun classDeclaration(
-    id: DeclarationId,
-    name: String,
-    origin: DeclarationOrigin = DeclarationOrigin.DOC_COMMENT,
-    owner: DeclarationOwner = DeclarationOwner.Root,
-    anchorNode: BaseASTNode? = null,
-    range: Range? = anchorNode?.range,
-    documentation: DeclarationDocumentation? = null,
-    declaredTypeSyntax: TypeSyntax? = null,
-    declaredType: Type? = null,
-    symbolId: SymbolId? = null
+    id: DeclarationId, name: String, origin: DeclarationOrigin = DeclarationOrigin.DOC_COMMENT, owner: DeclarationOwner = DeclarationOwner.Root,
+    anchorNode: BaseASTNode? = null, range: Range? = anchorNode?.range, documentation: DeclarationDocumentation? = null,
+    declaredTypeSyntax: TypeSyntax? = null, declaredType: Type? = null, symbolId: SymbolId? = null
 ): BinderDeclaration = BinderDeclaration(
-    id = id, name = name, kind = DeclarationKind.CLASS, origin = origin, owner = owner,
-    anchorNode = anchorNode, range = range, documentation = documentation,
-    declaredTypeSyntax = declaredTypeSyntax, declaredType = declaredType, symbolId = symbolId
+    id, name, DeclarationKind.CLASS, origin, owner, anchorNode, range,
+    documentation, declaredTypeSyntax, declaredType, symbolId
 )
 
 fun aliasDeclaration(
-    id: DeclarationId,
-    name: String,
-    origin: DeclarationOrigin = DeclarationOrigin.DOC_COMMENT,
-    owner: DeclarationOwner = DeclarationOwner.Root,
-    anchorNode: BaseASTNode? = null,
-    range: Range? = anchorNode?.range,
-    documentation: DeclarationDocumentation? = null,
-    declaredTypeSyntax: TypeSyntax? = null,
-    declaredType: Type? = null,
-    symbolId: SymbolId? = null
+    id: DeclarationId, name: String, origin: DeclarationOrigin = DeclarationOrigin.DOC_COMMENT, owner: DeclarationOwner = DeclarationOwner.Root,
+    anchorNode: BaseASTNode? = null, range: Range? = anchorNode?.range, documentation: DeclarationDocumentation? = null,
+    declaredTypeSyntax: TypeSyntax? = null, declaredType: Type? = null, symbolId: SymbolId? = null
 ): BinderDeclaration = BinderDeclaration(
-    id = id, name = name, kind = DeclarationKind.TYPE_ALIAS, origin = origin, owner = owner,
-    anchorNode = anchorNode, range = range, documentation = documentation,
-    declaredTypeSyntax = declaredTypeSyntax, declaredType = declaredType, symbolId = symbolId
+    id, name, DeclarationKind.TYPE_ALIAS, origin, owner, anchorNode, range,
+    documentation, declaredTypeSyntax, declaredType, symbolId
 )
 
 fun fieldDeclaration(
-    id: DeclarationId,
-    name: String,
-    origin: DeclarationOrigin = DeclarationOrigin.DOC_COMMENT,
-    owner: DeclarationOwner,
-    anchorNode: BaseASTNode? = null,
-    range: Range? = anchorNode?.range,
-    documentation: DeclarationDocumentation? = null,
-    declaredTypeSyntax: TypeSyntax? = null,
-    declaredType: Type? = null,
-    symbolId: SymbolId? = null
+    id: DeclarationId, name: String, origin: DeclarationOrigin = DeclarationOrigin.DOC_COMMENT, owner: DeclarationOwner,
+    anchorNode: BaseASTNode? = null, range: Range? = anchorNode?.range, documentation: DeclarationDocumentation? = null,
+    declaredTypeSyntax: TypeSyntax? = null, declaredType: Type? = null, symbolId: SymbolId? = null
 ): BinderDeclaration = BinderDeclaration(
-    id = id, name = name, kind = DeclarationKind.FIELD, origin = origin, owner = owner,
-    anchorNode = anchorNode, range = range, documentation = documentation,
-    declaredTypeSyntax = declaredTypeSyntax, declaredType = declaredType, symbolId = symbolId
+    id, name, DeclarationKind.FIELD, origin, owner, anchorNode, range,
+    documentation, declaredTypeSyntax, declaredType, symbolId
 )
 
 fun methodDeclaration(
-    id: DeclarationId,
-    name: String,
-    origin: DeclarationOrigin = DeclarationOrigin.DOC_COMMENT,
-    owner: DeclarationOwner,
-    anchorNode: BaseASTNode? = null,
-    range: Range? = anchorNode?.range,
-    documentation: DeclarationDocumentation? = null,
-    declaredTypeSyntax: TypeSyntax? = null,
-    declaredType: Type? = null,
-    symbolId: SymbolId? = null
+    id: DeclarationId, name: String, origin: DeclarationOrigin = DeclarationOrigin.DOC_COMMENT, owner: DeclarationOwner,
+    anchorNode: BaseASTNode? = null, range: Range? = anchorNode?.range, documentation: DeclarationDocumentation? = null,
+    declaredTypeSyntax: TypeSyntax? = null, declaredType: Type? = null, symbolId: SymbolId? = null
 ): BinderDeclaration = BinderDeclaration(
-    id = id, name = name, kind = DeclarationKind.METHOD, origin = origin, owner = owner,
-    anchorNode = anchorNode, range = range, documentation = documentation,
-    declaredTypeSyntax = declaredTypeSyntax, declaredType = declaredType, symbolId = symbolId
+    id, name, DeclarationKind.METHOD, origin, owner, anchorNode, range,
+    documentation, declaredTypeSyntax, declaredType, symbolId
 )
 
 fun typeParameterDeclaration(
-    id: DeclarationId,
-    name: String,
-    origin: DeclarationOrigin = DeclarationOrigin.DOC_COMMENT,
-    owner: DeclarationOwner,
-    anchorNode: BaseASTNode? = null,
-    range: Range? = anchorNode?.range,
-    documentation: DeclarationDocumentation? = null,
-    declaredTypeSyntax: TypeSyntax? = null,
-    declaredType: Type? = null,
-    symbolId: SymbolId? = null
+    id: DeclarationId, name: String, origin: DeclarationOrigin = DeclarationOrigin.DOC_COMMENT, owner: DeclarationOwner,
+    anchorNode: BaseASTNode? = null, range: Range? = anchorNode?.range, documentation: DeclarationDocumentation? = null,
+    declaredTypeSyntax: TypeSyntax? = null, declaredType: Type? = null, symbolId: SymbolId? = null
 ): BinderDeclaration = BinderDeclaration(
-    id = id, name = name, kind = DeclarationKind.TYPE_PARAMETER, origin = origin, owner = owner,
-    anchorNode = anchorNode, range = range, documentation = documentation,
-    declaredTypeSyntax = declaredTypeSyntax, declaredType = declaredType, symbolId = symbolId
+    id, name, DeclarationKind.TYPE_PARAMETER, origin, owner, anchorNode, range,
+    documentation, declaredTypeSyntax, declaredType, symbolId
 )

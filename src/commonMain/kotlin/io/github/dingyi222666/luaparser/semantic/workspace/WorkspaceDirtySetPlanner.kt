@@ -20,8 +20,8 @@ object WorkspaceDirtySetPlanner {
         // built once here instead of inside each comparison.
         val previousSnapshots = previous.files + previous.extraProviders
         val currentSnapshots = current.files + current.extraProviders
-        val changedFiles = changedFiles(previousSnapshots, currentSnapshots)
-        val publicSurfaceChangedFiles = publicSurfaceChangedFiles(previousSnapshots, currentSnapshots)
+        val (changedFiles, publicSurfaceChangedFiles) =
+            changedFileSets(previousSnapshots, currentSnapshots)
         val activeProviderChangedModuleNames = activeProviderChangedModuleNames(previous.graph, current.graph)
         val filesWithRequireResolutionChanged = filesWithRequireResolutionChanged(previous.graph, current.graph)
         val seeAllFallbackDocuments = seeAllFallbackDocumentsWithBuiltinGlobalsChanged(previous, current)
@@ -64,12 +64,13 @@ object WorkspaceDirtySetPlanner {
         )
     }
 
-    private fun changedFiles(
+    /** Changed-path and public-surface-changed-path sets share the merged-snapshot walk. */
+    private fun changedFileSets(
         previousSnapshots: Map<VirtualPath, WorkspaceSnapshot.FileSnapshot>,
         currentSnapshots: Map<VirtualPath, WorkspaceSnapshot.FileSnapshot>
-    ): Set<VirtualPath> {
+    ): Pair<Set<VirtualPath>, Set<VirtualPath>> {
         val allPaths = previousSnapshots.keys + currentSnapshots.keys
-        return allPaths.filterTo(linkedSetOf()) { path ->
+        val changedFiles = allPaths.filterTo(linkedSetOf()) { path ->
             val previous = previousSnapshots[path]
             val current = currentSnapshots[path]
             if (previous === current) return@filterTo false
@@ -87,14 +88,7 @@ object WorkspaceDirtySetPlanner {
                 previous.semanticFile?.recoveryDiagnostics != current.semanticFile?.recoveryDiagnostics ||
                 previous.semanticFile?.model?.getDiagnostics() != current.semanticFile?.model?.getDiagnostics()
         }
-    }
-
-    private fun publicSurfaceChangedFiles(
-        previousSnapshots: Map<VirtualPath, WorkspaceSnapshot.FileSnapshot>,
-        currentSnapshots: Map<VirtualPath, WorkspaceSnapshot.FileSnapshot>
-    ): Set<VirtualPath> {
-        val allPaths = previousSnapshots.keys + currentSnapshots.keys
-        return allPaths.filterTo(linkedSetOf()) { path ->
+        val publicSurfaceChangedFiles = allPaths.filterTo(linkedSetOf()) { path ->
             val previousFingerprint = previousSnapshots[path]?.publicFingerprint
             val currentFingerprint = currentSnapshots[path]?.publicFingerprint
             // Both comparisons below run over the same four previous/current (files,
@@ -106,6 +100,7 @@ object WorkspaceDirtySetPlanner {
             previousFingerprint?.value != currentFingerprint?.value ||
                 previousFingerprint?.globalSymbolsFingerprint != currentFingerprint?.globalSymbolsFingerprint
         }
+        return changedFiles to publicSurfaceChangedFiles
     }
 
     private fun activeProviderChangedModuleNames(

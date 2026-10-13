@@ -32,10 +32,7 @@ internal class SymbolTableBuilder {
     private val globalWriteNames = linkedSetOf<String>()
 
     fun recordCall(call: CallExpression) { calls += call }
-    fun recordGlobalWrite(write: BaseASTNode, name: String) {
-        globalWrites += write
-        globalWriteNames += name
-    }
+    fun recordGlobalWrite(write: BaseASTNode, name: String) { globalWrites += write; globalWriteNames += name }
 
     val currentScopeId: ScopeId
         get() = scopeStack.last()
@@ -127,18 +124,9 @@ internal class SymbolTableBuilder {
     fun findVisibleValueDeclaration(
         name: String,
         fromScopeId: ScopeId = currentScopeId
-    ): BinderDeclaration? {
-        var scopeId: ScopeId? = fromScopeId
-        while (scopeId != null) {
-            val scope = scopes.getValue(scopeId)
-            val match = scope.valuesByName[name]
-            if (match != null) {
-                return match
-            }
-            scopeId = scope.parentId
-        }
-        return null
-    }
+    ): BinderDeclaration? =
+        generateSequence(fromScopeId) { scopeId -> scopes.getValue(scopeId).parentId }
+            .firstNotNullOfOrNull { scopeId -> scopes.getValue(scopeId).valuesByName[name] }
 
     private fun indexDeclaration(scopeId: ScopeId, declaration: BinderDeclaration) {
         val scope = scopes.getValue(scopeId)

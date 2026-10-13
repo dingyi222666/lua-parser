@@ -637,19 +637,11 @@ internal class WorkspaceModuleResolver(
      */
     fun allSharedGlobalSymbols(consumerPath: VirtualPath, nameFilter: ((String) -> Boolean)? = null): List<WorkspaceImportedSymbol> {
         val result = linkedMapOf<String, WorkspaceImportedSymbol>()
-        snapshot.graph.providersByModuleName.values.asSequence()
-            .flatten()
-            .filter { provider ->
-                provider.path != consumerPath && isSourceModulePath(provider.path.value)
+        sharedGlobalProviders(consumerPath, alias = null).forEach { provider ->
+            providerGlobalSymbols(provider, nameFilter = nameFilter).forEach { symbol ->
+                if (!symbol.extendsExistingGlobal) result.putIfAbsentCompat(symbol.alias, symbol)
             }
-            .distinctBy { it.path }
-            .filter { provider -> declaresSharedGlobal(provider) }
-            .sortedBy { it.path.value }
-            .forEach { provider ->
-                providerGlobalSymbols(provider, nameFilter = nameFilter).forEach { symbol ->
-                    if (!symbol.extendsExistingGlobal) result.putIfAbsentCompat(symbol.alias, symbol)
-                }
-            }
+        }
         return result.values.toList()
     }
 
@@ -678,6 +670,23 @@ internal class WorkspaceModuleResolver(
         }
     }
 
+    /**
+     * Shared other-file provider scan under both shared-global surfaces: same file set,
+     * same distinct/sort order; [alias] selects the declares-shared-global predicate.
+     */
+    private fun sharedGlobalProviders(
+        consumerPath: VirtualPath,
+        alias: String?
+    ): Sequence<WorkspaceModuleGraph.ModuleProvider> =
+        snapshot.graph.providersByModuleName.values.asSequence()
+            .flatten()
+            .filter { provider ->
+                provider.path != consumerPath && isSourceModulePath(provider.path.value)
+            }
+            .distinctBy { it.path }
+            .filter { declaresSharedGlobal(it, alias) }
+            .sortedBy { it.path.value }
+
     private fun declaresSharedGlobal(provider: WorkspaceModuleGraph.ModuleProvider, alias: String? = null): Boolean {
         val binder = snapshot.files[provider.path]?.semanticFile?.snapshot?.binder ?: return false
         val candidates = globalDeclarations(provider.path, binder)
@@ -689,20 +698,11 @@ internal class WorkspaceModuleResolver(
         // keep pathological anchor evaluation from poisoning the completion pipeline.
         return try {
             val candidates = sharedGlobalSymbolsCache.getOrPut(consumerPath to alias) {
-                snapshot.graph.providersByModuleName.values.asSequence()
-                    .flatten()
-                    .filter { provider ->
-                        provider.path != consumerPath && isSourceModulePath(provider.path.value)
+                sharedGlobalProviders(consumerPath, alias).mapNotNull { provider ->
+                    providerGlobalSymbols(provider, alias).firstOrNull { symbol ->
+                        symbol.alias == alias && !symbol.extendsExistingGlobal
                     }
-                    .distinctBy { it.path }
-                    .filter { provider -> declaresSharedGlobal(provider, alias) }
-                    .sortedBy { it.path.value }
-                    .mapNotNull { provider ->
-                        providerGlobalSymbols(provider, alias).firstOrNull { symbol ->
-                            symbol.alias == alias && !symbol.extendsExistingGlobal
-                        }
-                    }
-                    .toList()
+                }.toList()
             }
             candidates.reduceOrNull { merged, next ->
                 merged.copy(valueType = mergeWorkspaceGlobalExtension(merged.valueType, next.valueType))
@@ -792,6 +792,18 @@ internal class WorkspaceModuleResolver(
         return targets
     }
 
+    /** Import symbol whose moduleName comes from the surface type (no extra metadata). */
+    private fun importedSymbol(
+        alias: String,
+        moduleType: ModuleType,
+        providerPath: VirtualPath
+    ): WorkspaceImportedSymbol = WorkspaceImportedSymbol(
+        alias = alias,
+        moduleName = moduleType.moduleName,
+        providerPath = providerPath,
+        moduleType = moduleType
+    )
+
     private fun importedClassSymbol(importText: String): WorkspaceImportedSymbol? {
         val aliases = classAliasCandidates(importText)
         val provider = aliases.firstNotNullOfOrNull(::classProviderForAlias)
@@ -804,12 +816,7 @@ internal class WorkspaceModuleResolver(
         val simpleName = aliases.firstOrNull { it == surface.moduleType.moduleName }
             ?: aliases.firstOrNull { !it.contains('.') && !it.contains('$') && !it.contains('_') }
             ?: surface.moduleType.moduleName
-        return WorkspaceImportedSymbol(
-            alias = simpleName,
-            moduleName = surface.moduleType.moduleName,
-            providerPath = provider.path,
-            moduleType = surface.moduleType
-        )
+        return importedSymbol(simpleName, surface.moduleType, provider.path)
     }
 
     private fun importedLuaModuleSymbol(importText: String): WorkspaceImportedSymbol? {
@@ -827,12 +834,7 @@ internal class WorkspaceModuleResolver(
             .substringAfterLast('/')
             .substringAfterLast('.')
             .ifBlank { return null }
-        return WorkspaceImportedSymbol(
-            alias = alias,
-            moduleName = surface.moduleType.moduleName,
-            providerPath = provider.path,
-            moduleType = resolvedModuleType(provider.path, surface)
-        )
+        return importedSymbol(alias, resolvedModuleType(provider.path, surface), provider.path)
     }
 
     /**
@@ -851,12 +853,7 @@ internal class WorkspaceModuleResolver(
     private fun importedPackageSymbol(packageName: String): WorkspaceImportedSymbol? {
         val packageProvider = packageProvider(packageName) ?: return null
         val moduleType = exportSurface(packageProvider)?.moduleType ?: return null
-        return WorkspaceImportedSymbol(
-            alias = packageName,
-            moduleName = moduleType.moduleName,
-            providerPath = packageProvider.path,
-            moduleType = moduleType
-        )
+        return importedSymbol(packageName, moduleType, packageProvider.path)
     }
 
     private fun packageMembers(packageName: String): List<WorkspaceImportedSymbol> {
@@ -868,12 +865,7 @@ internal class WorkspaceModuleResolver(
             .mapNotNull { (alias, memberType) ->
                 val moduleType = memberType as? ModuleType ?: return@mapNotNull null
                 val provider = classProviderForAlias(moduleType.moduleName) ?: classProviderForAlias(alias) ?: return@mapNotNull null
-                WorkspaceImportedSymbol(
-                    alias = alias,
-                    moduleName = moduleType.moduleName,
-                    providerPath = provider.path,
-                    moduleType = moduleType
-                )
+                importedSymbol(alias, moduleType, provider.path)
             }
     }
 
@@ -1012,10 +1004,8 @@ internal class WorkspaceModuleResolver(
     }
 
     private fun normalizeImportTarget(target: String): String {
-        return target.removePrefix("import ")
-            .trim()
-            .substringAfter(':', target.removePrefix("import ").trim())
-            .trim()
+        val trimmed = target.removePrefix("import ").trim()
+        return trimmed.substringAfter(':', trimmed).trim()
     }
 
     /**

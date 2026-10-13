@@ -193,10 +193,7 @@ open class JvmWorkspaceEngine(
         val sourceImports = if (deferWildcardPackageIndex && !mustMountDex) emptyMap()
         else analysisStage("source-imports", path) { activateImports(currentFacts?.sourceImports.orEmpty().map { it.target },
             currentFacts?.classLikeNames.orEmpty(), resolvedConfiguration) }
-        val activeImports = linkedMapOf<String, WorkspaceImportedSymbol>().apply {
-            putAll(configuredImports)
-            putAll(sourceImports)
-        }
+        val activeImports = LinkedHashMap(configuredImports).apply { putAll(sourceImports) }
         val workspaceResolver = analysisStage("resolver", path) {
             workspaceResolverFor(snapshot, path)
         }
@@ -206,6 +203,11 @@ open class JvmWorkspaceEngine(
         // unresolved LuaJava diagnostics) are stacked on top via copy.
         val baseContext = analysisStage("base-context", path) {
             super.workspaceContext(input, path, snapshot)
+        }
+        // Shared dynamic-target resolution for both the context map and the resolver-free
+        // fallback (identical policy: always hydrate full members).
+        val resolveTarget: (String) -> WorkspaceImportedSymbol? = { target ->
+            memoizedSymbolForTarget(target, resolvedConfiguration, deferMembers = false)
         }
         return baseContext.copy(
             analysisCheckpoint = analysisCheckpoint,
@@ -222,9 +224,7 @@ open class JvmWorkspaceEngine(
             baseResolveImportedSymbol = { name ->
                 lazyImportedSymbol(name, currentFacts, baseConfiguration, resolvedConfiguration)
             },
-            baseResolveImportTarget = { target ->
-                memoizedSymbolForTarget(target, resolvedConfiguration, deferMembers = false)
-            },
+            baseResolveImportTarget = resolveTarget,
             resolveImportedSymbol = { name ->
                 activeImports[name] ?: lazyImportedSymbol(
                     name, currentFacts, baseConfiguration, resolvedConfiguration
@@ -232,9 +232,7 @@ open class JvmWorkspaceEngine(
             },
             // Dynamic import()/import "..." targets must resolve even when not yet on the
             // sourceImports activation set for this path (engine-level JVM resolution).
-            resolveImportTarget = { target ->
-                memoizedSymbolForTarget(target, resolvedConfiguration, deferMembers = false)
-            },
+            resolveImportTarget = resolveTarget,
             unresolvedLuaJavaTargets = collectUnresolvedLuaJavaTargets(
                 currentFacts,
                 resolvedConfiguration,
@@ -319,16 +317,12 @@ open class JvmWorkspaceEngine(
                         )
                     }
             )
-            .distinctBy { target ->
-                listOf(
-                    target.range?.start?.line,
-                    target.range?.start?.column,
-                    target.range?.end?.line,
-                    target.range?.end?.column,
-                    target.helperName,
-                    target.target
-                )
-            }
+            // Data-class identity dedupe: the two streams above can never collide on
+            // (target, helperName, range) — class-load helpers are bindClass/newInstance/
+            // createProxy/loadLib, wildcard stream helperName is always "import" — and
+            // fromWildcardImport is constant per stream, so distinct() ≡ the former
+            // field-by-field distinctBy.
+            .distinct()
             .toList()
     }
 
@@ -535,18 +529,10 @@ open class JvmWorkspaceEngine(
                 facts.sourceImports.forEach { importFact ->
                     addExplicitClassTarget(importFact.target)
                 }
+                // Every collected JVM class-load kind feeds explicit class targets
+                // (createArray("pkg.Foo", ...) mounts the element class provider too).
                 facts.jvmClassLoads.forEach { fact ->
-                    when (fact.kind) {
-                        DocumentFacts.JvmClassLoadKind.IMPORT_CALL,
-                        DocumentFacts.JvmClassLoadKind.BIND_CLASS_CALL,
-                        DocumentFacts.JvmClassLoadKind.NEW_INSTANCE_CALL,
-                        DocumentFacts.JvmClassLoadKind.CREATE_PROXY_CALL,
-                        DocumentFacts.JvmClassLoadKind.LOAD_LIB_CALL,
-                        // createArray("pkg.Foo", ...) mounts element class provider without separate bindClass.
-                        DocumentFacts.JvmClassLoadKind.CREATE_ARRAY_CALL -> {
-                            addExplicitClassTarget(fact.target)
-                        }
-                    }
+                    addExplicitClassTarget(fact.target)
                 }
             }
         }
@@ -683,16 +669,7 @@ open class JvmWorkspaceEngine(
         // UpperCamel free identifiers that must not mount as JVM class roots.
         // Filters host/Lua-ish false positives; real classes (Locale/TextView/File) stay eligible.
         private val NON_CLASS_FREE_IDENTIFIERS: Set<String> = setOf(
-            "And",
-            "Or",
-            "Not",
-            "True",
-            "False",
-            "Nil",
-            "Self",
-            "This",
-            "Super",
-            "Global"
+            "And", "Or", "Not", "True", "False", "Nil", "Self", "This", "Super", "Global"
         )
     }
 

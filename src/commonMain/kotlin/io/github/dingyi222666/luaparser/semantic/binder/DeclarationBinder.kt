@@ -255,10 +255,7 @@ internal class DeclarationBinder(
 
     override fun visitElseClause(node: ElseClause, value: Unit) = bindBodyScope(node.body, ScopeKind.CONDITIONAL, value)
 
-    override fun visitElseIfClause(node: ElseIfClause, value: Unit) {
-        visitExpressionNode(node.condition, value)
-        bindBodyScope(node.body, ScopeKind.CONDITIONAL, value)
-    }
+    override fun visitElseIfClause(node: ElseIfClause, value: Unit) = visitIfClause(node, value)
 
     override fun visitCaseCause(node: CaseCause, value: Unit) {
         node.conditions.forEach { visitExpressionNode(it, value) }
@@ -348,11 +345,9 @@ internal class DeclarationBinder(
         }
     }
 
-    override fun visitCommentStatement(commentStatement: CommentStatement, value: Unit) {
-    }
+    override fun visitCommentStatement(commentStatement: CommentStatement, value: Unit) {}
 
-    override fun visitAttributeIdentifier(identifier: AttributeIdentifier, value: Unit) {
-    }
+    override fun visitAttributeIdentifier(identifier: AttributeIdentifier, value: Unit) {}
 
     /**
      * First bare free-name assignment (single or multi-LHS) introduces a chunk-level

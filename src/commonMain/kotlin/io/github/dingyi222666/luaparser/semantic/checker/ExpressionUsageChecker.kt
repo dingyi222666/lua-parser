@@ -17,6 +17,7 @@ import io.github.dingyi222666.luaparser.parser.ast.node.LambdaDeclaration
 import io.github.dingyi222666.luaparser.parser.ast.node.LocalStatement
 import io.github.dingyi222666.luaparser.parser.ast.node.MemberExpression
 import io.github.dingyi222666.luaparser.parser.ast.node.Position
+import io.github.dingyi222666.luaparser.parser.ast.node.Range
 import io.github.dingyi222666.luaparser.parser.ast.node.StringCallExpression
 import io.github.dingyi222666.luaparser.parser.ast.node.TableCallExpression
 import io.github.dingyi222666.luaparser.parser.ast.node.TableKeyString
@@ -74,24 +75,22 @@ internal class ExpressionUsageChecker(
         val diagnostics = mutableListOf<Diagnostic>()
         workspaceContext.unresolvedLuaJavaTargets.forEach { target ->
             addDiagnostic(
-                diagnostics = diagnostics,
+                diagnostics,
                 key = "luajava-target:${target.range?.start?.line}:${target.range?.start?.column}:${target.helperName}:${target.target}",
-                diagnostic = Diagnostic(
-                    range = target.range,
-                    message = "Unresolved LuaJava target '${target.target}' for ${target.helperName}.",
-                    // WARNING, not ERROR: hosts without android.jar / the target class on the
-                    // classpath still run this code fine on-device (e.g. bindClass on an
-                    // Android-only class), so a hard error would flag valid programs.
-                    // Dead WILDCARD imports are INFO: a pkg.* import is declarative scoping
-                    // whose members may come from workspace dex the analyzer cannot mount —
-                    // a different epistemic state from an explicitly written bindClass string.
-                    severity = if (target.fromWildcardImport) {
-                        DiagnosticSeverity.INFO
-                    } else {
-                        DiagnosticSeverity.WARNING
-                    },
-                    code = LUAJAVA_TARGET_UNRESOLVED_CODE
-                )
+                message = "Unresolved LuaJava target '${target.target}' for ${target.helperName}.",
+                range = target.range,
+                // WARNING, not ERROR: hosts without android.jar / the target class on the
+                // classpath still run this code fine on-device (e.g. bindClass on an
+                // Android-only class), so a hard error would flag valid programs.
+                // Dead WILDCARD imports are INFO: a pkg.* import is declarative scoping
+                // whose members may come from workspace dex the analyzer cannot mount —
+                // a different epistemic state from an explicitly written bindClass string.
+                severity = if (target.fromWildcardImport) {
+                    DiagnosticSeverity.INFO
+                } else {
+                    DiagnosticSeverity.WARNING
+                },
+                code = LUAJAVA_TARGET_UNRESOLVED_CODE
             )
         }
         readLocalDeclarationIds.clear()
@@ -235,7 +234,7 @@ internal class ExpressionUsageChecker(
         // T2: AndroLua runtime helpers (luajava numeric coercions, apply) that the
         // overlay catalog does not model — gated to the AndroLua flavor so plain-Lua
         // workspaces keep diagnosing typos of user globals with these plausible names.
-        if (workspaceContext.overlayGlobals.globalNames.contains("loadlayout") &&
+        if ("loadlayout" in workspaceContext.overlayGlobals.globalNames &&
             name in ANDROLUA_RUNTIME_HELPER_GLOBALS
         ) {
             return
@@ -257,17 +256,15 @@ internal class ExpressionUsageChecker(
             return // Oracle 3: first segment of an active import target (package root).
         }
         addDiagnostic(
-            diagnostics = diagnostics,
+            diagnostics,
             key = "unresolved-global:${node.range.start.line}:${node.range.start.column}:$name",
-            diagnostic = Diagnostic(
-                range = node.range,
-                message = "Unresolved global '$name'.",
-                // WARNING, not ERROR: AndroLua hosts inject cross-file runtime globals
-                // (loadlayout ids, dependency exports) that this static surface cannot
-                // always see, so a hard error would flag valid on-device programs.
-                severity = DiagnosticSeverity.WARNING,
-                code = GLOBAL_UNRESOLVED_CODE
-            )
+            message = "Unresolved global '$name'.",
+            range = node.range,
+            // WARNING, not ERROR: AndroLua hosts inject cross-file runtime globals
+            // (loadlayout ids, dependency exports) that this static surface cannot
+            // always see, so a hard error would flag valid on-device programs.
+            severity = DiagnosticSeverity.WARNING,
+            code = GLOBAL_UNRESOLVED_CODE
         )
     }
 
@@ -277,10 +274,8 @@ internal class ExpressionUsageChecker(
      * injects the id names as globals at load time, so free lowercase identifiers in
      * layout tables are runtime-injected, not unresolved user globals.
      */
-    private fun isLayoutDocument(): Boolean {
-        val path = workspaceContext.currentPath?.value ?: return false
-        return path.endsWith(".aly")
-    }
+    private fun isLayoutDocument(): Boolean =
+        workspaceContext.currentPath?.value?.endsWith(".aly") == true
 
     /**
      * True when [name] is the first segment of any active import target. Primary
@@ -312,13 +307,11 @@ internal class ExpressionUsageChecker(
         )
         if (!resolution.isSuccess && isJavaDiagnosticSurface(resolution.baseType ?: baseType, lexicalScopeId)) {
             addDiagnostic(
-                diagnostics = value,
+                value,
                 key = "member:${node.identifier.range.start.line}:${node.identifier.range.start.column}:${node.identifier.name}",
-                diagnostic = Diagnostic(
-                    range = node.identifier.range,
-                    message = "Unknown Java member '${node.identifier.name}' on ${baseType.displayName}.",
-                    code = MEMBER_MISSING_CODE
-                )
+                message = "Unknown Java member '${node.identifier.name}' on ${baseType.displayName}.",
+                range = node.identifier.range,
+                code = MEMBER_MISSING_CODE
             )
         }
     }
@@ -333,13 +326,11 @@ internal class ExpressionUsageChecker(
         val resolution = memberResolver.resolveIndex(baseType, node.index, indexType, lexicalScopeId)
         if (!resolution.isSuccess && isJavaDiagnosticSurface(resolution.baseType ?: baseType, lexicalScopeId)) {
             addDiagnostic(
-                diagnostics = value,
+                value,
                 key = "index:${node.index.range.start.line}:${node.index.range.start.column}:${baseType.displayName}",
-                diagnostic = Diagnostic(
-                    range = node.index.range,
-                    message = "Unknown Java member '${indexKeyText(node.index)}' on ${baseType.displayName}.",
-                    code = MEMBER_MISSING_CODE
-                )
+                message = "Unknown Java member '${indexKeyText(node.index)}' on ${baseType.displayName}.",
+                range = node.index.range,
+                code = MEMBER_MISSING_CODE
             )
         }
     }
@@ -369,14 +360,12 @@ internal class ExpressionUsageChecker(
         // even if a later dual-path rewrite reintroduces Class[] typing temporarily.
         if (evaluator.isInvalidNewArrayDimensionCall(node)) {
             addDiagnostic(
-                diagnostics = value,
+                value,
                 key = "newarray-dimension:${node.range.start.line}:${node.range.start.column}",
-                diagnostic = Diagnostic(
-                    range = node.range,
-                    message = LuaJavaNewArrayDimensionDiagnostics.MESSAGE,
-                    severity = DiagnosticSeverity.ERROR,
-                    code = LuaJavaNewArrayDimensionDiagnostics.CODE
-                )
+                message = LuaJavaNewArrayDimensionDiagnostics.MESSAGE,
+                range = node.range,
+                severity = DiagnosticSeverity.ERROR,
+                code = LuaJavaNewArrayDimensionDiagnostics.CODE
             )
         }
         // TASK-593: invalid loadLib arity/shape must surface structured diagnostics
@@ -384,14 +373,12 @@ internal class ExpressionUsageChecker(
         // member typing paths.
         if (evaluator.isInvalidLoadLibArgumentCall(node)) {
             addDiagnostic(
-                diagnostics = value,
+                value,
                 key = "loadlib-args:${node.range.start.line}:${node.range.start.column}",
-                diagnostic = Diagnostic(
-                    range = node.range,
-                    message = LuaJavaLoadLibArgumentDiagnostics.MESSAGE,
-                    severity = DiagnosticSeverity.ERROR,
-                    code = LuaJavaLoadLibArgumentDiagnostics.CODE
-                )
+                message = LuaJavaLoadLibArgumentDiagnostics.MESSAGE,
+                range = node.range,
+                severity = DiagnosticSeverity.ERROR,
+                code = LuaJavaLoadLibArgumentDiagnostics.CODE
             )
         }
     }
@@ -425,20 +412,18 @@ internal class ExpressionUsageChecker(
             )
             .forEach { declaration ->
                 addDiagnostic(
-                    diagnostics = diagnostics,
+                    diagnostics,
                     key = "unused-local:${declaration.id.value}:${declaration.name}",
-                    diagnostic = Diagnostic(
-                        range = declaration.range,
-                        message = "Unused local '${declaration.name}'.",
-                        // INFO, not WARNING: unused locals are editor hints, not defects. The
-                        // LSP publish surface maps this to lsp Information and only publishes
-                        // it while the analyzed snapshot matches the current buffer.
-                        severity = DiagnosticSeverity.INFO,
-                        code = UNUSED_LOCAL_CODE,
-                        // Canonical LSP unused signal (DiagnosticTag.Unnecessary): clients
-                        // fade/gray tagged ranges. The only tagged diagnostic today.
-                        tags = listOf(DIAGNOSTIC_TAG_UNNECESSARY)
-                    )
+                    message = "Unused local '${declaration.name}'.",
+                    range = declaration.range,
+                    // INFO, not WARNING: unused locals are editor hints, not defects. The
+                    // LSP publish surface maps this to lsp Information and only publishes
+                    // it while the analyzed snapshot matches the current buffer.
+                    severity = DiagnosticSeverity.INFO,
+                    code = UNUSED_LOCAL_CODE,
+                    // Canonical LSP unused signal (DiagnosticTag.Unnecessary): clients
+                    // fade/gray tagged ranges. The only tagged diagnostic today.
+                    tags = listOf(DIAGNOSTIC_TAG_UNNECESSARY)
                 )
             }
     }
@@ -528,20 +513,10 @@ internal class ExpressionUsageChecker(
         return parent is ForNumericStatement || parent is ForGenericStatement
     }
 
-    private fun isIgnoredLocalName(name: String): Boolean {
-        // Blank/empty names are parse-recovery placeholders (e.g. `local =`), not
-        // real locals. Suppress unused-local noise so LSP Error hard-locks on
-        // invalid sources are not diluted by "Unused local ''" warnings.
-        if (name.isBlank()) {
-            return true
-        }
-        // `self` is the implicit colon-method receiver (function t:build() ... self)
-        // and `_`-prefixed names are deliberate throwaways.
-        if (name == "self" || name == "_" || name.startsWith("_")) {
-            return true
-        }
-        return false
-    }
+    // Blank names are parse-recovery placeholders (`local =`), `self` is the implicit
+    // colon-method receiver, and `_`-prefixed names are deliberate throwaways.
+    private fun isIgnoredLocalName(name: String): Boolean =
+        name.isBlank() || name == "self" || name.startsWith("_")
 
     private fun isJavaDiagnosticSurface(type: Type, lexicalScopeId: ScopeId): Boolean {
         if (type == UnknownType) {
@@ -570,13 +545,28 @@ internal class ExpressionUsageChecker(
         return binder.positionQueries.getScopeAt(node.range.start)?.id ?: binder.scopeGraph.rootScope.id
     }
 
+    /**
+     * Deduplicated emission shared by every emit site: [key] is the per-pass de-dup
+     * identity ([seenDiagnostics]); the remaining parameters mirror the [Diagnostic]
+     * constructor (severity defaults to ERROR, as [Diagnostic] itself does).
+     */
     private fun addDiagnostic(
         diagnostics: MutableList<Diagnostic>,
         key: String,
-        diagnostic: Diagnostic
+        message: String,
+        range: Range? = null,
+        severity: DiagnosticSeverity = DiagnosticSeverity.ERROR,
+        code: String? = null,
+        tags: List<Int> = emptyList()
     ) {
         if (seenDiagnostics.add(key)) {
-            diagnostics += diagnostic
+            diagnostics += Diagnostic(
+                range = range,
+                message = message,
+                severity = severity,
+                code = code,
+                tags = tags
+            )
         }
     }
 
