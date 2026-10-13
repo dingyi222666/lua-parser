@@ -614,3 +614,15 @@ Verified remotely (JVM 2,929/0/0 + JS compile + **E2E rel54 = OK (7 tests)**):
 
 **Lines: 45,258** (baseline 53,562 → −8,304; target ≤41,562, ~3,700 remaining). All gates green on the final tree.
 
+## Round 27 — five-agent line reduction — 2026-10-13 (4/4)
+
+Verified remotely (JVM 2,929/0/0 + JS compile + **E2E rel54 = OK (7 tests)**):
+
+- LuaLanguageService second pass (−123): dead write-only generation counters, always-true format-range check, single-caller merges, 28-entry keyword ladder packing. Protected zones untouched.
+- checker second pass (−102): LuaJava helper ladder dedup (newInstance/loadLib delegate to luaJavaHelperCallReturn; 4-arm whens → shared name list; createProxySurface + ModuleType.constructorSurface extractions), shared callArgumentSequences, rootContextAt prologue ×8, evaluate() subtype-arm merge (hot-path: fewer type checks).
+- workspace safe files + facade compaction (−125): fingerprint import/branch dedup, positional provider constructions, provably-unreachable hover branches removed, putLocation key helper. VERIFIED IN AN ISOLATED HEAD-OVERLAY COPY while siblings blocked the shared tree — the collaboration protocol now includes isolated-copy verification when the shared tree is mid-edit.
+- JvmClassModuleProvider second pass (−86): providerForClass/shallow merge with exact cache-order preservation, reflected-member builders, jar-entries fallback reusing indexJarPackageClasses (filter equivalence proven entry-by-entry), cache-key compaction to byte-identical strings.
+- pipeline/binder/model third pass (−114): SignatureHelpProvider dispatch unification (−47), prepareBinding's provably-redundant builtinGlobals parameter deleted, DeclarationBinder expression-body compaction.
+
+**Lines: 44,709** (baseline 53,562 → −8,853; target ≤41,562, ~3,150 remaining). E2E rel54 = OK (7 tests) on the reduced tree; all gates green. Collaboration note: with 5 agents editing one worktree, mid-edit compile breakage is expected — the parent fixes cross-agent compile errors at integration (this round: linkedSetOf SAM, prepareBinding named-arg, globals-join typing) and agents increasingly verify in isolated copies.
+
