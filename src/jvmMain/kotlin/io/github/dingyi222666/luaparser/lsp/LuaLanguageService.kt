@@ -685,9 +685,15 @@ class LuaLanguageService(
             if (!file.isFile) return@forEach
             val key = "${file.absolutePath}#${file.lastModified()}#${file.length()}"
             if (!warmedDexImports.add(key)) return@forEach
+            val importTarget = "import '${file.absolutePath}'"
             Thread({
                 runCatching {
                     io.github.dingyi222666.luaparser.interop.jvm.DexLibraryMounter.libraryFor(file)
+                    // Mount alone is not enough: the provider snapshot + fingerprint
+                    // activation (measured 3.4-5.9s on the emulator) previously ran
+                    // inside the import-carrying analysis the client waits on.
+                    val metadata = synchronized(stateLock) { workspaceMetadata.toMap() }
+                    liveBufferEngine.warmImportTargets(listOf(importTarget), metadata)
                 }.onFailure {
                     System.err.println("LSP-DEVICE: dex import warmup failed for ${file.name}: $it")
                 }

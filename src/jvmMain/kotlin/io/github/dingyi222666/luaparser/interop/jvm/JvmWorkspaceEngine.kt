@@ -410,6 +410,22 @@ open class JvmWorkspaceEngine(
         }
     }
 
+    /**
+     * Pre-resolves EXPLICIT import targets (e.g. a runtime dex import that just appeared
+     * in an open buffer) through the full provider chain on the caller's thread. The
+     * didChange handler calls this so the activation overlaps the still-running
+     * analysis of the previous content: the first activation of a dex import measured
+     * 5.9-13.4s on the emulator (mount + provider snapshot + fingerprint), and it
+     * previously landed inside the very analysis the client is waiting on.
+     */
+    internal fun warmImportTargets(targets: Collection<String>, metadata: Map<String, String>) {
+        if (targets.isEmpty()) return
+        val configuration = JvmWorkspaceConfiguration.fromMetadata(metadata).normalized()
+        targets.forEach { target ->
+            runCatching { classModuleProvider.importedSymbolForTarget(target, configuration) }
+        }
+    }
+
     private fun memoizedSymbolForTarget(
         target: String,
         configuration: JvmWorkspaceConfiguration,
@@ -470,11 +486,19 @@ open class JvmWorkspaceEngine(
                 if (namesMs > 300) {
                     System.err.println("IMPORT-PERF: '$target' importedClassNames=${names.size} took ${namesMs}ms")
                 }
-                names.mapNotNull { classModuleProvider.importedSymbol(it, normalized, deferMembers = deferDependencyGlobals) }
+                names.mapNotNull { importedName ->
+                    analysisCheckpoint()
+                    classModuleProvider.importedSymbol(importedName, normalized, deferMembers = deferDependencyGlobals)
+                }
                     .forEach { imported[it.alias] = it }
             }
         }
         classNames.filter(::isClassLikeSimpleName).forEach { name ->
+            // One implicit lookup is a multi-second framework-dex candidate scan on
+            // the emulator (IMPORT-PERF samples 0.3-4.2s each); without a checkpoint
+            // here a superseded analysis ground through the whole class-name set
+            // before the newer content's analysis could start.
+            analysisCheckpoint()
             if (name !in imported) {
                 val implicitStart = System.currentTimeMillis()
                 val symbol = classModuleProvider.implicitClassSymbol(name, normalized)
