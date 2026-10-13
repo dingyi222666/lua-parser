@@ -66,6 +66,11 @@ timeout 90 adb install --no-streaming -r "android/sample/build/outputs/apk/andro
 adb shell dumpsys package dexopt >"$reports_dir/dexopt.log"
 # The default ring buffer evicts early-test lines (System.err-heavy phases);
 # enlarge it so the full run stays inspectable.
+# Free build-phase CPU before instrumentation: a lingering Gradle daemon plus the
+# TCG emulator on the shared host inflated cold-stage times run-to-run
+# (builtins 10.0s -> 16.0s purely from load variance).
+pkill -f GradleDaemon >/dev/null 2>&1 || true
+sleep 2
 adb logcat -G 16M
 adb logcat -c
 test_result=0
