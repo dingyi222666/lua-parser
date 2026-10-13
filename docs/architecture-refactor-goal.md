@@ -678,3 +678,7 @@ Verified remotely before the outage (JVM 2,929/0/0 + JS compile; the parser-corp
 
 **BLOCKER at round close:** remote host 10.1.1.14 unreachable (SSH banner timeout) since 03:24 local — the pending E2E rel58 (7/7 confirmation on the round-32 tree) and all further verification are blocked until the host returns. All round-32 code work is committed; JVM/JS gates were green before the outage.
 
+## Blocker resolved — E2E rel58 confirms 7/7 on the round-32 tree — 2026-10-14 04:52
+
+The remote host returned after ~80 min (recovered between 04:35-04:38 local, reason unknown — host-side). **E2E rel58 = OK (7 tests)** on the round-32 tree (42,637 lines, HEAD df1085b): the −1,075-remaining state is now fully verified (JVM 2,929/0/0, JS compile, corpus, E2E 7/7). ~1,075 lines remain to the −12,000 target.
+
