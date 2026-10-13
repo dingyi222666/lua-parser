@@ -334,6 +334,9 @@ class LuaLanguageService(
 
     private val builtinOverlayWarmed = java.util.concurrent.atomic.AtomicBoolean(false)
 
+    /** Counts down when the builtin overlay compile finishes; dex warmup serializes behind it. */
+    private val overlayCompileGate = java.util.concurrent.CountDownLatch(1)
+
     /**
      * Pre-compiles the live path's builtin overlay on a background thread at
      * initialize. The compiled revision is a process-wide static cache whose first
@@ -397,6 +400,7 @@ class LuaLanguageService(
                 io.github.dingyi222666.luaparser.semantic.workspace.std.BuiltinOverlayLoader
                     .compiledRevision(LuaVersion.ANDROLUA_5_3, includeFramework = false)
             }.onFailure { System.err.println("LSP: builtin overlay warmup failed: $it") }
+            overlayCompileGate.countDown()
             // Then pre-assemble the workspace's own Java surfaces: the first check of
             // a framework-importing document otherwise pays dozens of dex surface
             // assemblies inside a single client request budget.
@@ -649,6 +653,17 @@ class LuaLanguageService(
         }
         if (dexPaths.isEmpty()) return
         Thread({
+            // Serialize the service's own warmups behind the overlay compile: at
+            // initialize, the overlay compile (4 workers), the framework dex parse
+            // (~10s) and the first live analysis all raced on the emulator's 6
+            // TCG-emulated cores — the mutual contention inflated EVERY cold stage
+            // (builtins 10.0s -> 16.0s across runs at identical code). The first
+            // analysis needs builtins first; the dex warmup is only needed when the
+            // first check resolves framework imports (~15s later).
+            try {
+                overlayCompileGate.await(60, java.util.concurrent.TimeUnit.SECONDS)
+            } catch (_: InterruptedException) {
+            }
             dexPaths.forEach { path ->
                 runCatching {
                     io.github.dingyi222666.luaparser.interop.jvm.DexLibraryMounter.libraryFor(java.io.File(path))
