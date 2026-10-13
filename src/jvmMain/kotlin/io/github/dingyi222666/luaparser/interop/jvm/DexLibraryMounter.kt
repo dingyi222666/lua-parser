@@ -77,11 +77,6 @@ object DexLibraryMounter {
         return file.isFile && file.extension.lowercase() in MOUNTABLE_EXTENSIONS
     }
 
-    /** Path-string convenience for [isMountableDexLibrary] (trims surrounding blanks). */
-    fun isMountableDexLibraryPath(path: String): Boolean {
-        return isMountableDexLibrary(File(path.trim()))
-    }
-
     /**
      * Parsed, cached view of [file], or null when the file is missing, is not a
      * mountable dex/apk library, or parses to zero classes.
@@ -209,7 +204,7 @@ object DexLibraryMounter {
          */
         fun moduleTypeFor(cls: DexClass): ModuleType {
             moduleTypeCache[cls.binaryName]?.let { return it }
-            val moduleType = DexClassModelAdapter.cachedModuleType(cls, classes)
+            val moduleType = DexClassModelAdapter.toModuleType(cls, classes)
             moduleTypeCache[cls.binaryName] = moduleType
             return moduleType
         }

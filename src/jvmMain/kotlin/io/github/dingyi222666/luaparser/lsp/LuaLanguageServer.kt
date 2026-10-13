@@ -25,17 +25,11 @@ import org.eclipse.lsp4j.SemanticTokens
 import org.eclipse.lsp4j.SemanticTokensDelta
 import org.eclipse.lsp4j.SemanticTokensDeltaParams
 import org.eclipse.lsp4j.SemanticTokensParams
-import org.eclipse.lsp4j.ProgressParams
-import org.eclipse.lsp4j.WorkDoneProgressBegin
-import org.eclipse.lsp4j.WorkDoneProgressCreateParams
-import org.eclipse.lsp4j.WorkDoneProgressEnd
-import org.eclipse.lsp4j.WorkDoneProgressReport
 import org.eclipse.lsp4j.TextEdit
 import org.eclipse.lsp4j.WorkspaceEdit
 import org.eclipse.lsp4j.jsonrpc.messages.Either3
 
 import io.github.dingyi222666.luaparser.interop.jvm.JvmWorkspaceEngine
-import io.github.dingyi222666.luaparser.semantic.workspace.AnalysisProgress
 import org.eclipse.lsp4j.CompletionItem
 import org.eclipse.lsp4j.CompletionList
 import org.eclipse.lsp4j.CompletionParams
@@ -45,9 +39,6 @@ import org.eclipse.lsp4j.DidChangeConfigurationParams
 import org.eclipse.lsp4j.DidChangeTextDocumentParams
 import org.eclipse.lsp4j.DidChangeWatchedFilesParams
 import org.eclipse.lsp4j.DidChangeWorkspaceFoldersParams
-import org.eclipse.lsp4j.DidCloseTextDocumentParams
-import org.eclipse.lsp4j.DidOpenTextDocumentParams
-import org.eclipse.lsp4j.DidSaveTextDocumentParams
 import org.eclipse.lsp4j.DocumentHighlight
 import org.eclipse.lsp4j.DocumentHighlightParams
 import org.eclipse.lsp4j.DocumentSymbol
@@ -89,7 +80,6 @@ class LuaLanguageServer(
     private var lifecycleState = LifecycleState.CREATED
     @Volatile
     private var client: LanguageClient? = null
-    private var indexingProgressToken: Either<String, Int>? = null
     private val textDocuments = LuaTextDocumentService(
         languageService = languageService,
         publishDiagnostics = ::publishDiagnostics,
@@ -97,26 +87,12 @@ class LuaLanguageServer(
         requestPolicy = ::textDocumentRequestPolicy
     )
     private val textDocumentService = object : TextDocumentService by textDocuments {
-        override fun didOpen(params: DidOpenTextDocumentParams) {
-            // Lifecycle gating is owned by the service's acceptsNotifications policy.
-            textDocuments.didOpen(params)
-        }
-
-        override fun didChange(params: DidChangeTextDocumentParams) {
-            // Lifecycle gating is owned by the service's acceptsNotifications policy.
-            textDocuments.didChange(params)
-        }
-
-        override fun didClose(params: DidCloseTextDocumentParams) {
-            // Lifecycle gating is owned by the service's acceptsNotifications policy.
-            textDocuments.didClose(params)
-        }
-
-        override fun didSave(params: DidSaveTextDocumentParams) {
-            // Lifecycle gating is owned by the service's acceptsNotifications policy.
-            textDocuments.didSave(params)
-        }
-
+        // didOpen/didChange/didClose/didSave are lsp4j's only ABSTRACT members here, so
+        // the `by` delegation above forwards them to [textDocuments] unchanged; lifecycle
+        // gating lives in the service's acceptsNotifications policy. Every request method
+        // below is a default (UOE-throwing) lsp4j member, so it must be forwarded
+        // explicitly or the capability lies (smoke audit: textDocument/foldingRange
+        // returned "Internal error: null").
         override fun hover(params: HoverParams): CompletableFuture<Hover> {
             return textDocuments.hover(params)
         }
@@ -148,11 +124,6 @@ class LuaLanguageServer(
         override fun documentSymbol(params: DocumentSymbolParams): CompletableFuture<MutableList<Either<SymbolInformation, DocumentSymbol>>> {
             return textDocuments.documentSymbol(params)
         }
-        // Kotlin `by` delegation forwards only ABSTRACT interface members; lsp4j 0.23.1
-        // ships default bodies for the newer methods that throw
-        // UnsupportedOperationException. The delegate implements every one of them and
-        // the capabilities advertise them — forward explicitly or the capability lies
-        // (smoke audit: textDocument/foldingRange returned "Internal error: null").
         override fun resolveCompletionItem(unresolved: CompletionItem): CompletableFuture<CompletionItem> =
             textDocuments.resolveCompletionItem(unresolved)
 
@@ -258,11 +229,8 @@ class LuaLanguageServer(
         }
     }
 
-    @Volatile
-    private var clientSupportsWorkDoneProgress: Boolean = false
-
     override fun initialize(params: InitializeParams): CompletableFuture<InitializeResult> {
-        clientSupportsWorkDoneProgress = params.capabilities
+        val clientSupportsWorkDoneProgress = params.capabilities
             ?.window
             ?.workDoneProgress == true
         System.err.println("LSP-DEVICE: client window.workDoneProgress=$clientSupportsWorkDoneProgress")
@@ -348,32 +316,17 @@ class LuaLanguageServer(
                 this.client = client
             }
         }
-        // Forward background-build progress as standard $/progress work-done
-        // notifications for capability-advertising clients. When the client
-        // doesn't support them (sora), leave any host-set listener in place —
-        // an in-process host gets progress directly.
+        // Background-build progress forwarding over $/progress was unwired on purpose
+        // (see rel43-49: forwarding raced the emulator's GC and sora's client proxy
+        // throws UnsupportedOperationException on notifyProgress — d59f696, 93ae821).
+        // What must be preserved here: a host-set listener (setOnBuildProgressListener,
+        // android sample) is never overwritten by a protocol connect.
         if (languageService.onBuildProgress != null) {
             return
         }
-        languageService.onBuildProgress = { progress ->
-            val proxy = client
-            // sora's client proxy throws UnsupportedOperationException on
-            // createProgress/notifyProgress (device-verified) — when the client
-            // didn't advertise window.workDoneProgress, log instead of spamming.
-            val progressSink: (org.eclipse.lsp4j.jsonrpc.messages.Either<String, Int>) -> Unit = when {
-                clientSupportsWorkDoneProgress -> { token ->
-                    proxy.notifyProgress(ProgressParams(token, Either.forRight(null as org.eclipse.lsp4j.WorkDoneProgressReport?)))
-                }
-                else -> { _ ->
-                    runCatching {
-                        proxy.logMessage(org.eclipse.lsp4j.MessageParams().apply {
-                            type = org.eclipse.lsp4j.MessageType.Info
-                            message = "indexing update"
-                        })
-                    }
-                }
-            }
-        }
+        // Install a no-op sink so the build path keeps taking the sink != null branch;
+        // observably identical to null (the sink is never invoked with an effect).
+        languageService.onBuildProgress = { _ -> }
     }
 
     private fun acceptsMessages(): Boolean {

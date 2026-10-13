@@ -164,9 +164,6 @@ object DexClassModelAdapter {
             javaClassTypeFor(cls, index, resolving = emptySet(), referenceDepth = 0)
         }
 
-    fun cachedModuleType(cls: DexClass, dexClasses: Collection<DexClass>): ModuleType =
-        toModuleType(cls, dexClasses)
-
     fun toModuleType(cls: DexClass, dexClasses: Collection<DexClass> = emptyList()): ModuleType =
         toModuleType(cls, dexIndex(dexClasses), includeInnerModules = true)
 

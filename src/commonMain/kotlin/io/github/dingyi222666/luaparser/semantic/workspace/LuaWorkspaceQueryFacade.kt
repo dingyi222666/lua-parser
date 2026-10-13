@@ -1024,12 +1024,7 @@ class LuaWorkspaceQueryFacade(
         node: BaseASTNode?,
         symbol: io.github.dingyi222666.luaparser.semantic.api.Symbol?
     ): WorkspaceLocation? {
-        val identifier = node as? Identifier ?: return null
-        // Never treat a member-access identifier (dep.missing) as the require-local itself.
-        val parent = runCatching { identifier.parent }.getOrNull()
-        if (parent is MemberExpression && parent.identifier === identifier) {
-            return null
-        }
+        val identifier = plainIdentifier(node) ?: return null
         val moduleName = resolveRequiredModuleNameForLocal(semanticFile, symbol?.symbolId, identifier) ?: return null
         val providerPath = resolveWorkspaceRequire(path, moduleName)?.provider?.path ?: return null
         return WorkspaceLocation(providerPath, syntheticModuleRange(moduleName))
@@ -1045,15 +1040,8 @@ class LuaWorkspaceQueryFacade(
         node: BaseASTNode?,
         symbol: io.github.dingyi222666.luaparser.semantic.api.Symbol?
     ): WorkspaceLocation? {
-        val identifier = node as? Identifier ?: return null
-        val parent = runCatching { identifier.parent }.getOrNull()
-        if (parent is MemberExpression && parent.identifier === identifier) {
-            return null
-        }
-        val declaration = localDeclarationForSymbol(semanticFile, symbol?.symbolId)
-            ?: exactLocalDeclarationForIdentifier(semanticFile, identifier)
-            ?: visibleLocalValueDeclaration(semanticFile, identifier.name, identifier.range.start)
-            ?: return null
+        val identifier = plainIdentifier(node) ?: return null
+        val declaration = localDeclarationForSymbolOrIdentifier(semanticFile, symbol?.symbolId, identifier) ?: return null
         if (declaration.kind != DeclarationKind.LOCAL || declaration.anchorNode !is Identifier) {
             return null
         }
@@ -1092,11 +1080,8 @@ class LuaWorkspaceQueryFacade(
         val identifier = node as? Identifier
         // Member-access carets (dep.missing) must not be treated as require-local aliases.
         // Callers that intentionally want the receiver module should pass the receiver node.
-        if (identifier != null) {
-            val parent = runCatching { identifier.parent }.getOrNull()
-            if (parent is MemberExpression && parent.identifier === identifier) {
-                return emptyList()
-            }
+        if (identifier != null && isMemberAccessIdentifier(identifier)) {
+            return emptyList()
         }
         return buildList {
             identifier
@@ -1185,9 +1170,7 @@ class LuaWorkspaceQueryFacade(
                     }
                     resolvedRequireForWorkspaceMemberReceiver(semanticFile, path, current)?.let { return it }
                     val symbol = semanticFile.model.getSymbolAt(current.range.start)
-                    val declaration = localDeclarationForSymbol(semanticFile, symbol?.symbolId)
-                        ?: exactLocalDeclarationForIdentifier(semanticFile, current)
-                        ?: visibleLocalValueDeclaration(semanticFile, current.name, current.range.start)
+                    val declaration = localDeclarationForSymbolOrIdentifier(semanticFile, symbol?.symbolId, current)
                         ?: return null
                     val initializer = localInitializerExpression(declaration) ?: return null
                     current = initializer
@@ -1222,10 +1205,7 @@ class LuaWorkspaceQueryFacade(
         symbolId: String?,
         identifier: Identifier?
     ): String? {
-        val declaration = localDeclarationForSymbol(semanticFile, symbolId)
-            ?: identifier?.let { exactLocalDeclarationForIdentifier(semanticFile, it) }
-            ?: identifier?.let { visibleLocalValueDeclaration(semanticFile, it.name, it.range.start) }
-            ?: return null
+        val declaration = localDeclarationForSymbolOrIdentifier(semanticFile, symbolId, identifier) ?: return null
         return requiredModuleNameForDeclaration(semanticFile, declaration)
     }
 
@@ -1277,6 +1257,22 @@ class LuaWorkspaceQueryFacade(
         return semanticFile.snapshot.binder.declarationIndex
             .getDeclarations(identifier)
             .firstOrNull { it.kind == DeclarationKind.LOCAL && it.anchorNode === identifier }
+    }
+
+    /**
+     * Shared symbol-first local-declaration ladder: the symbol's declaration when a handle
+     * resolves it, else the exact declaration anchored at [identifier], else the visible
+     * local value declaration at the identifier position. Null when [identifier] is null and
+     * the symbol handle does not resolve.
+     */
+    private fun localDeclarationForSymbolOrIdentifier(
+        semanticFile: WorkspaceSemanticFile,
+        symbolId: String?,
+        identifier: Identifier?
+    ): BinderDeclaration? {
+        return localDeclarationForSymbol(semanticFile, symbolId)
+            ?: identifier?.let { exactLocalDeclarationForIdentifier(semanticFile, it) }
+            ?: identifier?.let { visibleLocalValueDeclaration(semanticFile, it.name, it.range.start) }
     }
 
     private fun declarationLocationForSymbol(
@@ -1704,11 +1700,7 @@ class LuaWorkspaceQueryFacade(
         path: VirtualPath,
         node: BaseASTNode?
     ): io.github.dingyi222666.luaparser.semantic.api.Symbol? {
-        val identifier = node as? Identifier ?: return null
-        val parent = runCatching { identifier.parent }.getOrNull()
-        if (parent is MemberExpression && parent.identifier === identifier) {
-            return null
-        }
+        val identifier = plainIdentifier(node) ?: return null
         val moduleName = resolveRequiredModuleNameForLocal(semanticFile, null, identifier)
             ?: resolveRequiredModuleNameForVisibleLocal(
                 semanticFile,
@@ -1807,9 +1799,7 @@ class LuaWorkspaceQueryFacade(
                     return null
                 }
                 val symbol = semanticFile.model.getSymbolAt(expression.range.start)
-                val declaration = localDeclarationForSymbol(semanticFile, symbol?.symbolId)
-                    ?: exactLocalDeclarationForIdentifier(semanticFile, expression)
-                    ?: visibleLocalValueDeclaration(semanticFile, expression.name, expression.range.start)
+                val declaration = localDeclarationForSymbolOrIdentifier(semanticFile, symbol?.symbolId, expression)
                 if (declaration != null) {
                     requiredModuleNameForDeclaration(semanticFile, declaration)?.let {
                         // Root require-backed local: export path is empty before the member segment.
@@ -1973,11 +1963,7 @@ class LuaWorkspaceQueryFacade(
         path: VirtualPath,
         node: BaseASTNode?
     ): io.github.dingyi222666.luaparser.semantic.api.Symbol? {
-        val identifier = node as? Identifier ?: return null
-        val parent = runCatching { identifier.parent }.getOrNull()
-        if (parent is MemberExpression && parent.identifier === identifier) {
-            return null
-        }
+        val identifier = plainIdentifier(node) ?: return null
         val declaration = exactLocalDeclarationForIdentifier(semanticFile, identifier)
             ?: visibleLocalValueDeclaration(semanticFile, identifier.name, identifier.range.start)
             ?: return null
@@ -2029,15 +2015,8 @@ class LuaWorkspaceQueryFacade(
         node: BaseASTNode?,
         symbol: io.github.dingyi222666.luaparser.semantic.api.Symbol?
     ): WorkspaceLocation? {
-        val identifier = node as? Identifier ?: return null
-        val parent = runCatching { identifier.parent }.getOrNull()
-        if (parent is MemberExpression && parent.identifier === identifier) {
-            return null
-        }
-        val declaration = localDeclarationForSymbol(semanticFile, symbol?.symbolId)
-            ?: exactLocalDeclarationForIdentifier(semanticFile, identifier)
-            ?: visibleLocalValueDeclaration(semanticFile, identifier.name, identifier.range.start)
-            ?: return null
+        val identifier = plainIdentifier(node) ?: return null
+        val declaration = localDeclarationForSymbolOrIdentifier(semanticFile, symbol?.symbolId, identifier) ?: return null
         val moduleName = importCallTargetModuleName(semanticFile, path, declaration)
             ?: symbol?.type?.moduleName?.takeIf { it.isNotBlank() }
             ?: return null
@@ -2061,8 +2040,7 @@ class LuaWorkspaceQueryFacade(
         val identifier = node as? Identifier
         val declaration = when {
             identifier != null -> {
-                val parent = runCatching { identifier.parent }.getOrNull()
-                if (parent is MemberExpression && parent.identifier === identifier) {
+                if (isMemberAccessIdentifier(identifier)) {
                     // Member access: resolve receiver local alias (Locale.getDefault -> Locale).
                     null
                 } else {
@@ -2183,28 +2161,42 @@ class LuaWorkspaceQueryFacade(
         return targets
     }
 
-    private fun isCreateProxyCallBase(
+    /**
+     * Shared LuaJava helper-call base detection: `luajava.<helper>` (or `LuaJava.<helper>`),
+     * or a bare identifier that is either an unresolved/builtin helper name or a local alias
+     * whose initializer resolves to the same helper. [isCreateProxyCallBase] and
+     * [isLuaJavaClassLoadCallee] differ only in the helper name(s) they accept.
+     */
+    private fun isLuaJavaHelperCallBase(
         semanticFile: WorkspaceSemanticFile,
-        expression: io.github.dingyi222666.luaparser.parser.ast.node.ExpressionNode
+        expression: io.github.dingyi222666.luaparser.parser.ast.node.ExpressionNode,
+        helperName: String
     ): Boolean {
         return when (expression) {
             is MemberExpression ->
-                expression.identifier.name == "createProxy" && isLuaJavaOwnerIdentifier(expression.base)
+                expression.identifier.name == helperName && isLuaJavaOwnerIdentifier(expression.base)
             is Identifier -> {
-                if (expression.name != "createProxy") {
+                if (expression.name != helperName) {
                     return false
                 }
+                // Bare helper or local alias of luajava.<helper>.
                 val declaration = visibleLocalValueDeclaration(
                     semanticFile,
                     expression.name,
                     expression.range.start
                 )
-                declaration == null ||
-                    declaration.origin == DeclarationOrigin.BUILTIN ||
-                    declarationResolvesToLuaJavaHelper(semanticFile, declaration, "createProxy")
+                declaration == null || declaration.origin == DeclarationOrigin.BUILTIN ||
+                    declarationResolvesToLuaJavaHelper(semanticFile, declaration, helperName)
             }
             else -> false
         }
+    }
+
+    private fun isCreateProxyCallBase(
+        semanticFile: WorkspaceSemanticFile,
+        expression: io.github.dingyi222666.luaparser.parser.ast.node.ExpressionNode
+    ): Boolean {
+        return isLuaJavaHelperCallBase(semanticFile, expression, "createProxy")
     }
 
     private fun javaProviderExposesMember(target: String, memberName: String): Boolean {
@@ -2228,26 +2220,7 @@ class LuaWorkspaceQueryFacade(
         semanticFile: WorkspaceSemanticFile,
         expression: io.github.dingyi222666.luaparser.parser.ast.node.ExpressionNode
     ): Boolean {
-        return when (expression) {
-            is MemberExpression -> {
-                val helper = expression.identifier.name
-                helper in LUA_JAVA_CLASS_LOAD_HELPERS && isLuaJavaOwnerIdentifier(expression.base)
-            }
-            is Identifier -> {
-                if (expression.name !in LUA_JAVA_CLASS_LOAD_HELPERS) {
-                    return false
-                }
-                // Bare helper or local alias of luajava.bindClass.
-                val declaration = visibleLocalValueDeclaration(
-                    semanticFile,
-                    expression.name,
-                    expression.range.start
-                )
-                declaration == null || declaration.origin == DeclarationOrigin.BUILTIN ||
-                    declarationResolvesToLuaJavaHelper(semanticFile, declaration, expression.name)
-            }
-            else -> false
-        }
+        return LUA_JAVA_CLASS_LOAD_HELPERS.any { isLuaJavaHelperCallBase(semanticFile, expression, it) }
     }
 
     private fun isLuaJavaOwnerIdentifier(
@@ -2362,6 +2335,23 @@ class LuaWorkspaceQueryFacade(
         }
     }
 
+    /** True when [identifier] is the member selector of `base.name`, not a standalone variable reference. */
+    private fun isMemberAccessIdentifier(identifier: Identifier): Boolean {
+        val parent = runCatching { identifier.parent }.getOrNull()
+        return parent is MemberExpression && parent.identifier === identifier
+    }
+
+    /**
+     * [node] as a plain variable-reference identifier: the cast plus the shared member-selector
+     * guard (a `dep.missing` caret identifier must never resolve as the require-local itself;
+     * callers that want the receiver module pass the receiver node instead). Null for both
+     * non-identifiers and member selectors.
+     */
+    private fun plainIdentifier(node: BaseASTNode?): Identifier? {
+        val identifier = node as? Identifier ?: return null
+        return identifier.takeUnless { isMemberAccessIdentifier(it) }
+    }
+
     /** [node] itself as a MemberExpression, or the MemberExpression the identifier belongs to. */
     private fun memberExpressionForNode(node: BaseASTNode?): MemberExpression? {
         return when (node) {
@@ -2466,11 +2456,7 @@ class LuaWorkspaceQueryFacade(
         node: BaseASTNode?,
         semanticFile: WorkspaceSemanticFile
     ): WorkspaceImportedSymbol? {
-        val identifier = node as? Identifier ?: return null
-        val parent = runCatching { identifier.parent }.getOrNull()
-        if (parent is MemberExpression && parent.identifier === identifier) {
-            return null
-        }
+        val identifier = plainIdentifier(node) ?: return null
         if (visibleLocalValueNames(semanticFile, position).contains(identifier.name)) {
             return null
         }

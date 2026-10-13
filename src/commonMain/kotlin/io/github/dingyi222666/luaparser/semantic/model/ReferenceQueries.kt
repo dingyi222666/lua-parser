@@ -23,11 +23,12 @@ import io.github.dingyi222666.luaparser.semantic.binder.DeclarationKind
 import io.github.dingyi222666.luaparser.semantic.binder.DeclarationNamespace
 import io.github.dingyi222666.luaparser.semantic.binder.Scope
 import io.github.dingyi222666.luaparser.semantic.binder.ScopeId
-import io.github.dingyi222666.luaparser.semantic.binder.comparePositions
 import io.github.dingyi222666.luaparser.semantic.binder.compareRangeSpecificity
 import io.github.dingyi222666.luaparser.semantic.binder.isChunkGlobalFunctionDeclaration
 import io.github.dingyi222666.luaparser.semantic.binder.isPositionWithin
+import io.github.dingyi222666.luaparser.semantic.binder.isVisibleAtPosition
 import io.github.dingyi222666.luaparser.semantic.checker.ExpressionTypeEvaluator
+import io.github.dingyi222666.luaparser.semantic.checker.enclosingAstNodeOf
 import io.github.dingyi222666.luaparser.semantic.checker.JavaBeanPropertySurface
 import io.github.dingyi222666.luaparser.semantic.checker.MemberAccessKind
 import io.github.dingyi222666.luaparser.semantic.checker.MemberResolver
@@ -123,18 +124,14 @@ internal class ReferenceQueries(
 
         return when (node) {
             is Identifier -> {
-                val parent = runCatching { node.parent }.getOrNull()
-                if (parent is MemberExpression && parent.identifier === node) {
-                    resolveMemberUsage(parent)
-                } else {
-                    importedSymbol?.let(::toImportedSymbol)
-                        ?: findNearestVisibleValueDeclaration(node.name, position)?.let { declaration ->
-                            preferDeclaredOrInferredSymbolType(
-                                adapters.toDeclarationSymbol(declaration),
-                                node
-                            ) ?: adapters.toDeclarationSymbol(declaration)
-                        }
-                }
+                memberIdentifierBase(node)?.let { return resolveMemberUsage(it) }
+                importedSymbol?.let(::toImportedSymbol)
+                    ?: findNearestVisibleValueDeclaration(node.name, position)?.let { declaration ->
+                        preferDeclaredOrInferredSymbolType(
+                            adapters.toDeclarationSymbol(declaration),
+                            node
+                        ) ?: adapters.toDeclarationSymbol(declaration)
+                    }
             }
 
             is MemberExpression -> resolveMemberUsage(node)
@@ -450,11 +447,8 @@ internal class ReferenceQueries(
     }
 
     private fun localJavaMemberInitializerSymbolAt(position: Position, node: BaseASTNode?): Symbol? {
-        if (node is Identifier) {
-            val parent = runCatching { node.parent }.getOrNull()
-            if (parent is MemberExpression && parent.identifier === node) {
-                return null
-            }
+        if (node is Identifier && memberIdentifierBase(node) != null) {
+            return null
         }
         val declaration = resolveDeclarationTokenStartAt(position)
             ?: resolveExactNodeDeclaration(node)
@@ -553,23 +547,20 @@ internal class ReferenceQueries(
         }
     }
 
-    /** Single owner for the "walk parents until node of type T" ladder. */
-    private inline fun <reified T : BaseASTNode> enclosingNode(node: BaseASTNode): T? {
-        var current: BaseASTNode? = node
-        while (current != null) {
-            if (current is T) {
-                return current
-            }
-            current = runCatching { current.parent }.getOrNull()
-        }
-        return null
-    }
+    /**
+     * The member expression whose identifier slot [node] occupies — null when [node] is a
+     * member-expression base or not inside a member access at all (shared by the
+     * symbol-at and initializer probes).
+     */
+    private fun memberIdentifierBase(node: BaseASTNode): MemberExpression? =
+        (runCatching { node.parent }.getOrNull() as? MemberExpression)?.takeIf { it.identifier === node }
 
+    /** Walk-parent ladder is shared with the evaluator: see [enclosingAstNodeOf]. */
     private fun enclosingCallExpression(node: BaseASTNode): io.github.dingyi222666.luaparser.parser.ast.node.CallExpression? =
-        enclosingNode(node)
+        enclosingAstNodeOf(node)
 
     private fun enclosingLocalStatement(node: BaseASTNode): LocalStatement? =
-        enclosingNode(node)
+        enclosingAstNodeOf(node)
 
     private fun callArguments(node: io.github.dingyi222666.luaparser.parser.ast.node.CallExpression): List<ExpressionNode> =
         node.compactCallArguments()
@@ -671,20 +662,15 @@ internal class ReferenceQueries(
                     collectJavaStaticMemberSurface(classType).forEach { (name, surface) ->
                         val existing = this[name]
                         when {
-                            // New static member (field or method) from reflection.
-                            existing == null -> {
-                                put(
-                                    name,
-                                    surface.copy(
-                                        syntheticHandle = surface.syntheticHandle
-                                            ?: "java:${classType.javaName.binaryName}:static:$name"
-                                    )
-                                )
-                            }
-                            // Prefer static METHOD/fun surfaces over non-callable field collisions
+                            // New static member (field or method) from reflection — or prefer
+                            // static METHOD/fun surfaces over non-callable field collisions
                             // (nested interface static helpers such as Map$Entry.comparingByKey).
-                            existing.accessKind != MemberAccessKind.METHOD &&
-                                surface.accessKind == MemberAccessKind.METHOD -> {
+                            // Both cases insert the identical reflected surface.
+                            existing == null ||
+                                (
+                                    existing.accessKind != MemberAccessKind.METHOD &&
+                                        surface.accessKind == MemberAccessKind.METHOD
+                                    ) -> {
                                 put(
                                     name,
                                     surface.copy(
@@ -1142,25 +1128,17 @@ internal class ReferenceQueries(
     private fun importedDeclaration(imported: WorkspaceImportedSymbol): BinderDeclaration {
         val id = io.github.dingyi222666.luaparser.semantic.binder.DeclarationId(-1000000 - imported.alias.hashCode())
         val origin = io.github.dingyi222666.luaparser.semantic.binder.DeclarationOrigin.BUILTIN
+        // The three factories share identical (id, name, origin, declaredType) arguments —
+        // only the produced DeclarationKind differs.
+        val alias = imported.alias
+        val valueType = imported.valueType
         return when (imported.kind) {
-            SymbolKind.FUNCTION -> io.github.dingyi222666.luaparser.semantic.binder.functionDeclaration(
-                id = id,
-                name = imported.alias,
-                origin = origin,
-                declaredType = imported.valueType
-            )
-            SymbolKind.MODULE -> io.github.dingyi222666.luaparser.semantic.binder.moduleDeclaration(
-                id = id,
-                name = imported.alias,
-                origin = origin,
-                declaredType = imported.valueType
-            )
-            else -> io.github.dingyi222666.luaparser.semantic.binder.globalDeclaration(
-                id = id,
-                name = imported.alias,
-                origin = origin,
-                declaredType = imported.valueType
-            )
+            SymbolKind.FUNCTION ->
+                io.github.dingyi222666.luaparser.semantic.binder.functionDeclaration(id = id, name = alias, origin = origin, declaredType = valueType)
+            SymbolKind.MODULE ->
+                io.github.dingyi222666.luaparser.semantic.binder.moduleDeclaration(id = id, name = alias, origin = origin, declaredType = valueType)
+            else ->
+                io.github.dingyi222666.luaparser.semantic.binder.globalDeclaration(id = id, name = alias, origin = origin, declaredType = valueType)
         }
     }
 
@@ -1231,38 +1209,18 @@ internal class ReferenceQueries(
         return lineSpan + (range.end.column - range.start.column)
     }
 
-    private fun isVisibleAt(declaration: BinderDeclaration, position: Position): Boolean {
-        // Ambient binder builtins (AndroLua activity/loadlayout/etc.) are file-global. Their
-        // documented ranges may come from overlay virtual documents and must not gate visibility
-        // against real file positions used by free-identifier completions.
-        if (declaration.origin == io.github.dingyi222666.luaparser.semantic.binder.DeclarationOrigin.BUILTIN) {
-            return true
-        }
-        if (binder.isChunkGlobalFunctionDeclaration(declaration)) {
-            return true
-        }
-        // AST-invented chunk globals (`cfg = { title = "x" }` written after a function that
-        // reads `cfg`) are position-independent: Lua globals live in the environment table,
-        // so a bare-name write anywhere in the chunk is visible to every free read of that
-        // name in the file. DOC_COMMENT / SYNTHETIC declarations keep positional gating.
-        if (
-            declaration.kind == DeclarationKind.GLOBAL &&
-            declaration.origin == io.github.dingyi222666.luaparser.semantic.binder.DeclarationOrigin.AST
-        ) {
-            return true
-        }
-        val range = declaration.range ?: return true
-        // The declared name itself is always in scope at its own site (hover/rename on
-        // `local x` must resolve to the new local even though USES begin after the
-        // statement ends).
-        if (comparePositions(range.start, position) <= 0 && comparePositions(position, range.end) < 0) {
-            return true
-        }
-        // Locals carry `visibleFrom` at the end of their LocalStatement, so `local x = x + 1`
-        // resolves the RHS `x` to the outer x (the new local only exists after the statement).
-        val visibleFrom = declaration.visibleFrom ?: range.start
-        return comparePositions(visibleFrom, position) <= 0
-    }
+    /**
+     * Canonical strict positional-visibility ladder — now the shared binder predicate
+     * (binder/DeclarationVisibility.kt). This file's free-position completion / hover /
+     * goto queries treat builtins and chunk-global functions as file-global.
+     */
+    private fun isVisibleAt(declaration: BinderDeclaration, position: Position): Boolean =
+        declaration.isVisibleAtPosition(
+            position,
+            isChunkGlobalFunction = { binder.isChunkGlobalFunctionDeclaration(it) },
+            builtinIsFileGlobal = true,
+            chunkGlobalIsFileGlobal = true
+        )
 
     private fun compareSpecificity(a: io.github.dingyi222666.luaparser.parser.ast.node.Range?, b: io.github.dingyi222666.luaparser.parser.ast.node.Range?): Int {
         if (a == null) return if (b == null) 0 else 1
@@ -1343,14 +1301,8 @@ internal class ReferenceQueries(
         return resolver.activeProvider(classType.javaName.simpleName)
             ?: resolver.activeProvider(classType.javaName.canonicalName)
             ?: resolver.activeProvider(classType.javaName.binaryName)
-            ?: resolveLuaJavaImportTarget(classType.javaName.canonicalName)?.let { imported ->
-                io.github.dingyi222666.luaparser.semantic.workspace.WorkspaceModuleGraph.ModuleProvider(
-                    moduleName = imported.moduleName,
-                    path = imported.providerPath,
-                    source = io.github.dingyi222666.luaparser.semantic.workspace.WorkspaceModuleGraph.ProviderSource.EXTRA_WORKSPACE_PROVIDER
-                )
-            }
-            ?: resolveLuaJavaImportTarget(classType.javaName.binaryName)?.let { imported ->
+            ?: (resolveLuaJavaImportTarget(classType.javaName.canonicalName)
+                ?: resolveLuaJavaImportTarget(classType.javaName.binaryName))?.let { imported ->
                 io.github.dingyi222666.luaparser.semantic.workspace.WorkspaceModuleGraph.ModuleProvider(
                     moduleName = imported.moduleName,
                     path = imported.providerPath,

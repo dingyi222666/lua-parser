@@ -26,8 +26,8 @@ class LuaLexer @JvmOverloads constructor(
 
     private var offset = 0
 
-    private var tokenType: LuaTokenTypes =
-        LuaTokenTypes.WHITE_SPACE
+    // Note: no cached last-token-type field — the type is returned per call and
+    // the wrapper (WrapperLuaLexer.LexerState.type) is the single source of truth.
 
     var tokenLine = 1
         private set
@@ -57,7 +57,7 @@ class LuaLexer @JvmOverloads constructor(
     }
 
     fun nextToken(): LuaTokenTypes {
-        return nextTokenInternal().also { tokenType = it }
+        return nextTokenInternal()
     }
 
     private fun nextTokenInternal(): LuaTokenTypes {
@@ -402,57 +402,32 @@ class LuaLexer @JvmOverloads constructor(
             '-' -> {
                 // This is the third dash, so it's a doc comment
                 tokenLength++
-                
+
                 // Scan first line content until newline
-                while (offset + tokenLength < bufferLen) {
-                    val ch = charAt()
-                    if (ch == '\n' || ch == '\r') {
-                        if (ch == '\r' && offset + tokenLength + 1 < bufferLen && source[offset + tokenLength + 1] == '\n') {
-                            tokenLength += 2
-                        } else {
-                            tokenLength++
-                        }
-                        break
-                    }
-                    tokenLength++
-                }
-                
+                tokenLength = lineRestEnd(offset + tokenLength) - offset
+
                 // Look for continuation lines
                 while (offset + tokenLength < bufferLen) {
                     var pos = offset + tokenLength
-                    
+
                     // Skip whitespace at start of line
                     while (pos < bufferLen && source[pos] != '\n' && source[pos] != '\r' && isNotNewLineWhiteSpace(source[pos])) {
                         pos++
                     }
-                    
+
                     // Check for doc comment continuation (---)
                     if (pos + 2 < bufferLen &&
-                        source[pos] == '-' && 
+                        source[pos] == '-' &&
                         source[pos + 1] == '-' &&
                         source[pos + 2] == '-') {
-                        
-                        pos += 3
-                        
-                        // Include this line in token
-                        while (pos < bufferLen) {
-                            if (source[pos] == '\n' || source[pos] == '\r') {
-                                if (source[pos] == '\r' && pos + 1 < bufferLen && source[pos + 1] == '\n') {
-                                    pos += 2
-                                } else {
-                                    pos++
-                                }
-                                break
-                            }
-                            pos++
-                        }
-                        
-                        tokenLength = pos - offset
+
+                        // Include this line in token (through its line terminator)
+                        tokenLength = lineRestEnd(pos + 3) - offset
                     } else {
                         break
                     }
                 }
-                
+
                 return LuaTokenTypes.DOC_COMMENT
             }
             else -> {
@@ -538,19 +513,25 @@ class LuaLexer @JvmOverloads constructor(
     }
 
     private fun scanShortComment(): LuaTokenTypes {
-        while (offset + tokenLength < bufferLen) {
-            val ch = charAt()
-            if (ch == '\n' || ch == '\r') {
-                if (ch == '\r' && offset + tokenLength + 1 < bufferLen && source[offset + tokenLength + 1] == '\n') {
-                    tokenLength += 2
-                } else {
-                    tokenLength++
-                }
-                break
-            }
-            tokenLength++
-        }
+        tokenLength = lineRestEnd(offset + tokenLength) - offset
         return LuaTokenTypes.SHORT_COMMENT
+    }
+
+    /**
+     * Index just past the end of the source line whose first character is at [start]:
+     * consumes a trailing CRLF pair as one terminator, LF or CR alone as one, and
+     * returns [bufferLen] when the line runs to EOF (no terminator).
+     */
+    private fun lineRestEnd(start: Int): Int {
+        var pos = start
+        while (pos < bufferLen) {
+            when (source[pos]) {
+                '\r' -> return if (pos + 1 < bufferLen && source[pos + 1] == '\n') pos + 2 else pos + 1
+                '\n' -> return pos + 1
+                else -> pos++
+            }
+        }
+        return pos
     }
 
     private fun scanDIV(): LuaTokenTypes {
@@ -620,12 +601,12 @@ class LuaLexer @JvmOverloads constructor(
     private fun scanNumber(char: Char): LuaTokenTypes {
         if (char == '0' && offset + tokenLength < bufferLen && (charAt() == 'x' || charAt() == 'X')) {
             tokenLength++
-            val leadingDigits = scanHexDigits()
+            val leadingDigits = scanDigits { isHexDigit(it) }
             var trailingDigits = 0
 
             if (offset + tokenLength < bufferLen && charAt() == '.') {
                 tokenLength++
-                trailingDigits = scanHexDigits()
+                trailingDigits = scanDigits { isHexDigit(it) }
             }
 
             if (leadingDigits + trailingDigits == 0) {
@@ -635,36 +616,28 @@ class LuaLexer @JvmOverloads constructor(
             return if (scanHexExponentIfPresent()) LuaTokenTypes.NUMBER else LuaTokenTypes.BAD_CHARACTER
         }
 
-        scanDecimalDigits()
+        scanDigits { isPrimeDigit(it) }
 
         if (offset + tokenLength < bufferLen &&
             charAt() == '.' &&
             chatAtOrNull(offset + tokenLength + 1) != '.'
         ) {
             tokenLength++
-            scanDecimalDigits()
+            scanDigits { isPrimeDigit(it) }
         }
 
         return if (scanDecimalExponentIfPresent()) LuaTokenTypes.NUMBER else LuaTokenTypes.BAD_CHARACTER
     }
 
     private fun scanNumberStartingWithDot(): LuaTokenTypes {
-        scanDecimalDigits()
+        scanDigits { isPrimeDigit(it) }
         return if (scanDecimalExponentIfPresent()) LuaTokenTypes.NUMBER else LuaTokenTypes.BAD_CHARACTER
     }
 
-    private fun scanDecimalDigits(): Int {
+    /** Consume the maximal run of digits accepted by [isDigit] at the cursor; returns the count. */
+    private fun scanDigits(isDigit: (Char) -> Boolean): Int {
         var count = 0
-        while (offset + tokenLength < bufferLen && isPrimeDigit(charAt())) {
-            tokenLength++
-            count++
-        }
-        return count
-    }
-
-    private fun scanHexDigits(): Int {
-        var count = 0
-        while (offset + tokenLength < bufferLen && isHexDigit(charAt())) {
+        while (offset + tokenLength < bufferLen && isDigit(charAt())) {
             tokenLength++
             count++
         }
@@ -689,7 +662,7 @@ class LuaLexer @JvmOverloads constructor(
 
         tokenLength++
         scanExponentSign()
-        return scanDecimalDigits() > 0
+        return scanDigits { isPrimeDigit(it) } > 0
     }
 
     private fun scanDecimalExponentIfPresent(): Boolean = scanExponentIfPresent('e', 'E')
@@ -719,8 +692,8 @@ class LuaLexer @JvmOverloads constructor(
      *   (the same tuple a `LexerState` snapshot stores).
      * - [tokenLength] -> [tokenLength], [line] -> [tokenLine], [column] -> [tokenColumn].
      *
-     * [tokenType] is intentionally not restored: it is write-only inside this class
-     * and the next [nextToken] call overwrites it.
+     * The token type needs no restore: it is returned per [nextToken] call and the
+     * next call recomputes it.
      *
      * The next [nextToken] call re-counts newlines across the restored token span,
      * moves `index`/`offset` past it, and scans the following token — identical to
@@ -766,118 +739,34 @@ class LuaLexer @JvmOverloads constructor(
 
         init {
             run {
-                keywords.put(
-                    "and",
-                    LuaTokenTypes.AND
-                )
-                keywords.put(
-                    "or",
-                    LuaTokenTypes.OR
-                )
-                keywords.put(
-                    "default",
-                    LuaTokenTypes.DEFAULT
-                )
-                keywords.put(
-                    "switch",
-                    LuaTokenTypes.SWITCH
-                )
-                keywords.put(
-                    "if",
-                    LuaTokenTypes.IF
-                )
-                keywords.put(
-                    "break",
-                    LuaTokenTypes.BREAK
-                )
-                keywords.put(
-                    "else",
-                    LuaTokenTypes.ELSE
-                )
-                keywords.put(
-                    "while",
-                    LuaTokenTypes.WHILE
-                )
-                keywords.put(
-                    "do",
-                    LuaTokenTypes.DO
-                )
-                keywords.put(
-                    "return",
-                    LuaTokenTypes.RETURN
-                )
-                keywords.put(
-                    "for",
-                    LuaTokenTypes.FOR
-                )
-                keywords.put(
-                    "function",
-                    LuaTokenTypes.FUNCTION
-                )
-                keywords.put(
-                    "local",
-                    LuaTokenTypes.LOCAL
-                )
-                keywords.put(
-                    "true",
-                    LuaTokenTypes.TRUE
-                )
-                keywords.put(
-                    "false",
-                    LuaTokenTypes.FALSE
-                )
-                keywords.put(
-                    "nil",
-                    LuaTokenTypes.NIL
-                )
-                keywords.put(
-                    "continue",
-                    LuaTokenTypes.CONTINUE
-                )
-                keywords.put(
-                    "not",
-                    LuaTokenTypes.NOT
-                )
-                keywords.put(
-                    "in",
-                    LuaTokenTypes.IN
-                )
-                keywords.put(
-                    "then",
-                    LuaTokenTypes.THEN
-                )
-                keywords.put(
-                    "end",
-                    LuaTokenTypes.END
-                )
-                keywords.put(
-                    "repeat",
-                    LuaTokenTypes.REPEAT
-                )
-                keywords.put(
-                    "elseif",
-                    LuaTokenTypes.ELSEIF
-                )
-                keywords.put(
-                    "until",
-                    LuaTokenTypes.UNTIL
-                )
-                keywords.put(
-                    "goto",
-                    LuaTokenTypes.GOTO
-                )
-                keywords.put(
-                    "case",
-                    LuaTokenTypes.CASE
-                )
-                keywords.put(
-                    "when",
-                    LuaTokenTypes.WHEN
-                )
-                keywords.put(
-                    "lambda",
-                    LuaTokenTypes.LAMBDA
-                )
+                keywords.put("and", LuaTokenTypes.AND)
+                keywords.put("or", LuaTokenTypes.OR)
+                keywords.put("default", LuaTokenTypes.DEFAULT)
+                keywords.put("switch", LuaTokenTypes.SWITCH)
+                keywords.put("if", LuaTokenTypes.IF)
+                keywords.put("break", LuaTokenTypes.BREAK)
+                keywords.put("else", LuaTokenTypes.ELSE)
+                keywords.put("while", LuaTokenTypes.WHILE)
+                keywords.put("do", LuaTokenTypes.DO)
+                keywords.put("return", LuaTokenTypes.RETURN)
+                keywords.put("for", LuaTokenTypes.FOR)
+                keywords.put("function", LuaTokenTypes.FUNCTION)
+                keywords.put("local", LuaTokenTypes.LOCAL)
+                keywords.put("true", LuaTokenTypes.TRUE)
+                keywords.put("false", LuaTokenTypes.FALSE)
+                keywords.put("nil", LuaTokenTypes.NIL)
+                keywords.put("continue", LuaTokenTypes.CONTINUE)
+                keywords.put("not", LuaTokenTypes.NOT)
+                keywords.put("in", LuaTokenTypes.IN)
+                keywords.put("then", LuaTokenTypes.THEN)
+                keywords.put("end", LuaTokenTypes.END)
+                keywords.put("repeat", LuaTokenTypes.REPEAT)
+                keywords.put("elseif", LuaTokenTypes.ELSEIF)
+                keywords.put("until", LuaTokenTypes.UNTIL)
+                keywords.put("goto", LuaTokenTypes.GOTO)
+                keywords.put("case", LuaTokenTypes.CASE)
+                keywords.put("when", LuaTokenTypes.WHEN)
+                keywords.put("lambda", LuaTokenTypes.LAMBDA)
             }
 
         }
@@ -927,16 +816,7 @@ class LuaLexer @JvmOverloads constructor(
 enum class LuaTokenTypes {
     SHEBANG_CONTENT, NEW_LINE, WHITE_SPACE, BAD_CHARACTER,
 
-    ADD_ASSIGN, SUB_ASSIGN, MUL_ASSIGN, DIV_ASSIGN,
-
-    /* AND_ASSIGN,
-     OR_ASSIGN,
-     XOR_ASSIGN,
-     MOD_ASSIGN,
-     LSHIFT_ASSIGN,
-     RSHIFT_ASSIGN,
-     URSHIFT_ASSIGN,*/
-    DOUBLE_DIV_ASSIGN,
+    ADD_ASSIGN, SUB_ASSIGN, MUL_ASSIGN, DIV_ASSIGN, DOUBLE_DIV_ASSIGN,
 
     NAME, NUMBER, PLUS, DOT, MINUS, LBRACK, ASSIGN, RBRACK, GETN, NOT, GT, LT, BIT_TILDE, MULT, MOD, DIV, LPAREN, RPAREN, LCURLY, RCURLY, COMMA, SEMI, COLON, EXP, BIT_AND, BIT_OR, STRING, LONG_STRING, CONCAT, IN, IF, OR, DO, EQ, NE, GE, BIT_RTRT, LE, BIT_LTLT, DOUBLE_DIV, DOUBLE_COLON, AND, SHORT_COMMENT, ELLIPSIS, END, NIL, FOR, DOC_COMMENT, ELSE, GOTO, CASE, TRUE, THEN, BLOCK_COMMENT, BREAK, LOCAL, FALSE, UNTIL, WHILE, RETURN, REPEAT, ELSEIF, CONTINUE, SWITCH, DEFAULT, FUNCTION, WHEN, LAMBDA, EOF
 }

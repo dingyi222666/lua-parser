@@ -93,7 +93,7 @@ internal class WorkspaceModuleResolver(
         return snapshot.files.keys.asSequence()
             .map { it.value }
             .filter { path ->
-                (path.endsWith(".lua") || path.endsWith(".aly")) && !path.startsWith("__")
+                isSourceModulePath(path) && !path.startsWith("__")
             }
             .flatMap { path ->
                 val base = path.removeSuffix(".lua").removeSuffix(".aly")
@@ -648,8 +648,7 @@ internal class WorkspaceModuleResolver(
         snapshot.graph.providersByModuleName.values.asSequence()
             .flatten()
             .filter { provider ->
-                provider.path != consumerPath &&
-                    (provider.path.value.endsWith(".lua") || provider.path.value.endsWith(".aly"))
+                provider.path != consumerPath && isSourceModulePath(provider.path.value)
             }
             .distinctBy { it.path }
             .filter { provider -> declaresSharedGlobal(provider) }
@@ -701,8 +700,7 @@ internal class WorkspaceModuleResolver(
                 snapshot.graph.providersByModuleName.values.asSequence()
                     .flatten()
                     .filter { provider ->
-                        provider.path != consumerPath &&
-                            (provider.path.value.endsWith(".lua") || provider.path.value.endsWith(".aly"))
+                        provider.path != consumerPath && isSourceModulePath(provider.path.value)
                     }
                     .distinctBy { it.path }
                     .filter { provider -> declaresSharedGlobal(provider, alias) }
@@ -828,9 +826,7 @@ internal class WorkspaceModuleResolver(
             return null
         }
         val provider = activeProvider(normalized) ?: return null
-        if (provider.path !in snapshot.files ||
-            (!provider.path.value.endsWith(".lua") && !provider.path.value.endsWith(".aly"))
-        ) {
+        if (provider.path !in snapshot.files || !isSourceModulePath(provider.path.value)) {
             return null
         }
         val surface = exportSurface(provider) ?: return null
@@ -1005,16 +1001,23 @@ internal class WorkspaceModuleResolver(
     }
 
     /**
+     * Real workspace source-module path rule: analyzable `.lua` / `.aly` project files.
+     * Shared by completion-name enumeration, shared-global scans and import recovery so
+     * every surface agrees on which provider paths are source modules.
+     */
+    private fun isSourceModulePath(value: String): Boolean =
+        value.endsWith(".lua") || value.endsWith(".aly")
+
+    /**
      * Recover an Android-Lua `.aly` layout provider for [moduleName] when graph active-provider
      * lookup missed it (path-derived claim not indexed, or only present as a workspace file).
      *
      * Never invents a fabricated `.lua` / JVM / stdlib path: only real workspace `.aly` files.
+     * Same `.aly` recovery the graph builder applies at build time; the shared helper
+     * [findAlyLayoutProviderIn] keeps the path-derived module-name rule in one place.
      */
-    private fun findAlyLayoutProvider(moduleName: String): WorkspaceModuleGraph.ModuleProvider? {
-        // Same `.aly` recovery the graph builder applies at build time; the shared helper
-        // keeps the path-derived module-name rule in one place.
-        return findAlyLayoutProviderIn(moduleName, snapshot.files.keys)
-    }
+    private fun findAlyLayoutProvider(moduleName: String): WorkspaceModuleGraph.ModuleProvider? =
+        findAlyLayoutProviderIn(moduleName, snapshot.files.keys)
 
     private fun syntheticAlyLayoutSurface(provider: WorkspaceModuleGraph.ModuleProvider): ModuleExportSurface? {
         if (!provider.path.value.endsWith(".aly")) {

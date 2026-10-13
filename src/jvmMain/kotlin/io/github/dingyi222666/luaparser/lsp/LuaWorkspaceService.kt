@@ -18,17 +18,17 @@ import java.util.concurrent.CompletableFuture
 
 class LuaWorkspaceService(
     private val languageService: LuaLanguageService,
-    private val acceptsRequests: () -> Boolean = { true },
     private val onConfigurationChanged: () -> Unit = {}
 ) : WorkspaceService {
     private val stateLock = Any()
     private var workspaceMetadata: Map<String, String> = emptyMap()
     private var watchedFileChanges: List<FileEvent> = emptyList()
 
+    // Lifecycle gating for these notifications lives in the only production caller
+    // (LuaLanguageServer.workspace, which checks acceptsMessages() before delegating);
+    // this class has never had another caller pass a gate (verified across main + tests).
+
     override fun didChangeConfiguration(params: DidChangeConfigurationParams) {
-        if (!acceptsRequests()) {
-            return
-        }
         val metadata = parseWorkspaceMetadata(params.settings) ?: return
         synchronized(stateLock) {
             if (metadata == workspaceMetadata) {
@@ -41,9 +41,6 @@ class LuaWorkspaceService(
     }
 
     override fun didChangeWatchedFiles(params: DidChangeWatchedFilesParams) {
-        if (!acceptsRequests()) {
-            return
-        }
         val changes = params.changes.orEmpty().toList()
         synchronized(stateLock) {
             watchedFileChanges = changes
@@ -64,9 +61,6 @@ class LuaWorkspaceService(
      * (documented in LspDidChangeWorkspaceFoldersTddTest).
      */
     override fun didChangeWorkspaceFolders(params: DidChangeWorkspaceFoldersParams) {
-        if (!acceptsRequests()) {
-            return
-        }
         val event = params.event
         val added = event?.added.orEmpty().toList()
         val removed = event?.removed.orEmpty().toList()
@@ -81,13 +75,6 @@ class LuaWorkspaceService(
     }
 
     override fun symbol(params: WorkspaceSymbolParams): CompletableFuture<Either<MutableList<out SymbolInformation>, MutableList<out WorkspaceSymbol>>> {
-        if (!acceptsRequests()) {
-            return if (languageService.supportsModernWorkspaceSymbols()) {
-                completedModernWorkspaceSymbols(mutableListOf())
-            } else {
-                completedLegacyWorkspaceSymbols(mutableListOf())
-            }
-        }
         val query = params.query.orEmpty()
         // Dual-path (TASK-397): client workspace.symbol.resolveSupport → modern
         // WorkspaceSymbol (Either.right via modernWorkspaceSymbols); else legacy

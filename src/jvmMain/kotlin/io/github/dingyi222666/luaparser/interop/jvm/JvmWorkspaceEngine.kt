@@ -572,6 +572,18 @@ open class JvmWorkspaceEngine(
     }
 
     /**
+     * Every import target visible to this update: workspace-configured AndroLua imports
+     * first, then each document's collected source imports (callers dedupe/order).
+     */
+    private fun allImportTargets(
+        configuration: JvmWorkspaceConfiguration,
+        documentFacts: Map<VirtualPath, DocumentFacts>
+    ): Sequence<String> = configuration.normalized().androluaImports.asSequence() +
+        documentFacts.values.asSequence().flatMap { facts ->
+            facts.sourceImports.asSequence().map { importFact -> importFact.target }
+        }
+
+    /**
      * Candidate import targets for dex library mounts (`import "libs/classes.dex"`):
      * configured imports, document source imports and AST import targets. The provider
      * re-filters to bare, existing dex/apk paths — this set is only the candidate pool.
@@ -579,39 +591,22 @@ open class JvmWorkspaceEngine(
     private fun collectDexLibraryImportTargets(
         configuration: JvmWorkspaceConfiguration,
         documentFacts: Map<VirtualPath, DocumentFacts>
-    ): Set<String> {
-        return buildSet {
-            configuration.normalized().androluaImports.forEach(::add)
-            documentFacts.values.forEach { facts ->
-                facts.sourceImports.forEach { importFact ->
-                    add(importFact.target)
-                }
-            }
-        }
-    }
+    ): Set<String> = allImportTargets(configuration, documentFacts).toCollection(linkedSetOf())
 
+    /**
+     * Mount package module providers for:
+     * - wildcard proxies: import "android.widget.*" / import("android.widget.*")
+     * - package-name aliases: import("android.widget") / import("java.util")
+     * Package modules power widget./util. member completions and hover moduleName.
+     */
     private fun collectWildcardImportTargets(
         configuration: JvmWorkspaceConfiguration,
         documentFacts: Map<VirtualPath, DocumentFacts>
-    ): Set<String> {
-        // Mount package module providers for:
-        // - wildcard proxies: import "android.widget.*" / import("android.widget.*")
-        // - package-name aliases: import("android.widget") / import("java.util")
-        // Package modules power widget./util. member completions and hover moduleName.
-        return buildSet {
-            fun maybeAddPackageTarget(importText: String) {
-                if (wildcardImportPrefix(importText) != null || packageNameAliasPrefix(importText) != null) {
-                    add(importText)
-                }
-            }
-            configuration.normalized().androluaImports.forEach(::maybeAddPackageTarget)
-            documentFacts.values.forEach { facts ->
-                facts.sourceImports.forEach { importFact ->
-                    maybeAddPackageTarget(importFact.target)
-                }
-            }
+    ): Set<String> = allImportTargets(configuration, documentFacts)
+        .filter { importText ->
+            wildcardImportPrefix(importText) != null || packageNameAliasPrefix(importText) != null
         }
-    }
+        .toCollection(linkedSetOf())
 
     private fun configurationWithWildcardImportPrefixes(
         configuration: JvmWorkspaceConfiguration,

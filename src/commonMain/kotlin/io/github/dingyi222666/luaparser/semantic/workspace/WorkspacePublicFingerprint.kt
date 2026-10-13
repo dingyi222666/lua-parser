@@ -81,22 +81,42 @@ data class WorkspacePublicFingerprint(
             append(serializeModuleType(surface.moduleType, linkedSetOf()))
         }
 
+        /** Shared `fields=…;methods=…;index=…` payload segment (module and table serialization). */
+        private fun serializeFieldMethodIndex(
+            fields: Map<String, Type>,
+            methods: Map<String, Type>,
+            indexSignature: Pair<Type, Type>?,
+            javaClassStack: MutableSet<String>
+        ): String = buildString {
+            append("fields=")
+            append(serializeTypeMap(fields, javaClassStack))
+            append(";methods=")
+            append(serializeTypeMap(methods, javaClassStack))
+            append(";index=")
+            append(indexSignature?.let {
+                "${serializeType(it.first, javaClassStack)}->${serializeType(it.second, javaClassStack)}"
+            }.orEmpty())
+        }
+
+        private fun serializeTypeMap(
+            entries: Map<String, Type>,
+            javaClassStack: MutableSet<String>
+        ): String = sortedEntries(entries).joinToString("|") { (name, type) ->
+            "$name:${serializeType(type, javaClassStack)}"
+        }
+
         private fun serializeModuleType(moduleType: ModuleType, javaClassStack: MutableSet<String>): String = buildString {
             append("name=")
             append(moduleType.moduleName)
             append(';')
-            append("fields=")
-            append(sortedEntries(moduleType.fields).joinToString("|") { (name, type) ->
-                "$name:${serializeType(type, javaClassStack)}"
-            })
-            append(";methods=")
-            append(sortedEntries(moduleType.methods).joinToString("|") { (name, type) ->
-                "$name:${serializeType(type, javaClassStack)}"
-            })
-            append(";index=")
-            append(moduleType.indexSignature?.let {
-                "${serializeType(it.keyType, javaClassStack)}->${serializeType(it.valueType, javaClassStack)}"
-            }.orEmpty())
+            append(
+                serializeFieldMethodIndex(
+                    moduleType.fields,
+                    moduleType.methods,
+                    moduleType.indexSignature?.let { it.keyType to it.valueType },
+                    javaClassStack
+                )
+            )
         }
 
         private fun serializeTypeParameters(
@@ -107,18 +127,15 @@ data class WorkspacePublicFingerprint(
         private fun serializeType(type: Type, javaClassStack: MutableSet<String>): String = when (type) {
             is ModuleType -> "module(${serializeModuleType(type, javaClassStack)})"
             is TableType -> buildString {
-                append("table(fields=")
-                append(sortedEntries(type.fields).joinToString("|") { (name, nested) ->
-                    "$name:${serializeType(nested, javaClassStack)}"
-                })
-                append(";methods=")
-                append(sortedEntries(type.methods).joinToString("|") { (name, nested) ->
-                    "$name:${serializeType(nested, javaClassStack)}"
-                })
-                append(";index=")
-                append(type.indexSignature?.let {
-                    "${serializeType(it.keyType, javaClassStack)}->${serializeType(it.valueType, javaClassStack)}"
-                }.orEmpty())
+                append("table(")
+                append(
+                    serializeFieldMethodIndex(
+                        type.fields,
+                        type.methods,
+                        type.indexSignature?.let { it.keyType to it.valueType },
+                        javaClassStack
+                    )
+                )
                 append(')')
             }
 
@@ -220,13 +237,9 @@ data class WorkspacePublicFingerprint(
                 append(";javaClass=")
                 append(type.javaClassName.orEmpty())
                 append(";fields=")
-                append(sortedEntries(type.fields).joinToString("|") { (name, nested) ->
-                    "$name:${serializeType(nested, javaClassStack)}"
-                })
+                append(serializeTypeMap(type.fields, javaClassStack))
                 append(";methods=")
-                append(sortedEntries(type.methods).joinToString("|") { (name, nested) ->
-                    "$name:${serializeType(nested, javaClassStack)}"
-                })
+                append(serializeTypeMap(type.methods, javaClassStack))
                 append(')')
             }
 
@@ -253,13 +266,9 @@ data class WorkspacePublicFingerprint(
                     append(";constructors=")
                     append(type.constructors.overloads.joinToString("|") { serializeType(it, javaClassStack) })
                     append(";staticMembers=")
-                    append(sortedEntries(type.staticMembers).joinToString("|") { (name, member) ->
-                        "$name:${serializeType(member, javaClassStack)}"
-                    })
+                    append(serializeTypeMap(type.staticMembers, javaClassStack))
                     append(";instanceMembers=")
-                    append(sortedEntries(type.instanceMembers).joinToString("|") { (name, member) ->
-                        "$name:${serializeType(member, javaClassStack)}"
-                    })
+                    append(serializeTypeMap(type.instanceMembers, javaClassStack))
                     append(";innerClasses=")
                     append(sortedEntries(type.innerClasses).joinToString("|") { (name, innerClass) ->
                         "$name:${serializeJavaClassType(innerClass, javaClassStack)}"

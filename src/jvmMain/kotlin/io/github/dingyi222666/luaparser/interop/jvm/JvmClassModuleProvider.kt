@@ -338,6 +338,18 @@ class JvmClassModuleProvider(
         return importedClassSymbol(importText, normalized, classLoader, deferMembers = deferPackageMemberReflection)
     }
 
+    /** Shared imported-symbol shape: caller-chosen alias, module identity from the surface. */
+    private fun importedSymbolOf(
+        alias: String,
+        providerPath: VirtualPath,
+        moduleType: ModuleType
+    ): WorkspaceImportedSymbol = WorkspaceImportedSymbol(
+        alias = alias,
+        moduleName = moduleType.moduleName,
+        providerPath = providerPath,
+        moduleType = moduleType
+    )
+
     private fun importedClassSymbol(
         importText: String,
         configuration: JvmWorkspaceConfiguration,
@@ -357,12 +369,7 @@ class JvmClassModuleProvider(
                     registerDexLibrary(dex)
                     val (providerPath, snapshot) = providerForDexClass(dex, cls, deferMembers)
                     val moduleType = snapshot.moduleExportSurface?.moduleType ?: return@firstNotNullOfOrNull null
-                    WorkspaceImportedSymbol(
-                        alias = moduleType.moduleName,
-                        moduleName = moduleType.moduleName,
-                        providerPath = providerPath,
-                        moduleType = moduleType
-                    )
+                    importedSymbolOf(moduleType.moduleName, providerPath, moduleType)
                 }
             }
             val dexMs = System.currentTimeMillis() - dexStart
@@ -386,24 +393,14 @@ class JvmClassModuleProvider(
             registerDexLibrary(dex)
             val (providerPath, snapshot) = providerForDexClass(dex, cls, deferMembers)
             val moduleType = snapshot.moduleExportSurface!!.moduleType
-            return WorkspaceImportedSymbol(
-                // Alias by the std-collision-guarded module name so a dex `R$string`
-                // class never activates the bare "string" Lua std alias.
-                alias = moduleType.moduleName,
-                moduleName = moduleType.moduleName,
-                providerPath = providerPath,
-                moduleType = moduleType
-            )
+            // Alias by the std-collision-guarded module name so a dex `R$string`
+            // class never activates the bare "string" Lua std alias.
+            return importedSymbolOf(moduleType.moduleName, providerPath, moduleType)
         }
         val clazz = loadClassOrNull(request.className, request.classLoader) ?: return null
         val (providerPath, snapshot) = (if (deferMembers) shallowProviderForClass(clazz) else providerForClass(clazz))
             ?: return null
-        return WorkspaceImportedSymbol(
-            alias = clazz.simpleName,
-            moduleName = clazz.simpleName,
-            providerPath = providerPath,
-            moduleType = snapshot.moduleExportSurface!!.moduleType
-        )
+        return importedSymbolOf(clazz.simpleName, providerPath, snapshot.moduleExportSurface!!.moduleType)
     }
 
     /**
@@ -451,12 +448,7 @@ class JvmClassModuleProvider(
             )
             return null
         }
-        return WorkspaceImportedSymbol(
-            alias = moduleType.moduleName,
-            moduleName = moduleType.moduleName,
-            providerPath = providerPath,
-            moduleType = moduleType
-        )
+        return importedSymbolOf(moduleType.moduleName, providerPath, moduleType)
     }
 
     private fun importedPackageSymbol(
@@ -467,17 +459,12 @@ class JvmClassModuleProvider(
         val packageName = packageNameFromImport(importText, configuration, classLoader) ?: return null
         val (providerPath, provider) = packageProviderFor(packageName, configuration, classLoader) ?: return null
         val moduleType = provider.moduleExportSurface?.moduleType ?: return null
-        return WorkspaceImportedSymbol(
-            // Key the activation alias by the FULL package name. A short
-            // substringBeforeLast('.') alias ("widget") collides silently when two wildcard
-            // packages share the last segment (android.widget.* vs android.support.v7.widget.*,
-            // demo main.lua) — last-wins would drop the other package symbol. The resolver's
-            // importedPackageSymbol already aliases by the full package name; match it here.
-            alias = packageName,
-            moduleName = moduleType.moduleName,
-            providerPath = providerPath,
-            moduleType = moduleType
-        )
+        // Key the activation alias by the FULL package name. A short
+        // substringBeforeLast('.') alias ("widget") collides silently when two wildcard
+        // packages share the last segment (android.widget.* vs android.support.v7.widget.*,
+        // demo main.lua) — last-wins would drop the other package symbol. The resolver's
+        // importedPackageSymbol already aliases by the full package name; match it here.
+        return importedSymbolOf(packageName, providerPath, moduleType)
     }
 
     private fun packageProviderFor(
@@ -1139,14 +1126,28 @@ class JvmClassModuleProvider(
         if (!Files.isDirectory(root)) {
             return
         }
+        collectTopLevelClassFiles(root, packageName, output)
+    }
+
+    /**
+     * Immediate `.class` children of [directory], emitted as `dottedPackage.SimpleName`
+     * entries. Shared verbatim by the file/directory and jrt package walks; nested
+     * (`$`) and malformed names are skipped identically. Failures are swallowed
+     * (empty output) exactly as each caller's local runCatching did.
+     */
+    private fun collectTopLevelClassFiles(
+        directory: java.nio.file.Path,
+        dottedPackage: String,
+        output: MutableSet<String>
+    ) {
         runCatching {
-            Files.list(root).use { entries ->
+            Files.list(directory).use { entries ->
                 entries
                     .filter { entry -> Files.isRegularFile(entry) && entry.fileName.toString().endsWith(".class") }
                     .forEach { entry ->
                         val fileName = entry.fileName.toString().removeSuffix(".class")
                         if ('$' !in fileName && fileName.isNotEmpty()) {
-                            output += "$packageName.$fileName"
+                            output += "$dottedPackage.$fileName"
                         }
                     }
             }
@@ -1280,18 +1281,7 @@ class JvmClassModuleProvider(
                     if (!Files.isDirectory(packageDir)) {
                         return@forEach
                     }
-                    runCatching {
-                        Files.list(packageDir).use { entries ->
-                            entries
-                                .filter { entry -> Files.isRegularFile(entry) && entry.fileName.toString().endsWith(".class") }
-                                .forEach { entry ->
-                                    val fileName = entry.fileName.toString().removeSuffix(".class")
-                                    if ('$' !in fileName && fileName.isNotEmpty()) {
-                                        found += "${packagePath.replace('/', '.')}.$fileName"
-                                    }
-                                }
-                        }
-                    }
+                    collectTopLevelClassFiles(packageDir, packagePath.replace('/', '.'), found)
                 }
             }
         }
@@ -1344,14 +1334,9 @@ class JvmClassModuleProvider(
     }
 
     /**
-     * Bundled Android-Lua runtime classes (com.androlua.*, com.luajava.*, compiled from the
-     * Android-Lua app sources, MIT license — see LICENSE attribution in the source repo).
-     * Extracted once to a temp file so the reflective classloader can mount real runtime
-     * members (LuaActivity.get/set/call/showToast/…) without host-specific configuration.
-     * Null when the resource is absent (never invents classes).
-     */
-    /**
      * Instance view of the process-wide bundled runtime jar ([Companion.companionRuntimeJarRef]).
+     * The bundled jar holds Android-Lua runtime classes (com.androlua.*, com.luajava.*,
+     * MIT license — see LICENSE attribution in the source repo).
      * Provider instances are created per workspace update — the shared companion lazy
      * guarantees exactly one temp extraction per JVM, and reading it directly keeps that
      * single-extraction contract (the old instance-level `by lazy` wrapper was a pure

@@ -87,6 +87,22 @@ import io.github.dingyi222666.luaparser.semantic.types.resolve.intersectionTypeO
 import io.github.dingyi222666.luaparser.semantic.types.resolve.unionTypeOf
 import io.github.dingyi222666.luaparser.semantic.types.resolve.isAssignableFrom
 
+/**
+ * Single owner for the "walk parents until node of type T" ladder, shared by this
+ * evaluator (LuaJava bindClass / loadLib probes) and the model layer's ReferenceQueries.
+ * Parent links may be lazily wired by the parser, hence the runCatching guard per hop.
+ */
+internal inline fun <reified T : BaseASTNode> enclosingAstNodeOf(node: BaseASTNode): T? {
+    var current: BaseASTNode? = node
+    while (current != null) {
+        if (current is T) {
+            return current
+        }
+        current = runCatching { current.parent }.getOrNull()
+    }
+    return null
+}
+
 class ExpressionTypeEvaluator internal constructor(
     private val binder: BinderPassResult,
     private val workspaceContext: SemanticWorkspaceContext
@@ -1183,45 +1199,43 @@ class ExpressionTypeEvaluator internal constructor(
         return stringLiteralOf(callArguments(node).getOrNull(argumentIndex) ?: return null)
     }
 
-    private fun resolveLoadLibMemberArgumentType(node: ConstantNode, context: Context): Type? {
+    /**
+     * Shared LuaJava helper probe: [node] must be the [argumentIndex]-th argument of
+     * the enclosing call whose base resolves to the named LuaJava helper
+     * (loadLib / bindClass). Both callers apply purely-conjunctive filters.
+     */
+    private fun luaJavaHelperStringCallAt(
+        node: ConstantNode,
+        context: Context,
+        helperName: String,
+        argumentIndex: Int
+    ): CallExpression? {
         if (node.constantType != ConstantNode.TYPE.STRING) {
             return null
         }
         val call = enclosingCallExpression(node) ?: return null
-        if (callArguments(call).getOrNull(1) !== node) {
+        if (callArguments(call).getOrNull(argumentIndex) !== node) {
             return null
         }
+        if (!isLuaJavaCallBase(effectiveCallBase(call), context, helperName)) {
+            return null
+        }
+        return call
+    }
+
+    private fun resolveLoadLibMemberArgumentType(node: ConstantNode, context: Context): Type? {
+        val call = luaJavaHelperStringCallAt(node, context, "loadLib", argumentIndex = 1) ?: return null
         val target = stringCallTarget(call) ?: return null
-        if (!isLuaJavaCallBase(effectiveCallBase(call), context, "loadLib")) {
-            return null
-        }
         return resolveLoadLibMemberType(target, node.stringOf(), context).takeIf { it != UnknownType }
     }
 
     private fun resolveBindClassTargetArgumentType(node: ConstantNode, context: Context): Type? {
-        if (node.constantType != ConstantNode.TYPE.STRING) {
-            return null
-        }
-        val call = enclosingCallExpression(node) ?: return null
-        if (callArguments(call).firstOrNull() !== node) {
-            return null
-        }
-        if (!isLuaJavaCallBase(effectiveCallBase(call), context, "bindClass")) {
-            return null
-        }
+        val call = luaJavaHelperStringCallAt(node, context, "bindClass", argumentIndex = 0) ?: return null
         return resolveLuaJavaImportTarget(node.stringOf())?.moduleType
     }
 
-    private fun enclosingCallExpression(node: BaseASTNode): CallExpression? {
-        var current: BaseASTNode? = node
-        while (current != null) {
-            if (current is CallExpression) {
-                return current
-            }
-            current = runCatching { current.parent }.getOrNull()
-        }
-        return null
-    }
+    private fun enclosingCallExpression(node: BaseASTNode): CallExpression? =
+        enclosingAstNodeOf(node)
 
     private fun isLuaJavaCallBase(base: ExpressionNode, context: Context, helperName: String): Boolean {
         return when (base) {
@@ -1978,18 +1992,30 @@ class ExpressionTypeEvaluator internal constructor(
         return declaredOrInferredFunctionValueType(declaration, context, preferDeclaredReturn)
     }
 
-    private fun globalAssignmentValueType(declaration: BinderDeclaration, context: Context): Type? {
-        val anchor = declaration.anchorNode ?: return null
+    /**
+     * Single owner for the assignment-LHS value derivation shared by global targets
+     * (anchor = the assignment node) and member targets (anchor = the member LHS);
+     * [scopeAdjust] rebinds the derived context per caller.
+     */
+    private inline fun assignmentValueTypeOf(
+        declaration: BinderDeclaration,
+        anchor: BaseASTNode,
+        context: Context,
+        scopeAdjust: (Context, AssignmentStatement) -> Context
+    ): Type? {
         val assignment = anchor.parent as? AssignmentStatement ?: return null
         val targetIndex = assignment.init.indexOf(anchor)
         if (targetIndex < 0) {
             return null
         }
-        return resolveAssignedValueType(
-            assignment.variables,
-            targetIndex,
-            context.copy(excludedDeclarations = context.excludedDeclarations + declaration.id)
-        )
+        return resolveAssignedValueType(assignment.variables, targetIndex, scopeAdjust(context, assignment))
+    }
+
+    private fun globalAssignmentValueType(declaration: BinderDeclaration, context: Context): Type? {
+        val anchor = declaration.anchorNode ?: return null
+        return assignmentValueTypeOf(declaration, anchor, context) { ctx, _ ->
+            ctx.copy(excludedDeclarations = ctx.excludedDeclarations + declaration.id)
+        }
     }
 
     private fun deriveMethodDeclarationValueType(declaration: BinderDeclaration, context: Context, preferDeclaredReturn: Boolean = true): Type {
@@ -2011,17 +2037,10 @@ class ExpressionTypeEvaluator internal constructor(
 
     private fun assignedMemberValueType(declaration: BinderDeclaration, context: Context): Type? {
         val member = declaration.anchorNode?.parent as? MemberExpression ?: return null
-        val assignment = member.parent as? AssignmentStatement ?: return null
-        val targetIndex = assignment.init.indexOf(member)
-        if (targetIndex < 0) {
-            return null
+        return assignmentValueTypeOf(declaration, member, context) { ctx, assignment ->
+            val scopeId = binder.positionQueries.getScopeAt(assignment.range.start)?.id ?: ctx.lexicalScopeId
+            ctx.copy(lexicalScopeId = scopeId)
         }
-        val scopeId = binder.positionQueries.getScopeAt(assignment.range.start)?.id ?: context.lexicalScopeId
-        return resolveAssignedValueType(
-            assignment.variables,
-            targetIndex,
-            context.copy(lexicalScopeId = scopeId)
-        )
     }
 
     private fun findVisibleValueDeclaration(name: String, position: Position, context: Context): BinderDeclaration? {
@@ -2296,6 +2315,14 @@ class ExpressionTypeEvaluator internal constructor(
         return findVisibleValueDeclaration(identifier.name, identifier.range.start, context)
     }
 
+    /**
+     * START_ONLY visibility gate — deliberately NOT the shared strict predicate
+     * `BinderDeclaration.isVisibleAtPosition`. Type inference must resolve references
+     * inside `local x = <expr using x>` to the new declaration itself, so only
+     * `range.start <= position` gates here: no `range.end` / `visibleFrom` clipping
+     * and no unconditional GLOBAL+AST pass. Completion / hover / ReferenceQueries
+     * use the strict ladder instead.
+     */
     private fun isVisibleAt(declaration: BinderDeclaration, position: Position): Boolean {
         // Builtin ranges belong to declaration resources, not the user's source file.
         // They are ambient bindings and must not be gated by unrelated file positions.

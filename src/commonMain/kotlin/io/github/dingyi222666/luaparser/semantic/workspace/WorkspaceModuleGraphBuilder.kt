@@ -67,7 +67,7 @@ object WorkspaceModuleGraphBuilder {
                 // a claim was lost to an overlay/extra conflict.
                 val provider = activeProviders[requireFact.moduleName]
                     ?: findOverlayProvider(requireFact.moduleName, builtinOverlay)
-                    ?: findAlyLayoutProvider(requireFact.moduleName, graphFiles)
+                    ?: findAlyLayoutProviderIn(requireFact.moduleName, graphFiles.keys)
                 if (provider == null) {
                     unresolved += WorkspaceModuleGraph.UnresolvedRequire(
                         consumerPath = path,
@@ -231,13 +231,6 @@ object WorkspaceModuleGraphBuilder {
             )
         }
         return null
-    }
-
-    private fun findAlyLayoutProvider(
-        moduleName: String,
-        graphFiles: Map<VirtualPath, WorkspaceSnapshot.FileSnapshot>
-    ): WorkspaceModuleGraph.ModuleProvider? {
-        return findAlyLayoutProviderIn(moduleName, graphFiles.keys)
     }
 
     private fun computeStronglyConnectedComponents(
