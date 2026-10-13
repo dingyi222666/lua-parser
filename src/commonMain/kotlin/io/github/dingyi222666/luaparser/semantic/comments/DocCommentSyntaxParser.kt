@@ -13,8 +13,7 @@ internal data class ParsedDocComment(
     val inlineTypeText: String?
 )
 
-class DocCommentSyntaxParser(
-) {
+class DocCommentSyntaxParser {
 
     private companion object {
         /** Longest-first candidate attempts in [recoverOperatorDelimitedTypePrefix]. */
@@ -35,7 +34,7 @@ class DocCommentSyntaxParser(
 
         comments.forEach { comment ->
             val rawLines = comment.comment.lines()
-            normalizeDocLines(rawLines).forEachIndexed { index, line ->
+            rawLines.map(::normalizeCommentLine).forEachIndexed { index, line ->
                 val lineInfo = DocLineInfo(
                     sourceLine = comment.range.start.line + index,
                     rawLine = rawLines.getOrElse(index) { "" },
@@ -329,19 +328,12 @@ class DocCommentSyntaxParser(
             return MethodTagSyntax(name = "", range = lineRange(lineInfo))
         }
 
+        // A "fun(" prefix that is not the leading token ("Foo.bar fun(...)") splits the target
+        // from the signature at "fun(" itself; otherwise the first "(" splits it ("fun(...)"
+        // and "Foo.bar(...)" share the parenthesis branch, since a leading "fun(" has an
+        // empty target prefix either way).
         val functionStart = normalized.indexOf("fun(")
-        if (functionStart > 0) {
-            val target = normalized.substring(0, functionStart).trim()
-            val (className, methodName) = splitMethodTarget(target)
-            return MethodTagSyntax(
-                name = methodName,
-                className = className,
-                signatureText = normalized.substring(functionStart).trim(),
-                range = tokenRange(lineInfo, methodName)
-            )
-        }
-
-        val signatureStart = normalized.indexOf('(')
+        val signatureStart = if (functionStart > 0) functionStart else normalized.indexOf('(')
         if (signatureStart == -1) {
             val (className, methodName) = splitMethodTarget(normalized)
             return MethodTagSyntax(name = methodName, className = className, range = tokenRange(lineInfo, methodName))
@@ -465,14 +457,6 @@ class DocCommentSyntaxParser(
         } else {
             text
         }
-    }
-
-    private fun normalizeDocLines(rawComment: String): List<String> {
-        return normalizeDocLines(rawComment.lines())
-    }
-
-    private fun normalizeDocLines(rawLines: List<String>): List<String> {
-        return rawLines.map(::normalizeCommentLine)
     }
 
     private fun normalizeCommentLine(rawLine: String): String {

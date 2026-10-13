@@ -6,6 +6,7 @@ import io.github.dingyi222666.luaparser.semantic.types.model.ArrayType
 import io.github.dingyi222666.luaparser.semantic.types.model.CallableType
 import io.github.dingyi222666.luaparser.semantic.types.model.ClassType
 import io.github.dingyi222666.luaparser.semantic.types.model.CustomType
+import io.github.dingyi222666.luaparser.semantic.types.model.canonicalByKind
 import io.github.dingyi222666.luaparser.semantic.types.model.ErrorType
 import io.github.dingyi222666.luaparser.semantic.types.model.FunctionParameter
 import io.github.dingyi222666.luaparser.semantic.types.model.FunctionType
@@ -118,7 +119,8 @@ object TypeRelations {
     }
 
     private fun isLiteralAssignable(target: LiteralType, source: Type): Boolean = when (source) {
-        is LiteralType -> target.value == source.value && canonicalPrimitive(target.baseType) == canonicalPrimitive(source.baseType)
+        is LiteralType -> target.value == source.value &&
+            target.baseType.canonicalByKind() == source.baseType.canonicalByKind()
         else -> false
     }
 
@@ -127,8 +129,8 @@ object TypeRelations {
         PrimitiveType.FUNCTION -> source is CallableType
         PrimitiveType.TABLE -> isTableLike(source)
         else -> when (source) {
-            is LiteralType -> canonicalPrimitive(source.baseType) == target
-            is PrimitiveType -> canonicalPrimitive(source) == target
+            is LiteralType -> source.baseType.canonicalByKind() == target
+            is PrimitiveType -> source.canonicalByKind() == target
             else -> false
         }
     }
@@ -145,49 +147,7 @@ object TypeRelations {
     }
 
     private fun isTableAssignable(target: TableType, source: Type): Boolean {
-        return when (source) {
-            is TableType -> {
-                if (!target.fields.all { (name, type) -> source.fields[name]?.let { isAssignable(type, it) } == true }) {
-                    false
-                } else if (!target.methods.all { (name, type) -> source.methods[name]?.let { isAssignable(type, it) } == true }) {
-                    false
-                } else {
-                    val targetIndex = target.indexSignature
-                    if (targetIndex == null) {
-                        true
-                    } else {
-                        val sourceIndex = source.indexSignature ?: return false
-                        isAssignable(targetIndex.keyType, sourceIndex.keyType) &&
-                            isAssignable(targetIndex.valueType, sourceIndex.valueType)
-                    }
-                }
-            }
-
-            is ModuleType -> isMemberBearingShapeAssignable(
-                target.fields,
-                target.methods,
-                target.indexSignature,
-                source.fields,
-                source.methods,
-                source.indexSignature?.let { TableType.IndexSignature(it.keyType, it.valueType) }
-            )
-
-            is ClassType -> isMemberBearingTargetAssignableToClass(
-                target.fields,
-                target.methods,
-                target.indexSignature,
-                source
-            )
-
-            is ArrayType -> isMemberBearingTargetAssignableToArray(
-                target.fields,
-                target.methods,
-                target.indexSignature,
-                source
-            )
-
-            else -> false
-        }
+        return isMemberBearingTargetAssignable(target.fields, target.methods, target.indexSignature, source)
     }
 
     private fun isClassAssignable(target: ClassType, source: Type): Boolean {
@@ -250,18 +210,25 @@ object TypeRelations {
     }
 
     /**
+     * Lua sequence sources (array / table literal / module surface) flowing into a Java
+     * element type — the shared core of isJavaContainerAssignable, isJavaArrayAssignable,
+     * isArrayAssignable and the SEQUENCE branch of isJavaContainerAssignableFromLuaTable.
+     */
+    private fun isLuaSequenceSourceAssignableToElement(elementType: Type, source: Type): Boolean = when (source) {
+        is ArrayType -> isAssignable(elementType, source.elementType)
+        is TableType -> isTableAssignableToJavaArrayElements(elementType, source)
+        is ModuleType -> isModuleAssignableToJavaArrayElements(elementType, source)
+        else -> false
+    }
+
+    /**
      * Conservatively models Lua table / array literals as Java List or Map parameters when
      * element / key / value types are statically known. Raw or mixed shapes stay non-assignable.
      */
     internal fun isJavaContainerAssignable(target: Type, source: Type): Boolean {
         return when (target) {
             is JavaArrayType -> isJavaArrayAssignable(target, source)
-            is ArrayType -> when (source) {
-                is ArrayType -> isAssignable(target.elementType, source.elementType)
-                is TableType -> isTableAssignableToJavaArrayElements(target.elementType, source)
-                is ModuleType -> isModuleAssignableToJavaArrayElements(target.elementType, source)
-                else -> false
-            }
+            is ArrayType -> isLuaSequenceSourceAssignableToElement(target.elementType, source)
             is JavaInstanceType -> isJavaContainerAssignableFromLuaTable(target, source)
             else -> false
         }
@@ -271,12 +238,7 @@ object TypeRelations {
         return when (target.javaContainerKind()) {
             JavaContainerKind.SEQUENCE -> {
                 val elementType = target.typeArguments.singleOrNull() ?: return false
-                when (source) {
-                    is TableType -> isTableAssignableToJavaArrayElements(elementType, source)
-                    is ArrayType -> isAssignable(elementType, source.elementType)
-                    is ModuleType -> isModuleAssignableToJavaArrayElements(elementType, source)
-                    else -> false
-                }
+                isLuaSequenceSourceAssignableToElement(elementType, source)
             }
             JavaContainerKind.MAP -> {
                 if (target.typeArguments.size < 2) {
@@ -325,17 +287,21 @@ object TypeRelations {
         return true
     }
 
+    /**
+     * ModuleType and TableType.IndexSignature are structurally identical member surfaces;
+     * every Module-vs-table comparison goes through this view instead of re-inlining the
+     * field/method/index conversion. (Construction is confined to the rare Module-as-array
+     * / Module-as-map branches, matching the previous call sites — never the hot
+     * TableType/ModuleType target dispatch.)
+     */
+    private fun ModuleType.toTableShape(): TableType = TableType(
+        fields = fields,
+        methods = methods,
+        indexSignature = indexSignature?.let { TableType.IndexSignature(it.keyType, it.valueType) }
+    )
+
     private fun isModuleAssignableToJavaArrayElements(elementType: Type, source: ModuleType): Boolean {
-        return isTableAssignableToJavaArrayElements(
-            elementType,
-            TableType(
-                fields = source.fields,
-                methods = source.methods,
-                indexSignature = source.indexSignature?.let {
-                    TableType.IndexSignature(it.keyType, it.valueType)
-                }
-            )
-        )
+        return isTableAssignableToJavaArrayElements(elementType, source.toTableShape())
     }
 
     private fun isTableAssignableToJavaMap(keyType: Type, valueType: Type, source: TableType): Boolean {
@@ -382,17 +348,7 @@ object TypeRelations {
     }
 
     private fun isModuleAssignableToJavaMap(keyType: Type, valueType: Type, source: ModuleType): Boolean {
-        return isTableAssignableToJavaMap(
-            keyType,
-            valueType,
-            TableType(
-                fields = source.fields,
-                methods = source.methods,
-                indexSignature = source.indexSignature?.let {
-                    TableType.IndexSignature(it.keyType, it.valueType)
-                }
-            )
-        )
+        return isTableAssignableToJavaMap(keyType, valueType, source.toTableShape())
     }
 
     private fun tableFieldKeyType(fieldName: String): Type {
@@ -425,9 +381,8 @@ object TypeRelations {
 
     private fun isJavaArrayAssignable(target: JavaArrayType, source: Type): Boolean = when (source) {
         is JavaArrayType -> target.dimensions == source.dimensions && isAssignable(target.elementType, source.elementType)
-        is ArrayType -> target.dimensions == 1 && isAssignable(target.elementType, source.elementType)
-        is TableType -> target.dimensions == 1 && isTableAssignableToJavaArrayElements(target.elementType, source)
-        is ModuleType -> target.dimensions == 1 && isModuleAssignableToJavaArrayElements(target.elementType, source)
+        is ArrayType, is TableType, is ModuleType ->
+            target.dimensions == 1 && isLuaSequenceSourceAssignableToElement(target.elementType, source)
         else -> false
     }
 
@@ -448,42 +403,51 @@ object TypeRelations {
         }
     }
 
+    /**
+     * The single member-bearing dispatch. TableType and ModuleType targets were two
+     * byte-parallel 4-branch ladders; the only difference was the ModuleType.IndexSignature
+     * -> TableType.IndexSignature conversion of the TARGET index, now done once at entry
+     * (the source-side conversions stay exactly where they were, so no new allocations on
+     * the assignability hot path).
+     */
+    private fun isMemberBearingTargetAssignable(
+        targetFields: Map<String, Type>,
+        targetMethods: Map<String, Type>,
+        targetIndex: TableType.IndexSignature?,
+        source: Type
+    ): Boolean = when (source) {
+        is TableType -> isMemberBearingShapeAssignable(
+            targetFields,
+            targetMethods,
+            targetIndex,
+            source.fields,
+            source.methods,
+            source.indexSignature
+        )
+
+        is ModuleType -> isMemberBearingShapeAssignable(
+            targetFields,
+            targetMethods,
+            targetIndex,
+            source.fields,
+            source.methods,
+            source.indexSignature?.let { TableType.IndexSignature(it.keyType, it.valueType) }
+        )
+
+        is ClassType -> isMemberBearingTargetAssignableToClass(targetFields, targetMethods, targetIndex, source)
+
+        is ArrayType -> isMemberBearingTargetAssignableToArray(targetFields, targetMethods, targetIndex, source)
+
+        else -> false
+    }
+
     private fun isModuleAssignable(target: ModuleType, source: Type): Boolean {
-        return when (source) {
-            is ModuleType -> isMemberBearingShapeAssignable(
-                target.fields,
-                target.methods,
-                target.indexSignature?.let { TableType.IndexSignature(it.keyType, it.valueType) },
-                source.fields,
-                source.methods,
-                source.indexSignature?.let { TableType.IndexSignature(it.keyType, it.valueType) }
-            )
-
-            is TableType -> isMemberBearingShapeAssignable(
-                target.fields,
-                target.methods,
-                target.indexSignature?.let { TableType.IndexSignature(it.keyType, it.valueType) },
-                source.fields,
-                source.methods,
-                source.indexSignature
-            )
-
-            is ClassType -> isMemberBearingTargetAssignableToClass(
-                target.fields,
-                target.methods,
-                target.indexSignature?.let { TableType.IndexSignature(it.keyType, it.valueType) },
-                source
-            )
-
-            is ArrayType -> isMemberBearingTargetAssignableToArray(
-                target.fields,
-                target.methods,
-                target.indexSignature?.let { TableType.IndexSignature(it.keyType, it.valueType) },
-                source
-            )
-
-            else -> false
-        }
+        return isMemberBearingTargetAssignable(
+            target.fields,
+            target.methods,
+            target.indexSignature?.let { TableType.IndexSignature(it.keyType, it.valueType) },
+            source
+        )
     }
 
     /** Shared ClassType-source branch of the member-bearing ladders (Table/Module targets identical). */
@@ -519,9 +483,7 @@ object TypeRelations {
         is ArrayType -> isAssignable(target.elementType, source.elementType)
         // Prefer index-signature array tables; also accept integer-keyed table literals so
         // reflected Java array parameters can be checked against Lua table constructors.
-        is TableType -> isTableAssignableToJavaArrayElements(target.elementType, source)
-        is ModuleType -> isModuleAssignableToJavaArrayElements(target.elementType, source)
-        else -> false
+        else -> isLuaSequenceSourceAssignableToElement(target.elementType, source)
     }
 
     private fun isTupleAssignable(target: TupleType, source: Type): Boolean {
@@ -720,9 +682,7 @@ object TypeRelations {
 
     private fun asTableShape(type: Type): TableType? = when (type) {
         is TableType -> type
-        is ModuleType -> TableType(fields = type.fields, methods = type.methods, indexSignature = type.indexSignature?.let {
-            TableType.IndexSignature(it.keyType, it.valueType)
-        })
+        is ModuleType -> type.toTableShape()
         is ClassType -> TableType(fields = type.getAllFields(), methods = type.getAllMethods())
         is ArrayType -> TableType(indexSignature = TableType.IndexSignature(PrimitiveType.NUMBER, type.elementType))
         is JavaClassType -> TableType(
@@ -814,22 +774,6 @@ object TypeRelations {
     private fun mergeStructuralType(left: Type, right: Type): Type? {
         val merged = TypeNormalizer.normalize(IntersectionType(linkedSetOf(left, right)))
         return if (merged == NeverType) null else merged
-    }
-
-    private fun canonicalPrimitive(type: PrimitiveType): PrimitiveType = when (type.kind) {
-        PrimitiveType.Kind.VOID -> PrimitiveType.VOID
-        PrimitiveType.Kind.NIL -> PrimitiveType.NIL
-        PrimitiveType.Kind.BOOLEAN -> PrimitiveType.BOOLEAN
-        PrimitiveType.Kind.NUMBER -> PrimitiveType.NUMBER
-        PrimitiveType.Kind.STRING -> PrimitiveType.STRING
-        PrimitiveType.Kind.FUNCTION -> PrimitiveType.FUNCTION
-        PrimitiveType.Kind.TABLE -> PrimitiveType.TABLE
-        PrimitiveType.Kind.THREAD -> PrimitiveType.THREAD
-        PrimitiveType.Kind.USERDATA -> PrimitiveType.USERDATA
-        PrimitiveType.Kind.ANY -> PrimitiveType.ANY
-        PrimitiveType.Kind.UNKNOWN -> PrimitiveType.UNKNOWN
-        PrimitiveType.Kind.NEVER -> PrimitiveType.NEVER
-        PrimitiveType.Kind.ERROR -> PrimitiveType.ERROR
     }
 }
 

@@ -35,31 +35,33 @@ class CommentCollector(
                     // A non-adjacent comment starts a new group, so the previous one is complete
                     // and can never gain a target.
                     if (pending.isNotEmpty() && !areAdjacentInSource(pending.last(), statement)) {
-                        closeGroup(pending)?.let { attachments.add(it.toAttachment()) }
+                        flushGroup(pending, forward = null, backward = null)
                     }
                     pending.add(statement)
                     return@forEach
                 }
 
-                closeGroup(pending)?.let { group ->
-                    attachments.add(group.toAttachment(group.resolveTarget(forward = statement, backward = lastStatement)))
-                }
+                flushGroup(pending, forward = statement, backward = lastStatement)
                 walkStatement(statement)
                 lastStatement = statement
             }
 
+            // A trailing group after the return statement (or block end) resolves against the
+            // last statement only; both cases share the same flush + optional walk.
             val returnStatement = block.returnStatement
-            if (returnStatement == null) {
-                closeGroup(pending)?.let { group ->
-                    attachments.add(group.toAttachment(group.resolveTarget(forward = null, backward = lastStatement)))
-                }
-                return
-            }
+            flushGroup(pending, forward = returnStatement, backward = lastStatement)
+            returnStatement?.let(::walkStatement)
+        }
 
+        /** Closes the buffered group, if any, and attaches it via the trailing/forward target rule. */
+        private fun flushGroup(
+            pending: MutableList<CommentStatement>,
+            forward: BaseASTNode?,
+            backward: StatementNode?
+        ) {
             closeGroup(pending)?.let { group ->
-                attachments.add(group.toAttachment(group.resolveTarget(forward = returnStatement, backward = lastStatement)))
+                attachments.add(group.toAttachment(group.resolveTarget(forward, backward)))
             }
-            walkStatement(returnStatement)
         }
 
         /** Materializes the buffered comments as a block, or returns null when none are buffered. */
@@ -71,17 +73,14 @@ class CommentCollector(
             val comments = pending.toList()
             pending.clear()
             val docComments = comments.filter(CommentStatement::isDocComment)
-            val range = Range(
-                start = comments.first().range.start,
-                end = comments.last().range.end
-            )
+            val startLine = comments.first().range.start.line
+            val endLine = comments.last().range.end.line
 
             val parsedDocComment = docCommentSyntaxParser.parseWithInlineType(docComments)
             val block = CollectedCommentBlock(
                 comments = comments,
-                range = range,
-                startLine = range.start.line,
-                endLine = range.end.line,
+                startLine = startLine,
+                endLine = endLine,
                 visibleEndLine = comments.last().visibleEndLine(),
                 docComment = parsedDocComment.syntax,
                 inlineTypeText = parsedDocComment.inlineTypeText
@@ -179,10 +178,7 @@ class CommentCollector(
 
                 is LambdaDeclaration -> walkExpression(expression.expression)
                 is MemberExpression -> walkExpression(expression.base)
-                is TableConstructorExpression -> expression.fields.forEach {
-                    walkExpression(it.key)
-                    walkExpression(it.value)
-                }
+                is TableConstructorExpression -> expression.fields.forEach(::walkExpression)
 
                 is TableKey -> {
                     walkExpression(expression.key)
@@ -222,7 +218,7 @@ class CommentCollector(
         return trailingTarget ?: forward?.takeIf { target -> isAdjacentTo(target) }
     }
 
-    private fun CollectedCommentBlock.toAttachment(target: BaseASTNode? = null): CommentAttachment {
+    private fun CollectedCommentBlock.toAttachment(target: BaseASTNode?): CommentAttachment {
         return CommentAttachment(
             comments = comments,
             target = target,

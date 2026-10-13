@@ -189,6 +189,56 @@ class TypeResolver(
             .distinctBy(TypeParameterType::name)
     }
 
+    /** The TYPE_PARAMETER children of one declaration, resolved (shared by class/method/function/alias parents). */
+    private fun ownedTypeParameters(ownerDeclarationId: DeclarationId): List<TypeParameterType> =
+        binder.declarationIndex.getOwnedDeclarations(DeclarationOwner.Declaration(ownerDeclarationId))
+            .filter { it.kind == DeclarationKind.TYPE_PARAMETER }
+            .mapNotNull { resolveDeclaration(it.id).declaredType as? TypeParameterType }
+
+    /** Shared PARAMETER-children materialization (identical in method and function resolution). */
+    private fun resolveOwnedParameters(ownedDeclarations: List<BinderDeclaration>): List<FunctionParameter> =
+        ownedDeclarations
+            .filter { it.kind == DeclarationKind.PARAMETER }
+            .map { parameterDeclaration ->
+                val resolvedParameter = resolveDeclaration(parameterDeclaration.id)
+                val paramTag = resolvedParameter.findOwningFunctionParamTag()
+                val isVararg = paramTag?.vararg == true || resolvedParameter.name == "..."
+                val parameterType = resolvedParameter.declaredType?.let {
+                    if (isVararg && it !is VarargType) VarargType(it) else it
+                } ?: UnknownType
+                FunctionParameter(
+                    name = resolvedParameter.name,
+                    type = parameterType,
+                    optional = paramTag?.optional == true,
+                    vararg = isVararg
+                )
+            }
+
+    private fun resolveReturnTypes(declaration: BinderDeclaration, context: TypeResolutionContext): List<Type> =
+        declaration.documentation?.docComment
+            ?.tags
+            .orEmpty()
+            .filterIsInstance<ReturnTagSyntax>()
+            .lastOrNull()
+            ?.typeTexts
+            ?.map(::parseTypeSyntax)
+            ?.map { syntaxNode -> resolveSyntax(syntaxNode, context) }
+            .orEmpty()
+
+    private fun singleOrMultiReturnType(returnTypes: List<Type>): Type = when (returnTypes.size) {
+        0 -> UnknownType
+        1 -> returnTypes.single()
+        else -> MultiReturnType(returnTypes)
+    }
+
+    private fun resolveOwnedParameterTypes(ownedDeclarations: List<BinderDeclaration>): Map<String, Type> {
+        val types = linkedMapOf<String, Type>()
+        ownedDeclarations.filter { it.kind == DeclarationKind.PARAMETER }.forEach { parameter ->
+            resolveDeclaration(parameter.id).declaredType?.let { types[parameter.name] = it }
+        }
+        return types
+    }
+
     private fun resolveClassDeclaration(declaration: BinderDeclaration): BinderDeclaration {
         if (!classStack.add(declaration.id)) {
             return declaration.copy(declaredType = ClassType(declaration.name, declarationId = declaration.id.value))
@@ -198,9 +248,7 @@ class TypeResolver(
             val owner = DeclarationOwner.Declaration(declaration.id)
             val ownedDeclarations = binder.declarationIndex.getOwnedDeclarations(owner)
             val context = TypeResolutionContext.forDeclaration(declaration.id, binder)
-            val typeParameters = ownedDeclarations
-                .filter { it.kind == DeclarationKind.TYPE_PARAMETER }
-                .mapNotNull { resolveDeclaration(it.id).declaredType as? TypeParameterType }
+            val typeParameters = ownedTypeParameters(declaration.id)
             val fields = linkedMapOf<String, Type>()
             ownedDeclarations.filter { it.kind == DeclarationKind.FIELD }.forEach { field ->
                 fields[field.name] = resolveDeclaration(field.id).declaredType ?: UnknownType
@@ -272,48 +320,17 @@ class TypeResolver(
                 add(FunctionParameter(name = "self", type = selfType))
             }
 
-            addAll(
-                ownedDeclarations
-                    .filter { it.kind == DeclarationKind.PARAMETER }
-                    .map { parameterDeclaration ->
-                        val resolvedParameter = resolveDeclaration(parameterDeclaration.id)
-                        val paramTag = resolvedParameter.findOwningFunctionParamTag()
-                        val isVararg = paramTag?.vararg == true || resolvedParameter.name == "..."
-                        val parameterType = resolvedParameter.declaredType?.let {
-                            if (isVararg && it !is VarargType) VarargType(it) else it
-                        } ?: UnknownType
-                        FunctionParameter(
-                            name = resolvedParameter.name,
-                            type = parameterType,
-                            optional = paramTag?.optional == true,
-                            vararg = isVararg
-                        )
-                    }
-            )
+            addAll(resolveOwnedParameters(ownedDeclarations))
         }
 
-        val returnTypes = declaration.documentation?.docComment
-            ?.tags
-            .orEmpty()
-            .filterIsInstance<ReturnTagSyntax>()
-            .lastOrNull()
-            ?.typeTexts
-            ?.map(::parseTypeSyntax)
-            ?.map { syntaxNode -> resolveSyntax(syntaxNode, context) }
-            .orEmpty()
-        val returnType = when (returnTypes.size) {
-            0 -> UnknownType
-            1 -> returnTypes.single()
-            else -> MultiReturnType(returnTypes)
-        }
+        val returnTypes = resolveReturnTypes(declaration, context)
+        val returnType = singleOrMultiReturnType(returnTypes)
 
         // Method-owned @generic tags are bound as TYPE_PARAMETER children of the METHOD
         // declaration (same as functions); carry them onto the synthesized signature so
         // CallChecker.instantiateGenericSignature can infer method-level generics
         // (`Repo:of(value)` with `---@generic U`), mirroring resolveFunctionDeclaration.
-        val typeParameters = ownedDeclarations
-            .filter { it.kind == DeclarationKind.TYPE_PARAMETER }
-            .mapNotNull { resolveDeclaration(it.id).declaredType as? TypeParameterType }
+        val typeParameters = ownedTypeParameters(declaration.id)
 
         val inferredPrimaryType = when {
             primaryType == null && (parameters.isNotEmpty() || returnTypes.isNotEmpty()) ->
@@ -334,13 +351,13 @@ class TypeResolver(
             else -> primaryType
         }
         val type = combineMethodCallableType(inferredPrimaryType, overloadTypes)
+        // Self first (original insertion order), then the owned parameters; putAll on an
+        // existing "self" key keeps its slot and applies the same overwrite as before.
         val resolvedParameterTypes = linkedMapOf<String, Type>()
         if (isColonMethod) {
             parameters.firstOrNull { it.name == "self" }?.type?.let { resolvedParameterTypes["self"] = it }
         }
-        ownedDeclarations.filter { it.kind == DeclarationKind.PARAMETER }.forEach { parameter ->
-            resolveDeclaration(parameter.id).declaredType?.let { resolvedParameterTypes[parameter.name] = it }
-        }
+        resolvedParameterTypes.putAll(resolveOwnedParameterTypes(ownedDeclarations))
         return declaration.copy(
             declaredType = type,
             documentation = declaration.documentation.withResolved(
@@ -373,48 +390,15 @@ class TypeResolver(
     private fun resolveFunctionDeclaration(declaration: BinderDeclaration): BinderDeclaration {
         val owner = DeclarationOwner.Declaration(declaration.id)
         val ownedDeclarations = binder.declarationIndex.getOwnedDeclarations(owner)
-        val typeParameters = ownedDeclarations
-            .filter { it.kind == DeclarationKind.TYPE_PARAMETER }
-            .mapNotNull { resolveDeclaration(it.id).declaredType as? TypeParameterType }
-
-        val parameters = ownedDeclarations
-            .filter { it.kind == DeclarationKind.PARAMETER }
-            .map { parameterDeclaration ->
-                val resolvedParameter = resolveDeclaration(parameterDeclaration.id)
-                val paramTag = resolvedParameter.findOwningFunctionParamTag()
-                val isVararg = paramTag?.vararg == true || resolvedParameter.name == "..."
-                val parameterType = resolvedParameter.declaredType?.let {
-                    if (isVararg && it !is VarargType) VarargType(it) else it
-                } ?: UnknownType
-                FunctionParameter(
-                    name = resolvedParameter.name,
-                    type = parameterType,
-                    optional = paramTag?.optional == true,
-                    vararg = isVararg
-                )
-            }
+        val typeParameters = ownedTypeParameters(declaration.id)
+        val parameters = resolveOwnedParameters(ownedDeclarations)
 
         val context = TypeResolutionContext.forDeclaration(declaration.id, binder)
         val overloadTypes = resolveOverloadTypes(declaration, context)
-        val returnTypes = declaration.documentation?.docComment
-            ?.tags
-            .orEmpty()
-            .filterIsInstance<ReturnTagSyntax>()
-            .lastOrNull()
-            ?.typeTexts
-            ?.map(::parseTypeSyntax)
-            ?.map { syntax -> resolveSyntax(syntax, context) }
-            .orEmpty()
-        val returnType = when (returnTypes.size) {
-            0 -> UnknownType
-            1 -> returnTypes.single()
-            else -> MultiReturnType(returnTypes)
-        }
+        val returnTypes = resolveReturnTypes(declaration, context)
+        val returnType = singleOrMultiReturnType(returnTypes)
 
-        val resolvedParameterTypes = linkedMapOf<String, Type>()
-        ownedDeclarations.filter { it.kind == DeclarationKind.PARAMETER }.forEach { parameter ->
-            resolveDeclaration(parameter.id).declaredType?.let { resolvedParameterTypes[parameter.name] = it }
-        }
+        val resolvedParameterTypes = resolveOwnedParameterTypes(ownedDeclarations)
 
         // Bare undocumented GLOBAL function sites intentionally keep declaredType null so
         // export-only inference is not suppressed (see undocumentedGlobalFunctionHasNoSyntheticFunctionType).
@@ -575,7 +559,7 @@ class TypeResolver(
      * signature (`fun(value: Mapper.T): Mapper.T`) instead of being shielded by the merged
      * slots. Those merged `fun<T>` slots are dead inference slots on a bare use (no type
      * arguments can ever bind them), so they are dropped once their occurrences were renamed
-     * — same phantom rule as TypeSubstitutor.dropAppliedTypeParameters. Tradeoff: the
+     * — same phantom rule as TypeSubstitutor.dropMappedTypeParameters. Tradeoff: the
      * signature no longer carries an explicit "is generic" marker, but a bare alias
      * reference binds nothing, and the qualified `Alias.Param` names keep the provenance;
      * inline slots whose names do NOT collide with the alias's own parameters (e.g.
@@ -583,10 +567,7 @@ class TypeResolver(
      */
     private fun renameBareAliasTypeParameters(resolved: Type, aliasDeclaration: BinderDeclaration): Type {
         val alias = resolved as? AliasType ?: return resolved
-        val ownedTypeParameters = binder.declarationIndex
-            .getOwnedDeclarations(DeclarationOwner.Declaration(aliasDeclaration.id))
-            .filter { it.kind == DeclarationKind.TYPE_PARAMETER }
-            .mapNotNull { resolveDeclaration(it.id).declaredType as? TypeParameterType }
+        val ownedTypeParameters = ownedTypeParameters(aliasDeclaration.id)
         if (ownedTypeParameters.isEmpty()) {
             return resolved
         }
@@ -601,42 +582,10 @@ class TypeResolver(
         // re-enters the target with own-parameter masking ON, which lets a callable target's
         // merged fun<T> slots shield the mapping and left the stale marker in place.
         val renamedTarget = typeSubstitutor.substitute(alias.target, mapping)
-        return AliasType(alias.name, dropRenamedTargetTypeParameters(renamedTarget, mapping.keys))
-    }
-
-    /**
-     * Drops declared type-parameter slots whose names were just renamed to `<Alias>.<Param>`:
-     * after the rename no occurrence under the old bare name remains, so the slot is a
-     * phantom. Constructors (not copy()) rebuild the display name, otherwise the stale
-     * `fun<T>(...)` marker survives. Slots whose names were NOT renamed are kept: they are
-     * genuinely unbound.
-     */
-    private fun dropRenamedTargetTypeParameters(type: Type, renamedNames: Set<String>): Type {
-        if (renamedNames.isEmpty()) {
-            return type
-        }
-        return when (type) {
-            is FunctionType -> {
-                val typeParameters = type.typeParameters.filterNot { parameter -> parameter.name in renamedNames }
-                if (typeParameters.size == type.typeParameters.size) {
-                    type
-                } else {
-                    FunctionType(
-                        parameters = type.parameters,
-                        returnType = type.returnType,
-                        typeParameters = typeParameters
-                    )
-                }
-            }
-
-            is OverloadedFunctionType -> OverloadedFunctionType(
-                callSignatures = type.callSignatures.map {
-                    dropRenamedTargetTypeParameters(it, renamedNames) as FunctionType
-                }
-            )
-
-            else -> type
-        }
+        return AliasType(
+            alias.name,
+            typeSubstitutor.dropMappedTypeParameters(renamedTarget, mapping.keys, dropClassParameters = false)
+        )
     }
 
     private fun resolveGenericType(typeSyntax: GenericTypeSyntax, context: TypeResolutionContext): Type {
@@ -815,18 +764,11 @@ class TypeResolver(
         context: TypeResolutionContext,
         aliasStack: MutableList<AliasType>
     ): ClassType? {
-        val declaration = context.resolveNamedType(type.baseName)
-            ?: context.visibleDeclarations().firstOrNull { candidate ->
-                (candidate.kind == DeclarationKind.CLASS || candidate.kind == DeclarationKind.TYPE_ALIAS) &&
-                    candidate.name.substringBefore('<').trim() == type.baseName
-            }
-            ?: return null
+        val declaration = typeSubstitutor.resolveAppliedTargetDeclaration(type.baseName, context) ?: return null
 
         val resolvedDeclaration = resolveDeclaration(declaration.id)
         val resolvedType = resolvedDeclaration.declaredType ?: return null
-        val ownedTypeParameters = binder.declarationIndex.getOwnedDeclarations(DeclarationOwner.Declaration(declaration.id))
-            .filter { it.kind == DeclarationKind.TYPE_PARAMETER }
-            .mapNotNull { owned -> resolveDeclaration(owned.id).declaredType as? TypeParameterType }
+        val ownedTypeParameters = ownedTypeParameters(declaration.id)
 
         if (ownedTypeParameters.size != type.typeArguments.size) {
             return null
@@ -866,15 +808,22 @@ class TypeResolver(
             .lastOrNull { tag -> tag.name == name || (tag.vararg && name == "...") }
     }
 
-    private fun makeUnionType(types: List<Type>): Type {
+    /** Shared flatten of composite type syntax (union of unions / intersection of intersections). */
+    private fun flattenedComposite(types: List<Type>, nestedMembers: (Type) -> Set<Type>?): LinkedHashSet<Type> {
         val flattened = linkedSetOf<Type>()
         types.forEach { type ->
-            if (type is UnionType) {
-                flattened += type.types
+            val nested = nestedMembers(type)
+            if (nested != null) {
+                flattened += nested
             } else {
                 flattened += type
             }
         }
+        return flattened
+    }
+
+    private fun makeUnionType(types: List<Type>): Type {
+        val flattened = flattenedComposite(types) { (it as? UnionType)?.types }
         return when (flattened.size) {
             0 -> NeverType
             1 -> flattened.single()
@@ -883,14 +832,7 @@ class TypeResolver(
     }
 
     private fun makeIntersectionType(types: List<Type>): Type {
-        val flattened = linkedSetOf<Type>()
-        types.forEach { type ->
-            if (type is IntersectionType) {
-                flattened += type.types
-            } else {
-                flattened += type
-            }
-        }
+        val flattened = flattenedComposite(types) { (it as? IntersectionType)?.types }
         return when (flattened.size) {
             0 -> PrimitiveType.ANY
             1 -> flattened.single()

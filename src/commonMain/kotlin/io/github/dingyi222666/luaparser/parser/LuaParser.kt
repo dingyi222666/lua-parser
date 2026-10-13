@@ -705,6 +705,17 @@ class LuaParser(
         locations.addFirst(lexer.startPosition())
     }
 
+    /**
+     * Shared statement prolog for the [parseBlockNode] keyword dispatch: after a
+     * `consumeToken(KEYWORD)` arm matched, the keyword is still the current token,
+     * so mark its start before delegating. Identical to the former inline
+     * `markLocation(); parseXxxStatement(blockNode)` pair at every keyword arm.
+     */
+    private inline fun parseMarkedStatement(create: () -> StatementNode): StatementNode {
+        markLocation()
+        return create()
+    }
+
     private fun currentEndPosition(): Position {
         // Prefer the last committed (consumed) token end. WrapperLuaLexer.pushback leaves
         // currentState on the requeued peeked token, so reading lexer.line()/column() here
@@ -805,17 +816,13 @@ class LuaParser(
                     else parseLocalVarList(blockNode)
                 }
 
-                // After consumeToken the keyword is still current, so markLocation()
-                // records the keyword start before any further advances.
-                consumeToken(LuaTokenTypes.WHILE) -> {
-                    markLocation()
-                    parseWhileStatement(blockNode)
-                }
+                // After consumeToken the keyword is still current, so parseMarkedStatement's
+                // markLocation() records the keyword start before any further advances.
+                consumeToken(LuaTokenTypes.WHILE) ->
+                    parseMarkedStatement { parseWhileStatement(blockNode) }
 
-                consumeToken(LuaTokenTypes.REPEAT) -> {
-                    markLocation()
-                    parseRepeatStatement(blockNode)
-                }
+                consumeToken(LuaTokenTypes.REPEAT) ->
+                    parseMarkedStatement { parseRepeatStatement(blockNode) }
 
                 consumeToken(LuaTokenTypes.BREAK) -> {
                     if (!errorRecovery && !isAndroLua() && loopDepth == 0) {
@@ -825,15 +832,11 @@ class LuaParser(
                     BreakStatement()
                 }
 
-                consumeToken(LuaTokenTypes.FOR) -> {
-                    markLocation()
-                    parseForStatement(blockNode)
-                }
+                consumeToken(LuaTokenTypes.FOR) ->
+                    parseMarkedStatement { parseForStatement(blockNode) }
 
-                consumeToken(LuaTokenTypes.FUNCTION) -> {
-                    markLocation()
-                    parseGlobalFunctionDeclaration(blockNode)
-                }
+                consumeToken(LuaTokenTypes.FUNCTION) ->
+                    parseMarkedStatement { parseGlobalFunctionDeclaration(blockNode) }
 
                 consumeToken(LuaTokenTypes.CONTINUE) -> {
                     assertVersion(LuaVersion.ANDROLUA_5_3) {
@@ -843,12 +846,7 @@ class LuaParser(
                     ContinueStatement()
                 }
 
-                consume {
-                    it == LuaTokenTypes.SHORT_COMMENT ||
-                            it == LuaTokenTypes.BLOCK_COMMENT ||
-                            it == LuaTokenTypes.DOC_COMMENT ||
-                            it == LuaTokenTypes.SHEBANG_CONTENT
-                } -> {
+                consume { isCommentToken(it) || it == LuaTokenTypes.SHEBANG_CONTENT } -> {
                     markLocation()
                     CommentStatement().apply {
                         comment = lexerText().toString()
@@ -871,22 +869,16 @@ class LuaParser(
                     parseSwitchStatement(blockNode)
                 }
 
-                consumeToken(LuaTokenTypes.GOTO) -> {
-                    markLocation()
-                    parseGotoStatement(blockNode)
-                }
+                consumeToken(LuaTokenTypes.GOTO) ->
+                    parseMarkedStatement { parseGotoStatement(blockNode) }
 
-                consumeToken(LuaTokenTypes.DOUBLE_COLON) -> {
-                    markLocation()
-                    parseLabelStatement(blockNode)
-                }
+                consumeToken(LuaTokenTypes.DOUBLE_COLON) ->
+                    parseMarkedStatement { parseLabelStatement(blockNode) }
 
                 consumeToken(LuaTokenTypes.SEMI) -> continue
 
-                consumeToken(LuaTokenTypes.DO) -> {
-                    markLocation()
-                    parseDoStatement(blockNode)
-                }
+                consumeToken(LuaTokenTypes.DO) ->
+                    parseMarkedStatement { parseDoStatement(blockNode) }
 
                 consumeToken(LuaTokenTypes.BAD_CHARACTER) -> {
                     val text = lexerText()
@@ -913,10 +905,8 @@ class LuaParser(
                 // (standard Lua + AndroLua loadlayout-style `function(a)(...)(a)end`).
                 peekToken(LuaTokenTypes.LPAREN) -> parseExpStatement(blockNode)
 
-                consumeToken(LuaTokenTypes.RETURN) -> {
-                    markLocation()
-                    parseReturnStatement(blockNode)
-                }
+                consumeToken(LuaTokenTypes.RETURN) ->
+                    parseMarkedStatement { parseReturnStatement(blockNode) }
 
                 // AndroLua `.aly` layout files are bare table constructors loaded as
                 // `return <table>`. Accept a top-level `{ ... }` as that return form so
@@ -1392,14 +1382,15 @@ class LuaParser(
         return result
     }
 
+    /** loopDepth guard around a loop-body block parse (for / while / repeat). */
+    private inline fun parseLoopBody(parent: BaseASTNode): BlockNode {
+        loopDepth++
+        return try { parseBlockNode(parent) } finally { loopDepth-- }
+    }
+
     private fun parseForBody(parent: BaseASTNode): BlockNode {
         recoverToken(LuaTokenTypes.DO) { missingDoExpectedNearToken }
-        loopDepth++
-        return try {
-            parseBlockNode(parent)
-        } finally {
-            loopDepth--
-        }
+        return parseLoopBody(parent)
     }
 
     //     goto Name |
@@ -1526,8 +1517,7 @@ class LuaParser(
         val result = RepeatStatement()
         result.parent = parent
 
-        loopDepth++
-        result.body = try { parseBlockNode(result) } finally { loopDepth-- }
+        result.body = parseLoopBody(result)
 
         if (!recoverToken(LuaTokenTypes.UNTIL) { "'until' expected near '${lexerText()}'" }) {
             result.condition = missingExpression(result)
@@ -1549,8 +1539,7 @@ class LuaParser(
 
         recoverToken(LuaTokenTypes.DO) { missingDoExpectedNearToken }
 
-        loopDepth++
-        result.body = try { parseBlockNode(result) } finally { loopDepth-- }
+        result.body = parseLoopBody(result)
 
         recoverBlockEnd("do", currentLine)
 
@@ -2170,14 +2159,12 @@ class LuaParser(
         result.parent = parent
 
         // ['(' [parlist] ')']
-        run {
-            if (consumeToken(LuaTokenTypes.LPAREN)) {
-                if (!consumeToken(LuaTokenTypes.RPAREN)) {
-                    if (peekToken(LuaTokenTypes.NAME)) {
-                        result.params.addAll(parseNameList(result))
-                    }
-                    recoverToken(LuaTokenTypes.RPAREN) { rparenExpectedNearToken }
+        if (consumeToken(LuaTokenTypes.LPAREN)) {
+            if (!consumeToken(LuaTokenTypes.RPAREN)) {
+                if (peekToken(LuaTokenTypes.NAME)) {
+                    result.params.addAll(parseNameList(result))
                 }
+                recoverToken(LuaTokenTypes.RPAREN) { rparenExpectedNearToken }
             }
         }
 
@@ -2300,10 +2287,8 @@ class LuaParser(
 
             LuaTokenTypes.LBRACK -> return ParsedTableField(parseTableKey(parent), implicitArrayField = false)
             LuaTokenTypes.EOF, LuaTokenTypes.RCURLY, LuaTokenTypes.RPAREN -> return null
-            // Comments already skipped; remaining non-expression tokens end the field list.
-            LuaTokenTypes.SHORT_COMMENT,
-            LuaTokenTypes.BLOCK_COMMENT,
-            LuaTokenTypes.DOC_COMMENT -> return null
+            // (Comment tokens are unreachable here: parseField's skipCommentTokens()
+            // above already consumed every leading comment, so peek() is never one.)
             // exp |
             // It is possible to encounter '}',
             // and since we cannot tell if this is an expression, we use nullable return.

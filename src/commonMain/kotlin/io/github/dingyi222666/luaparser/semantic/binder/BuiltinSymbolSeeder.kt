@@ -5,12 +5,9 @@ import io.github.dingyi222666.luaparser.semantic.types.model.FunctionType
 import io.github.dingyi222666.luaparser.semantic.types.model.OverloadedFunctionType
 import io.github.dingyi222666.luaparser.semantic.types.model.Type
 import io.github.dingyi222666.luaparser.semantic.types.model.UnknownType
-import io.github.dingyi222666.luaparser.semantic.workspace.std.BuiltinOverlayLoader
 import io.github.dingyi222666.luaparser.semantic.workspace.std.BuiltinOverlaySnapshot
 
 internal object BuiltinSymbolSeeder {
-    private val standaloneCompatibilityGlobals by lazy { BuiltinOverlayLoader.standaloneGlobals() }
-
     /**
      * Seeds root builtin VALUE declarations from the active overlay globals snapshot.
      *
@@ -28,7 +25,7 @@ internal object BuiltinSymbolSeeder {
      */
     fun seed(
         builder: SymbolTableBuilder,
-        globals: BuiltinOverlaySnapshot.GlobalsSnapshot = standaloneCompatibilityGlobals
+        globals: BuiltinOverlaySnapshot.GlobalsSnapshot
     ) {
         val documentedGlobals = globals.file.moduleExportSurface
             ?.members
@@ -62,14 +59,6 @@ internal object BuiltinSymbolSeeder {
                     range = documented.range,
                     declaredType = documented.type
                 )
-
-                name in globals.moduleFieldNames.keys || name == "_G" || name == "_VERSION" ->
-                    globalDeclaration(
-                        id = builder.nextDeclarationId(),
-                        name = name,
-                        origin = DeclarationOrigin.BUILTIN,
-                        owner = DeclarationOwner.Root
-                    )
 
                 else -> globalDeclaration(
                     id = builder.nextDeclarationId(),

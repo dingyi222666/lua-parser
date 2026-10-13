@@ -48,8 +48,6 @@ internal class SymbolTableBuilder {
 
     fun nextDeclarationId(): DeclarationId = DeclarationId(nextDeclarationId++)
 
-    fun nextSymbolId(): SymbolId = SymbolId(nextSymbolId++)
-
     fun createScope(
         kind: ScopeKind,
         range: Range,
@@ -88,12 +86,7 @@ internal class SymbolTableBuilder {
 
     fun addDeclarationWithSymbol(declaration: BinderDeclaration, scopeId: ScopeId? = currentScopeId): BinderDeclaration {
         val symbol = createSymbolFor(declaration)
-        val declarationWithSymbol = declaration.copy(symbolId = symbol.id)
-        declarations += declarationWithSymbol
-        if (scopeId != null) {
-            indexDeclaration(scopeId, declarationWithSymbol)
-        }
-        return declarationWithSymbol
+        return commit(declaration.copy(symbolId = symbol.id), scopeId)
     }
 
     /**
@@ -112,14 +105,19 @@ internal class SymbolTableBuilder {
         }
 
         val declarationWithSymbol = declaration.copy(symbolId = symbolId)
-        declarations += declarationWithSymbol
         symbols[symbolIndex] = existing.copy(
             declarationIds = existing.declarationIds + declarationWithSymbol.id
         )
+        return commit(declarationWithSymbol, scopeId)
+    }
+
+    /** Shared registration epilog: append the declaration, then index it into [scopeId]. */
+    private fun commit(declaration: BinderDeclaration, scopeId: ScopeId?): BinderDeclaration {
+        declarations += declaration
         if (scopeId != null) {
-            indexDeclaration(scopeId, declarationWithSymbol)
+            indexDeclaration(scopeId, declaration)
         }
-        return declarationWithSymbol
+        return declaration
     }
 
     /**
@@ -151,7 +149,7 @@ internal class SymbolTableBuilder {
 
     fun createSymbolFor(declaration: BinderDeclaration): BinderSymbol {
         val symbol = BinderSymbol(
-            id = nextSymbolId(),
+            id = SymbolId(nextSymbolId++),
             name = declaration.name,
             namespace = declaration.kind.namespace,
             declarationIds = listOf(declaration.id),

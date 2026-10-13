@@ -69,17 +69,7 @@ class TypeSubstitutor {
                         )
                     },
                     returnType = substituteRecursive(type.returnType, scopedMapping, maskOwnTypeParameters = true),
-                    typeParameters = type.typeParameters.map { parameter ->
-                        TypeParameterType(
-                            name = parameter.name,
-                            constraint = parameter.constraint?.let {
-                                substituteRecursive(it, scopedMapping, maskOwnTypeParameters = true)
-                            },
-                            defaultType = parameter.defaultType?.let {
-                                substituteRecursive(it, scopedMapping, maskOwnTypeParameters = true)
-                            }
-                        )
-                    }
+                    typeParameters = substituteTypeParameters(type.typeParameters, scopedMapping)
                 )
             }
 
@@ -120,17 +110,7 @@ class TypeSubstitutor {
                     methods = type.methods.mapValues { (_, value) -> substituteRecursive(value, scopedMapping, maskOwnTypeParameters = true) },
                     superClass = type.superClass?.let { substituteRecursive(it, scopedMapping, maskOwnTypeParameters = false) as ClassType },
                     superType = type.superType?.let { substituteRecursive(it, scopedMapping, maskOwnTypeParameters = true) },
-                    typeParameters = type.typeParameters.map { parameter ->
-                        TypeParameterType(
-                            name = parameter.name,
-                            constraint = parameter.constraint?.let {
-                                substituteRecursive(it, scopedMapping, maskOwnTypeParameters = true)
-                            },
-                            defaultType = parameter.defaultType?.let {
-                                substituteRecursive(it, scopedMapping, maskOwnTypeParameters = true)
-                            }
-                        )
-                    },
+                    typeParameters = substituteTypeParameters(type.typeParameters, scopedMapping),
                     alias = type.alias?.let { substituteRecursive(it, scopedMapping, maskOwnTypeParameters = true) as AliasType },
                     javaClassName = type.javaClassName,
                     declarationId = type.declarationId
@@ -161,17 +141,7 @@ class TypeSubstitutor {
                     interfaces = type.interfaces.map {
                         substituteRecursive(it, scopedMapping, maskOwnTypeParameters = false) as JavaClassType
                     },
-                    typeParameters = type.typeParameters.map { parameter ->
-                        TypeParameterType(
-                            name = parameter.name,
-                            constraint = parameter.constraint?.let {
-                                substituteRecursive(it, scopedMapping, maskOwnTypeParameters = true)
-                            },
-                            defaultType = parameter.defaultType?.let {
-                                substituteRecursive(it, scopedMapping, maskOwnTypeParameters = true)
-                            }
-                        )
-                    }
+                    typeParameters = substituteTypeParameters(type.typeParameters, scopedMapping)
                 )
             }
 
@@ -268,24 +238,35 @@ class TypeSubstitutor {
         }
         // Alias targets substitute through the aliased type, not the alias node itself.
         val substitutionTarget = (declaredType as? AliasType)?.target ?: declaredType
-        return dropAppliedTypeParameters(substitute(substitutionTarget, mapping), mapping)
+        return dropMappedTypeParameters(substitute(substitutionTarget, mapping), mapping.keys, dropClassParameters = true)
     }
 
     /**
-     * Applying concrete arguments replaces the applied target's own type parameters, so any
-     * type-parameter declarations still riding the substituted surface under those names are
-     * stale phantoms: `Box<number>` materialized `class Box<T>` with `value: number` but kept
-     * the `class Box<T>` marker (hover rendered the phantom `<T>`; an applied
-     * `Mapper<number>` alias rendered `fun<T>(value: number): number`). Drop the mapped
-     * parameters — the concrete arguments already carry the type information. Parameters
-     * whose names were NOT mapped are kept: they are genuinely unbound.
+     * Applying concrete arguments (or renaming an alias's own parameters, its other caller
+     * in TypeResolver.renameBareAliasTypeParameters) replaces the applied target's own type
+     * parameters, so any type-parameter declarations still riding the substituted surface
+     * under those names are stale phantoms: `Box<number>` materialized `class Box<T>` with
+     * `value: number` but kept the `class Box<T>` marker (hover rendered the phantom `<T>`;
+     * an applied `Mapper<number>` alias rendered `fun<T>(value: number): number`). Drop the
+     * mapped parameters — the concrete arguments already carry the type information.
+     * Parameters whose names were NOT mapped are kept: they are genuinely unbound.
+     *
+     * [dropClassParameters] covers the applied-type caller only: materialized `class Box<T>`
+     * surfaces keep their phantom marker until the concrete arguments replaced them. The
+     * alias-rename caller deliberately leaves ClassType parameters untouched (aliases whose
+     * target is a class keep the class's own slots).
      */
-    private fun dropAppliedTypeParameters(type: Type, mapping: Map<String, Type>): Type {
+    internal fun dropMappedTypeParameters(
+        type: Type,
+        mapping: Set<String>,
+        dropClassParameters: Boolean
+    ): Type {
         if (mapping.isEmpty()) {
             return type
         }
         return when (type) {
             is ClassType -> {
+                if (!dropClassParameters) return type
                 val typeParameters = type.typeParameters.filterNot { parameter -> parameter.name in mapping }
                 if (typeParameters.size == type.typeParameters.size) {
                     type
@@ -307,13 +288,16 @@ class TypeSubstitutor {
                 }
             }
             is OverloadedFunctionType -> OverloadedFunctionType(
-                callSignatures = type.callSignatures.map { dropAppliedTypeParameters(it, mapping) as FunctionType }
+                callSignatures = type.callSignatures.map {
+                    dropMappedTypeParameters(it, mapping, dropClassParameters) as FunctionType
+                }
             )
             else -> type
         }
     }
 
-    private fun resolveAppliedTargetDeclaration(baseName: String, context: TypeResolutionContext) =
+    /** Shared CLASS/TYPE_ALIAS applied-target lookup (also used by TypeResolver parent materialization). */
+    internal fun resolveAppliedTargetDeclaration(baseName: String, context: TypeResolutionContext) =
         context.resolveNamedType(baseName)
             ?: context.visibleDeclarations()
                 .firstOrNull { candidate ->
@@ -347,17 +331,7 @@ class TypeSubstitutor {
             return metadata
         }
         return metadata.copy(
-            typeParameters = metadata.typeParameters.map { parameter ->
-                TypeParameterType(
-                    name = parameter.name,
-                    constraint = parameter.constraint?.let {
-                        substituteRecursive(it, scopedMapping, maskOwnTypeParameters = true)
-                    },
-                    defaultType = parameter.defaultType?.let {
-                        substituteRecursive(it, scopedMapping, maskOwnTypeParameters = true)
-                    }
-                )
-            },
+            typeParameters = substituteTypeParameters(metadata.typeParameters, scopedMapping),
             genericReturnTypeName = metadata.genericReturnTypeName
                 ?.takeUnless { returnName ->
                     scopedMapping.keys.any { typeParameterName ->
@@ -380,5 +354,21 @@ class TypeSubstitutor {
             return this
         }
         return this - typeParameters.map(TypeParameterType::name).toSet()
+    }
+
+    /** Shared constraint/defaultType substitution over declared type-parameter slots (FunctionType, ClassType, JavaClassType, signature metadata). */
+    private fun substituteTypeParameters(
+        typeParameters: List<TypeParameterType>,
+        scopedMapping: Map<String, Type>
+    ): List<TypeParameterType> = typeParameters.map { parameter ->
+        TypeParameterType(
+            name = parameter.name,
+            constraint = parameter.constraint?.let {
+                substituteRecursive(it, scopedMapping, maskOwnTypeParameters = true)
+            },
+            defaultType = parameter.defaultType?.let {
+                substituteRecursive(it, scopedMapping, maskOwnTypeParameters = true)
+            }
+        )
     }
 }

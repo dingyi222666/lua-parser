@@ -33,6 +33,7 @@ import io.github.dingyi222666.luaparser.semantic.types.model.UnknownType
 import io.github.dingyi222666.luaparser.semantic.types.model.VarargType
 import io.github.dingyi222666.luaparser.semantic.types.model.unwrapAliases
 import io.github.dingyi222666.luaparser.semantic.types.model.CustomType
+import io.github.dingyi222666.luaparser.semantic.types.model.canonicalByKind
 
 object TypeNormalizer {
     fun normalize(type: Type): Type = normalize(type, mutableListOf())
@@ -40,7 +41,7 @@ object TypeNormalizer {
     private fun normalize(type: Type, aliasStack: MutableList<AliasType>): Type = when (type) {
         is AliasType -> normalizeAlias(type, aliasStack)
         is PrimitiveType -> canonicalizePrimitive(type)
-        is LiteralType -> LiteralType(type.value, canonicalizeLiteralBaseType(type.baseType))
+        is LiteralType -> LiteralType(type.value, type.baseType.canonicalByKind())
         is FunctionType -> FunctionType(
             parameters = type.parameters.map { parameter ->
                 FunctionParameter(
@@ -230,19 +231,12 @@ object TypeNormalizer {
                 else -> members += type
             }
         }
-
-        val simplifiedMembers = linkedSetOf<Type>()
-        members.forEach { member ->
-            when (member) {
-                NeverType -> Unit
-                else -> simplifiedMembers += member
-            }
-        }
+        members.removeAll { it == NeverType }
 
         // A doc-declared Java member (no reflection metadata) and its reflected twin encode
         // the SAME member; plain data-class equality would keep both in the union and
         // duplicate completion / hover entries (see dedupeSignatureMetadataDuplicates).
-        val metadataDedupedMembers = dedupeSignatureMetadataDuplicates(simplifiedMembers)
+        val metadataDedupedMembers = dedupeSignatureMetadataDuplicates(members)
 
         if (metadataDedupedMembers.any { it == PrimitiveType.ANY }) return PrimitiveType.ANY
         if (metadataDedupedMembers.any { it == UnknownType }) return UnknownType
@@ -391,35 +385,12 @@ object TypeNormalizer {
     }
 
     private fun canonicalizePrimitive(type: PrimitiveType): Type = when (type.kind) {
-        PrimitiveType.Kind.VOID -> PrimitiveType.VOID
-        PrimitiveType.Kind.NIL -> PrimitiveType.NIL
-        PrimitiveType.Kind.BOOLEAN -> PrimitiveType.BOOLEAN
-        PrimitiveType.Kind.NUMBER -> PrimitiveType.NUMBER
-        PrimitiveType.Kind.STRING -> PrimitiveType.STRING
-        PrimitiveType.Kind.FUNCTION -> PrimitiveType.FUNCTION
-        PrimitiveType.Kind.TABLE -> PrimitiveType.TABLE
-        PrimitiveType.Kind.THREAD -> PrimitiveType.THREAD
-        PrimitiveType.Kind.USERDATA -> PrimitiveType.USERDATA
-        PrimitiveType.Kind.ANY -> PrimitiveType.ANY
+        // UNKNOWN/NEVER/ERROR collapse onto the singleton objects; every other kind uses
+        // the shared Kind -> sentinel mapping (PrimitiveType.canonicalByKind).
         PrimitiveType.Kind.UNKNOWN -> UnknownType
         PrimitiveType.Kind.NEVER -> NeverType
         PrimitiveType.Kind.ERROR -> ErrorType
-    }
-
-    private fun canonicalizeLiteralBaseType(type: PrimitiveType): PrimitiveType = when (type.kind) {
-        PrimitiveType.Kind.VOID -> PrimitiveType.VOID
-        PrimitiveType.Kind.NIL -> PrimitiveType.NIL
-        PrimitiveType.Kind.BOOLEAN -> PrimitiveType.BOOLEAN
-        PrimitiveType.Kind.NUMBER -> PrimitiveType.NUMBER
-        PrimitiveType.Kind.STRING -> PrimitiveType.STRING
-        PrimitiveType.Kind.FUNCTION -> PrimitiveType.FUNCTION
-        PrimitiveType.Kind.TABLE -> PrimitiveType.TABLE
-        PrimitiveType.Kind.THREAD -> PrimitiveType.THREAD
-        PrimitiveType.Kind.USERDATA -> PrimitiveType.USERDATA
-        PrimitiveType.Kind.ANY -> PrimitiveType.ANY
-        PrimitiveType.Kind.UNKNOWN -> PrimitiveType.UNKNOWN
-        PrimitiveType.Kind.NEVER -> PrimitiveType.NEVER
-        PrimitiveType.Kind.ERROR -> PrimitiveType.ERROR
+        else -> type.canonicalByKind()
     }
 
     private fun isIncompatiblePrimitiveOrLiteral(left: Type, right: Type): Boolean {

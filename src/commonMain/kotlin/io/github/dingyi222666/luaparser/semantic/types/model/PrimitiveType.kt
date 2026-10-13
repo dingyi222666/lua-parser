@@ -37,6 +37,28 @@ data class PrimitiveType(
     }
 }
 
+/**
+ * The single shared Kind -> sentinel mapping. TypeNormalizer.canonicalizePrimitive and
+ * TypeRelations previously carried two more copies of this ladder (one byte-identical);
+ * both now route through here. Callers that must collapse UNKNOWN/NEVER/ERROR onto the
+ * UnknownType/NeverType/ErrorType objects do so on top of this mapping.
+ */
+internal fun PrimitiveType.canonicalByKind(): PrimitiveType = when (kind) {
+    PrimitiveType.Kind.VOID -> PrimitiveType.VOID
+    PrimitiveType.Kind.NIL -> PrimitiveType.NIL
+    PrimitiveType.Kind.BOOLEAN -> PrimitiveType.BOOLEAN
+    PrimitiveType.Kind.NUMBER -> PrimitiveType.NUMBER
+    PrimitiveType.Kind.STRING -> PrimitiveType.STRING
+    PrimitiveType.Kind.FUNCTION -> PrimitiveType.FUNCTION
+    PrimitiveType.Kind.TABLE -> PrimitiveType.TABLE
+    PrimitiveType.Kind.THREAD -> PrimitiveType.THREAD
+    PrimitiveType.Kind.USERDATA -> PrimitiveType.USERDATA
+    PrimitiveType.Kind.ANY -> PrimitiveType.ANY
+    PrimitiveType.Kind.UNKNOWN -> PrimitiveType.UNKNOWN
+    PrimitiveType.Kind.NEVER -> PrimitiveType.NEVER
+    PrimitiveType.Kind.ERROR -> PrimitiveType.ERROR
+}
+
 object UnknownType : Type {
     override val name: String = PrimitiveType.UNKNOWN.name
 }

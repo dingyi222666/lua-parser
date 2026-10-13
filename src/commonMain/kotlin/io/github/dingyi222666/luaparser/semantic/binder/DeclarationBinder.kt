@@ -220,13 +220,10 @@ internal class DeclarationBinder(
             ownerDeclarationId = functionDeclaration?.id
         )
 
-        builder.pushScope(functionScopeId)
-        try {
+        inScope(functionScopeId) {
             bindFunctionTypeParameters(functionDeclaration, attachment)
             bindFunctionParameters(node, functionDeclaration, documentation)
             visitBlockNode(body, value)
-        } finally {
-            builder.popScope()
         }
     }
 
@@ -241,14 +238,11 @@ internal class DeclarationBinder(
             ownerNode = node
         )
 
-        builder.pushScope(lambdaScopeId)
-        try {
+        inScope(lambdaScopeId) {
             node.params.forEach { parameter ->
                 bindParameter(parameter, DeclarationOwner.Lexical(node))
             }
             visitExpressionNode(node.expression, value)
-        } finally {
-            builder.popScope()
         }
     }
 
@@ -286,12 +280,9 @@ internal class DeclarationBinder(
 
     override fun visitRepeatStatement(node: RepeatStatement, value: Unit) {
         val scopeId = builder.createScope(ScopeKind.LOOP, node.range, node.body)
-        builder.pushScope(scopeId)
-        try {
+        inScope(scopeId) {
             visitBlockNode(node.body, value)
             visitExpressionNode(node.condition, value)
-        } finally {
-            builder.popScope()
         }
     }
 
@@ -305,8 +296,7 @@ internal class DeclarationBinder(
         // to the body; the control-var declaration keeps its header anchor (its own range
         // covers the declared name for hover/rename via the declaration-site queries).
         val scopeId = builder.createScope(ScopeKind.LOOP, node.body.range, node.body)
-        builder.pushScope(scopeId)
-        try {
+        inScope(scopeId) {
             // Numeric for control var is always number in Lua (for i = start, limit [, step]).
             // Seed declaredType so hover/type-at participate in normal declaredType path.
             builder.addDeclarationWithSymbol(
@@ -319,8 +309,6 @@ internal class DeclarationBinder(
                 )
             )
             visitBlockNode(node.body, value)
-        } finally {
-            builder.popScope()
         }
     }
 
@@ -331,8 +319,7 @@ internal class DeclarationBinder(
         // scope and the loop variables are scoped to the body only. Scope the LOOP scope
         // to the body; the loop-variable declarations keep their header anchors.
         val scopeId = builder.createScope(ScopeKind.LOOP, node.body.range, node.body)
-        builder.pushScope(scopeId)
-        try {
+        inScope(scopeId) {
             node.variables.forEach { identifier ->
                 builder.addDeclarationWithSymbol(
                     localDeclaration(
@@ -344,8 +331,6 @@ internal class DeclarationBinder(
                 )
             }
             visitBlockNode(node.body, value)
-        } finally {
-            builder.popScope()
         }
     }
 
@@ -780,23 +765,29 @@ internal class DeclarationBinder(
         val overloadTags: List<OverloadTagSyntax> = emptyList()
     )
 
-    private fun bindBodyScope(body: BlockNode, kind: ScopeKind, value: Unit) {
-        val scopeId = builder.createScope(kind, body.range, body)
+    /**
+     * Pushes [scopeId] for the duration of [block] and always pops it afterwards — the
+     * shared push/try/finally-pop scaffolding behind every nested binding scope below.
+     * The lambda is inlined, so binding the critical path allocates nothing extra.
+     */
+    private inline fun inScope(scopeId: ScopeId, block: () -> Unit) {
         builder.pushScope(scopeId)
         try {
-            visitBlockNode(body, value)
+            block()
         } finally {
             builder.popScope()
         }
     }
 
+    private fun bindBodyScope(body: BlockNode, kind: ScopeKind, value: Unit) {
+        inScope(builder.createScope(kind, body.range, body)) {
+            visitBlockNode(body, value)
+        }
+    }
+
     private fun bindNestedConditionalStatement(statement: StatementNode, value: Unit) {
-        val scopeId = builder.createScope(ScopeKind.CONDITIONAL, statement.range, statement)
-        builder.pushScope(scopeId)
-        try {
+        inScope(builder.createScope(ScopeKind.CONDITIONAL, statement.range, statement)) {
             visitStatementNode(statement, value)
-        } finally {
-            builder.popScope()
         }
     }
 

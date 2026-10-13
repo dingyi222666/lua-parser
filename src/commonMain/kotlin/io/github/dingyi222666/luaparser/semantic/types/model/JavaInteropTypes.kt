@@ -22,12 +22,18 @@ data class JavaTypeName(
     val simpleName: String
         get() = simpleNames.last()
 
+    // The three accessors below have no caller anywhere in the repo (main + all test source
+    // sets); kept but deprecated because the artifact is published and external use is
+    // plausible.
+    @Deprecated("Unused API surface; no in-repo caller.")
     val topLevelName: String
         get() = simpleNames.first()
 
+    @Deprecated("Unused API surface; no in-repo caller.")
     val innerClassNames: List<String>
         get() = simpleNames.drop(1)
 
+    @Deprecated("Unused API surface; no in-repo caller.")
     val hasInnerClassName: Boolean
         get() = innerClassNames.isNotEmpty()
 }

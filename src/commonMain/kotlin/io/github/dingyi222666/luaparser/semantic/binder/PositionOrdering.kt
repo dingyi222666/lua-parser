@@ -22,10 +22,7 @@ internal fun isPositionWithin(start: Position, end: Position, position: Position
 }
 
 internal fun rangeContains(range: Range, position: Position): Boolean {
-    if (!isValidNonEmptyRange(range)) {
-        return false
-    }
-    return positionLte(range.start, position) && positionLt(position, range.end)
+    return isValidNonEmptyRange(range) && isPositionWithin(range.start, range.end, position)
 }
 
 internal fun compareRangeSpecificity(a: Range, b: Range): Int {
@@ -34,10 +31,5 @@ internal fun compareRangeSpecificity(a: Range, b: Range): Int {
         return startComparison
     }
 
-    val endComparison = comparePositions(a.end, b.end)
-    if (endComparison != 0) {
-        return endComparison
-    }
-
-    return 0
+    return comparePositions(a.end, b.end)
 }
