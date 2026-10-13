@@ -115,30 +115,21 @@ internal class DeclarationBinder(
                     // "Unused local"). Anchor strictly after it instead.
                     visibleFrom = node.variables.lastOrNull()?.range?.end
                         ?.let { end ->
-                            val declaredNames = node.init.map { it.name }
-                            // A same-name read ending at the initializer's last
-                            // character self-binds at the legacy anchor — cover both the
-                            // bare identifier and prefix-unary forms (local i = -i).
-                            val sameNameReadEndsAtEnd = sequence {
-                                var current: io.github.dingyi222666.luaparser.parser.ast.node.ExpressionNode? =
-                                    node.variables.lastOrNull()
-                                while (current is io.github.dingyi222666.luaparser.parser.ast.node.UnaryExpression) {
-                                    current = current.arg
-                                }
-                                if (current is Identifier && current.name in declaredNames) {
-                                    yield(current)
-                                }
-                            }.any { read ->
-                                // The read's exclusive end IS the initializer's exclusive
-                                // end: the whole initializer is the same-name read itself
-                                // (`local x = x`), so the caret on its last character sits
-                                // on the read.
-                                read.range.end.column == end.column && read.range.end.line == end.line
+                            // A same-name read ending at the initializer's last character
+                            // self-binds at the legacy anchor — cover both the bare
+                            // identifier and prefix-unary forms (`local i = i`,
+                            // `local i = -i`): the whole initializer IS the same-name read,
+                            // its exclusive end equals the initializer's, so the caret on
+                            // the last character would sit on the not-yet-initialized local
+                            // (the outer is never marked used → false "Unused local").
+                            var read: io.github.dingyi222666.luaparser.parser.ast.node.ExpressionNode? =
+                                node.variables.lastOrNull()
+                            while (read is io.github.dingyi222666.luaparser.parser.ast.node.UnaryExpression) {
+                                read = read.arg
                             }
-                            Position(
-                                end.line,
-                                if (sameNameReadEndsAtEnd) end.column else (end.column - 1).coerceAtLeast(1)
-                            )
+                            val selfBindAnchor = read is Identifier &&
+                                read.name in node.init.map { it.name } && read.range.end == end
+                            Position(end.line, if (selfBindAnchor) end.column else (end.column - 1).coerceAtLeast(1))
                         }
                         ?: node.range.end
                 )
@@ -518,8 +509,7 @@ internal class DeclarationBinder(
         tags.filterIsInstance<AliasTagSyntax>().forEach { aliasTag ->
             val aliasDeclaration = builder.addDeclarationWithSymbol(
                 aliasDeclaration(
-                    id = builder.nextDeclarationId(), name = aliasTag.name,
-                    origin = DeclarationOrigin.DOC_COMMENT, owner = DeclarationOwner.Root, range = commentRange(attachment),
+                    id = builder.nextDeclarationId(), name = aliasTag.name, range = commentRange(attachment),
                     documentation = documentationForTags(attachment, listOf(aliasTag)),
                     declaredTypeSyntax = parseTypeSyntax(aliasTag.targetTypeText)
                 ),
@@ -540,8 +530,7 @@ internal class DeclarationBinder(
             val classTag = binding.classTag
             val classDeclaration = builder.addDeclarationWithSymbol(
                 classDeclaration(
-                    id = builder.nextDeclarationId(), name = classTag.name,
-                    origin = DeclarationOrigin.DOC_COMMENT, owner = DeclarationOwner.Root, range = commentRange(attachment),
+                    id = builder.nextDeclarationId(), name = classTag.name, range = commentRange(attachment),
                     documentation = documentationForTags(attachment, listOf(classTag) + binding.tags)
                 ),
                 scopeId = builder.rootScopeId

@@ -39,11 +39,8 @@ object WorkspaceDirtySetPlanner {
             previous.graph.stronglyConnectedComponentByFile[path].orEmpty() +
                 current.graph.stronglyConnectedComponentByFile[path].orEmpty()
         }
-        val affectedDocuments = (
-            changedFiles.filterTo(linkedSetOf()) { it in current.files } +
-                sccExpanded +
-                seeAllFallbackDocuments
-            ).toSet()
+        val affectedDocuments = (changedFiles.filterTo(linkedSetOf()) { it in current.files } +
+            sccExpanded + seeAllFallbackDocuments).toSet()
         val affectedModuleNames = affectedModuleNames(
             previous = previous,
             current = current,
@@ -137,8 +134,7 @@ object WorkspaceDirtySetPlanner {
         filesWithRequireResolutionChanged: Set<VirtualPath>,
         seeAllFallbackDocuments: Set<VirtualPath>
     ): Set<VirtualPath> {
-        val seedFiles = linkedSetOf<VirtualPath>()
-        seedFiles += filesWithRequireResolutionChanged.filter { it in current.files }
+        val seedFiles = filesWithRequireResolutionChanged.filterTo(linkedSetOf()) { it in current.files }
         seedFiles += seeAllFallbackDocuments
         val globalReaders = buildMap<String, MutableSet<VirtualPath>> {
             current.files.forEach { (path, file) ->
@@ -180,9 +176,7 @@ object WorkspaceDirtySetPlanner {
         val visited = linkedSetOf<VirtualPath>()
         while (queue.isNotEmpty()) {
             val path = queue.removeFirst()
-            if (!visited.add(path)) {
-                continue
-            }
+            if (!visited.add(path)) { continue }
             reverseEdges[path].orEmpty().sortedBy { it.value }.forEach(queue::addLast)
         }
         return visited.filterTo(linkedSetOf()) { it in current.files }
@@ -226,10 +220,8 @@ object WorkspaceDirtySetPlanner {
         return buildSet {
             addAll(activeProviderChangedModuleNames)
             publicSurfaceChangedFiles.forEach { path ->
-                addAll(previous.files[path]?.publicFingerprint?.providedModuleNames.orEmpty())
-                addAll(previous.extraProviders[path]?.publicFingerprint?.providedModuleNames.orEmpty())
-                addAll(current.files[path]?.publicFingerprint?.providedModuleNames.orEmpty())
-                addAll(current.extraProviders[path]?.publicFingerprint?.providedModuleNames.orEmpty())
+                sequenceOf(previous.files, previous.extraProviders, current.files, current.extraProviders)
+                    .forEach { addAll(it[path]?.publicFingerprint?.providedModuleNames.orEmpty()) }
             }
         }
     }

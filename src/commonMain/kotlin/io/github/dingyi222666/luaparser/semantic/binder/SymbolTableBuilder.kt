@@ -41,7 +41,7 @@ internal class SymbolTableBuilder {
         get() = scopes.keys.first()
 
     val currentScope: Scope
-        get() = requireNotNull(buildScope(scopes[currentScopeId]))
+        get() = buildScope(scopes.getValue(currentScopeId))
 
     fun nextDeclarationId(): DeclarationId = DeclarationId(nextDeclarationId++)
 
@@ -147,37 +147,28 @@ internal class SymbolTableBuilder {
         return symbol
     }
 
-    fun buildScopeGraph(): ScopeGraph {
-        val immutableScopes = scopes.values.mapNotNull(::buildScope)
-        return ScopeGraph(
-            scopes = immutableScopes,
-            rootScopeId = immutableScopes.first().id,
-            nodeToScopeId = nodeToScope,
-            calls = calls,
-            globalWrites = globalWrites,
-            globalWriteNames = globalWriteNames
-        )
-    }
+    fun buildScopeGraph(): ScopeGraph = ScopeGraph(
+        scopes = scopes.values.map(::buildScope),
+        rootScopeId = scopes.keys.first(),
+        nodeToScopeId = nodeToScope,
+        calls = calls,
+        globalWrites = globalWrites,
+        globalWriteNames = globalWriteNames
+    )
 
     fun buildDeclarationIndex(): DeclarationIndex = DeclarationIndex(
         declarations = declarations.toList(),
         symbols = symbols.toList()
     )
 
-    private fun buildScope(scope: MutableScope?): Scope? {
-        if (scope == null) {
-            return null
-        }
-
-        return Scope(
-            id = scope.id,
-            kind = scope.kind,
-            range = scope.range,
-            ownerNode = scope.ownerNode,
-            ownerDeclarationId = scope.ownerDeclarationId,
-            parentId = scope.parentId,
-            childIds = scope.childIds.toList(),
-            declarationIds = scope.declarationIds.toList()
-        )
-    }
+    private fun buildScope(scope: MutableScope): Scope = Scope(
+        id = scope.id,
+        kind = scope.kind,
+        range = scope.range,
+        ownerNode = scope.ownerNode,
+        ownerDeclarationId = scope.ownerDeclarationId,
+        parentId = scope.parentId,
+        childIds = scope.childIds.toList(),
+        declarationIds = scope.declarationIds.toList()
+    )
 }

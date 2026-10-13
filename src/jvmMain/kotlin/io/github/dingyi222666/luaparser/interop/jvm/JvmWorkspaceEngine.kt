@@ -153,14 +153,10 @@ open class JvmWorkspaceEngine(
             resolvedConfiguration,
             deferMembers = deferDependencyGlobals
         )
-        val providerConfiguration = if (sourceDiscoveredClasses.isEmpty()) {
-            resolvedConfiguration
-        } else {
-            resolvedConfiguration.copy(
-                classes = (resolvedConfiguration.classes + sourceDiscoveredClasses)
-                    .toCollection(linkedSetOf())
-            )
-        }
+        val providerConfiguration = if (sourceDiscoveredClasses.isEmpty()) resolvedConfiguration
+        else resolvedConfiguration.copy(
+            classes = (resolvedConfiguration.classes + sourceDiscoveredClasses).toCollection(linkedSetOf())
+        )
         // Package modules + shallow class providers + dex library mounts first; explicit/
         // full providers win on path collision so bindClass / configured classes keep deep
         // reflection surfaces.
@@ -282,13 +278,7 @@ open class JvmWorkspaceEngine(
                         (fact.kind != DocumentFacts.JvmClassLoadKind.IMPORT_CALL ||
                             workspaceResolver.importTargetSymbol(fact.target) == null)
                 }
-                .map { fact ->
-                    UnresolvedLuaJavaTarget(
-                        target = fact.target,
-                        helperName = luaJavaHelperName(fact.kind),
-                        range = fact.range
-                    )
-                } +
+                .map { fact -> UnresolvedLuaJavaTarget(fact.target, luaJavaHelperName(fact.kind), fact.range) } +
                 // Dead wildcard/package imports: `pkg.*` whose package enumeration came back
                 // empty (typo, case mismatch, absent jar) used to emit nothing because the
                 // wildcard targets are stripped from jvmClassLoads and IMPORT_CALL stays off
@@ -305,12 +295,7 @@ open class JvmWorkspaceEngine(
                         target.endsWith(".*") && workspaceResolver.importTargetSymbol(target) == null
                     }
                     .map { importFact ->
-                        UnresolvedLuaJavaTarget(
-                            target = importFact.target,
-                            helperName = "import",
-                            range = importFact.range,
-                            fromWildcardImport = true
-                        )
+                        UnresolvedLuaJavaTarget(importFact.target, "import", importFact.range, fromWildcardImport = true)
                     }
             )
             // Data-class identity dedupe: the two streams above can never collide on
@@ -535,20 +520,19 @@ open class JvmWorkspaceEngine(
     }
 
     private fun isClassLikeSimpleName(name: String): Boolean {
-        if (name.isEmpty() || name in NON_CLASS_FREE_IDENTIFIERS) {
-            return false
-        }
-        val first = name.first()
-        return first.isUpperCase() && first.isLetter() &&
+        val first = name.firstOrNull() ?: return false
+        return name !in NON_CLASS_FREE_IDENTIFIERS && first.isUpperCase() && first.isLetter() &&
             name.all { ch -> ch.isLetterOrDigit() || ch == '_' }
     }
+
+    /** Import text with the optional `path:` prefix stripped (`import "/a.jar:pkg.Foo"` → `pkg.Foo`). */
+    private fun importTargetText(importText: String): String =
+        importText.removePrefix("import ").trim().let { it.substringAfter(':', it).trim() }
 
     private fun isWildcardOrPackageTarget(importText: String): Boolean {
         // Same membership as [packageNameAliasPrefix] (dotted lowercase segments, >=2 segments,
         // not a loadable-class shape) plus the explicit `pkg.*` wildcard form.
-        val normalized = importText.removePrefix("import ").trim()
-        val target = normalized.substringAfter(':', normalized).trim()
-        return target.endsWith(".*") || packageNameAliasPrefix(importText) != null
+        return importTargetText(importText).endsWith(".*") || packageNameAliasPrefix(importText) != null
     }
 
     /**
@@ -613,10 +597,11 @@ open class JvmWorkspaceEngine(
     }
 
     private fun wildcardImportPrefix(importText: String): String? {
+        // The `.*` gate stays on the FULL text so a prefixed class target
+        // (`/path/to.jar:com.foo.Bar`) never yields a package prefix; the post-`:` text
+        // keeps the original non-trimming split (verbatim legacy behavior).
         val normalized = importText.removePrefix("import ").trim()
-        if (!normalized.endsWith(".*")) {
-            return null
-        }
+        if (!normalized.endsWith(".*")) return null
         return normalized.substringAfter(':', normalized).removeSuffix(".*").takeIf(String::isNotBlank)
     }
 
@@ -631,15 +616,12 @@ open class JvmWorkspaceEngine(
         return null
     }
 
-    private fun luaJavaHelperName(kind: DocumentFacts.JvmClassLoadKind): String {
-        return when (kind) {
-            DocumentFacts.JvmClassLoadKind.BIND_CLASS_CALL -> "bindClass"
-            DocumentFacts.JvmClassLoadKind.NEW_INSTANCE_CALL -> "newInstance"
-            DocumentFacts.JvmClassLoadKind.CREATE_PROXY_CALL -> "createProxy"
-            DocumentFacts.JvmClassLoadKind.LOAD_LIB_CALL -> "loadLib"
-            DocumentFacts.JvmClassLoadKind.IMPORT_CALL,
-            DocumentFacts.JvmClassLoadKind.CREATE_ARRAY_CALL -> kind.name
-        }
+    private fun luaJavaHelperName(kind: DocumentFacts.JvmClassLoadKind): String = when (kind) {
+        DocumentFacts.JvmClassLoadKind.BIND_CLASS_CALL -> "bindClass"
+        DocumentFacts.JvmClassLoadKind.NEW_INSTANCE_CALL -> "newInstance"
+        DocumentFacts.JvmClassLoadKind.CREATE_PROXY_CALL -> "createProxy"
+        DocumentFacts.JvmClassLoadKind.LOAD_LIB_CALL -> "loadLib"
+        DocumentFacts.JvmClassLoadKind.IMPORT_CALL, DocumentFacts.JvmClassLoadKind.CREATE_ARRAY_CALL -> kind.name
     }
 
     private companion object {
@@ -658,20 +640,16 @@ open class JvmWorkspaceEngine(
     }
 
     private fun packageNameAliasPrefix(importText: String): String? {
-        val normalized = importText.removePrefix("import ").trim()
-        val target = normalized.substringAfter(':', normalized).trim()
-        if (target.isBlank() || target.endsWith(".*") || '.' !in target) {
-            return null
-        }
-        // ('.' in target) already guarantees >= 2 split segments.
-        val segments = target.split('.')
+        val target = importTargetText(importText)
+        if (target.isBlank() || target.endsWith(".*") || '.' !in target) return null
         // Package segments are lowercase-leading (android / widget / util); class simple names
-        // are UpperCamelCase and must not mount as package modules.
-        val packageLike = segments.all { segment ->
-            segment.isNotEmpty() &&
-                segment.first().isLowerCase() &&
-                segment.all { ch -> ch.isLetterOrDigit() || ch == '_' }
+        // are UpperCamelCase and must not mount as package modules. ('.' in target) already
+        // guarantees >= 2 split segments.
+        return target.takeIf { t ->
+            t.split('.').all { segment ->
+                segment.isNotEmpty() && segment.first().isLowerCase() &&
+                    segment.all { ch -> ch.isLetterOrDigit() || ch == '_' }
+            }
         }
-        return target.takeIf { packageLike }
     }
 }

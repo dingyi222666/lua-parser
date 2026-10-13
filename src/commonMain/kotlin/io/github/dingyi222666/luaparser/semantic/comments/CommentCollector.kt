@@ -190,9 +190,8 @@ class CommentCollector(
         }
     }
 
-    private fun areAdjacentInSource(previous: CommentStatement, current: CommentStatement): Boolean {
-        return current.range.start.line - previous.visibleEndLine() <= 1
-    }
+    private fun areAdjacentInSource(previous: CommentStatement, current: CommentStatement): Boolean =
+        current.range.start.line - previous.visibleEndLine() <= 1
 
     private fun CommentStatement.visibleEndLine(): Int {
         val visibleText = comment.trimEnd('\r', '\n')

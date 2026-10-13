@@ -99,8 +99,9 @@ class BinderPositionQueries(
         // `forLoopBodyScopes` only yields LOOP scopes whose ownerNode is a BlockNode, and
         // `parent` is a not-null delegate that can still throw on synthetic/detached trees —
         // treat both as non-candidates like CompletionProvider does.
-        val statement = runCatching { (scope.ownerNode as BlockNode).parent }.getOrNull() ?: return null
-        if (statement !is ForNumericStatement && statement !is ForGenericStatement && statement !is WhileStatement) return null
+        val statement = runCatching { (scope.ownerNode as BlockNode).parent }.getOrNull()
+            ?.takeIf { it is ForNumericStatement || it is ForGenericStatement || it is WhileStatement }
+            ?: return null
         if (!isPositionWithin(statement.range.start, statement.range.end, position)) return null
         if (comparePositions((scope.ownerNode as BlockNode).range.end, position) > 0) return null
         return scope
@@ -114,11 +115,9 @@ class BinderPositionQueries(
         val matches = getDeclarationsAt(position)
         val best = matches.firstOrNull() ?: return null
         val second = matches.getOrNull(1) ?: return best
-        return if (compareDeclarationPrecedence(best, second, position) == 0) {
-            null
-        } else {
-            best
-        }
+        // A tie on positional precedence is ambiguous (two equally-specific declarations):
+        // resolve to nothing rather than an arbitrary winner.
+        return best.takeUnless { compareDeclarationPrecedence(best, second, position) == 0 }
     }
 
     fun getSymbolAt(position: Position): BinderSymbol? {

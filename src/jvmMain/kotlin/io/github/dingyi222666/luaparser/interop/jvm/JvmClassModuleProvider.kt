@@ -2,6 +2,8 @@ package io.github.dingyi222666.luaparser.interop.jvm
 
 import io.github.dingyi222666.luaparser.interop.dex.DexClass
 import io.github.dingyi222666.luaparser.semantic.WorkspaceImportedSymbol
+import io.github.dingyi222666.luaparser.semantic.api.SymbolKind
+import io.github.dingyi222666.luaparser.semantic.types.model.CallableType
 import io.github.dingyi222666.luaparser.semantic.types.model.ArrayType
 import io.github.dingyi222666.luaparser.semantic.types.model.ClassType
 import io.github.dingyi222666.luaparser.semantic.types.model.FunctionParameter
@@ -253,25 +255,23 @@ class JvmClassModuleProvider(
             .mapTo(linkedSetOf()) { it.className }
     }
 
-    internal fun importedClassName(importText: String, configuration: JvmWorkspaceConfiguration): String? {
+    private fun importedClassLoadNames(importText: String, configuration: JvmWorkspaceConfiguration): List<String> {
         val normalized = configuration.normalized(defaultImportPrefixes)
         val classLoader = normalized.classLoader ?: classLoaderFor(normalized)
         return resolveClassLoads(importText, normalized.importPrefixes, classLoader, normalized)
-            .firstOrNull()?.className
+            .map(ResolvedClassLoad::className)
     }
 
+    internal fun importedClassName(importText: String, configuration: JvmWorkspaceConfiguration): String? =
+        importedClassLoadNames(importText, configuration).firstOrNull()
+
     internal fun importedClassNames(importText: String, configuration: JvmWorkspaceConfiguration): List<String> {
-        val normalized = configuration.normalized(defaultImportPrefixes)
-        val classLoader = normalized.classLoader ?: classLoaderFor(normalized)
         // Heap bound: never expand wildcard/package targets into full class lists for
         // configuration.classes / source discovery. Package members are mounted via
         // packageProvidersFor (package paths) + packageMemberClassProvidersFor (class paths);
         // unparsable and wildcard targets therefore yield an empty list.
-        if (parseImportTarget(importText)?.className?.endsWith(".*") != false) {
-            return emptyList()
-        }
-        return resolveClassLoads(importText, normalized.importPrefixes, classLoader, normalized)
-            .map { it.className }
+        if (parseImportTarget(importText)?.className?.endsWith(".*") != false) return emptyList()
+        return importedClassLoadNames(importText, configuration)
     }
 
     internal fun importDiagnostics(configuration: JvmWorkspaceConfiguration): List<ImportDiagnostic> {
@@ -530,18 +530,16 @@ class JvmClassModuleProvider(
         if ('.' in target) {
             // Explicit metadata defines the API surface, including APIs newer than the
             // device runtime. It must not be replaced by parent-first reflection.
-            if (parsed.pathPrefix != null || !configuration.androidDex.isNullOrBlank()) {
-                resolveDexClassLoad(parsed, target, configuration)?.let { return listOf(it) }
-            }
-            val asClass = loadedCandidateOrNull(candidateClassNames(target), targetClassLoader)
-            if (asClass != null) {
-                return asClass
-            }
+            val metadataDexFirst = parsed.pathPrefix != null || !configuration.androidDex.isNullOrBlank()
+            if (metadataDexFirst) resolveDexClassLoad(parsed, target, configuration)?.let { return listOf(it) }
             // Dex classes cannot Class.forName: resolve dotted targets against the
             // prefix-named dex library first (`libs/classes.dex:com.foo.Bar`), then every
             // visible dex library (classpath entries + bare-imported libraries).
-            // Reflection keeps precedence — this only runs after every Class.forName miss.
-            resolveDexClassLoad(parsed, target, configuration)?.let { return listOf(it) }
+            // Reflection keeps precedence — the second dex probe only runs after every
+            // Class.forName miss, and only when the metadata-first probe above did not
+            // already cover the identical resolution.
+            loadedCandidateOrNull(candidateClassNames(target), targetClassLoader)?.let { return it }
+            if (!metadataDexFirst) resolveDexClassLoad(parsed, target, configuration)?.let { return listOf(it) }
             // Package-name alias support (import "android.widget") only when explicitly allowed.
             // Default class-load paths keep this off so providersFor does not reflect whole packages.
             if (allowPackageEnumeration) {
@@ -559,10 +557,7 @@ class JvmClassModuleProvider(
         // Prefer binary `$` join first so host android.jar nested types resolve before
         // non-loadable pure-dotted Class.forName attempts.
         return importPrefixes.firstNotNullOfOrNull { prefix ->
-            val trimmedPrefix = prefix.trim()
-            if (trimmedPrefix.isEmpty()) {
-                return@firstNotNullOfOrNull null
-            }
+            val trimmedPrefix = prefix.trim().takeIf(String::isNotEmpty) ?: return@firstNotNullOfOrNull null
             val shortNameCandidates = shortNameClassCandidates(trimmedPrefix, target)
             if (!configuration.androidDex.isNullOrBlank()) {
                 shortNameCandidates.firstNotNullOfOrNull { candidate ->
@@ -1456,7 +1451,7 @@ class JvmClassModuleProvider(
     private fun classModuleSimpleName(clazz: Class<*>): String {
         val simple = clazz.simpleName
         val enclosing = clazz.enclosingClass ?: return simple
-        return if (simple in LUA_STD_MODULE_NAMES) "${enclosing.simpleName}.$simple" else simple
+        return if (simple in DexLibraryMounter.LUA_STD_MODULE_NAMES) "${enclosing.simpleName}.$simple" else simple
     }
 
     /**
@@ -1958,7 +1953,7 @@ class JvmClassModuleProvider(
     private fun memberExport(
         name: String,
         type: Type,
-        kind: io.github.dingyi222666.luaparser.semantic.api.SymbolKind,
+        kind: SymbolKind,
         exportPath: List<String> = listOf(name)
     ) = ModuleExportSurface.MemberExport(
         name = name,
@@ -1971,13 +1966,13 @@ class JvmClassModuleProvider(
     private fun moduleMembers(moduleType: ModuleType): List<ModuleExportSurface.MemberExport> {
         val output = mutableListOf<ModuleExportSurface.MemberExport>()
         moduleType.fields.forEach { (name, type) ->
-            output += memberExport(name, type, io.github.dingyi222666.luaparser.semantic.api.SymbolKind.FIELD)
+            output += memberExport(name, type, SymbolKind.FIELD)
             if (name == "__class") {
                 output += classMembers(type)
             }
         }
         moduleType.methods.forEach { (name, type) ->
-            output += memberExport(name, type, io.github.dingyi222666.luaparser.semantic.api.SymbolKind.METHOD)
+            output += memberExport(name, type, SymbolKind.METHOD)
         }
         return output.sortedWith(compareBy<ModuleExportSurface.MemberExport>({ it.exportPath.size }, { it.name }))
     }
@@ -1990,7 +1985,7 @@ class JvmClassModuleProvider(
         // reuse a name never collide. First occurrence wins, preserving the previous
         // precedence: static members, then inner classes, then instance members.
         val exportedPaths = HashSet<List<String>>()
-        fun addExport(name: String, kind: io.github.dingyi222666.luaparser.semantic.api.SymbolKind, memberType: Type) {
+        fun addExport(name: String, kind: SymbolKind, memberType: Type) {
             val exportPath = exportPathPrefix + name
             if (!exportedPaths.add(exportPath)) {
                 return
@@ -2003,17 +1998,15 @@ class JvmClassModuleProvider(
             else -> {
                 val classType = type as? ClassType ?: return emptyList()
                 classType.getAllFields().forEach { (name, memberType) ->
-                    addExport(name, io.github.dingyi222666.luaparser.semantic.api.SymbolKind.FIELD, memberType)
+                    addExport(name, SymbolKind.FIELD, memberType)
                 }
                 classType.getAllMethods().forEach { (name, memberType) ->
-                    addExport(name, io.github.dingyi222666.luaparser.semantic.api.SymbolKind.METHOD, memberType)
+                    addExport(name, SymbolKind.METHOD, memberType)
                 }
             }
         }
         return output.sortedWith(
-            compareBy<ModuleExportSurface.MemberExport>(
-                { it.exportPath.size }, { it.name }, { it.exportPath.joinToString("/") }
-            )
+            compareBy({ it.exportPath.size }, { it.name }, { it.exportPath.joinToString("/") })
         )
     }
 
@@ -2026,7 +2019,7 @@ class JvmClassModuleProvider(
     private fun appendClassExports(
         classType: JavaClassType,
         instanceMembers: Map<String, JavaInstanceMemberType>,
-        addExport: (String, io.github.dingyi222666.luaparser.semantic.api.SymbolKind, Type) -> Unit
+        addExport: (String, SymbolKind, Type) -> Unit
     ) {
         // Nested / interface static helpers (Map$Entry.comparingByKey) live on the class
         // surface. Export them under __class so workspace export lookup, goto, and
@@ -2035,7 +2028,7 @@ class JvmClassModuleProvider(
             addExport(name, symbolKindForJavaMember(member.memberKind, member.valueType), member.valueType)
         }
         classType.allInnerClasses().forEach { (name, innerClass) ->
-            addExport(name, io.github.dingyi222666.luaparser.semantic.api.SymbolKind.CLASS, innerClass)
+            addExport(name, SymbolKind.CLASS, innerClass)
         }
         instanceMembers.forEach { (name, member) ->
             // Prefer static METHOD exports when names collide with instance members.
@@ -2043,17 +2036,9 @@ class JvmClassModuleProvider(
         }
     }
 
-    private fun symbolKindForJavaMember(
-        memberKind: JavaMemberKind,
-        valueType: Type
-    ): io.github.dingyi222666.luaparser.semantic.api.SymbolKind {
-        return when {
-            memberKind == JavaMemberKind.METHOD -> io.github.dingyi222666.luaparser.semantic.api.SymbolKind.METHOD
-            valueType is io.github.dingyi222666.luaparser.semantic.types.model.CallableType ->
-                io.github.dingyi222666.luaparser.semantic.api.SymbolKind.METHOD
-            else -> io.github.dingyi222666.luaparser.semantic.api.SymbolKind.FIELD
-        }
-    }
+    /** METHOD exports for method-kind/callable members; everything else is a FIELD. */
+    private fun symbolKindForJavaMember(memberKind: JavaMemberKind, valueType: Type): SymbolKind =
+        if (memberKind == JavaMemberKind.METHOD || valueType is CallableType) SymbolKind.METHOD else SymbolKind.FIELD
 
     private fun javaTypeToType(
         type: ReflectType,
@@ -2216,11 +2201,6 @@ class JvmClassModuleProvider(
                 file
             }.getOrNull()
         }
-        // Lua standard library module names a reflected nested class simple name must never
-        // claim bare (android.R$string → "string" used to shadow the string library).
-        private val LUA_STD_MODULE_NAMES = setOf(
-            "bit32", "coroutine", "debug", "io", "math", "os", "package", "string", "table", "utf8"
-        )
         // Practical member expand depth for deep class providers.
         private const val MAX_DEEP_HIERARCHY_EXPAND_DEPTH = 2
         // Lightweight hierarchy skeleton depth for assignability (transitive supers/interfaces).

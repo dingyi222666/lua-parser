@@ -40,12 +40,13 @@ object DexLibraryMounter {
 
     /**
      * Lua std module names a dex class simple-name ALIAS must never resolve bare
-     * (mirror of the `JvmClassModuleProvider` / `DexClassModelAdapter` guard:
-     * `bindClass("string")` must not land on a dex class named `string`).
-     * Dotted binary-name resolution is unaffected — `android.R.string` style
-     * targets always resolve; only the bare-alias surface is guarded.
+     * (`bindClass("string")` must not land on a dex class named `string`); shared
+     * verbatim by [JvmClassModuleProvider.classModuleSimpleName] and
+     * [DexClassModelAdapter.moduleSimpleNameFor], which apply the same guard to
+     * module-name claims. Dotted binary-name resolution is unaffected —
+     * `android.R.string` style targets always resolve; only bare aliases are guarded.
      */
-    private val LUA_STD_MODULE_NAMES: Set<String> = setOf(
+    internal val LUA_STD_MODULE_NAMES: Set<String> = setOf(
         "bit32", "coroutine", "debug", "io", "math", "os", "package", "string", "table", "utf8"
     )
 

@@ -46,9 +46,7 @@ class DocCommentSyntaxParser {
                         currentTagIndex = tags.lastIndex
                         if (it is TypeTagSyntax &&
                             lineInfo.normalizedLine.removePrefix("@type").trim().isNotBlank()
-                        ) {
-                            inlineTypeText = it.typeText
-                        }
+                        ) inlineTypeText = it.typeText
                     }
                 } else if (line.isNotBlank()) {
                     if (currentTagIndex >= 0) {
@@ -414,9 +412,8 @@ class DocCommentSyntaxParser {
         }
     }
 
-    private fun normalizeCommentLine(rawLine: String): String {
-        return rawLine.trim().removePrefix("---").removePrefix("--").removePrefix("-").trim()
-    }
+    private fun normalizeCommentLine(rawLine: String): String =
+        rawLine.trim().removePrefix("---").removePrefix("--").removePrefix("-").trim()
 
     private fun lineRange(lineInfo: DocLineInfo): Range {
         return Range(

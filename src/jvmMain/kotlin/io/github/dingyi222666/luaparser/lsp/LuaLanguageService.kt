@@ -26,6 +26,7 @@ import io.github.dingyi222666.luaparser.parser.ast.node.Range
 
 import io.github.dingyi222666.luaparser.parser.ast.visitor.ASTVisitor
 import io.github.dingyi222666.luaparser.semantic.model.NodePositionIndex
+import io.github.dingyi222666.luaparser.semantic.binder.comparePositions
 import io.github.dingyi222666.luaparser.semantic.workspace.WorkspaceLocation
 
 import io.github.dingyi222666.luaparser.semantic.workspace.WorkspaceSemanticFile
@@ -125,10 +126,8 @@ class LuaLanguageService(
     /** Ends background work when the owning protocol connection shuts down. */
     internal fun close() {
         closed = true
-        onBuildProgress = null
-        onLiveAnalysisProgress = null
-        onLiveDiagnosticsFileChecked = null
-        onDocumentDiagnostics = null
+        onBuildProgress = null; onLiveAnalysisProgress = null
+        onLiveDiagnosticsFileChecked = null; onDocumentDiagnostics = null
         backgroundRebuildThread?.interrupt()
         synchronized(documentRefreshLock) { documentRefreshPending = false }
         synchronized(liveDiagnosticLock) {
@@ -178,26 +177,11 @@ class LuaLanguageService(
     private var semanticTokensResultSeq: Long = 0L
     private var workspaceMetadata: Map<String, String> = initialWorkspaceMetadata.toMap()
     private var workspaceFolders: List<WorkspaceFolder> = emptyList()
-    /**
-     * Captured from client initialize:
-     * `textDocument.documentSymbol.hierarchicalDocumentSymbolSupport`.
-     * When true, textDocument/documentSymbol may return nested DocumentSymbol (Either.right);
-     * otherwise flatten to SymbolInformation (Either.left).
-     */
+    /** Captured at initialize: `documentSymbol.hierarchicalDocumentSymbolSupport` → Either.right nested symbols. */
     private var hierarchicalDocumentSymbolSupport: Boolean = false
-    /**
-     * Captured from client initialize:
-     * `workspace.symbol.resolveSupport` (modern WorkspaceSymbol client capability).
-     * When present (non-null), workspace/symbol may return WorkspaceSymbol (Either.right);
-     * otherwise legacy SymbolInformation (Either.left).
-     */
+    /** Captured at initialize: `workspace.symbol.resolveSupport` present → Either.right WorkspaceSymbol lists. */
     private var modernWorkspaceSymbolSupport: Boolean = false
-    /**
-     * Captured from client initialize:
-     * `textDocument.definition.linkSupport`.
-     * When true, textDocument/definition may return LocationLink (Either.right);
-     * when absent/false, keep Location lists (Either.left) without inventing links.
-     */
+    /** Captured at initialize: `definition.linkSupport` → Either.right LocationLink (never invented). */
     private var definitionLinkSupport: Boolean = false
     /** Files last applied to [snapshot] via build/update (indexed + open overlays). */
     private var lastSyncedFiles: Map<VirtualPath, String> = emptyMap()
@@ -212,15 +196,12 @@ class LuaLanguageService(
         private set
 
     fun initialize(params: InitializeParams): InitializeResult = synchronized(stateLock) {
-        // Clients that understand hierarchical DocumentSymbol advertise
-        // `textDocument.documentSymbol.hierarchicalDocumentSymbolSupport`.
+        // Capture the three client capability signals that pick Either.right payloads:
+        // hierarchical DocumentSymbol support, workspace/symbol resolveSupport (modern
+        // WorkspaceSymbol) and definition linkSupport (LocationLink).
         hierarchicalDocumentSymbolSupport =
             params.capabilities?.textDocument?.documentSymbol?.hierarchicalDocumentSymbolSupport == true
-        // Clients that understand modern WorkspaceSymbol advertise resolveSupport on
-        // workspace.symbol (properties they can resolve). Presence of that object is the
-        // dual-path signal for Either.right WorkspaceSymbol lists.
         modernWorkspaceSymbolSupport = params.capabilities?.workspace?.symbol?.resolveSupport != null
-        // textDocument.definition.linkSupport → LocationLink (Either.right) for definition.
         definitionLinkSupport = params.capabilities?.textDocument?.definition?.linkSupport == true
         workspaceFolders = configuredWorkspaceFolders(params)
         refreshWorkspaceFolderUriPrefixes()
@@ -615,11 +596,8 @@ class LuaLanguageService(
             val virtualPath = virtualPathForWatchedUri(uri)
             when (event.type) {
                 FileChangeType.Deleted -> {
-                    val removedSource = indexedWorkspaceFiles.remove(virtualPath) != null
+                    if (indexedWorkspaceFiles.remove(virtualPath) != null) mutated = true
                     forgetIndexedFileTokens(virtualPath, uri)
-                    if (removedSource) {
-                        mutated = true
-                    }
                 }
 
                 FileChangeType.Created, FileChangeType.Changed -> {
@@ -666,9 +644,7 @@ class LuaLanguageService(
 
         val removedKeys = removed.mapNotNull(::folderUriKey).toSet()
         if (removedKeys.isNotEmpty()) {
-            workspaceFolders = workspaceFolders.filter { folder ->
-                folderUriKey(folder) !in removedKeys
-            }
+            workspaceFolders = workspaceFolders.filter { folderUriKey(it) !in removedKeys }
         }
 
         // Dedup against the (possibly updated) folder list; an empty `added` yields no adds.
@@ -1290,8 +1266,7 @@ class LuaLanguageService(
         openDocuments[path] = applyContentChanges(baseSource, params.contentChanges)
         documentUris[path] = params.textDocument.uri
         if (deferDocumentAnalysis) {
-            val changedContent = openDocuments[path]
-            if (changedContent != null) warmDexImportsIn(changedContent)
+            openDocuments[path]?.let(::warmDexImportsIn)
             scheduleDocumentRefresh()
             return@synchronized emptyList<PublishDiagnosticsParams>()
         }
@@ -1304,20 +1279,18 @@ class LuaLanguageService(
     fun didClose(params: DidCloseTextDocumentParams): List<PublishDiagnosticsParams> {
         val uri = params.textDocument.uri
         val path = pathOf(uri)
-        synchronized(stateLock) {
+        val republished = synchronized(stateLock) {
             openDocuments.remove(path)
             documentUris.remove(path)
             semanticTokensCache.remove(path)
             if (!deferDocumentAnalysis) {
-                val affected = refreshIncremental()
-                return affected.filter { it != path && it in openDocuments }
-                    .map { publishDiagnostics(it) } + PublishDiagnosticsParams(uri, emptyList())
-            }
+                refreshIncremental().filter { it != path && it in openDocuments }.map(::publishDiagnostics)
+            } else null
         }
         // Close notifications are on Sora's disconnect path. Analyze later and
         // publish dependent diagnostics through the same coalescing worker.
-        scheduleDocumentRefresh()
-        return listOf(PublishDiagnosticsParams(uri, emptyList()))
+        if (republished == null) scheduleDocumentRefresh()
+        return republished.orEmpty() + PublishDiagnosticsParams(uri, emptyList())
     }
 
     fun didSave(@Suppress("UNUSED_PARAMETER") params: DidSaveTextDocumentParams) {
@@ -1481,8 +1454,7 @@ class LuaLanguageService(
         val resolved = CompletionItem(label).apply {
             // Preserve core identity fields first — never drop label/kind. Label
             // presentation and insert-mode travel with the label.
-            kind = item.kind
-            labelDetails = item.labelDetails; insertTextMode = item.insertTextMode
+            kind = item.kind; labelDetails = item.labelDetails; insertTextMode = item.insertTextMode
             detail = item.detail; documentation = item.documentation
             insertText = item.insertText; insertTextFormat = item.insertTextFormat
             sortText = item.sortText; filterText = item.filterText
@@ -1508,11 +1480,6 @@ class LuaLanguageService(
             }.joinToString("\n\n").toLspMarkdownDoc()
         }
 
-        // Never blank insertText when the unresolved item had one.
-        if (resolved.insertText != null && resolved.insertText.isBlank() && !item.insertText.isNullOrBlank()) {
-            resolved.insertText = item.insertText
-        }
-
         return resolved
     }
 
@@ -1523,18 +1490,18 @@ class LuaLanguageService(
      */
     private val completionKindPresentation:
         Map<org.eclipse.lsp4j.CompletionItemKind, Pair<String, String>> = mapOf(
-            org.eclipse.lsp4j.CompletionItemKind.Function to ("function" to "function"),
-            org.eclipse.lsp4j.CompletionItemKind.Method to ("function" to "method"),
-            org.eclipse.lsp4j.CompletionItemKind.Variable to ("variable" to "variable"),
-            org.eclipse.lsp4j.CompletionItemKind.Field to ("field" to "field"),
-            org.eclipse.lsp4j.CompletionItemKind.Property to ("field" to "field"),
-            org.eclipse.lsp4j.CompletionItemKind.Keyword to ("keyword" to "keyword"),
-            org.eclipse.lsp4j.CompletionItemKind.Snippet to ("snippet" to "snippet"),
-            org.eclipse.lsp4j.CompletionItemKind.Module to ("module" to "module"),
-            org.eclipse.lsp4j.CompletionItemKind.Class to ("class" to "class"),
-            org.eclipse.lsp4j.CompletionItemKind.TypeParameter to ("type" to "type"),
-            org.eclipse.lsp4j.CompletionItemKind.Text to ("" to "text")
-        )
+        org.eclipse.lsp4j.CompletionItemKind.Function to ("function" to "function"),
+        org.eclipse.lsp4j.CompletionItemKind.Method to ("function" to "method"),
+        org.eclipse.lsp4j.CompletionItemKind.Variable to ("variable" to "variable"),
+        org.eclipse.lsp4j.CompletionItemKind.Field to ("field" to "field"),
+        org.eclipse.lsp4j.CompletionItemKind.Property to ("field" to "field"),
+        org.eclipse.lsp4j.CompletionItemKind.Keyword to ("keyword" to "keyword"),
+        org.eclipse.lsp4j.CompletionItemKind.Snippet to ("snippet" to "snippet"),
+        org.eclipse.lsp4j.CompletionItemKind.Module to ("module" to "module"),
+        org.eclipse.lsp4j.CompletionItemKind.Class to ("class" to "class"),
+        org.eclipse.lsp4j.CompletionItemKind.TypeParameter to ("type" to "type"),
+        org.eclipse.lsp4j.CompletionItemKind.Text to ("" to "text")
+    )
 
     fun signatureHelp(params: SignatureHelpParams): SignatureHelp? = synchronized(stateLock) {
         val path = pathOf(params.textDocument)
@@ -1868,9 +1835,7 @@ class LuaLanguageService(
 
             // Same-file lexical policy: only emit edits for the requesting document URI.
             // Multi-file field rename may stay empty (documented limit).
-            val sameFile = referenceLocations.filter { location ->
-                location.uri == requestUri || location.uri == uriFor(requestPath)
-            }
+            val sameFile = referenceLocations.filter { it.uri == requestUri || it.uri == uriFor(requestPath) }
 
             val ranges = linkedMapOf<String, org.eclipse.lsp4j.Range>()
             // Always include the prepared identifier span at the caret.
@@ -2035,13 +2000,9 @@ class LuaLanguageService(
         when (symbol?.kind) {
             // Bare MODULE / class aliases are not lexical local renames; fields/methods
             // are soft-accepted earlier via the MemberExpression parent.
-            SemanticSymbolKind.MODULE,
-            SemanticSymbolKind.FIELD,
-            SemanticSymbolKind.METHOD,
-            SemanticSymbolKind.CLASS,
-            SemanticSymbolKind.TYPE_ALIAS -> return false
-            SemanticSymbolKind.PARAMETER,
-            SemanticSymbolKind.LOCAL -> return true
+            SemanticSymbolKind.MODULE, SemanticSymbolKind.FIELD, SemanticSymbolKind.METHOD,
+            SemanticSymbolKind.CLASS, SemanticSymbolKind.TYPE_ALIAS -> return false
+            SemanticSymbolKind.PARAMETER, SemanticSymbolKind.LOCAL -> return true
             else -> Unit
         }
 
@@ -2063,10 +2024,9 @@ class LuaLanguageService(
      * names, for-loop variables, function parameters and local function names.
      */
     private fun isLocalBindingSite(identifier: Identifier): Boolean {
-        if (identifier.isLocal) {
-            return true
-        }
-        if (identifier is io.github.dingyi222666.luaparser.parser.ast.node.AttributeIdentifier) {
+        if (identifier.isLocal ||
+            identifier is io.github.dingyi222666.luaparser.parser.ast.node.AttributeIdentifier
+        ) {
             return true
         }
         val parent = identifier.parentOrNull() ?: return false
@@ -2696,18 +2656,16 @@ class LuaLanguageService(
         val identifier = identifierAtHighlight(semanticFile, location.range) ?: return location
         val idRange = identifier.range
         // Shrink over-extended declaration/expression spans down to the identifier token
-        // when the current highlight fully covers that token on the same line/start region.
-        val coversIdentifier =
-            compareHighlightPositions(location.range.start, idRange.start) <= 0 &&
-                compareHighlightPositions(idRange.end, location.range.end) <= 0
-        if (!coversIdentifier) {
-            return location
+        // when the current highlight fully covers that token on the same line/start region;
+        // an already-equal span stays as-is (Parser Range is a data class).
+        return if (comparePositions(location.range.start, idRange.start) <= 0 &&
+            comparePositions(idRange.end, location.range.end) <= 0 &&
+            location.range != idRange
+        ) {
+            WorkspaceLocation(location.path, idRange)
+        } else {
+            location
         }
-        // Parser Range is a data class: field equality covers the start/end line+column check.
-        if (location.range == idRange) {
-            return location
-        }
-        return WorkspaceLocation(location.path, idRange)
     }
 
     private fun documentHighlightKindFor(
@@ -2719,13 +2677,8 @@ class LuaLanguageService(
             ?.takeIf { location.path == requestPath }
             ?.let { identifierAtHighlight(it, location.range) }
             ?: return DocumentHighlightKind.Read
-        return if (isDocumentHighlightWriteSite(identifier)) {
-            DocumentHighlightKind.Write
-        } else {
-            DocumentHighlightKind.Read
-        }
+        return if (isDocumentHighlightWriteSite(identifier)) DocumentHighlightKind.Write else DocumentHighlightKind.Read
     }
-
     private fun identifierAtHighlight(
         semanticFile: WorkspaceSemanticFile,
         range: Range
@@ -2738,8 +2691,8 @@ class LuaLanguageService(
 
         // Identifier fully contained by an over-extended highlight (declaration lines).
         semanticFile.identifiers.firstOrNull { identifier ->
-            compareHighlightPositions(range.start, identifier.range.start) <= 0 &&
-                compareHighlightPositions(identifier.range.end, range.end) <= 0 &&
+            comparePositions(range.start, identifier.range.start) <= 0 &&
+                comparePositions(identifier.range.end, range.end) <= 0 &&
                 identifier.range.start.line == range.start.line
         }?.let { return it }
 
@@ -2772,27 +2725,16 @@ class LuaLanguageService(
         }
     }
 
-    private fun functionDeclarationNameIs(
-        nameExpression: ExpressionNode?,
-        identifier: Identifier
-    ): Boolean {
-        return when (nameExpression) {
+    private fun functionDeclarationNameIs(nameExpression: ExpressionNode?, identifier: Identifier): Boolean =
+        when (nameExpression) {
             is Identifier -> nameExpression === identifier
             is MemberExpression -> nameExpression.identifier === identifier
             else -> false
         }
-    }
 
-    private fun assignmentLhsContainsIdentifier(
-        lhs: ExpressionNode,
-        identifier: Identifier
-    ): Boolean {
-        return when (lhs) {
-            is Identifier -> lhs === identifier
-            is MemberExpression -> lhs.identifier === identifier || assignmentLhsContainsIdentifier(lhs.base, identifier)
-            else -> false
-        }
-    }
+    private fun assignmentLhsContainsIdentifier(lhs: ExpressionNode, identifier: Identifier): Boolean =
+        functionDeclarationNameIs(lhs, identifier) ||
+            lhs is MemberExpression && assignmentLhsContainsIdentifier(lhs.base, identifier)
 
     private fun isAssignmentLhsExpression(expression: ExpressionNode): Boolean {
         var current: BaseASTNode? = expression
@@ -2810,13 +2752,8 @@ class LuaLanguageService(
         return false
     }
 
-    private fun rangeContainsHighlight(range: Range, position: Position): Boolean {
-        return compareHighlightPositions(range.start, position) <= 0 &&
-            compareHighlightPositions(position, range.end) <= 0
-    }
-
-    private fun compareHighlightPositions(left: Position, right: Position): Int =
-        io.github.dingyi222666.luaparser.semantic.binder.comparePositions(left, right)
+    private fun rangeContainsHighlight(range: Range, position: Position): Boolean =
+        comparePositions(range.start, position) <= 0 && comparePositions(position, range.end) <= 0
 
     /**
      * Lex [source] and emit LSP semantic-token data:
@@ -2843,12 +2780,9 @@ class LuaLanguageService(
                 }
                 // Whitespace / newlines must NOT clear function-name lookahead
                 // (`function   greet`) or call-site lookahead (`greet  (`).
-                if (type == LuaTokenTypes.WHITE_SPACE || type == LuaTokenTypes.NEW_LINE) {
-                    continue
-                }
+                if (type == LuaTokenTypes.WHITE_SPACE || type == LuaTokenTypes.NEW_LINE) continue
                 if (type == LuaTokenTypes.BAD_CHARACTER) {
-                    previousWasFunctionKeyword = false
-                    pendingNameAsFunctionCall = false
+                    previousWasFunctionKeyword = false; pendingNameAsFunctionCall = false
                     continue
                 }
 
@@ -3269,11 +3203,8 @@ class LuaLanguageService(
                     printed = convertLeadingSpacesToTabs(printed, tabSize)
                 }
                 // Preserve a trailing newline if the source had one.
-                if (source.endsWith("\n") && !printed.endsWith("\n")) {
-                    printed += "\n"
-                } else if (!source.endsWith("\n") && printed.endsWith("\n")) {
-                    printed = printed.trimEnd('\n', '\r')
-                }
+                if (source.endsWith("\n") && !printed.endsWith("\n")) printed += "\n"
+                else if (!source.endsWith("\n") && printed.endsWith("\n")) printed = printed.trimEnd('\n', '\r')
                 // CRLF source → emit CRLF so editors don't thrash line endings.
                 if (source.contains("\r\n")) {
                     printed = printed.replace("\r\n", "\n").replace("\n", "\r\n")
@@ -3657,11 +3588,7 @@ class LuaLanguageService(
 
         // Use sites from references (exclude declaration) + document highlights as fallback.
         val useSites = sameFileReferences(path, targetName.range.start)
-        val highlightSites = if (useSites.isEmpty()) {
-            sameFileHighlights(path, targetName.range.start)
-        } else {
-            emptyList()
-        }
+        val highlightSites = if (useSites.isEmpty()) sameFileHighlights(path, targetName.range.start) else emptyList()
 
         // WorkspaceLocation / parser Range are data classes, so range equality is the
         // same dedup key as the previous start/end line+column string.
@@ -3825,11 +3752,9 @@ class LuaLanguageService(
         // Probe signature help at the first argument start so we reuse the same
         // formal metadata / activeSignature ranking as SignatureHelpProvider.
         val help = queries.signatureHelp(path, arguments.first().range.start) ?: return emptyList()
-        if (help.signatures.isEmpty()) {
-            return emptyList()
-        }
         val signature = help.signatures.getOrNull(help.activeSignature.coerceAtLeast(0))
-            ?: help.signatures.first()
+            ?: help.signatures.firstOrNull()
+            ?: return emptyList()
         val formalNames = signature.parameters.mapNotNull { formalNameFromParameterLabel(it.label) }
         if (formalNames.isEmpty()) {
             return emptyList()
@@ -3870,13 +3795,13 @@ class LuaLanguageService(
         if (trimmed.isEmpty()) {
             return null
         }
-        // `name: type`, `name?: type`, `...: type` (skip pure vararg marker)
+        // `name: type` / `name?: type` / `...: type` (skip pure vararg marker);
+        // otherwise a bare identifier formal (no type annotation in the label).
         val colon = trimmed.indexOf(':')
         if (colon > 0) {
-            val namePart = trimmed.substring(0, colon).trim().trimEnd('?')
-            return namePart.takeIf { it.isNotEmpty() && it != "..." }
+            return trimmed.substring(0, colon).trim().trimEnd('?')
+                .takeIf { it.isNotEmpty() && it != "..." }
         }
-        // Bare identifier formal (no type annotation in the label).
         return trimmed.takeIf { it.matches(Regex("[A-Za-z_][A-Za-z0-9_]*")) }
     }
 
@@ -3894,13 +3819,10 @@ class LuaLanguageService(
     ): Boolean {
         val start = range.start
         val end = range.end
-        val afterStart =
-            position.line > start.line ||
-                (position.line == start.line && position.character >= start.character)
-        val beforeEnd =
-            position.line < end.line ||
-                (position.line == end.line && position.character <= end.character)
-        return afterStart && beforeEnd
+        return (position.line > start.line ||
+            (position.line == start.line && position.character >= start.character)) &&
+            (position.line < end.line ||
+                (position.line == end.line && position.character <= end.character))
     }
 }
 
@@ -3956,9 +3878,8 @@ private fun DiagnosticSeverity.toLspSeverity(): org.eclipse.lsp4j.DiagnosticSeve
 }
 
 /**
- * api [io.github.dingyi222666.luaparser.semantic.api.Diagnostic.tags] (raw LSP
- * DiagnosticTag values as Ints, so the common api stays lsp4j-free) → lsp4j
- * DiagnosticTag. Unknown values are dropped rather than crashing the publish pass.
+ * api Diagnostic.tags (raw LSP DiagnosticTag values as Ints, so the common api stays
+ * lsp4j-free) → lsp4j DiagnosticTag. Unknown values are dropped, not crash the publish pass.
  */
 private fun Int.toLspDiagnosticTag(): org.eclipse.lsp4j.DiagnosticTag? {
     return when (this) {
@@ -3968,20 +3889,13 @@ private fun Int.toLspDiagnosticTag(): org.eclipse.lsp4j.DiagnosticTag? {
     }
 }
 
-private fun CompletionItemKind.toLspKind(): org.eclipse.lsp4j.CompletionItemKind {
-    return when (this) {
-        CompletionItemKind.TEXT -> org.eclipse.lsp4j.CompletionItemKind.Text
-        CompletionItemKind.VARIABLE -> org.eclipse.lsp4j.CompletionItemKind.Variable
-        CompletionItemKind.PARAMETER -> org.eclipse.lsp4j.CompletionItemKind.Variable
-        CompletionItemKind.FUNCTION -> org.eclipse.lsp4j.CompletionItemKind.Function
-        CompletionItemKind.METHOD -> org.eclipse.lsp4j.CompletionItemKind.Method
-        CompletionItemKind.FIELD -> org.eclipse.lsp4j.CompletionItemKind.Field
-        CompletionItemKind.CLASS -> org.eclipse.lsp4j.CompletionItemKind.Class
-        CompletionItemKind.TYPE_ALIAS -> org.eclipse.lsp4j.CompletionItemKind.TypeParameter
-        CompletionItemKind.MODULE -> org.eclipse.lsp4j.CompletionItemKind.Module
-        CompletionItemKind.KEYWORD -> org.eclipse.lsp4j.CompletionItemKind.Keyword
-        CompletionItemKind.SNIPPET -> org.eclipse.lsp4j.CompletionItemKind.Snippet
-    }
+/** Name-derived bridge; only the two non-identity constants need explicit arms. */
+private fun CompletionItemKind.toLspKind(): org.eclipse.lsp4j.CompletionItemKind = when (this) {
+    CompletionItemKind.PARAMETER -> org.eclipse.lsp4j.CompletionItemKind.Variable
+    CompletionItemKind.TYPE_ALIAS -> org.eclipse.lsp4j.CompletionItemKind.TypeParameter
+    else -> org.eclipse.lsp4j.CompletionItemKind.valueOf(
+        name.lowercase().replaceFirstChar(Char::uppercaseChar)
+    )
 }
 
 internal fun lspVirtualPathFromUri(
@@ -4028,41 +3942,29 @@ internal fun normalizeLspFileUriPath(uri: String): String? {
     }
 }
 
+/** Strips a leading `//authority` (including the extra `//` of `file:///path`), keeping the path part. */
+private fun String.uriAuthoritySuffix(): String {
+    if (!startsWith("//")) return this
+    val authorityAndPath = substring(2)
+    val slash = authorityAndPath.indexOf('/')
+    return if (slash >= 0) authorityAndPath.substring(slash) else authorityAndPath
+}
+
 private fun fallbackFileUriPath(uri: String): String? {
     val trimmed = uri.trim()
     if (!trimmed.regionMatches(0, "file:", 0, 5, ignoreCase = true)) {
         return trimmed.takeIf { it.isNotBlank() }
     }
+    // file:///path, file://localhost/path, file:/path → ensure a leading '/', then strip authority.
     var rest = trimmed.substring(5)
-    // file:///path, file://localhost/path, file:/path
-    rest = when {
-        rest.startsWith("///") -> rest.substring(2) // keep one leading '/'
-        rest.startsWith("//") -> {
-            val authorityAndPath = rest.substring(2)
-            val slash = authorityAndPath.indexOf('/')
-            if (slash >= 0) authorityAndPath.substring(slash) else authorityAndPath
-        }
-        rest.startsWith("/") -> rest
-        else -> "/$rest"
-    }
-    return normalizeFileSystemPathFromUriPath(rest.replace('\\', '/'))
+    if (!rest.startsWith("/")) rest = "/$rest"
+    return normalizeFileSystemPathFromUriPath(rest.uriAuthoritySuffix().replace('\\', '/'))
 }
 
 private fun URI.fileWorkspacePath(originalUri: String): String {
     val rawPath = when {
         !path.isNullOrBlank() -> path
-        !schemeSpecificPart.isNullOrBlank() -> {
-            val ssp = schemeSpecificPart
-            when {
-                ssp.startsWith("///") -> ssp.substring(2) // "/..."
-                ssp.startsWith("//") -> {
-                    val authorityAndPath = ssp.substring(2)
-                    val slash = authorityAndPath.indexOf('/')
-                    if (slash >= 0) authorityAndPath.substring(slash) else authorityAndPath
-                }
-                else -> ssp
-            }
-        }
+        !schemeSpecificPart.isNullOrBlank() -> schemeSpecificPart.uriAuthoritySuffix()
         else -> return fallbackFileUriPath(originalUri) ?: originalUri
     }
     return normalizeFileSystemPathFromUriPath(rawPath.replace('\\', '/'))
@@ -4076,37 +3978,27 @@ internal fun normalizeFileSystemPathFromUriPath(uriPath: String): String {
     if (uriPath.isEmpty()) {
         return uriPath
     }
-    // Windows drive encoded as "/C:/..." or "/c|/..." style from file URIs.
-    if (uriPath.length >= 3 &&
-        uriPath[0] == '/' &&
-        uriPath[1].isLetter() &&
-        (uriPath[2] == ':' || uriPath[2] == '|')
-    ) {
-        val drive = uriPath[1]
-        val rest = uriPath.substring(3)
-        return buildString {
-            append(drive)
-            append(':')
-            if (rest.isNotEmpty() && !rest.startsWith('/')) {
-                append('/')
-            }
-            append(rest.replace('|', ':'))
+    // Windows drive encoded as "/C:/..." or "/c|/..." from file URIs, or already "C:/...".
+    val driveIndex = when {
+        uriPath.length >= 3 && uriPath[0] == '/' && uriPath[1].isLetter() &&
+            (uriPath[2] == ':' || uriPath[2] == '|') -> 1
+        uriPath.length >= 2 && uriPath[0].isLetter() && (uriPath[1] == ':' || uriPath[1] == '|') -> 0
+        // Unix absolute and all other forms keep their shape (including leading '/').
+        else -> return uriPath
+    }
+    val rest = uriPath.substring(driveIndex + 2)
+    return buildString {
+        append(uriPath[driveIndex])
+        append(':')
+        if (driveIndex == 1 && rest.isNotEmpty() && !rest.startsWith('/')) {
+            append('/')
         }
+        append(rest.replace('|', ':'))
     }
-    // Already a Windows drive path: "C:/..."
-    if (uriPath.length >= 2 && uriPath[0].isLetter() && (uriPath[1] == ':' || uriPath[1] == '|')) {
-        return uriPath[0] + ":" + uriPath.substring(2).replace('|', ':')
-    }
-    // Unix absolute and all other forms keep their shape (including leading '/').
-    return uriPath
 }
 
-private fun String.toVirtualPathOrNull(): VirtualPath? {
-    if (isBlank()) {
-        return null
-    }
-    return runCatching { VirtualPath.of(this) }.getOrNull()
-}
+private fun String.toVirtualPathOrNull(): VirtualPath? =
+    takeIf { it.isNotBlank() }?.let { runCatching { VirtualPath.of(it) }.getOrNull() }
 
 private fun String.workspaceRelativePath(workspaceFolderUriPrefixes: Map<String, String>): String {
     val normalized = normalizeWorkspacePathPrefix()
@@ -4121,14 +4013,12 @@ private fun String.workspaceRelativePath(workspaceFolderUriPrefixes: Map<String,
 }
 
 private fun String.syntheticWorkspaceRelativePath(enabled: Boolean): String {
-    if (!enabled) {
-        return this
-    }
+    if (!enabled) return this
     val normalized = replace('\\', '/')
+    val rel = normalized.removePrefix("/")
     return when {
         normalized == "workspace" || normalized == "/workspace" -> normalized
-        normalized.startsWith("workspace/") -> normalized.removePrefix("workspace/").ifBlank { this }
-        normalized.startsWith("/workspace/") -> normalized.removePrefix("/workspace/").ifBlank { this }
+        rel.startsWith("workspace/") -> rel.removePrefix("workspace/").ifBlank { this }
         else -> this
     }
 }
@@ -4160,30 +4050,20 @@ private fun encodedUriPath(uri: String): VirtualPath {
  * paths containing spaces or other reserved characters round-trip with [normalizeLspFileUriPath].
  */
 internal fun lspFileUri(path: VirtualPath): String {
+    // Windows drive paths (C:/...) get the leading slash too, like every relative form.
     val normalized = path.value.replace('\\', '/')
-    val uriPath = when {
-        // Windows drive path (C:/...): prefix the leading slash for the file URI.
-        normalized.length >= 2 && normalized[0].isLetter() && normalized[1] == ':' -> "/$normalized"
-        normalized.startsWith("/") -> normalized
-        else -> "/$normalized"
-    }
+    val uriPath = if (normalized.startsWith("/")) normalized else "/$normalized"
     return URI("file", "", uriPath, null).toASCIIString()
 }
 
-private fun SemanticSymbolKind.toLspSymbolKind(): org.eclipse.lsp4j.SymbolKind {
-    return when (this) {
-        SemanticSymbolKind.VARIABLE,
-        SemanticSymbolKind.PARAMETER,
-        SemanticSymbolKind.LOCAL -> org.eclipse.lsp4j.SymbolKind.Variable
-
-        SemanticSymbolKind.FUNCTION -> org.eclipse.lsp4j.SymbolKind.Function
-        SemanticSymbolKind.METHOD -> org.eclipse.lsp4j.SymbolKind.Method
-        SemanticSymbolKind.FIELD -> org.eclipse.lsp4j.SymbolKind.Field
-        SemanticSymbolKind.CLASS -> org.eclipse.lsp4j.SymbolKind.Class
-        SemanticSymbolKind.TYPE_ALIAS -> org.eclipse.lsp4j.SymbolKind.TypeParameter
-        SemanticSymbolKind.MODULE -> org.eclipse.lsp4j.SymbolKind.Module
-        SemanticSymbolKind.UNKNOWN -> org.eclipse.lsp4j.SymbolKind.Property
-    }
+/** Name-derived bridge; only the four non-identity constants need explicit arms. */
+private fun SemanticSymbolKind.toLspSymbolKind(): org.eclipse.lsp4j.SymbolKind = when (this) {
+    SemanticSymbolKind.PARAMETER, SemanticSymbolKind.LOCAL -> org.eclipse.lsp4j.SymbolKind.Variable
+    SemanticSymbolKind.TYPE_ALIAS -> org.eclipse.lsp4j.SymbolKind.TypeParameter
+    SemanticSymbolKind.UNKNOWN -> org.eclipse.lsp4j.SymbolKind.Property
+    else -> org.eclipse.lsp4j.SymbolKind.valueOf(
+        name.lowercase().replaceFirstChar(Char::uppercaseChar)
+    )
 }
 
 /** Bound for the per-document published diagnostic payload (adversarial audit wave N). */

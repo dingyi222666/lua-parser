@@ -18,18 +18,11 @@ class AST2Lua : ASTVisitor<StringBuilder> {
 
     var indentSize = 4
 
-    private fun indent(): String {
-        return " ".repeat(indentSize).repeat(max(currentDepth, 0))
-    }
+    private fun indent(): String = " ".repeat(indentSize).repeat(max(currentDepth, 0))
 
-    private fun indent(sb: StringBuilder) {
-        sb.append(indent())
-    }
+    private fun indent(sb: StringBuilder) = sb.append(indent())
 
-    private fun appendLineAndIndent(value: StringBuilder) {
-        value.appendLine()
-        indent(value)
-    }
+    private fun appendLineAndIndent(value: StringBuilder) = indent(value.appendLine())
 
     private fun appendCompactCallSuffix(value: StringBuilder, arguments: List<ExpressionNode>) {
         if (arguments.firstOrNull()?.canStartCompactCallSuffix() == true) {
@@ -78,7 +71,6 @@ class AST2Lua : ASTVisitor<StringBuilder> {
         return builder.toString()
     }
 
-
     override fun visitAssignmentStatement(node: AssignmentStatement, value: StringBuilder) {
         appendVisitorList(value, node.init)
         value.append(" = ")
@@ -94,7 +86,6 @@ class AST2Lua : ASTVisitor<StringBuilder> {
     override fun visitUnaryExpression(node: UnaryExpression, value: StringBuilder) = appendExpression(value, node)
 
     override fun visitCallExpression(node: CallExpression, value: StringBuilder) = appendExpression(value, node)
-
 
     override fun visitFunctionDeclaration(node: FunctionDeclaration, value: StringBuilder) {
         if (node.isLocal) {
@@ -131,14 +122,9 @@ class AST2Lua : ASTVisitor<StringBuilder> {
         appendVisitorList(value, node.conditions)
         // AndroLua case: `then` is optional. Emit only when CaseCause.hasThen records presence
         // (parser sets this from source; hand-built nodes default hasThen=true).
-        if (node.hasThen) {
-            value.append(" then")
-        }
-
+        if (node.hasThen) value.append(" then")
         visitBlockNode(node.body, value)
-
     }
-
 
     override fun visitCommentStatement(commentStatement: CommentStatement, value: StringBuilder) {
         value.append(commentStatement.comment)
@@ -152,14 +138,33 @@ class AST2Lua : ASTVisitor<StringBuilder> {
         value.appendLine("continue")
     }
 
-    override fun visitDefaultCause(node: DefaultCause, value: StringBuilder) {
+    /**
+     * Shared clause prolog: newline + indent, the keyword line (with an optional
+     * condition and its `then`), then the clause body block. Covers if / elseif /
+     * else / default clauses. [blankLineAfterThen] preserves the historical elseif
+     * line break between `then` and the body.
+     */
+    private fun appendClauseBody(
+        value: StringBuilder,
+        keyword: String,
+        condition: ExpressionNode?,
+        body: BlockNode,
+        blankLineAfterThen: Boolean = false
+    ) {
         appendLineAndIndent(value)
-        value.append("default")
-
-        visitBlockNode(node.body, value)
-
-
+        value.append(keyword)
+        condition?.let {
+            visitExpressionNode(it, value)
+            value.append(" then")
+        }
+        if (blankLineAfterThen) {
+            appendLineAndIndent(value)
+        }
+        visitBlockNode(body, value)
     }
+
+    override fun visitDefaultCause(node: DefaultCause, value: StringBuilder) =
+        appendClauseBody(value, "default", null, node.body)
 
     override fun visitSwitchStatement(node: SwitchStatement, value: StringBuilder) {
         value.append("switch ")
@@ -181,23 +186,11 @@ class AST2Lua : ASTVisitor<StringBuilder> {
         value.append("end")
     }
 
-    override fun visitElseClause(node: ElseClause, value: StringBuilder) {
-        appendLineAndIndent(value)
-        value.append("else")
+    override fun visitElseClause(node: ElseClause, value: StringBuilder) =
+        appendClauseBody(value, "else", null, node.body)
 
-        visitBlockNode(node.body, value)
-
-    }
-
-    override fun visitElseIfClause(node: ElseIfClause, value: StringBuilder) {
-        appendLineAndIndent(value)
-        value.append("elseif ")
-        visitExpressionNode(node.condition, value)
-        value.append(" then")
-
-        appendLineAndIndent(value)
-        visitBlockNode(node.body, value)
-    }
+    override fun visitElseIfClause(node: ElseIfClause, value: StringBuilder) =
+        appendClauseBody(value, "elseif ", node.condition, node.body, blankLineAfterThen = true)
 
     override fun visitForGenericStatement(node: ForGenericStatement, value: StringBuilder) {
         value.append("for ")
@@ -241,15 +234,8 @@ class AST2Lua : ASTVisitor<StringBuilder> {
         value.append("end")
     }
 
-    override fun visitIfClause(node: IfClause, value: StringBuilder) {
-        appendLineAndIndent(value)
-        value.append("if ")
-        visitExpressionNode(node.condition, value)
-        value.append(" then")
-
-        visitBlockNode(node.body, value)
-
-    }
+    override fun visitIfClause(node: IfClause, value: StringBuilder) =
+        appendClauseBody(value, "if ", node.condition, node.body)
 
     override fun visitMemberExpression(node: MemberExpression, value: StringBuilder) = appendExpression(value, node)
 
@@ -273,14 +259,11 @@ class AST2Lua : ASTVisitor<StringBuilder> {
         }
         value.append(" do ")
 
-
         visitBlockNode(node.body, value)
-
 
         indent(value)
         value.appendLine("end")
     }
-
 
     override fun visitLabelStatement(node: LabelStatement, value: StringBuilder) {
         value.append("::")
@@ -383,14 +366,8 @@ class AST2Lua : ASTVisitor<StringBuilder> {
     override fun visitAttributeIdentifier(identifier: AttributeIdentifier, value: StringBuilder) {
         value.append(identifier.name)
 
-        val attributeName = identifier.attributeName
-
-        if (attributeName != null) {
-            value.append(" ")
-            value.append("<")
-            value.append(attributeName)
-            value.append(">")
-        }
+        // ` <attributeName>` when the AndroLua `local x <const>` attribute is present.
+        identifier.attributeName?.let { value.append(" <$it>") }
     }
 
     private fun appendExpression(value: StringBuilder, expression: ExpressionNode) {

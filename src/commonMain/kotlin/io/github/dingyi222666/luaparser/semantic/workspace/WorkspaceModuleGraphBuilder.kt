@@ -47,9 +47,7 @@ object WorkspaceModuleGraphBuilder {
 
         graphFiles.forEach { (path, snapshot) ->
             val facts = snapshot.documentFacts
-            if (facts == null) {
-                return@forEach
-            }
+            if (facts == null) { return@forEach }
 
             val resolved = mutableListOf<WorkspaceModuleGraph.ResolvedDependency>()
             val unresolved = mutableListOf<WorkspaceModuleGraph.UnresolvedRequire>()
@@ -70,11 +68,7 @@ object WorkspaceModuleGraphBuilder {
                     ?: findOverlayProvider(requireFact.moduleName, builtinOverlay)
                     ?: findAlyLayoutProviderIn(requireFact.moduleName, graphFiles.keys)
                 if (provider == null) {
-                    unresolved += WorkspaceModuleGraph.UnresolvedRequire(
-                        consumerPath = path,
-                        moduleName = requireFact.moduleName,
-                        range = requireFact.range
-                    )
+                    unresolved += WorkspaceModuleGraph.UnresolvedRequire(consumerPath = path, moduleName = requireFact.moduleName, range = requireFact.range)
                 } else {
                     addResolved(requireFact.moduleName, provider, requireFact.range)
                 }
@@ -86,12 +80,8 @@ object WorkspaceModuleGraphBuilder {
                     ?.let { addResolved(importFact.target, it, importFact.range) }
             }
 
-            if (resolved.isNotEmpty()) {
-                resolvedDependencies[path] = resolved
-            }
-            if (unresolved.isNotEmpty()) {
-                unresolvedStaticRequires[path] = unresolved
-            }
+            if (resolved.isNotEmpty()) { resolvedDependencies[path] = resolved }
+            if (unresolved.isNotEmpty()) { unresolvedStaticRequires[path] = unresolved }
 
             if (facts.dynamicRequires.isNotEmpty()) {
                 dynamicRequireSites[path] = facts.dynamicRequires.map {
@@ -100,10 +90,7 @@ object WorkspaceModuleGraphBuilder {
             }
         }
 
-        val components = computeStronglyConnectedComponents(
-            paths = graphFiles.keys,
-            resolvedDependencies = resolvedDependencies
-        )
+        val components = computeStronglyConnectedComponents(paths = graphFiles.keys, resolvedDependencies = resolvedDependencies)
         val componentByFile = linkedMapOf<VirtualPath, Set<VirtualPath>>()
         components.forEach { component -> component.forEach { path -> componentByFile[path] = component } }
 
@@ -157,9 +144,7 @@ object WorkspaceModuleGraphBuilder {
 
     private fun alyPathProviders(path: VirtualPath): List<WorkspaceModuleGraph.ModuleProvider> {
         val moduleName = alyModuleNameFromPath(path) ?: return emptyList()
-        return listOf(
-            WorkspaceModuleGraph.ModuleProvider(moduleName, path, WorkspaceModuleGraph.ProviderSource.VIRTUAL_PATH)
-        )
+        return listOf(WorkspaceModuleGraph.ModuleProvider(moduleName, path, WorkspaceModuleGraph.ProviderSource.VIRTUAL_PATH))
     }
 
     /**
@@ -236,10 +221,7 @@ object WorkspaceModuleGraphBuilder {
                         // frame, now on top of the call stack.
                         pushActivation(dependency)
                     } else if (dependency in onStack) {
-                        lowLinkByNode[node] = minOf(
-                            lowLinkByNode.getValue(node),
-                            indexByNode.getValue(dependency)
-                        )
+                        lowLinkByNode[node] = minOf(lowLinkByNode.getValue(node), indexByNode.getValue(dependency))
                     }
                 } else {
                     // All of node's edges are processed: strongConnect(node) returns here.
@@ -250,23 +232,16 @@ object WorkspaceModuleGraphBuilder {
                     // equals its own (strictly larger) index, so the min is a no-op and a
                     // parent never absorbs a lowlink from an already-emitted component.
                     callStack.lastOrNull()?.first?.let { parent ->
-                        lowLinkByNode[parent] = minOf(
-                            lowLinkByNode.getValue(parent),
-                            lowLinkByNode.getValue(node)
-                        )
+                        lowLinkByNode[parent] = minOf(lowLinkByNode.getValue(parent), lowLinkByNode.getValue(node))
                     }
-                    if (lowLinkByNode.getValue(node) != indexByNode.getValue(node)) {
-                        continue
-                    }
+                    if (lowLinkByNode.getValue(node) != indexByNode.getValue(node)) { continue }
 
                     val component = linkedSetOf<VirtualPath>()
                     while (true) {
                         val member = stack.removeLast()
                         onStack -= member
                         component += member
-                        if (member == node) {
-                            break
-                        }
+                        if (member == node) { break }
                     }
                     components += component
                 }
@@ -276,10 +251,7 @@ object WorkspaceModuleGraphBuilder {
         return components.sortedBy { component -> component.minOf { it.value } }
     }
 
-    private val providerComparator = compareBy<WorkspaceModuleGraph.ModuleProvider>(
-        { providerSourceRank(it.source) },
-        { it.path.value }
-    )
+    private val providerComparator = compareBy<WorkspaceModuleGraph.ModuleProvider>({ providerSourceRank(it.source) }, { it.path.value })
 
     private fun providerSourceRank(source: WorkspaceModuleGraph.ProviderSource): Int = when (source) {
         WorkspaceModuleGraph.ProviderSource.LEGACY_TOP_LEVEL -> 0
@@ -302,10 +274,7 @@ internal fun findAlyLayoutProviderIn(
 ): WorkspaceModuleGraph.ModuleProvider? {
     if (moduleName.isBlank()) return null
     val dotted = moduleName.replace('\\', '/')
-    val candidates = listOf(
-        "$dotted.aly",
-        "${dotted.replace('.', '/')}.aly"
-    )
+    val candidates = listOf("$dotted.aly", "${dotted.replace('.', '/')}.aly")
     val match = paths.firstOrNull { path ->
         val value = path.value
         if (!value.endsWith(".aly")) return@firstOrNull false

@@ -1,6 +1,5 @@
 package io.github.dingyi222666.luaparser.parser
 
-
 import io.github.dingyi222666.luaparser.lexer.LuaLexer
 import io.github.dingyi222666.luaparser.lexer.LuaTokenTypes
 import io.github.dingyi222666.luaparser.lexer.WrapperLuaLexer
@@ -96,7 +95,7 @@ class LuaParser(
         /** Default for non-assignment/local/return explists (for-in iterators, case, arrays). */
         const val RECOVER_FIRST_RHS_STATEMENT_LINE_BREAK_DEFAULT: Boolean = true
 
-        /** Hoisted test-pinned message shared by both lambda version gates (parseSubExp / parsePrimaryExp). */
+        /** Test-pinned lambda-gate message; parsePrimaryExp errors with it, parseSubExp rebuilds it via androLuaOnly. */
         private const val LAMBDA_EXPRESSION_ONLY_ANDROLUA = "lambda expression is only supported in androlua 5.3"
     }
 
@@ -171,9 +170,7 @@ class LuaParser(
         return needConsume
     }
 
-    private fun peek(): LuaTokenTypes {
-        return peek { it }
-    }
+    private fun peek(): LuaTokenTypes = peek { it }
 
     private inline fun <T> peek(crossinline func: (LuaTokenTypes) -> T): T {
         val savedEnd = lastCommittedEndPosition
@@ -187,18 +184,10 @@ class LuaParser(
         return result
     }
 
-    private inline fun peekToken(tokenTypes: LuaTokenTypes): Boolean {
-        return peek { it == tokenTypes }
-    }
+    private inline fun peekToken(tokenTypes: LuaTokenTypes): Boolean = peek { it == tokenTypes }
 
-    private fun ignoreToken(advanceToken: LuaTokenTypes): Boolean {
-        return when (advanceToken) {
-            LuaTokenTypes.WHITE_SPACE, LuaTokenTypes.NEW_LINE
-                -> true
-
-            else -> false
-        }
-    }
+    private fun ignoreToken(advanceToken: LuaTokenTypes): Boolean =
+        advanceToken == LuaTokenTypes.WHITE_SPACE || advanceToken == LuaTokenTypes.NEW_LINE
 
     /**
      * Line/block/doc comments are statement-level AST nodes when they appear where a
@@ -206,15 +195,10 @@ class LuaParser(
      * and must not surface as `<expression>` / `<end>` failures for Android-Lua layout
      * tables and trailing end-of-line notes (TASK-610).
      */
-    private fun isCommentToken(tokenTypes: LuaTokenTypes): Boolean {
-        return when (tokenTypes) {
-            LuaTokenTypes.SHORT_COMMENT,
-            LuaTokenTypes.BLOCK_COMMENT,
-            LuaTokenTypes.DOC_COMMENT -> true
-
-            else -> false
-        }
-    }
+    private fun isCommentToken(tokenTypes: LuaTokenTypes): Boolean =
+        tokenTypes == LuaTokenTypes.SHORT_COMMENT ||
+                tokenTypes == LuaTokenTypes.BLOCK_COMMENT ||
+                tokenTypes == LuaTokenTypes.DOC_COMMENT
 
     private fun skipCommentTokens() {
         while (isCommentToken(peek())) {
@@ -265,11 +249,7 @@ class LuaParser(
         return result
     }
 
-    private inline fun consumeToken(target: LuaTokenTypes): Boolean {
-        return consume { token ->
-            target == token
-        }
-    }
+    private inline fun consumeToken(target: LuaTokenTypes): Boolean = consume { token -> target == token }
 
     private inline fun expectToken(target: LuaTokenTypes, crossinline messageBuilder: () -> String): Boolean {
         advance()
@@ -291,9 +271,7 @@ class LuaParser(
         return false
     }
 
-    private fun hasLineBreakBeforeNextSignificantToken(): Boolean {
-        return lexer.hasLineBreakBeforeNextSignificantToken()
-    }
+    private fun hasLineBreakBeforeNextSignificantToken(): Boolean = lexer.hasLineBreakBeforeNextSignificantToken()
 
     //region Hoisted diagnostics literals: byte-identical message groups shared across
     // parse sites (several are test-pinned goldens). Interpolated groups use getter-vals
@@ -319,9 +297,7 @@ class LuaParser(
 
     private fun error(message: String): Nothing = kotlin.error("(${lexer.line()},${lexer.column()}): " + message)
 
-    private fun warning(message: String) {
-        warning(message, currentRecoveryRange())
-    }
+    private fun warning(message: String) = warning(message, currentRecoveryRange())
 
     private fun warning(message: String, range: Range) {
         if (errorRecovery) {
@@ -352,9 +328,17 @@ class LuaParser(
         }
     }
 
-    private fun isAndroLua(): Boolean {
-        return luaVersion == LuaVersion.ANDROLUA_5_3
+    /**
+     * AndroLua-only construct gate shared by the statement/expression dispatch arms:
+     * hard-errors outside AndroLua 5.3 with the historical per-construct message
+     * (`$what is only supported in androlua 5.3`), then runs [create].
+     */
+    private inline fun <T> androLuaOnly(what: String, create: () -> T): T {
+        assertVersion(LuaVersion.ANDROLUA_5_3) { "$what is only supported in androlua 5.3" }
+        return create()
     }
+
+    private fun isAndroLua(): Boolean = luaVersion == LuaVersion.ANDROLUA_5_3
 
     private fun isBlockTerminator(tokenTypes: LuaTokenTypes): Boolean {
         return when (tokenTypes) {
@@ -431,12 +415,8 @@ class LuaParser(
         }
     }
 
-    private fun emptyExpression(parent: BaseASTNode, bad: Boolean = false): ExpressionNode {
-        return ExpressionNode.Companion.ExpressionNodeSupport().also {
-            it.parent = parent
-            it.bad = bad
-        }
-    }
+    private fun emptyExpression(parent: BaseASTNode, bad: Boolean = false): ExpressionNode =
+        ExpressionNode.Companion.ExpressionNodeSupport().also { it.parent = parent; it.bad = bad }
 
     private fun missingExpression(parent: BaseASTNode): ExpressionNode {
         return emptyExpression(parent, bad = true)
@@ -455,33 +435,40 @@ class LuaParser(
     private fun malformedLiteral(parent: BaseASTNode): ExpressionNode {
         val text = lexerText(true)
         warning(malformedTokenNear(text))
-        return ConstantNode(ConstantNode.TYPE.UNKNOWN, malformedTokenHead(text)).also {
-            it.parent = parent
-            it.bad = true
-        }
+        return ConstantNode(ConstantNode.TYPE.UNKNOWN, malformedTokenHead(text)).also { it.parent = parent; it.bad = true }
+    }
+
+    /**
+     * Shared first-term scaffold for [parseExpressionOrMissing] / [parseAssignmentTargetOrMissing]:
+     * a statement start after a line break (gated by [recoverStatementStartAfterLineBreak] and
+     * [recoversStatementStart]) recovers as a missing expression; an expression start parses via
+     * [parseTarget]; anything else is a missing placeholder under recovery, else [strictErrorMessage].
+     * [strictErrorMessage] is lazy: the hoisted diagnostic getters evaluate [lexerText] (which
+     * advances the lexer), so they must only run in the strict-error branch.
+     */
+    private inline fun parseExpressionTermOrMissing(
+        parent: BaseASTNode,
+        recoverStatementStartAfterLineBreak: Boolean,
+        crossinline strictErrorMessage: () -> String,
+        recoversStatementStart: (LuaTokenTypes) -> Boolean,
+        parseTarget: (BaseASTNode) -> ExpressionNode
+    ): ExpressionNode {
+        // Capture linebreak BEFORE any peek/pushback so WrapperLuaLexer.currentState
+        // is not already sitting on the next NAME (which would look past it).
+        val hasLineBreakBefore = recoverStatementStartAfterLineBreak && hasLineBreakBeforeNextSignificantToken()
+        val token = peek()
+        return if (errorRecovery && hasLineBreakBefore && recoversStatementStart(token)) missingExpression(parent)
+        else if (isExpressionStart(token)) parseTarget(parent)
+        else if (errorRecovery) missingExpression(parent)
+        else error(strictErrorMessage())
     }
 
     private fun parseExpressionOrMissing(
         parent: BaseASTNode,
         recoverStatementStartAfterLineBreak: Boolean = true
-    ): ExpressionNode {
-        // Capture linebreak BEFORE any peek/pushback so WrapperLuaLexer.currentState
-        // is not already sitting on the next NAME (which would look past it).
-        val hasLineBreakBeforeExpression = recoverStatementStartAfterLineBreak && hasLineBreakBeforeNextSignificantToken()
-        val token = peek()
-        return if (errorRecovery &&
-            hasLineBreakBeforeExpression &&
-            shouldRecoverStatementStartAsMissingExpression(token)
-        ) {
-            missingExpression(parent)
-        } else if (isExpressionStart(token)) {
-            parseExp(parent)
-        } else if (errorRecovery) {
-            missingExpression(parent)
-        } else {
-            error(expressionExpectedNearNextToken)
-        }
-    }
+    ): ExpressionNode =
+        parseExpressionTermOrMissing(parent, recoverStatementStartAfterLineBreak, { expressionExpectedNearNextToken },
+            { shouldRecoverStatementStartAsMissingExpression(it) }, ::parseExp)
 
     /**
      * After a line break, recover a following statement as a missing expression
@@ -626,10 +613,7 @@ class LuaParser(
      */
     private fun missingName(parent: BaseASTNode): Identifier {
         warning(nameExpectedNearToken)
-        return Identifier("").also {
-            it.parent = parent
-            it.bad = true
-        }
+        return Identifier("").also { it.parent = parent; it.bad = true }
     }
 
     private fun parseNameOrMissing(parent: BaseASTNode, supportDollarSymbol: Boolean = false): Identifier {
@@ -642,19 +626,8 @@ class LuaParser(
         }
     }
 
-    private fun parseAssignmentTargetOrMissing(parent: BaseASTNode): ExpressionNode {
-        val hasLineBreakBeforeTarget = hasLineBreakBeforeNextSignificantToken()
-        val token = peek()
-        return if (errorRecovery && hasLineBreakBeforeTarget && isStatementStart(token)) {
-            missingExpression(parent)
-        } else if (isExpressionStart(token)) {
-            parsePrefixExp(parent)
-        } else if (errorRecovery) {
-            missingExpression(parent)
-        } else {
-            error(nameExpectedNearNextToken)
-        }
-    }
+    private fun parseAssignmentTargetOrMissing(parent: BaseASTNode): ExpressionNode =
+        parseExpressionTermOrMissing(parent, true, { nameExpectedNearNextToken }, ::isStatementStart, ::parsePrefixExp)
 
     private data class ParsedTableField(
         val field: TableKey,
@@ -676,16 +649,8 @@ class LuaParser(
                 equalsMore(tokenTypes, LuaTokenTypes.DOT, LuaTokenTypes.COLON, LuaTokenTypes.LBRACK)
     }
 
-    private fun binaryLeftOperand(node: ExpressionNode): ExpressionNode {
-        return if (node is CallExpression &&
-            node.arguments.isEmpty() &&
-            node.isCompactShortCall()
-        ) {
-            node.base
-        } else {
-            node
-        }
-    }
+    private fun binaryLeftOperand(node: ExpressionNode): ExpressionNode =
+        if (node is CallExpression && node.arguments.isEmpty() && node.isCompactShortCall()) node.base else node
 
     private fun markLocation() {
         locations.addFirst(lexer.startPosition())
@@ -702,23 +667,16 @@ class LuaParser(
         return create()
     }
 
-    private fun <T : BaseASTNode> finishNode(node: T): T {
-        val start = locations.removeFirst()
-        node.range = Range(start, lastCommittedEndPosition)
-        return node
-    }
+    private fun <T : BaseASTNode> finishNode(node: T): T =
+        node.also { it.range = Range(locations.removeFirst(), lastCommittedEndPosition) }
 
     /**
      * Finish a composite node whose source span begins at a child (left/base)
      * rather than at the operator / suffix token that triggered the node.
      * Does not touch the locations stack.
      */
-    private fun <T : BaseASTNode> finishNodeSpanning(node: T, start: Position): T {
-        node.range = Range(start, lastCommittedEndPosition)
-        return node
-    }
-
-
+    private fun <T : BaseASTNode> finishNodeSpanning(node: T, start: Position): T =
+        node.also { it.range = Range(start, lastCommittedEndPosition) }
 
     // chunk ::= block
     private fun parseChunk(): ChunkNode {
@@ -742,7 +700,6 @@ class LuaParser(
         }
         return chunkNode
     }
-
 
     //block ::= {stat} [retstat]
     //stat ::=  ‘;’ |
@@ -817,13 +774,8 @@ class LuaParser(
                 consumeToken(LuaTokenTypes.FUNCTION) ->
                     parseMarkedStatement { parseGlobalFunctionDeclaration(blockNode) }
 
-                consumeToken(LuaTokenTypes.CONTINUE) -> {
-                    assertVersion(LuaVersion.ANDROLUA_5_3) {
-                        "continue statement is only supported in androlua 5.3"
-                    }
-                    markLocation()
-                    ContinueStatement()
-                }
+                consumeToken(LuaTokenTypes.CONTINUE) ->
+                    androLuaOnly("continue statement") { markLocation(); ContinueStatement() }
 
                 consume { isCommentToken(it) || it == LuaTokenTypes.SHEBANG_CONTENT } -> {
                     markLocation()
@@ -833,20 +785,12 @@ class LuaParser(
                     }
                 }
 
-                peekToken(LuaTokenTypes.WHEN) -> {
-                    assertVersion(LuaVersion.ANDROLUA_5_3) {
-                        "when statement is only supported in androlua 5.3"
-                    }
-                    parseWhenStatement(blockNode)
-                }
+                peekToken(LuaTokenTypes.WHEN) ->
+                    androLuaOnly("when statement") { parseWhenStatement(blockNode) }
 
                 peekToken(LuaTokenTypes.IF) -> parseIfStatement(blockNode)
-                peekToken(LuaTokenTypes.SWITCH) -> {
-                    assertVersion(LuaVersion.ANDROLUA_5_3) {
-                        "switch statement is only supported in androlua 5.3"
-                    }
-                    parseSwitchStatement(blockNode)
-                }
+                peekToken(LuaTokenTypes.SWITCH) ->
+                    androLuaOnly("switch statement") { parseSwitchStatement(blockNode) }
 
                 consumeToken(LuaTokenTypes.GOTO) ->
                     parseMarkedStatement { parseGotoStatement(blockNode) }
@@ -913,11 +857,8 @@ class LuaParser(
                 peek {
                     val node = finishNode(stat)
                     val commentLines = stat.comment.trimEnd('\r', '\n').split("\r\n", "\n", "\r")
-                    val endColumn = if (commentLines.size == 1) {
-                        node.range.start.column + commentLines.last().length
-                    } else {
-                        commentLines.last().length + 1
-                    }
+                    val endColumn = if (commentLines.size == 1) node.range.start.column + commentLines.last().length
+                    else commentLines.last().length + 1
                     node.range = Range(node.range.start, Position(node.range.start.line + commentLines.lastIndex, endColumn))
                 }
             } else {
@@ -958,7 +899,6 @@ class LuaParser(
             }
         }
 
-
         if (parent != null) {
             blockNode.parent = parent
         }
@@ -966,12 +906,8 @@ class LuaParser(
         return finishNode(blockNode)
     }
 
-    private fun shouldRecoverTopLevelBlockTerminator(parent: BaseASTNode?, token: LuaTokenTypes): Boolean {
-        return recoverIncompleteWorkspaceSnippet &&
-                errorRecovery &&
-                parent is ChunkNode &&
-                token != LuaTokenTypes.EOF
-    }
+    private fun shouldRecoverTopLevelBlockTerminator(parent: BaseASTNode?, token: LuaTokenTypes): Boolean =
+        recoverIncompleteWorkspaceSnippet && errorRecovery && parent is ChunkNode && token != LuaTokenTypes.EOF
 
     /**
      * Chunk-scope residual block terminators that must never be recovered as source
@@ -979,12 +915,8 @@ class LuaParser(
      * can consume a matching end/else/until/case; only unmatched terminators at the
      * chunk root reach this path (TASK-645).
      */
-    private fun isOutOfScopeTopLevelBlockTerminator(
-        parent: BaseASTNode?,
-        token: LuaTokenTypes,
-    ): Boolean {
-        return parent is ChunkNode && token != LuaTokenTypes.EOF && isBlockTerminator(token)
-    }
+    private fun isOutOfScopeTopLevelBlockTerminator(parent: BaseASTNode?, token: LuaTokenTypes): Boolean =
+        parent is ChunkNode && token != LuaTokenTypes.EOF && isBlockTerminator(token)
 
     /**
      * Shared `<end> expected (to close '<keyword>' at line N)` recovery for block-opening
@@ -1431,7 +1363,6 @@ class LuaParser(
         }
     }
 
-
     //      label ::= ‘::’ Name ‘::’
     // Caller already markLocation()'d at leading `::` and advanced past it.
     private fun parseLabelStatement(parent: BaseASTNode): LabelStatement {
@@ -1630,10 +1561,9 @@ class LuaParser(
             // accepted `n += 2` where the pre-desugar parser rejected it with
             // "'=' expected". Version gating is hard (not parser recovery) — same
             // contract as the sibling lambda/switch/continue assertVersion gates.
-            assertVersion(LuaVersion.ANDROLUA_5_3) {
-                "compound assignment statement is only supported in androlua 5.3"
+            return androLuaOnly("compound assignment statement") {
+                parseCompoundAssignmentStatement(parent, suffix, compoundOperator)
             }
-            return parseCompoundAssignmentStatement(parent, suffix, compoundOperator)
         }
 
         return if (suffix is Identifier || equalsMore(peekToken, LuaTokenTypes.ASSIGN, LuaTokenTypes.COMMA)) {
@@ -1781,7 +1711,6 @@ class LuaParser(
 
         recoverToken(LuaTokenTypes.LPAREN) { "( expected near '${lexerText()}'" }
 
-
         val hasLineBreakBeforeFirstParameterToken = hasLineBreakBeforeNextSignificantToken()
         val firstParameterToken = peek()
 
@@ -1910,16 +1839,13 @@ class LuaParser(
         return result
     }
 
-
     //      exp ::= (unop exp | primary | prefixexp ) { binop exp }
     //
     //     primary ::= nil | false | true | Number | String | '...'
     //          | functiondef | tableconstructor | lambdadef | arrayconstructor
     //
     //
-    private fun parseExp(parent: BaseASTNode): ExpressionNode {
-        return parseSubExp(parent, 0).requireNotNull()
-    }
+    private fun parseExp(parent: BaseASTNode): ExpressionNode = parseSubExp(parent, 0).requireNotNull()
 
     private fun binaryPrecedence(tokenTypes: LuaTokenTypes): Int {
         return when (tokenTypes) {
@@ -1940,10 +1866,8 @@ class LuaParser(
         }
     }
 
-    private fun isRightAssociative(tokenTypes: LuaTokenTypes): Boolean {
-        return tokenTypes == LuaTokenTypes.CONCAT || tokenTypes == LuaTokenTypes.EXP
-    }
-
+    private fun isRightAssociative(tokenTypes: LuaTokenTypes): Boolean =
+        tokenTypes == LuaTokenTypes.CONCAT || tokenTypes == LuaTokenTypes.EXP
 
     private fun findExpressionOperator(text: CharSequence): ExpressionOperator? {
         // Canonical operator spellings live on ExpressionOperator; Android-Lua also
@@ -1957,7 +1881,6 @@ class LuaParser(
             else -> ExpressionOperator.entries.find { it.value == text.toString() }
         }
     }
-
 
     //          functiondef ::= function funcbody
     private fun parseFunctionExp(parent: BaseASTNode): FunctionDeclaration {
@@ -2008,23 +1931,15 @@ class LuaParser(
                 ConstantNode.fromNumberLexeme(lexerText())
             }
 
-            currentToken == LuaTokenTypes.LAMBDA -> {
-                assertVersion(LuaVersion.ANDROLUA_5_3) {
-                    LAMBDA_EXPRESSION_ONLY_ANDROLUA
-                }
-                parseLambdaExp(parent)
-            }
+            currentToken == LuaTokenTypes.LAMBDA ->
+                androLuaOnly("lambda expression") { parseLambdaExp(parent) }
 
             currentToken == LuaTokenTypes.FUNCTION -> consume {
                 parseFunctionExp(parent)
             }
 
-            currentToken == LuaTokenTypes.LBRACK -> {
-                assertVersion(LuaVersion.ANDROLUA_5_3) {
-                    "array constructor is only supported in androlua 5.3"
-                }
-                parseArrayConstructorExpression(parent)
-            }
+            currentToken == LuaTokenTypes.LBRACK ->
+                androLuaOnly("array constructor") { parseArrayConstructorExpression(parent) }
 
             currentToken == LuaTokenTypes.LCURLY -> parseTableConstructorExpression(parent)
 
@@ -2083,13 +1998,9 @@ class LuaParser(
     private fun parseOperandOrMissing(parent: BaseASTNode, minPrecedence: Int): ExpressionNode {
         val hasLineBreakBeforeOperand = hasLineBreakBeforeNextSignificantToken()
         val operandToken = peek()
-        return if (errorRecovery && isExpressionTerminator(operandToken)) {
-            missingExpression(parent)
-        } else if (errorRecovery && hasLineBreakBeforeOperand && isStatementStart(operandToken)) {
-            missingExpression(parent)
-        } else {
-            parseSubExp(parent, minPrecedence)
-        }
+        val recoversOperand = errorRecovery &&
+            (isExpressionTerminator(operandToken) || (hasLineBreakBeforeOperand && isStatementStart(operandToken)))
+        return if (recoversOperand) missingExpression(parent) else parseSubExp(parent, minPrecedence)
     }
 
     //   arrayconstructor ::= '[' [explist] ']'
@@ -2450,13 +2361,9 @@ class LuaParser(
 
     }
 
-
     // funcargs -> '(' [ explist ] ') | tableconstructor | string
     private fun parseCallExpression(parent: BaseASTNode, base: ExpressionNode): CallExpression {
-        val result = CallExpression()
-        result.parent = parent
-        result.base = base
-        base.parent = result
+        val result = linkedCallExpression(parent, base, ::CallExpression)
         // CallExpression range is finished by the caller via finishNodeSpanning(base.range.start).
         // Do not markLocation() here — that would leave a dangling stack entry.
         // consume
@@ -2511,10 +2418,7 @@ class LuaParser(
             isStatementStart(nextAfterLeftParen)
         ) {
             result.bad = true
-            val nearText = peek {
-                tokenText = null
-                lexer.text()
-            }
+            val nearText = peek { tokenText = null; lexer.text() }
             warning("')' expected near $nearText")
             return result
         }
@@ -2611,45 +2515,47 @@ class LuaParser(
         }
     }
 
-    private fun parseTableCallExpression(parent: BaseASTNode, base: ExpressionNode): TableCallExpression {
-        // Range finished by caller via finishNodeSpanning(base.range.start).
-        val result = TableCallExpression()
-        result.parent = parent
-        result.base = base
-        base.parent = result
-
-        // Mark at '{' (next significant token) so the table constructor arg range is correct.
-        peek { markLocation() }
-        result.arguments.add(finishNode(parseTableConstructorExpression(result)))
-
-        return result
+    /**
+     * Shared call-node prolog: create the node, parent-link it, and attach [callBase]
+     * (also parent-linked). Ranges are finished by the caller via
+     * finishNodeSpanning(callBase.range.start), so no mark is taken here.
+     */
+    private inline fun <T : CallExpression> linkedCallExpression(
+        parentNode: BaseASTNode,
+        callBase: ExpressionNode,
+        create: () -> T,
+        body: T.() -> Unit = {}
+    ): T = create().apply {
+        this.parent = parentNode
+        this.base = callBase
+        callBase.parent = this
+        body()
     }
 
-    private fun parseStringCallExpression(parent: BaseASTNode, base: ExpressionNode): StringCallExpression {
-        // Range finished by caller via finishNodeSpanning(base.range.start).
-        val result = StringCallExpression()
-        result.parent = parent
-        result.base = base
-        base.parent = result
+    private fun parseTableCallExpression(parent: BaseASTNode, base: ExpressionNode): TableCallExpression =
+        linkedCallExpression(parent, base, ::TableCallExpression) {
+            // Mark at '{' (next significant token) so the table constructor arg range is correct.
+            peek { markLocation() }
+            arguments.add(finishNode(parseTableConstructorExpression(this)))
+        }
 
-        // String-call arguments are a single string / long-string primary only.
-        // Using parseExp here would keep consuming binary ops (e.g. `printer 'ready' or
-        // fallback` wrongly became StringCall(..., Binary(or, 'ready', fallback))).
-        // Mark at the string token so the ConstantNode range is the literal itself.
-        // Parent-link the argument so import/require string-call definition walks
-        // (enclosingCallExpression) resolve import "File" / import "BigDecimal".
-        peek { markLocation() }
-        result.arguments.add(
-            finishNode(
-                consume {
-                    ConstantNode(ConstantNode.TYPE.STRING, lexerText())
-                }
-            ).also { it.parent = result }
-        )
-
-        return result
-    }
-
+    private fun parseStringCallExpression(parent: BaseASTNode, base: ExpressionNode): StringCallExpression =
+        linkedCallExpression(parent, base, ::StringCallExpression) {
+            // String-call arguments are a single string / long-string primary only.
+            // Using parseExp here would keep consuming binary ops (e.g. `printer 'ready' or
+            // fallback` wrongly became StringCall(..., Binary(or, 'ready', fallback))).
+            // Mark at the string token so the ConstantNode range is the literal itself.
+            // Parent-link the argument so import/require string-call definition walks
+            // (enclosingCallExpression) resolve import "File" / import "BigDecimal".
+            peek { markLocation() }
+            arguments.add(
+                finishNode(
+                    consume {
+                        ConstantNode(ConstantNode.TYPE.STRING, lexerText())
+                    }
+                ).also { it.parent = this }
+            )
+        }
 
     // [' exp ']'
     private fun parseIndexExpression(parent: BaseASTNode, base: ExpressionNode): IndexExpression {
@@ -2711,7 +2617,6 @@ class LuaParser(
         result.arg = parseOperandOrMissing(result, 11)
         return result
     }
-
 
     // explist ::= exp {‘,’ exp}
     //

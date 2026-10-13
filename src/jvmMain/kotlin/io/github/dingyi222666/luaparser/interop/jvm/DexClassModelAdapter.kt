@@ -134,14 +134,7 @@ object DexClassModelAdapter {
     private const val ACC_CONSTRUCTOR = 0x10000
 
     /**
-     * Lua std module names a nested-class simple name must never claim bare
-     * (mirror of [JvmClassModuleProvider] `LUA_STD_MODULE_NAMES`).
-     */
-    private val LUA_STD_MODULE_NAMES = setOf(
-        "bit32", "coroutine", "debug", "io", "math", "os", "package", "string", "table", "utf8"
-    )
-
-    /** `L...;` descriptor names mapping to STRING (CharSequence family) / NUMBER
+     * `L...;` descriptor names mapping to STRING (CharSequence family) / NUMBER
      *  (boxed numerics; BigInteger/BigDecimal sit where the reflection table's
      *  `Number.isAssignableFrom` check would place them). `java.lang.Boolean`
      *  maps to BOOLEAN directly in [lDescriptorToType]. */
@@ -410,7 +403,7 @@ object DexClassModelAdapter {
     private fun moduleSimpleNameFor(cls: DexClass): String {
         val classPart = cls.binaryName.replace('/', '.').substringAfterLast('.')
         val simple = classPart.substringAfterLast('$').ifBlank { cls.simpleName }
-        if (simple !in LUA_STD_MODULE_NAMES) {
+        if (simple !in DexLibraryMounter.LUA_STD_MODULE_NAMES) {
             return simple
         }
         val enclosing = classPart.substringBeforeLast('$').substringAfterLast('$')
@@ -549,18 +542,14 @@ object DexClassModelAdapter {
             in L_NUMBER_DESCRIPTOR_TYPES -> return PrimitiveType.NUMBER
         }
         val shell = typeReferenceForBinaryName(binaryName)
-        if (key in resolving) {
-            return JavaInstanceType(shell)
-        }
         val dexClass = dexByName[binaryName]
             ?: dexByName[key]
             ?: dexByName[binaryName.replace('.', '/')]
-            ?: return JavaInstanceType(shell)
-        // Direct same-dex-set references carry their member surface. Deeper references get
-        // name-only shells: transitive hydration walked the entire 929-class
-        // reference graph on-device (minutes per cold build) and the memo
-        // makes repeated requests cheap anyway. Cycle guard still applies.
-        if (referenceDepth > 1) {
+        // Shells when: the class is absent from the dex set, its members are already on
+        // the resolving stack (self/mutual reference), or hydration depth is exhausted
+        // (transitive hydration walked the entire 929-class reference graph on-device —
+        // minutes per cold build; the memo makes repeated requests cheap anyway).
+        if (dexClass == null || key in resolving || referenceDepth > 1) {
             return JavaInstanceType(shell)
         }
         val referenceType = if (dexByName is DexIndex) {
