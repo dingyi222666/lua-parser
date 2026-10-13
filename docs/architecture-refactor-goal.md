@@ -640,3 +640,17 @@ Collaboration protocol matured: every agent verified in an ISOLATED COPY (standa
 
 **Lines: 44,155** (baseline 53,562 → −9,407; target ≤41,562, ~2,600 remaining). E2E rel55 = OK (7 tests); all gates green.
 
+## Round 29 — five-agent line reduction — 2026-10-13 (6/6)
+
+Verified remotely (JVM 2,929/0/0 + JS compile + **E2E rel56 = OK (7 tests)**):
+
+- LuaLanguageService fourth pass (−126): callHierarchyTarget prologue twin, inlay visitor 3-hooks→1 (visitor.kt dispatch proof), isLocalFunctionDeclaration fold, producer-invariant guard removals (deltaEncodeSemanticTokens), workspace-index region.
+- facade/resolver fourth (−115): requireBackedLocation (3 identical assemblies), surfaceSymbol ×3, visibleValueDeclarations shared scope-walk (order proven), completionItem assembly, provably-dead bindClass recompute removed from gotoDefinition, resolver classAliasCandidates distinct() proof.
+- parser/AST2Lua second (−98): 13× comma-join ladder → appendSeparated, parseCommaSeparatedExpList (the r25-mandate lambda-parameterized scaffold — decisions as lambdas), strict/recovery gate collapse (warning() hard-errors under strict with byte-identical messages), compact-call twin arms. Differential harness: 83 repo .lua files × 3 versions × 2 recovery modes × 4 output modes — byte-identical.
+- provider/lexer/comments fourth (−92): nextToken wrapper merge, operator-ladder packing, keyword pair-list, javaTypeParameterFor overload collapse, generic-tag twin arms, splitTolerantGenericParameters depth-map (with a caught-and-fixed angle-depth semantics deviation).
+- evaluator/ReferenceQueries fourth (−91): getSymbolAt hot-path ladder (removes list+5-lambda allocation per call), isPreferredRichType provable subsumption, single-evaluation fixes (toTypeInfo/toDeclarationSymbol were computed twice per call), dead branch, ~25 guard packs.
+
+Protocol upgrade: annotations-13.0.jar on the standalone compiler's JVM classpath makes the REAL generated BuiltinOverlayResourceMirror compile — no stub needed; agents also built behavioral smoke harnesses (99 symbol queries + 99 completion surfaces + 21 diagnostics byte-identical).
+
+**Lines: 43,633** (baseline 53,562 → −9,929; target ≤41,562, ~2,070 remaining). E2E rel56 = OK (7 tests); all gates green.
+
