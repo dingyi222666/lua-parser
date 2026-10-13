@@ -682,3 +682,15 @@ Verified remotely before the outage (JVM 2,929/0/0 + JS compile; the parser-corp
 
 The remote host returned after ~80 min (recovered between 04:35-04:38 local, reason unknown — host-side). **E2E rel58 = OK (7 tests)** on the round-32 tree (42,637 lines, HEAD df1085b): the −1,075-remaining state is now fully verified (JVM 2,929/0/0, JS compile, corpus, E2E 7/7). ~1,075 lines remain to the −12,000 target.
 
+## Round 33 — five-agent line reduction — 2026-10-14 (8/8)
+
+Verified remotely (JVM 2,929/0/0 + JS compile + **E2E rel59 = OK (7 tests)**):
+
+- workspace sixth (−366): positional constructions verified against every data class's declared order, serializeTypes adopted at 12 fingerprint sites, activeImportTargets order-preserving buildSet, resolvedModuleType twins folded; two unsound simplifications (bindClass declaration collapse, receiver merge) analyzed and REJECTED in the resolution-order zone.
+- parser fifth (−122): androLuaOnly gate ×6, parseExpressionTermOrMissing scaffold — with the LAZY diagnostic-message trap caught remotely (eager lexerText(true) advances the lexer; 358 corpus failures → lazy () -> String fix → corpus 735/735 green), linkedCallExpression prolog, appendClauseBody preserving elseif's historical extra break byte-exactly.
+- LuaLanguageService seventh (−120): toLspKind/toLspSymbolKind valueOf bridges validated against the actual api enums, URI authority-strip helper, provably-dead insertText guard, rename/highlight folds.
+- evaluator/ReferenceQueries sixth+fifth (−74): evaluateCallExpression tail fold, rootDeclarationContext, tautological null checks proven non-null, importedDeclaration factory collapse.
+- interop fourth+binder fifth (−73): LUA_STD_MODULE_NAMES triplication unified, metadataDexFirst gate preserving reflection-before-dex precedence, symbolKindForJavaMember 11→2 lines.
+
+**Lines: 41,882** (baseline 53,562 → **−11,680**; target ≤41,562 — **320 lines away**). E2E rel59 = OK (7 tests); all gates green. One more modest round crosses the finish line.
+
