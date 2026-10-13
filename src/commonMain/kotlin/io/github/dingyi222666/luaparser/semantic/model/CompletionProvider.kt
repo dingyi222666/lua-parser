@@ -82,9 +82,12 @@ internal class CompletionProvider(
                 val prefix = if (expression.indexer == ":") {
                     if (symbol.kind == SymbolKind.METHOD) "0" else "1"
                 } else {
-                    // Prefer fields (including Java static fields and JavaBean aliases on bindClass
-                    // targets) over methods for `.` members.
-                    if (symbol.kind == SymbolKind.FIELD || isMemberFieldLike(symbol)) "0" else "1"
+                    // Prefer fields (including Java static fields and JavaBean aliases on
+                    // bindClass targets) over methods for `.` members.
+                    if (symbol.kind == SymbolKind.FIELD ||
+                        symbol.kind == SymbolKind.LOCAL ||
+                        symbol.kind == SymbolKind.VARIABLE
+                    ) "0" else "1"
                 }
                 val type = adapters.typeByKey(symbol.declaredType?.typeKey ?: symbol.type?.typeKey)
                 memberCompletionItem(symbol, prefix, index).let { item ->
@@ -166,25 +169,20 @@ internal class CompletionProvider(
             SymbolKind.MODULE -> CompletionItemKind.MODULE
             SymbolKind.TYPE_ALIAS -> CompletionItemKind.TYPE_ALIAS
             SymbolKind.PARAMETER -> CompletionItemKind.PARAMETER
-            // Explicit FIELD, plus value-kind fallthrough for field-like member surfaces
-            // (LOCAL/VARIABLE-backed Java static members and JavaBean aliases). A callable
-            // display (Lua function stored in a table/module field) is a function to call,
-            // so it must not complete as a field/value icon.
+            // Explicit FIELD plus value-kind fallthrough for field-like member surfaces
+            // (LOCAL/VARIABLE-backed Java static members and JavaBean aliases) and unknown
+            // synthetic members: a callable display (Lua function stored in a table/module
+            // field) is a function to call, any other known display is a field/value icon,
+            // and only an unknown synthetic with no display evidence at all falls back to
+            // the adapter (TEXT).
             SymbolKind.FIELD,
             SymbolKind.LOCAL,
-            SymbolKind.VARIABLE ->
-                if (display != null && looksCallableDisplay(display)) {
-                    CompletionItemKind.FUNCTION
-                } else {
-                    CompletionItemKind.FIELD
-                }
-            // Soft dual-path: unknown synthetic members complete as FIELD for value reads,
-            // FUNCTION when their type display is callable, and only fall back to the
-            // adapter (TEXT) with no display evidence at all.
+            SymbolKind.VARIABLE,
             SymbolKind.UNKNOWN -> when {
                 display != null && looksCallableDisplay(display) -> CompletionItemKind.FUNCTION
                 display != null -> CompletionItemKind.FIELD
-                else -> adapters.completionKind(symbol)
+                symbol.kind == SymbolKind.UNKNOWN -> adapters.completionKind(symbol)
+                else -> CompletionItemKind.FIELD
             }
         }
     }
@@ -194,10 +192,6 @@ internal class CompletionProvider(
         return normalized.startsWith("fun(") ||
             normalized.contains(" -> ") ||
             normalized.startsWith("(") && normalized.contains(")->")
-    }
-
-    private fun isMemberFieldLike(symbol: Symbol): Boolean {
-        return symbol.kind == SymbolKind.LOCAL || symbol.kind == SymbolKind.VARIABLE
     }
 
     private fun categoryPrefix(symbol: Symbol): String {

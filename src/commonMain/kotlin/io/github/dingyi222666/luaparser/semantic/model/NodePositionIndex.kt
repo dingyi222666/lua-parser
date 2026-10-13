@@ -9,6 +9,9 @@ import io.github.dingyi222666.luaparser.parser.ast.node.Position
 import io.github.dingyi222666.luaparser.parser.ast.node.Range
 import io.github.dingyi222666.luaparser.parser.ast.visitor.ASTVisitor
 import io.github.dingyi222666.luaparser.semantic.binder.comparePositions
+import io.github.dingyi222666.luaparser.semantic.binder.compareRangeSpecificity
+import io.github.dingyi222666.luaparser.semantic.binder.isPositionWithin
+import io.github.dingyi222666.luaparser.semantic.binder.isValidNonEmptyRange
 
 internal class NodePositionIndex(root: BaseASTNode) {
     private data class Entry(
@@ -33,7 +36,7 @@ internal class NodePositionIndex(root: BaseASTNode) {
         var order = 0
         val visitor = object : ASTVisitor<Unit> {
             private fun record(node: BaseASTNode) {
-                if (containsNodeRange(node.range)) {
+                if (isValidNonEmptyRange(node.range)) {
                     collected += Entry(node = node, range = node.range, order = order++)
                 }
             }
@@ -79,7 +82,7 @@ internal class NodePositionIndex(root: BaseASTNode) {
             is io.github.dingyi222666.luaparser.parser.ast.node.ExpressionNode -> visitor.visitExpressionNode(startNode, Unit)
             is io.github.dingyi222666.luaparser.parser.ast.node.StatementNode -> visitor.visitStatementNode(startNode, Unit)
             else -> {
-                if (containsNodeRange(startNode.range)) {
+                if (isValidNonEmptyRange(startNode.range)) {
                     collected += Entry(startNode, startNode.range, order)
                 }
             }
@@ -125,24 +128,11 @@ internal class NodePositionIndex(root: BaseASTNode) {
                 .thenByDescending { it.range.end.column }
                 .thenBy { if (it.identifier.name.isBlank()) 1 else 0 })
 
-    private fun containsNodeRange(range: Range): Boolean {
-        return comparePositions(range.start, range.end) < 0
-    }
-
-    private fun contains(range: Range, position: Position): Boolean {
-        return comparePositions(range.start, position) <= 0 && comparePositions(position, range.end) < 0
-    }
-
-    private fun compareSpecificity(a: Range, b: Range): Int {
-        val startComparison = comparePositions(b.start, a.start)
-        if (startComparison != 0) {
-            return startComparison
-        }
-        return comparePositions(a.end, b.end)
-    }
+    private fun contains(range: Range, position: Position): Boolean =
+        isPositionWithin(range.start, range.end, position)
 
     private fun compareEntries(a: Entry, b: Entry): Int {
-        val specificity = compareSpecificity(a.range, b.range)
+        val specificity = compareRangeSpecificity(a.range, b.range)
         return if (specificity != 0) specificity else b.order.compareTo(a.order)
     }
 }

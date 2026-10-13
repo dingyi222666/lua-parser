@@ -103,15 +103,8 @@ internal class LuaLayoutCompletionProvider(
     }
 
     private fun valueDomainCompletions(key: String?): List<CompletionItem>? {
-        val values = evaluator.layoutValueSuggestionsForKey(key ?: return null)
-        return values.takeIf { it.isNotEmpty() }?.map { value ->
-            CompletionItem(
-                label = value,
-                kind = CompletionItemKind.KEYWORD,
-                insertText = value,
-                sortText = value
-            )
-        }
+        val resolvedKey = key ?: return null
+        return simpleSuggestions(evaluator.layoutValueSuggestionsForKey(resolvedKey), CompletionItemKind.KEYWORD)
     }
 
     private fun moduleArgumentCompletions(call: CallExpression): List<CompletionItem>? {
@@ -119,16 +112,19 @@ internal class LuaLayoutCompletionProvider(
         if (base.name !in MODULE_NAME_FUNCTIONS) {
             return null
         }
-        val names = evaluator.workspaceModuleCompletionNames()
-        return names.takeIf { it.isNotEmpty() }?.map { name ->
+        return simpleSuggestions(evaluator.workspaceModuleCompletionNames(), CompletionItemKind.MODULE)
+    }
+
+    /** Label-only completion rows (value-domain keywords, workspace module names). */
+    private fun simpleSuggestions(labels: List<String>, kind: CompletionItemKind): List<CompletionItem>? =
+        labels.takeIf { it.isNotEmpty() }?.map { label ->
             CompletionItem(
-                label = name,
-                kind = CompletionItemKind.MODULE,
-                insertText = name,
-                sortText = name
+                label = label,
+                kind = kind,
+                insertText = label,
+                sortText = label
             )
         }
-    }
 
     private fun tableKeyName(field: TableKey): String? {
         return when (val key = field.key) {

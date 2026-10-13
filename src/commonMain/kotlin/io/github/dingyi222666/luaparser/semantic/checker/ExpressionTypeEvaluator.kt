@@ -104,7 +104,38 @@ class ExpressionTypeEvaluator internal constructor(
         val localOverrides: Map<String, Type> = emptyMap(),
         val excludedDeclarations: Set<DeclarationId> = emptySet(),
         val varargType: Type = VarargType(UnknownType)
-    )
+    ) {
+        // Contexts are the keys of contextualExpressionTypeCache / declarationValueTypeCache,
+        // so hashCode runs on EVERY evaluate()/typeOfDeclaration() cache lookup. The default
+        // data-class hashCode re-walks localOverrides/varargType structurally each time, and
+        // those values can be large Java class graphs (android.jar surfaces) — device stack
+        // samples showed deep equals/hashCode chains under typeOfDeclaration cache hits.
+        // Contexts are immutable after construction (every construction site builds a fresh
+        // map/set for overrides/exclusions and nothing mutates them in place), so the hash
+        // is computed once per instance and reused. Equality semantics stay exactly the
+        // generated data-class ones.
+        private val cachedHashCode: Int by lazy(LazyThreadSafetyMode.PUBLICATION) {
+            var result = lexicalScopeId.hashCode()
+            result = 31 * result + localOverrides.hashCode()
+            result = 31 * result + excludedDeclarations.hashCode()
+            result = 31 * result + varargType.hashCode()
+            result
+        }
+
+        override fun hashCode(): Int = cachedHashCode
+
+        override fun equals(other: Any?): Boolean {
+            if (this === other) return true
+            if (other !is Context) return false
+            // copy() shares the map/set references, and AbstractMap.equals short-circuits on
+            // identical instances, so derived contexts stay O(1) to compare against their
+            // parent context.
+            return lexicalScopeId == other.lexicalScopeId &&
+                localOverrides == other.localOverrides &&
+                excludedDeclarations == other.excludedDeclarations &&
+                varargType == other.varargType
+        }
+    }
 
     private val expressionTypeCache = mutableMapOf<ExpressionNode, Type>()
     private val contextualExpressionTypeCache = mutableMapOf<ExpressionNode, MutableMap<Context, Type>>()
@@ -115,6 +146,13 @@ class ExpressionTypeEvaluator internal constructor(
     private val activeDeclarationIds = mutableSetOf<DeclarationId>()
     private val memberResolver = MemberResolver(binder) { workspaceContext.analysisCheckpoint() }
     private val callChecker = CallChecker(binder)
+    // Hoisted out of typeOfDeclaration, which allocated an equal set on every call.
+    private val declaredTypeUnavailableKinds = setOf(
+        DeclarationKind.FUNCTION,
+        DeclarationKind.GLOBAL,
+        DeclarationKind.METHOD,
+        DeclarationKind.FIELD
+    )
     private val luaJavaArrayHelperNames = setOf("newArray", "createArray")
     // getContext is an AndroLua helper surface (TASK-575); include it so colon-call guards and
     // helper-owner checks stay consistent with bind/newInstance/createProxy/loadLib.
@@ -1385,13 +1423,25 @@ class ExpressionTypeEvaluator internal constructor(
         } else {
             binder.scopeGraph.getDeclarationScope(declaration.id)?.id ?: binder.scopeGraph.rootScope.id
         }
-        val derivationContext = context.copy(lexicalScopeId = derivationScope)
+        // Reuse the caller's Context instance when the scope is already normalized. Context
+        // is immutable and copy() shares every field reference, so identity reuse is
+        // value-identical; it only saves an allocation and lets the cache lookups below
+        // reuse a context instance whose cached hashCode was already paid for.
+        val derivationContext = if (context.lexicalScopeId == derivationScope) {
+            context
+        } else {
+            context.copy(lexicalScopeId = derivationScope)
+        }
         declarationValueTypeCache[declaration.id]?.get(derivationContext)?.let { return it }
+        // Superseded-analysis guard for the derivation itself: a cache miss here starts a
+        // full member-surface assembly (visible member walk + per-member re-derivation)
+        // whose inner loops may not pass through evaluate() for a while.
+        workspaceContext.analysisCheckpoint()
         activeDeclarationIds.add(declaration.id)
         val epoch = recursionEpoch
         return try {
             val declared = declaration.declaredType.takeIf {
-                declaration.kind !in setOf(DeclarationKind.FUNCTION, DeclarationKind.GLOBAL, DeclarationKind.METHOD, DeclarationKind.FIELD)
+                declaration.kind !in declaredTypeUnavailableKinds
             }
             val type = attachVisibleAstMembersToType(
                 declaration,
@@ -2291,6 +2341,10 @@ class ExpressionTypeEvaluator internal constructor(
         val fields = linkedMapOf<String, Type>()
         val methods = linkedMapOf<String, Type>()
         memberDeclarations.forEach { memberDeclaration ->
+            // One checkpoint per visible member: each member triggers its own
+            // typeOfDeclaration derivation, and this loop is the outermost driver of the
+            // per-declaration × per-member fan-out seen in device stack samples.
+            workspaceContext.analysisCheckpoint()
             val memberType = typeOfDeclaration(memberDeclaration, context)
             if (memberType != UnknownType) {
                 if (memberDeclaration.kind == DeclarationKind.METHOD) {
@@ -2300,7 +2354,13 @@ class ExpressionTypeEvaluator internal constructor(
                 }
             }
         }
-        val merged = when (baseType) {
+        // Nothing to merge: return baseType itself instead of an equal-but-distinct copy.
+        // The copy defeats the identity fast path inside Type.equals/hashCode consumers,
+        // forcing structural deep compares over the same (possibly large) class graph
+        // again; returning baseType keeps them O(1). Value semantics are unchanged.
+        val merged = if (fields.isEmpty() && methods.isEmpty()) {
+            baseType
+        } else when (baseType) {
             is TableType -> baseType.copy(
                 fields = baseType.fields + fields,
                 methods = baseType.methods + methods
@@ -2357,6 +2417,9 @@ class ExpressionTypeEvaluator internal constructor(
         // owner chain (callbacks assigned to member functions, etc.).
         val grouped = linkedMapOf<List<String>, MutableList<Pair<String, Type>>>()
         memberAssignmentsByRootName()[declaration.name].orEmpty().forEach { anchor ->
+            // One checkpoint per member-assignment anchor: each surviving anchor resolves
+            // its root declaration (scope walk) and derives the member type.
+            workspaceContext.analysisCheckpoint()
             val candidate = anchor.declaration
             val anchorMember = anchor.anchorMember
             // Segments between the root identifier and the assigned member form the
@@ -2444,6 +2507,7 @@ class ExpressionTypeEvaluator internal constructor(
         memberAssignmentsByRoot?.let { return it }
         val index = linkedMapOf<String, MutableList<MemberAssignmentAnchor>>()
         binder.declarationIndex.declarations.forEach { candidate ->
+            workspaceContext.analysisCheckpoint()
             if (candidate.kind != DeclarationKind.FIELD && candidate.kind != DeclarationKind.METHOD) {
                 return@forEach
             }
@@ -2469,18 +2533,25 @@ class ExpressionTypeEvaluator internal constructor(
         val lexicalOwner = binder.scopeGraph.getScope(context.lexicalScopeId)?.ownerNode
         val candidates = memberAssignmentsByRootName()[valueName].orEmpty()
             .map { it.declaration }
-        val scopedMatches = lexicalOwner?.let { owner ->
-            candidates.filter { candidate ->
-                isDeclaredInLexicalOwnerChain(candidate, owner) &&
-                    isMemberBoundToValueDeclaration(candidate, declaration, valueName, context)
-            }
-        }.orEmpty()
-        if (scopedMatches.isNotEmpty()) {
-            return scopedMatches
-        }
-        return candidates.filter { candidate ->
+        // isMemberBoundToValueDeclaration is a pure base-resolution scope walk per
+        // candidate; it ran once in the scoped pass AND again in the fallback pass
+        // whenever the scoped pass came up empty. Compute it once — the scoped/fallback
+        // split then only re-filters the already-bound candidates (order-preserving,
+        // value-identical to the previous two-pass behavior).
+        val boundCandidates = candidates.filter { candidate ->
+            // One checkpoint per candidate: each check resolves the member's base
+            // declaration through the scope graph.
+            workspaceContext.analysisCheckpoint()
             isMemberBoundToValueDeclaration(candidate, declaration, valueName, context)
         }
+        if (lexicalOwner == null) {
+            return boundCandidates
+        }
+        val scopedMatches = boundCandidates.filter { candidate ->
+            workspaceContext.analysisCheckpoint()
+            isDeclaredInLexicalOwnerChain(candidate, lexicalOwner)
+        }
+        return if (scopedMatches.isNotEmpty()) scopedMatches else boundCandidates
     }
 
     private fun isMemberBoundToValueDeclaration(

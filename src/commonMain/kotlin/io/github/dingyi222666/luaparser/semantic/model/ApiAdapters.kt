@@ -191,24 +191,11 @@ internal class ApiAdapters(
 
     fun scopeHandle(scopeId: ScopeId): String = "scope:${scopeId.value}"
 
-    private fun declarationDisplayRange(declaration: BinderDeclaration): Range? {
+    fun declarationDisplayRange(declaration: BinderDeclaration): Range? {
         if (declaration.origin != io.github.dingyi222666.luaparser.semantic.binder.DeclarationOrigin.DOC_COMMENT) {
             return declaration.range
         }
-
-        val tags = declaration.documentation?.docComment?.tags.orEmpty()
-        return when (declaration.kind) {
-            DeclarationKind.TYPE_ALIAS -> tags.filterIsInstance<AliasTagSyntax>().firstOrNull { it.name == declaration.name }?.range
-            DeclarationKind.CLASS -> tags.filterIsInstance<ClassTagSyntax>().firstOrNull { it.name == declaration.name }?.range
-            DeclarationKind.FIELD -> tags.filterIsInstance<FieldTagSyntax>().firstOrNull { it.name == declaration.name }?.range
-            DeclarationKind.METHOD -> tags.filterIsInstance<MethodTagSyntax>().firstOrNull { it.name == declaration.name }?.range
-            DeclarationKind.TYPE_PARAMETER -> tags.filterIsInstance<GenericTagSyntax>()
-                .flatMap { it.parameters }
-                .firstOrNull { it.name == declaration.name }
-                ?.range
-
-            else -> null
-        } ?: declaration.range
+        return declaration.declarationSpecificRange() ?: declaration.range
     }
 }
 
@@ -223,6 +210,20 @@ internal fun String.toSymbolHandle(): SymbolHandle? {
         startsWith("declaration:") -> SymbolHandle(declarationId = substringAfter(':').toIntOrNull())
         else -> null
     }
+}
+
+/**
+ * Single owner for resolving a [SymbolHandle] back to its binder declaration: prefer the
+ * primary declaration of the binder symbol, then the declaration id directly.
+ */
+internal fun BinderPassResult.declarationForSymbolHandle(handle: SymbolHandle?): BinderDeclaration? {
+    handle?.binderSymbolId?.let { id ->
+        return declarationIndex.getPrimaryDeclaration(io.github.dingyi222666.luaparser.semantic.binder.SymbolId(id))
+    }
+    handle?.declarationId?.let { id ->
+        return declarationIndex.getDeclaration(io.github.dingyi222666.luaparser.semantic.binder.DeclarationId(id))
+    }
+    return null
 }
 
 private fun DeclarationKind.toSymbolKind(): SymbolKind {
@@ -248,5 +249,30 @@ private fun io.github.dingyi222666.luaparser.semantic.binder.ScopeKind.toApiScop
         io.github.dingyi222666.luaparser.semantic.binder.ScopeKind.MODULE -> ScopeKind.MODULE
         io.github.dingyi222666.luaparser.semantic.binder.ScopeKind.LOOP -> ScopeKind.LOOP
         io.github.dingyi222666.luaparser.semantic.binder.ScopeKind.CONDITIONAL -> ScopeKind.CONDITIONAL
+    }
+}
+
+/**
+ * Single owner for the doc-comment tag range ladder (alias/class/field/method/generic tags).
+ * Returns the tag-specific range for declarations whose kind carries a tag, `null` when a
+ * tag-carrying kind has no matching tag, and [BinderDeclaration.range] for every other kind.
+ *
+ * Consumers derive their exact fallback: the API surface (`declarationDisplayRange`) falls
+ * back to `declaration.range`, while exact doc-position matching in [ReferenceQueries]
+ * treats `null` as "this declaration does not cover the caret position".
+ */
+internal fun BinderDeclaration.declarationSpecificRange(): io.github.dingyi222666.luaparser.parser.ast.node.Range? {
+    val tags = documentation?.docComment?.tags.orEmpty()
+    return when (kind) {
+        DeclarationKind.TYPE_ALIAS -> tags.filterIsInstance<AliasTagSyntax>().firstOrNull { it.name == name }?.range
+        DeclarationKind.CLASS -> tags.filterIsInstance<ClassTagSyntax>().firstOrNull { it.name == name }?.range
+        DeclarationKind.FIELD -> tags.filterIsInstance<FieldTagSyntax>().firstOrNull { it.name == name }?.range
+        DeclarationKind.METHOD -> tags.filterIsInstance<MethodTagSyntax>().firstOrNull { it.name == name }?.range
+        DeclarationKind.TYPE_PARAMETER -> tags.filterIsInstance<GenericTagSyntax>()
+            .flatMap { it.parameters }
+            .firstOrNull { it.name == name }
+            ?.range
+
+        else -> range
     }
 }

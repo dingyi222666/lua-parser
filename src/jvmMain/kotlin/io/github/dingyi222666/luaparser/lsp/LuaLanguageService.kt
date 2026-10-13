@@ -833,14 +833,31 @@ class LuaLanguageService(
         Thread({
             val pipeline = io.github.dingyi222666.luaparser.semantic.SemanticPipeline()
             while (true) {
-                val work = synchronized(liveDiagnosticLock) {
-                    val pending = if (closed) null else pendingLiveDiagnostics
-                    if (pending == null) {
-                        liveDiagnosticRunning = false
-                        return@Thread
+                // Single-worker invariant: liveDiagnosticRunning==true implies THIS
+                // thread is alive and will take pending work at the top of this loop;
+                // a spawner that sees the flag set never starts a second thread, and
+                // the flag is cleared here under the same lock only when pending is
+                // empty and the thread is returning. So at most one thread is ever
+                // inside the per-file check loop, and a preempted item hands off to
+                // the newer pending work on the very next iteration below.
+                val work = try {
+                    synchronized(liveDiagnosticLock) {
+                        val pending = if (closed) null else pendingLiveDiagnostics
+                        if (pending == null) {
+                            liveDiagnosticRunning = false
+                            return@Thread
+                        }
+                        pendingLiveDiagnostics = null
+                        pending
                     }
-                    pendingLiveDiagnostics = null
-                    pending
+                } catch (t: Throwable) {
+                    // This section sits outside the per-work try below; a crash here
+                    // would otherwise leave liveDiagnosticRunning=true forever and
+                    // every later republication would queue work no thread will ever
+                    // take. Reset the flag so the next schedule can spawn a worker.
+                    synchronized(liveDiagnosticLock) { liveDiagnosticRunning = false }
+                    System.err.println("LSP: live diagnostics worker died taking work: $t")
+                    return@Thread
                 }
                 try {
                     System.err.println(
@@ -933,7 +950,21 @@ class LuaLanguageService(
                                     workspaceResolver = diagnosticResolver,
                                     resolveImportedSymbol = null,
                                     resolveImportTarget = null,
-                                    onExpressionEvaluation = { evaluations.incrementAndGet() },
+                                    // Every evaluate() entry must ALSO test the live
+                                    // checkpoint, not only count for the watchdog:
+                                    // between expression-evaluation checkpoints a
+                                    // superseded check otherwise grinds through a
+                                    // non-yielding stretch (measured ~3.7s on device
+                                    // between a newer schedule and the next
+                                    // member-resolution / class-load site). Throwing
+                                    // ObsoleteLiveAnalysis from here propagates up
+                                    // through evaluate() exactly like the
+                                    // analysisCheckpoint throw, so the worker loop
+                                    // takes the newer pending work immediately.
+                                    onExpressionEvaluation = {
+                                        evaluations.incrementAndGet()
+                                        checkLiveAnalysisCurrent()
+                                    },
                                     analysisCheckpoint = {
                                         checkLiveAnalysisCurrent()
                                         semantic.snapshot.workspaceContext.analysisCheckpoint()

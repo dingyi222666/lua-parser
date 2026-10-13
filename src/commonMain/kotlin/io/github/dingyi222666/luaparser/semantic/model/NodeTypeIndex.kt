@@ -7,10 +7,7 @@ import io.github.dingyi222666.luaparser.semantic.binder.BinderDeclaration
 import io.github.dingyi222666.luaparser.semantic.binder.BinderPassResult
 import io.github.dingyi222666.luaparser.semantic.binder.DeclarationKind
 import io.github.dingyi222666.luaparser.semantic.checker.ExpressionTypeEvaluator
-import io.github.dingyi222666.luaparser.semantic.types.model.CallableType
-import io.github.dingyi222666.luaparser.semantic.types.model.FunctionType
 import io.github.dingyi222666.luaparser.semantic.types.model.Type
-import io.github.dingyi222666.luaparser.semantic.types.model.UnknownType
 
 internal class NodeTypeIndex(
     private val binder: BinderPassResult,
@@ -66,9 +63,7 @@ internal class NodeTypeIndex(
         ) {
             return false
         }
-        val callable = declared as? CallableType ?: return false
-        return callable.callSignatures.isNotEmpty() &&
-            callable.callSignatures.all { signature -> signature.returnType == UnknownType }
+        return declared?.isUnknownReturnOnlyCallable() == true
     }
 
     fun getInferredType(declaration: BinderDeclaration): io.github.dingyi222666.luaparser.semantic.api.TypeInfo? {

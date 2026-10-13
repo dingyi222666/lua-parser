@@ -9,9 +9,7 @@ import io.github.dingyi222666.luaparser.semantic.api.SignatureHelp
 import io.github.dingyi222666.luaparser.semantic.api.Symbol
 import io.github.dingyi222666.luaparser.semantic.api.TypeInfo
 import io.github.dingyi222666.luaparser.semantic.binder.BinderDeclaration
-import io.github.dingyi222666.luaparser.semantic.binder.DeclarationId
 import io.github.dingyi222666.luaparser.semantic.binder.BinderPassResult
-import io.github.dingyi222666.luaparser.semantic.binder.SymbolId
 
 /**
  * The only [SemanticModel] implementation the pipeline produces. Callers that already hold one
@@ -93,16 +91,6 @@ internal class DefaultSemanticModel(
         return adapters.toScope(scope, referenceQueries.visibleValueSymbols(position))
     }
 
-    private fun resolveDeclaration(symbol: Symbol): BinderDeclaration? {
-        val handle = symbol.symbolId?.toSymbolHandle() ?: return null
-        val binderSymbolId = handle.binderSymbolId?.let(::SymbolId)
-        if (binderSymbolId != null) {
-            return binder.declarationIndex.getPrimaryDeclaration(binderSymbolId)
-        }
-        val declarationId = handle.declarationId?.let(::DeclarationId)
-        if (declarationId != null) {
-            return binder.declarationIndex.getDeclaration(declarationId)
-        }
-        return null
-    }
+    private fun resolveDeclaration(symbol: Symbol): BinderDeclaration? =
+        binder.declarationForSymbolHandle(symbol.symbolId?.toSymbolHandle())
 }

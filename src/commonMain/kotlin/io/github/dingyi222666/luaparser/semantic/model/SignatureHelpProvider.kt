@@ -25,6 +25,7 @@ import io.github.dingyi222666.luaparser.semantic.binder.BinderDeclaration
 import io.github.dingyi222666.luaparser.semantic.binder.BinderPassResult
 import io.github.dingyi222666.luaparser.semantic.binder.ScopeId
 import io.github.dingyi222666.luaparser.semantic.binder.comparePositions
+import io.github.dingyi222666.luaparser.semantic.binder.positionLte
 import io.github.dingyi222666.luaparser.semantic.binder.rangeContains
 import io.github.dingyi222666.luaparser.semantic.checker.CallChecker
 import io.github.dingyi222666.luaparser.semantic.checker.CallResolution
@@ -399,23 +400,19 @@ internal class SignatureHelpProvider(
                     }
                     current = parent
                 }
-                is LocalStatement -> {
-                    val idx = parent.variables.indexOf(current)
-                    if (idx >= 0 && idx + 1 < parent.variables.size) {
-                        return null
-                    }
-                    current = parent
-                }
-                is AssignmentStatement -> {
-                    val idx = parent.variables.indexOf(current)
-                    if (idx >= 0 && idx + 1 < parent.variables.size) {
-                        return null
-                    }
-                    current = parent
-                }
+                is LocalStatement,
+                is AssignmentStatement,
                 is ReturnStatement -> {
-                    val idx = parent.arguments.indexOf(current)
-                    if (idx >= 0 && idx + 1 < parent.arguments.size) {
+                    // Same "nested call is not the last slot" rule for local/assignment
+                    // initializers and return arguments: a later slot owns the following
+                    // token, so do not inflate into it.
+                    val slots = when (parent) {
+                        is LocalStatement -> parent.variables
+                        is AssignmentStatement -> parent.variables
+                        else -> (parent as ReturnStatement).arguments
+                    }
+                    val idx = slots.indexOf(current)
+                    if (idx >= 0 && idx + 1 < slots.size) {
                         return null
                     }
                     current = parent
@@ -450,7 +447,6 @@ internal class SignatureHelpProvider(
         }
     }
 
-    private fun contains(range: Range, position: Position): Boolean {
-        return comparePositions(position, range.start) >= 0 && comparePositions(position, range.end) <= 0
-    }
+    private fun contains(range: Range, position: Position): Boolean =
+        positionLte(range.start, position) && positionLte(position, range.end)
 }

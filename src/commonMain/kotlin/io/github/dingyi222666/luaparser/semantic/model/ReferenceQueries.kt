@@ -24,14 +24,11 @@ import io.github.dingyi222666.luaparser.semantic.binder.DeclarationNamespace
 import io.github.dingyi222666.luaparser.semantic.binder.Scope
 import io.github.dingyi222666.luaparser.semantic.binder.ScopeId
 import io.github.dingyi222666.luaparser.semantic.binder.comparePositions
+import io.github.dingyi222666.luaparser.semantic.binder.compareRangeSpecificity
 import io.github.dingyi222666.luaparser.semantic.binder.isChunkGlobalFunctionDeclaration
 import io.github.dingyi222666.luaparser.semantic.binder.isPositionWithin
-import io.github.dingyi222666.luaparser.semantic.comments.AliasTagSyntax
-import io.github.dingyi222666.luaparser.semantic.comments.ClassTagSyntax
-import io.github.dingyi222666.luaparser.semantic.comments.FieldTagSyntax
-import io.github.dingyi222666.luaparser.semantic.comments.GenericTagSyntax
-import io.github.dingyi222666.luaparser.semantic.comments.MethodTagSyntax
 import io.github.dingyi222666.luaparser.semantic.checker.ExpressionTypeEvaluator
+import io.github.dingyi222666.luaparser.semantic.checker.JavaBeanPropertySurface
 import io.github.dingyi222666.luaparser.semantic.checker.MemberAccessKind
 import io.github.dingyi222666.luaparser.semantic.checker.MemberResolver
 import io.github.dingyi222666.luaparser.semantic.checker.allReadableInstanceJavaBeanProperties
@@ -48,6 +45,8 @@ import io.github.dingyi222666.luaparser.semantic.types.model.JavaArrayType
 import io.github.dingyi222666.luaparser.semantic.types.model.JavaClassType
 import io.github.dingyi222666.luaparser.semantic.types.model.JavaInstanceType
 import io.github.dingyi222666.luaparser.semantic.types.model.JavaMemberKind
+import io.github.dingyi222666.luaparser.semantic.types.model.JavaMemberType
+import io.github.dingyi222666.luaparser.semantic.types.model.JavaSignatureMetadata
 import io.github.dingyi222666.luaparser.semantic.types.model.ModuleType
 import io.github.dingyi222666.luaparser.semantic.types.model.OverloadedFunctionType
 import io.github.dingyi222666.luaparser.semantic.types.model.TableType
@@ -89,16 +88,16 @@ internal class ReferenceQueries(
         localJavaMemberInitializerSymbolAt(position, node)?.let { return it }
         bindClassTargetLocalSymbolAt(node)?.let { return it }
         importTargetStringSymbolAt(node)?.let { return it }
-        val declarationSymbol = resolveDeclarationTokenStartAt(position)
+        // One ordered fallback ladder for declaration-backed symbols; each probe is a pure
+        // query, so first-non-null short-circuiting preserves the original precedence.
+        val declarationSymbol = listOf(
+            { resolveDeclarationTokenStartAt(position) },
+            { resolveExactNodeDeclaration(node) },
+            { resolveExactDocDeclaration(position) },
+            { resolveDeclarationAtPosition(position) },
+            { binder.positionQueries.getDeclarationAt(position) }
+        ).firstNotNullOfOrNull { it() }
             ?.let { adapters.toDeclarationSymbol(it) }
-            ?: resolveExactNodeDeclaration(node)
-            ?.let { adapters.toDeclarationSymbol(it) }
-            ?: resolveExactDocDeclaration(position)
-                ?.let { adapters.toDeclarationSymbol(it) }
-            ?: resolveDeclarationAtPosition(position)
-            ?.let { adapters.toDeclarationSymbol(it) }
-            ?: binder.positionQueries.getDeclarationAt(position)
-                ?.let { adapters.toDeclarationSymbol(it) }
             ?: binder.positionQueries.getSymbolAt(position)
                 ?.let(adapters::toSymbol)
         if (declarationSymbol != null) {
@@ -143,8 +142,6 @@ internal class ReferenceQueries(
         }
     }
 
-    private fun isBareWeakType(type: TypeInfo): Boolean = type.isBareWeakType()
-
     /**
      * When a binder declaration only surfaces bare unknown/any, recover declared/inferred
      * FunctionType / ClassType / ModuleType / Java class surfaces for hover.
@@ -152,7 +149,7 @@ internal class ReferenceQueries(
     private fun preferDeclaredOrInferredSymbolType(symbol: Symbol, node: BaseASTNode?): Symbol? {
         val current = symbol.type
         val needsUpgrade = current == null ||
-            isBareWeakType(current) ||
+            current.isBareWeakType() ||
             (current.kind == TypeInfoKind.UNKNOWN &&
                 !current.displayName.contains("fun(") &&
                 !current.displayName.contains("fun<"))
@@ -166,7 +163,7 @@ internal class ReferenceQueries(
             return null
         }
         val preferredInfo = adapters.toTypeInfo(preferredType, declaration) ?: return null
-        if (isBareWeakType(preferredInfo) &&
+        if (preferredInfo.isBareWeakType() &&
             preferredInfo.kind != TypeInfoKind.FUNCTION &&
             preferredInfo.kind != TypeInfoKind.CLASS &&
             preferredInfo.kind != TypeInfoKind.MODULE
@@ -193,18 +190,8 @@ internal class ReferenceQueries(
     }
 
     private fun resolveDeclarationForSymbol(symbol: Symbol, node: BaseASTNode?): BinderDeclaration? {
-        val handle = symbol.symbolId?.toSymbolHandle()
-        if (handle?.binderSymbolId != null) {
-            binder.declarationIndex
-                .getPrimaryDeclaration(io.github.dingyi222666.luaparser.semantic.binder.SymbolId(handle.binderSymbolId))
-                ?.let { return it }
-        }
-        if (handle?.declarationId != null) {
-            binder.declarationIndex
-                .getDeclaration(io.github.dingyi222666.luaparser.semantic.binder.DeclarationId(handle.declarationId))
-                ?.let { return it }
-        }
-        return resolveExactNodeDeclaration(node)
+        return binder.declarationForSymbolHandle(symbol.symbolId?.toSymbolHandle())
+            ?: resolveExactNodeDeclaration(node)
             ?: (node as? Identifier)?.let { identifier ->
                 findNearestVisibleValueDeclaration(identifier.name, identifier.range.start)
             }
@@ -217,7 +204,7 @@ internal class ReferenceQueries(
         if (declared != null &&
             declared !== UnknownType &&
             isPreferredRichType(declared) &&
-            !isUnknownReturnOnlyCallable(declared)
+            !declared.isUnknownReturnOnlyCallable()
         ) {
             return declared
         }
@@ -227,17 +214,11 @@ internal class ReferenceQueries(
 
         return when {
             inferred != null && isPreferredRichType(inferred) -> inferred
-            declared != null && declared !== UnknownType && !isUnknownReturnOnlyCallable(declared) -> declared
+            declared != null && declared !== UnknownType && !declared.isUnknownReturnOnlyCallable() -> declared
             inferred != null && inferred !== UnknownType -> inferred
             declared != null && declared !== UnknownType -> declared
             else -> null
         }
-    }
-
-    private fun isUnknownReturnOnlyCallable(type: Type): Boolean {
-        val callable = type as? CallableType ?: return false
-        return callable.callSignatures.isNotEmpty() &&
-            callable.callSignatures.all { signature -> signature.returnType == UnknownType }
     }
 
     private fun isPreferredRichType(type: Type): Boolean {
@@ -572,10 +553,11 @@ internal class ReferenceQueries(
         }
     }
 
-    private fun enclosingCallExpression(node: BaseASTNode): io.github.dingyi222666.luaparser.parser.ast.node.CallExpression? {
+    /** Single owner for the "walk parents until node of type T" ladder. */
+    private inline fun <reified T : BaseASTNode> enclosingNode(node: BaseASTNode): T? {
         var current: BaseASTNode? = node
         while (current != null) {
-            if (current is io.github.dingyi222666.luaparser.parser.ast.node.CallExpression) {
+            if (current is T) {
                 return current
             }
             current = runCatching { current.parent }.getOrNull()
@@ -583,16 +565,11 @@ internal class ReferenceQueries(
         return null
     }
 
-    private fun enclosingLocalStatement(node: BaseASTNode): LocalStatement? {
-        var current: BaseASTNode? = node
-        while (current != null) {
-            if (current is LocalStatement) {
-                return current
-            }
-            current = runCatching { current.parent }.getOrNull()
-        }
-        return null
-    }
+    private fun enclosingCallExpression(node: BaseASTNode): io.github.dingyi222666.luaparser.parser.ast.node.CallExpression? =
+        enclosingNode(node)
+
+    private fun enclosingLocalStatement(node: BaseASTNode): LocalStatement? =
+        enclosingNode(node)
 
     private fun callArguments(node: io.github.dingyi222666.luaparser.parser.ast.node.CallExpression): List<ExpressionNode> =
         node.compactCallArguments()
@@ -667,29 +644,26 @@ internal class ReferenceQueries(
             }
 
             is ModuleType -> buildMap {
-                normalized.fields.forEach { (name, memberType) ->
-                    val workspaceMember = workspaceModuleMember(null, normalized, name)
-                    val structuralType = if (normalized.isJavaBackedModule() && name == "__call") {
-                        memberType.withJavaCallableSurface(resolveImportTarget = workspaceContext.resolveImportTarget)
-                    } else {
-                        memberType.hydrateJavaProviderType(workspaceContext.resolveImportTarget)
+                sequenceOf(
+                    MemberAccessKind.FIELD to normalized.fields,
+                    MemberAccessKind.METHOD to normalized.methods
+                ).forEach { (accessKind, members) ->
+                    members.forEach { (name, memberType) ->
+                        val workspaceMember = workspaceModuleMember(null, normalized, name)
+                        // Java-backed modules surface every method callable; the `__call`
+                        // field slot (module invocation) is callable for the same reason.
+                        val structuralType = if (normalized.isJavaBackedModule() &&
+                            (accessKind == MemberAccessKind.METHOD || name == "__call")
+                        ) {
+                            memberType.withJavaCallableSurface(resolveImportTarget = workspaceContext.resolveImportTarget)
+                        } else {
+                            memberType.hydrateJavaProviderType(workspaceContext.resolveImportTarget)
+                        }
+                        val surfaceType = workspaceMember?.type
+                            ?.hydrateJavaProviderType(workspaceContext.resolveImportTarget)
+                            ?: structuralType
+                        put(name, MemberSurface(name, surfaceType, accessKind, syntheticRange = workspaceMember?.member?.range, syntheticHandle = workspaceMember?.handle))
                     }
-                    val surfaceType = workspaceMember?.type
-                        ?.hydrateJavaProviderType(workspaceContext.resolveImportTarget)
-                        ?: structuralType
-                    put(name, MemberSurface(name, surfaceType, MemberAccessKind.FIELD, syntheticRange = workspaceMember?.member?.range, syntheticHandle = workspaceMember?.handle))
-                }
-                normalized.methods.forEach { (name, memberType) ->
-                    val workspaceMember = workspaceModuleMember(null, normalized, name)
-                    val structuralType = if (normalized.isJavaBackedModule()) {
-                        memberType.withJavaCallableSurface(resolveImportTarget = workspaceContext.resolveImportTarget)
-                    } else {
-                        memberType.hydrateJavaProviderType(workspaceContext.resolveImportTarget)
-                    }
-                    val surfaceType = workspaceMember?.type
-                        ?.hydrateJavaProviderType(workspaceContext.resolveImportTarget)
-                        ?: structuralType
-                    put(name, MemberSurface(name, surfaceType, MemberAccessKind.METHOD, syntheticRange = workspaceMember?.member?.range, syntheticHandle = workspaceMember?.handle))
                 }
                 // Expand static members from __class even when the reflected surface is
                 // JavaInstanceType (classType holds staticMembers) rather than bare JavaClassType.
@@ -846,28 +820,81 @@ internal class ReferenceQueries(
         }
     }
 
-    private fun collectJavaStaticMemberSurface(classType: JavaClassType): Map<String, MemberSurface> = buildMap {
-        classType.allInnerClasses().forEach { (name, innerClass) ->
-            put(
-                name,
-                MemberSurface(
-                    name = name,
-                    type = innerClass,
-                    accessKind = MemberAccessKind.FIELD,
-                    syntheticHandle = "java:${classType.javaName.binaryName}:inner:$name"
+    private fun collectJavaStaticMemberSurface(classType: JavaClassType): Map<String, MemberSurface> {
+        val innerClassNames = classType.allInnerClasses().keys
+        val reflected = collectJavaReflectedMemberSurface(
+            classType = classType,
+            members = classType.allStaticMembers(),
+            signatureMetadataOf = { it.signatureMetadata },
+            beanProperties = classType.allReadableStaticJavaBeanProperties(),
+            receiverType = null,
+            handleFlavor = "static",
+            // The pre-merge bean-alias loop saw the already-inserted inner-class slots and
+            // never overwrote them; reserve those names so that guarantee is preserved.
+            reservedNames = innerClassNames
+        )
+        // Inner-class name slots are inserted first; a same-named static member still
+        // overwrites the slot in place (LinkedHashMap put semantics), as in the prior
+        // inlined inner-class + static-member ladders.
+        return buildMap {
+            classType.allInnerClasses().forEach { (name, innerClass) ->
+                put(
+                    name,
+                    MemberSurface(
+                        name = name,
+                        type = innerClass,
+                        accessKind = MemberAccessKind.FIELD,
+                        syntheticHandle = "java:${classType.javaName.binaryName}:inner:$name"
+                    )
                 )
-            )
+            }
+            putAll(reflected)
         }
-        classType.allStaticMembers().forEach { (name, member) ->
+    }
+
+    private fun collectJavaInstanceMemberSurface(instanceType: JavaInstanceType): Map<String, MemberSurface> =
+        collectJavaReflectedMemberSurface(
+            classType = instanceType.classType,
+            members = instanceType.allInstanceMembers(),
+            signatureMetadataOf = { it.signatureMetadata },
+            beanProperties = instanceType.allReadableInstanceJavaBeanProperties(),
+            receiverType = instanceType,
+            handleFlavor = "instance"
+        )
+
+    /**
+     * Single owner for the reflected Java member-surface ladder shared by static
+     * (JavaClassType) and instance (JavaInstanceType) expansion: access kind from the
+     * reflected memberKind, callable surface for methods, workspace export handle
+     * preference, then conservative JavaBean aliases that never hide direct members.
+     */
+    private fun <M : JavaMemberType> collectJavaReflectedMemberSurface(
+        classType: JavaClassType,
+        members: Map<String, M>,
+        signatureMetadataOf: (M) -> List<JavaSignatureMetadata>,
+        beanProperties: List<JavaBeanPropertySurface>,
+        receiverType: JavaInstanceType?,
+        handleFlavor: String,
+        // Names whose existing slots (e.g. inner classes) the bean-alias pass must not overwrite.
+        reservedNames: Set<String> = emptySet()
+    ): Map<String, MemberSurface> = buildMap {
+        members.forEach { (name, member) ->
             val accessKind = javaAccessKind(member.memberKind, member.valueType)
             val surfaceType = if (accessKind == MemberAccessKind.METHOD) {
-                member.valueType.withJavaCallableSurface(signatureMetadata = member.signatureMetadata)
+                // withJavaCallableSurface's defaults (receiverType = null, includeReceiver
+                // = false) are exactly the pre-merge static-branch call shape.
+                member.valueType.withJavaCallableSurface(
+                    receiverType = receiverType,
+                    includeReceiver = false,
+                    signatureMetadata = signatureMetadataOf(member)
+                )
             } else {
                 member.valueType
             }
             val workspaceMember = indexedJavaCompletionMember(classType, name)
-            // Prefer imported:<providerPath>:<name> so gotoDefinition lands on the binary provider
-            // for nested interface static helpers even when export surface omits the member.
+            // Prefer imported:<providerPath>:<name> so gotoDefinition lands on the binary
+            // provider for nested interface static helpers / createProxy instance methods
+            // even when the export surface omits the member.
             put(
                 name,
                 MemberSurface(
@@ -877,13 +904,13 @@ internal class ReferenceQueries(
                     declaredType = surfaceType,
                     syntheticRange = workspaceMember?.member?.range,
                     syntheticHandle = workspaceMember?.handle
-                        ?: "java:${member.owner.binaryName}:static:$name"
+                        ?: "java:${member.owner.binaryName}:$handleFlavor:$name"
                 )
             )
         }
         // Conservative readable JavaBean aliases (TASK-177). Never hide direct getter/setter methods.
-        classType.allReadableStaticJavaBeanProperties().forEach { property ->
-            if (property.name !in this) {
+        beanProperties.forEach { property ->
+            if (property.name !in this && property.name !in reservedNames) {
                 val surfaceType = property.valueType
                 put(
                     property.name,
@@ -892,53 +919,7 @@ internal class ReferenceQueries(
                         type = surfaceType,
                         accessKind = MemberAccessKind.FIELD,
                         declaredType = surfaceType,
-                        syntheticHandle = "java:${classType.javaName.binaryName}:static-bean:${property.name}"
-                    )
-                )
-            }
-        }
-    }
-
-    private fun collectJavaInstanceMemberSurface(instanceType: JavaInstanceType): Map<String, MemberSurface> = buildMap {
-        instanceType.allInstanceMembers().forEach { (name, member) ->
-            val accessKind = javaAccessKind(member.memberKind, member.valueType)
-            val surfaceType = if (accessKind == MemberAccessKind.METHOD) {
-                member.valueType.withJavaCallableSurface(
-                    receiverType = instanceType,
-                    includeReceiver = false,
-                    signatureMetadata = member.signatureMetadata
-                )
-            } else {
-                member.valueType
-            }
-            val workspaceMember = indexedJavaCompletionMember(instanceType.classType, name)
-            // Prefer imported:<providerPath>:<name> so createProxy instance methods
-            // (Runnable.run / Comparator.compare) goto the binary interface provider.
-            put(
-                name,
-                MemberSurface(
-                    name = name,
-                    type = surfaceType,
-                    accessKind = accessKind,
-                    declaredType = surfaceType,
-                    syntheticRange = workspaceMember?.member?.range,
-                    syntheticHandle = workspaceMember?.handle
-                        ?: "java:${member.owner.binaryName}:instance:$name"
-                )
-            )
-        }
-        // Conservative readable JavaBean aliases (TASK-177). Never hide direct getter/setter methods.
-        instanceType.allReadableInstanceJavaBeanProperties().forEach { property ->
-            if (property.name !in this) {
-                val surfaceType = property.valueType
-                put(
-                    property.name,
-                    MemberSurface(
-                        name = property.name,
-                        type = surfaceType,
-                        accessKind = MemberAccessKind.FIELD,
-                        declaredType = surfaceType,
-                        syntheticHandle = "java:${instanceType.classType.javaName.binaryName}:instance-bean:${property.name}"
+                        syntheticHandle = "java:${classType.javaName.binaryName}:$handleFlavor-bean:${property.name}"
                     )
                 )
             }
@@ -1025,50 +1006,61 @@ internal class ReferenceQueries(
         }
     }
 
-    private fun resolveExactDocDeclaration(position: Position): BinderDeclaration? {
+    /**
+     * Single owner for the "declaration whose site range covers the caret, most specific
+     * wins" picker shared by exact doc-comment matching and fallback position resolution.
+     */
+    private fun declarationCovering(
+        position: Position,
+        rangeOf: (BinderDeclaration) -> io.github.dingyi222666.luaparser.parser.ast.node.Range?,
+        originFilter: ((BinderDeclaration) -> Boolean)?,
+        comparator: Comparator<Pair<BinderDeclaration, io.github.dingyi222666.luaparser.parser.ast.node.Range>>
+    ): BinderDeclaration? {
         return binder.declarationIndex.declarations
             .asSequence()
-            .filter { it.origin == io.github.dingyi222666.luaparser.semantic.binder.DeclarationOrigin.DOC_COMMENT }
+            .filter { originFilter?.invoke(it) ?: true }
             .mapNotNull { declaration ->
-                val range = declarationSpecificRange(declaration) ?: return@mapNotNull null
+                val range = rangeOf(declaration) ?: return@mapNotNull null
                 if (isPositionWithin(range.start, range.end, position)) {
                     declaration to range
                 } else {
                     null
                 }
             }
-            .sortedWith(compareBy<Pair<BinderDeclaration, io.github.dingyi222666.luaparser.parser.ast.node.Range>>(
-                { rangeSpan(it.second) },
-                { it.first.id.value }
-            ))
+            .sortedWith(comparator)
             .map { it.first }
             .firstOrNull()
     }
 
+    private fun resolveExactDocDeclaration(position: Position): BinderDeclaration? {
+        return declarationCovering(
+            position,
+            BinderDeclaration::declarationSpecificRange,
+            originFilter = { it.origin == io.github.dingyi222666.luaparser.semantic.binder.DeclarationOrigin.DOC_COMMENT },
+            comparator = compareBy(
+                { pair: Pair<BinderDeclaration, io.github.dingyi222666.luaparser.parser.ast.node.Range> -> rangeSpan(pair.second) },
+                { pair: Pair<BinderDeclaration, io.github.dingyi222666.luaparser.parser.ast.node.Range> -> pair.first.id.value }
+            )
+        )
+    }
+
     private fun resolveDeclarationAtPosition(position: Position): BinderDeclaration? {
-        return binder.declarationIndex.declarations
-            .asSequence()
-            .mapNotNull { declaration ->
-                val range = declarationSiteRange(declaration) ?: return@mapNotNull null
-                if (isPositionWithin(range.start, range.end, position)) {
-                    declaration to range
-                } else {
-                    null
-                }
-            }
-            .sortedWith(compareBy<Pair<BinderDeclaration, io.github.dingyi222666.luaparser.parser.ast.node.Range>>(
-                { declarationRank(it.first) },
-                { rangeSpan(it.second) },
-                { it.first.id.value }
-            ))
-            .map { it.first }
-            .firstOrNull()
+        return declarationCovering(
+            position,
+            this::declarationSiteRange,
+            originFilter = null,
+            comparator = compareBy(
+                { pair: Pair<BinderDeclaration, io.github.dingyi222666.luaparser.parser.ast.node.Range> -> declarationRank(pair.first) },
+                { pair: Pair<BinderDeclaration, io.github.dingyi222666.luaparser.parser.ast.node.Range> -> rangeSpan(pair.second) },
+                { pair: Pair<BinderDeclaration, io.github.dingyi222666.luaparser.parser.ast.node.Range> -> pair.first.id.value }
+            )
+        )
     }
 
     private fun declarationSiteRange(declaration: BinderDeclaration): io.github.dingyi222666.luaparser.parser.ast.node.Range? {
         return when (declaration.origin) {
             io.github.dingyi222666.luaparser.semantic.binder.DeclarationOrigin.AST -> declaration.anchorNode?.range ?: declaration.range
-            io.github.dingyi222666.luaparser.semantic.binder.DeclarationOrigin.DOC_COMMENT -> declarationSpecificRange(declaration) ?: declaration.range
+            io.github.dingyi222666.luaparser.semantic.binder.DeclarationOrigin.DOC_COMMENT -> declaration.declarationSpecificRange() ?: declaration.range
             else -> declaration.range
         }
     }
@@ -1079,26 +1071,8 @@ internal class ReferenceQueries(
                 (declaration.anchorNode as? Identifier)?.range ?: declaration.anchorNode?.range
             }
 
-            io.github.dingyi222666.luaparser.semantic.binder.DeclarationOrigin.DOC_COMMENT -> declarationSpecificRange(declaration)
+            io.github.dingyi222666.luaparser.semantic.binder.DeclarationOrigin.DOC_COMMENT -> declaration.declarationSpecificRange()
             else -> null
-        }
-    }
-
-    private fun declarationSpecificRange(declaration: BinderDeclaration): io.github.dingyi222666.luaparser.parser.ast.node.Range? {
-        val tags = declaration.documentation?.docComment?.tags.orEmpty()
-        return when (declaration.kind) {
-            DeclarationKind.TYPE_ALIAS -> tags.filterIsInstance<AliasTagSyntax>().firstOrNull { it.name == declaration.name }?.range
-            DeclarationKind.CLASS -> tags.filterIsInstance<ClassTagSyntax>().firstOrNull { it.name == declaration.name }?.range
-            DeclarationKind.FIELD -> tags.filterIsInstance<FieldTagSyntax>().firstOrNull { it.name == declaration.name }?.range
-            DeclarationKind.METHOD -> tags.filterIsInstance<MethodTagSyntax>().firstOrNull { it.name == declaration.name }?.range
-            DeclarationKind.TYPE_PARAMETER -> {
-                tags.filterIsInstance<GenericTagSyntax>()
-                    .flatMap { it.parameters }
-                    .firstOrNull { it.name == declaration.name }
-                    ?.range
-            }
-
-            else -> declaration.range
         }
     }
 
@@ -1291,14 +1265,9 @@ internal class ReferenceQueries(
     }
 
     private fun compareSpecificity(a: io.github.dingyi222666.luaparser.parser.ast.node.Range?, b: io.github.dingyi222666.luaparser.parser.ast.node.Range?): Int {
-        a ?: return if (b == null) 0 else 1
-        b ?: return -1
-
-        val startComparison = comparePositions(b.start, a.start)
-        if (startComparison != 0) {
-            return startComparison
-        }
-        return comparePositions(a.end, b.end)
+        if (a == null) return if (b == null) 0 else 1
+        if (b == null) return -1
+        return compareRangeSpecificity(a, b)
     }
 
     private fun workspaceModuleMember(
@@ -1484,6 +1453,17 @@ internal class ReferenceQueries(
             else -> null
         }
     }
+}
+
+/**
+ * Shared "callable whose every signature returns only unknown" predicate (hover preference
+ * and node-type preference): such unannotated shells must not freeze a concrete body
+ * inference that yields a real return type.
+ */
+internal fun Type.isUnknownReturnOnlyCallable(): Boolean {
+    val callable = this as? CallableType ?: return false
+    return callable.callSignatures.isNotEmpty() &&
+        callable.callSignatures.all { signature -> signature.returnType == UnknownType }
 }
 
 /**

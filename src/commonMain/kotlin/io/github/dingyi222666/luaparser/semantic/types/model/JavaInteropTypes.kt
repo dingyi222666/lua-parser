@@ -69,6 +69,29 @@ data class JavaClassType(
 
     override fun hashCode(): Int = cachedHashCode
 
+    // Same O(members) story as hashCode: the generated data-class equals walks the
+    // full member graph on every comparison, and diagnostics-time checks compare
+    // these types repeatedly (device stack: equals <- equals <- typeOfDeclaration
+    // <- attachVisibleAstMembersToType <- evaluateIdentifier). The pre-filter below
+    // is contract-preserving: cachedHashCode is a pure function of exactly the
+    // fields the data-class equals compares, so equal objects always share it; a
+    // mismatch only rejects candidates a structural compare would also reject.
+    // The identity check keeps the common same-instance case O(1) even when
+    // hashCode collides.
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (other !is JavaClassType) return false
+        if (cachedHashCode != other.cachedHashCode) return false
+        return javaName == other.javaName &&
+            constructors == other.constructors &&
+            staticMembers == other.staticMembers &&
+            instanceMembers == other.instanceMembers &&
+            innerClasses == other.innerClasses &&
+            superClass == other.superClass &&
+            interfaces == other.interfaces &&
+            typeParameters == other.typeParameters
+    }
+
     // These maps belong to this immutable type. A process-wide cache retained
     // obsolete workspace graphs indefinitely and collided on identity hashes.
     private val flattenedStatics by lazy { collectStaticMembers(linkedSetOf()) }
