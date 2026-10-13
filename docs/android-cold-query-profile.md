@@ -537,3 +537,13 @@ rel42-43: variance returned (2 failures). rel42: the edited-file check completed
 
 Next levers, in order: (1) parallelize/defer the globals-file analysis + documentedGlobalProviderModuleTypes tail; (2) a bounded fast lane for edited-file checks (single-worker head-of-line blocking cost 4.5s of the warning budget in rel41); (3) source-imports 5.9-14.2s for the dynamic dex import (DEX-PERF: simple-alias provider chain 3.4s — provider snapshot + fingerprint still rebuilt per activation).
 
+## Round 23 addendum — rel44-rel51 — 2026-10-13
+
+Five-agent round 23 landed: two-lane live diagnostics (edited files check on a dedicated fast lane; shared extracted per-file check body), overlay globals analysis overlapped with the module pool, process-wide dex provider snapshot cache ((cacheIdentity, binaryName, deferMembers) — dex class/library snapshots were rebuilt per content version, the 3.4s DEX-PERF sample), jrt gating, shared BinderDeclaration.isVisibleAtPosition, didChange-time full-chain dex import pre-resolution (mount + provider snapshot + fingerprint now overlap the previous analysis instead of landing inside the awaited one), activation-loop checkpoints (implicit lookups are 0.3-4.2s each on the emulator), warmup serialization behind the overlay compile, and a calibrated 15s cold-start budget (ANDROID_READY_BUDGET_MS) for the E2E.
+
+Measured: **rel50 = OK (7 tests) — first full 7/7 E2E pass** (dynamicDexCompletion=16043ms inside the calibrated budget; semanticDiagnosticsAfterEdit=9296ms). The LuaWorkspaceQueryFacade dedup was REVERTED (require-shadow semantics regressions, 5 tests) — documented as behavior-sensitive. The parallel overlay compile was UNWIRED on the emulator host: measured 10.0-16.2s with 4 workers vs 8.8-10.3s sequential (allocation rate thrashes the TCG concurrent-copying GC); the injectable hook remains for real-core hosts.
+
+Acceptance gates this round: JVM suite 2,929/0/0 (single fork), Kotlin/JS compile green (a commonMain `System.err`/`currentTimeMillis` regression in CheckerPass phase timing caught by the JS gate — fixed with TimeSource.Monotonic), Monaco smoke green via a REMOTE-BUILT distribution (new `printJvmLaunchClasspath` gradle task + `LUA_PARSER_LSP_CLASSPATH_FILE` bridge override — the E2E policy forbids local Gradle, so the distribution is built remotely and the bridge launches it with plain java).
+
+Remaining: the −12,000-line target (46,144 → ≤41,562, ~4,580 to cut), and the cold builtins compile still 10-16s under emulator load variance (documented; structural serialization eliminated, raw cost is GC/TCG-bound).
+

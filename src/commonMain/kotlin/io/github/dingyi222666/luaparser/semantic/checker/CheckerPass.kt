@@ -25,10 +25,10 @@ class CheckerPass {
 
         // Fresh expression checker per analyze call so diagnostics never accumulate on reuse.
         val expressionChecker = ExpressionUsageChecker(binder, context, evaluator)
-        val expressionStart = System.currentTimeMillis()
+        val expressionMark = kotlin.time.TimeSource.Monotonic.markNow()
         val expressionDiagnostics = expressionChecker.check(chunk)
-        val expressionMs = System.currentTimeMillis() - expressionStart
-        val signatureStart = System.currentTimeMillis()
+        val expressionMs = expressionMark.elapsedNow().inWholeMilliseconds
+        val signatureMark = kotlin.time.TimeSource.Monotonic.markNow()
         val signatureDiagnostics = declarations.flatMap { declaration ->
             buildList {
                 addAll(signatureChecker.checkDeclaration(declaration))
@@ -37,9 +37,9 @@ class CheckerPass {
                 }
             }
         }
-        val signatureMs = System.currentTimeMillis() - signatureStart
+        val signatureMs = signatureMark.elapsedNow().inWholeMilliseconds
         if (expressionMs > 1_000 || signatureMs > 1_000) {
-            System.err.println(
+            println(
                 "CHECKER-PERF: expression=${expressionMs}ms signature=${signatureMs}ms " +
                     "declarations=${declarations.size} path=${context.currentPath?.value ?: "?"}"
             )

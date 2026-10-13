@@ -166,6 +166,34 @@ function resolveJava17Home() {
   );
 }
 
+/**
+ * Remote-build launch: when LUA_PARSER_LSP_CLASSPATH_FILE is set, the LSP server
+ * starts with plain `java -cp <contents> <main>` instead of the Gradle wrapper —
+ * the E2E policy builds on a remote host and copies the distribution back, so the
+ * smoke can verify a remote-built server without ever invoking Gradle locally.
+ */
+function resolvePlainJavaLaunch() {
+  const classpathFile = process.env.LUA_PARSER_LSP_CLASSPATH_FILE;
+  if (!classpathFile || !fs.existsSync(classpathFile)) return null;
+  const classpath = fs.readFileSync(classpathFile, 'utf8').trim();
+  if (!classpath) return null;
+  const mainClass = process.env.LUA_PARSER_LSP_MAIN || 'io.github.dingyi222666.luaparser.lsp.LuaLanguageServerLauncherKt';
+  const javaHome = resolveJava17Home();
+  const env = { ...process.env };
+  if (javaHome) {
+    env.JAVA_HOME = javaHome;
+    env.PATH = `${path.join(javaHome, 'bin')}${path.delimiter}${env.PATH || ''}`;
+  }
+  const java = javaHome ? path.join(javaHome, 'bin', 'java') : 'java';
+  return {
+    command: java,
+    args: ['-cp', classpath, mainClass],
+    shell: false,
+    env,
+    javaHome: javaHome || env.JAVA_HOME || 'PATH java',
+  };
+}
+
 function resolveGradleLaunch() {
   const wrapper = path.join(REPO_ROOT, process.platform === 'win32' ? 'gradlew.bat' : 'gradlew');
   if (!fs.existsSync(wrapper)) {
@@ -184,6 +212,10 @@ function resolveGradleLaunch() {
     env,
     javaHome: javaHome || env.JAVA_HOME || 'PATH java',
   };
+}
+
+function resolveLspLaunch() {
+  return resolvePlainJavaLaunch() ?? resolveGradleLaunch();
 }
 
 /** Content-Length framed JSON-RPC reader from a stream. */
@@ -297,9 +329,11 @@ function apiInfo() {
     demoDexPresent: !!(demoDex && fs.existsSync(demoDex)),
     sampleFiles: listWorkspaceFiles().map((f) => ({ name: f.name, uri: f.uri })),
     lspMain: 'io.github.dingyi222666.luaparser.lsp.LuaLanguageServerLauncherKt',
-    lspLaunch: process.platform === 'win32'
-      ? 'gradlew.bat --no-daemon --console=plain -q runLuaLanguageServer'
-      : './gradlew --no-daemon --console=plain -q runLuaLanguageServer',
+    lspLaunch: process.env.LUA_PARSER_LSP_CLASSPATH_FILE
+      ? 'java -cp <LUA_PARSER_LSP_CLASSPATH_FILE contents> (remote-built distribution)'
+      : process.platform === 'win32'
+        ? 'gradlew.bat --no-daemon --console=plain -q runLuaLanguageServer'
+        : './gradlew --no-daemon --console=plain -q runLuaLanguageServer',
     port: PORT,
     transport: 'websocket-json (one JSON-RPC object per message) → stdio Content-Length',
   };
@@ -409,7 +443,7 @@ wss.on('connection', (ws) => {
   }
 
   try {
-    const launch = resolveGradleLaunch();
+    const launch = resolveLspLaunch();
     console.log('[bridge] JDK 17:', launch.javaHome);
     console.log('[bridge] spawn', launch.command, ...launch.args);
     const child = spawn(launch.command, launch.args, {

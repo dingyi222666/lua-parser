@@ -236,6 +236,19 @@ tasks.register<JavaExec>("runLuaLanguageServer") {
     standardInput = System.`in`
 }
 
+// A remote-build entry point for hosts that cannot run Gradle locally (the E2E
+// policy builds on the remote server and the Monaco smoke then launches the
+// distribution with plain java, no wrapper invocation). Emits the jvmJar plus its
+// full runtime classpath so the launcher can be started with `java -cp`.
+tasks.register("printJvmLaunchClasspath") {
+    group = "application"
+    description = "Print the runLuaLanguageServer runtime classpath (jar paths separated by ':')"
+    doLast {
+        val cp = files(tasks.named("jvmJar"), configurations.getByName("jvmRuntimeClasspath")).files
+        println(cp.joinToString(":") { it.absolutePath })
+    }
+}
+
 mavenPublishing {
     publishToMavenCentral(com.vanniktech.maven.publish.SonatypeHost.S01)
 
