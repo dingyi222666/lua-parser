@@ -6,7 +6,6 @@ import io.github.dingyi222666.luaparser.semantic.SemanticWorkspaceContext
 import io.github.dingyi222666.luaparser.semantic.UnresolvedLuaJavaTarget
 import io.github.dingyi222666.luaparser.semantic.WorkspaceImportedSymbol
 import io.github.dingyi222666.luaparser.semantic.workspace.DocumentFacts
-import io.github.dingyi222666.luaparser.semantic.workspace.DocumentFactsCollector
 import io.github.dingyi222666.luaparser.semantic.workspace.LuaWorkspaceEngine
 import io.github.dingyi222666.luaparser.semantic.workspace.LuaWorkspaceInput
 import io.github.dingyi222666.luaparser.semantic.workspace.VirtualPath
@@ -248,10 +247,8 @@ open class JvmWorkspaceEngine(
         baseConfiguration: JvmWorkspaceConfiguration,
         resolvedConfiguration: JvmWorkspaceConfiguration
     ): WorkspaceImportedSymbol? {
-        val targets = buildList {
-            facts?.sourceImports.orEmpty().forEach { add(it.target) }
-            baseConfiguration.normalized().androluaImports.forEach(::add)
-        }
+        val targets = facts?.sourceImports.orEmpty().map { it.target } +
+            baseConfiguration.normalized().androluaImports
         return targets.firstNotNullOfOrNull { target ->
             val normalized = target.removePrefix("import ").trim()
             val simple = normalized.substringAfterLast('.').removeSuffix("*")
@@ -659,7 +656,6 @@ open class JvmWorkspaceEngine(
             "And", "Or", "Not", "True", "False", "Nil", "Self", "This", "Super", "Global"
         )
     }
-
 
     private fun packageNameAliasPrefix(importText: String): String? {
         val normalized = importText.removePrefix("import ").trim()

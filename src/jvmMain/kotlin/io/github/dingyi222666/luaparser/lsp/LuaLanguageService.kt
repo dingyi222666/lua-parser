@@ -43,89 +43,7 @@ import io.github.dingyi222666.luaparser.semantic.workspace.WorkspaceDocumentSymb
 import io.github.dingyi222666.luaparser.semantic.workspace.WorkspaceSnapshot
 import io.github.dingyi222666.luaparser.semantic.workspace.WorkspaceSymbolEntry
 import io.github.dingyi222666.luaparser.semantic.workspace.WorkspaceUpdateResult
-import org.eclipse.lsp4j.CallHierarchyIncomingCall
-import org.eclipse.lsp4j.CallHierarchyIncomingCallsParams
-import org.eclipse.lsp4j.CallHierarchyItem
-import org.eclipse.lsp4j.CallHierarchyOutgoingCall
-import org.eclipse.lsp4j.CallHierarchyOutgoingCallsParams
-import org.eclipse.lsp4j.CallHierarchyPrepareParams
-import org.eclipse.lsp4j.SymbolKind
-import org.eclipse.lsp4j.CodeAction
-import org.eclipse.lsp4j.CodeActionParams
-import org.eclipse.lsp4j.Command
-import org.eclipse.lsp4j.CompletionItem
-
-import org.eclipse.lsp4j.CompletionList
-import org.eclipse.lsp4j.CompletionOptions
-import org.eclipse.lsp4j.DeclarationParams
-import org.eclipse.lsp4j.DefinitionOptions
-import org.eclipse.lsp4j.DefinitionParams
-import org.eclipse.lsp4j.Diagnostic
-import org.eclipse.lsp4j.DidChangeTextDocumentParams
-import org.eclipse.lsp4j.DidCloseTextDocumentParams
-import org.eclipse.lsp4j.DidOpenTextDocumentParams
-import org.eclipse.lsp4j.DidSaveTextDocumentParams
-import org.eclipse.lsp4j.DocumentHighlight
-import org.eclipse.lsp4j.DocumentHighlightKind
-import org.eclipse.lsp4j.DocumentHighlightParams
-import org.eclipse.lsp4j.TextEdit
-import org.eclipse.lsp4j.FormattingOptions
-import org.eclipse.lsp4j.DocumentRangeFormattingParams
-import org.eclipse.lsp4j.DocumentFormattingParams
-import org.eclipse.lsp4j.DocumentSymbol
-import org.eclipse.lsp4j.DocumentSymbolOptions
-import org.eclipse.lsp4j.FileChangeType
-import org.eclipse.lsp4j.FileEvent
-import org.eclipse.lsp4j.FoldingRange
-import org.eclipse.lsp4j.FoldingRangeRequestParams
-import org.eclipse.lsp4j.Hover
-import org.eclipse.lsp4j.HoverOptions
-import org.eclipse.lsp4j.HoverParams
-import org.eclipse.lsp4j.InitializeParams
-import org.eclipse.lsp4j.InitializeResult
-import org.eclipse.lsp4j.InlayHint
-import org.eclipse.lsp4j.InlayHintKind
-import org.eclipse.lsp4j.InlayHintParams
-import org.eclipse.lsp4j.InsertTextFormat
-
-import org.eclipse.lsp4j.Location
-import org.eclipse.lsp4j.MarkupContent
-import org.eclipse.lsp4j.MarkupKind
-import org.eclipse.lsp4j.ParameterInformation
-import org.eclipse.lsp4j.PublishDiagnosticsParams
-import org.eclipse.lsp4j.ReferenceOptions
-import org.eclipse.lsp4j.ReferenceParams
-import org.eclipse.lsp4j.PrepareRenameParams
-import org.eclipse.lsp4j.PrepareRenameResult
-import org.eclipse.lsp4j.RenameOptions
-import org.eclipse.lsp4j.RenameParams
-import org.eclipse.lsp4j.SelectionRange
-import org.eclipse.lsp4j.SelectionRangeParams
-import org.eclipse.lsp4j.SemanticTokenModifiers
-import org.eclipse.lsp4j.SemanticTokenTypes
-import org.eclipse.lsp4j.SemanticTokens
-import org.eclipse.lsp4j.SemanticTokensDelta
-import org.eclipse.lsp4j.SemanticTokensDeltaParams
-import org.eclipse.lsp4j.SemanticTokensLegend
-import org.eclipse.lsp4j.SemanticTokensParams
-import org.eclipse.lsp4j.SemanticTokensServerFull
-import org.eclipse.lsp4j.SemanticTokensWithRegistrationOptions
-import org.eclipse.lsp4j.ServerCapabilities
-import org.eclipse.lsp4j.DocumentOnTypeFormattingParams
-
-import org.eclipse.lsp4j.SignatureHelp
-import org.eclipse.lsp4j.SignatureHelpOptions
-import org.eclipse.lsp4j.SignatureHelpParams
-import org.eclipse.lsp4j.SignatureInformation
-import org.eclipse.lsp4j.SymbolInformation
-import org.eclipse.lsp4j.WorkspaceSymbol
-import org.eclipse.lsp4j.TextDocumentIdentifier
-import org.eclipse.lsp4j.TextDocumentSyncKind
-import org.eclipse.lsp4j.WorkspaceEdit
-import org.eclipse.lsp4j.WorkspaceFolder
-import org.eclipse.lsp4j.WorkspaceFoldersOptions
-import org.eclipse.lsp4j.WorkspaceServerCapabilities
-import org.eclipse.lsp4j.WorkspaceSymbolOptions
+import org.eclipse.lsp4j.*
 import org.eclipse.lsp4j.jsonrpc.messages.Either
 import java.io.IOException
 import java.io.UncheckedIOException
@@ -444,9 +362,7 @@ class LuaLanguageService(
      */
     internal fun flushBackgroundRebuild(timeoutMs: Long = 60_000): Boolean {
         val thread = synchronized(rebuildLock) { backgroundRebuildThread }
-        if (thread != null && thread.isAlive) {
-            thread.join(timeoutMs)
-        }
+        thread?.takeIf { it.isAlive }?.join(timeoutMs)
         if (closed) return false
         // If the thread was discarded by the stale-swap guard, run one
         // synchronous build so observers see a settled snapshot.
@@ -748,22 +664,18 @@ class LuaLanguageService(
             return
         }
 
-        val removedKeys = removed.mapNotNull { folderUriKey(it) }.toSet()
+        val removedKeys = removed.mapNotNull(::folderUriKey).toSet()
         if (removedKeys.isNotEmpty()) {
             workspaceFolders = workspaceFolders.filter { folder ->
                 folderUriKey(folder) !in removedKeys
             }
         }
 
-        if (added.isNotEmpty()) {
-            val existingKeys = workspaceFolders.mapNotNull { folderUriKey(it) }.toSet()
-            val toAdd = added.filter { folder ->
-                val key = folderUriKey(folder) ?: return@filter false
-                key !in existingKeys
-            }
-            if (toAdd.isNotEmpty()) {
-                workspaceFolders = workspaceFolders + toAdd
-            }
+        // Dedup against the (possibly updated) folder list; an empty `added` yields no adds.
+        val existingKeys = workspaceFolders.mapNotNull(::folderUriKey).toSet()
+        val toAdd = added.filter { folder -> folderUriKey(folder)?.let { it !in existingKeys } == true }
+        if (toAdd.isNotEmpty()) {
+            workspaceFolders = workspaceFolders + toAdd
         }
 
         // Reuse initialize-time helpers: recompute URI prefixes then re-walk remaining
@@ -1557,11 +1469,7 @@ class LuaLanguageService(
      * missing/unknown input (no throw).
      */
     fun resolveCompletionItem(item: CompletionItem): CompletionItem = synchronized(stateLock) {
-        try {
-            enrichResolvedCompletionItem(item)
-        } catch (_: Exception) {
-            item
-        }
+        try { enrichResolvedCompletionItem(item) } catch (_: Exception) { item }
     }
 
     private fun enrichResolvedCompletionItem(item: CompletionItem): CompletionItem {
@@ -1741,19 +1649,19 @@ class LuaLanguageService(
         params: SemanticTokensDeltaParams
     ): Either<SemanticTokens, SemanticTokensDelta> = synchronized(stateLock) {
         val path = pathOf(params.textDocument)
-        val previousResultId = params.previousResultId
         return@synchronized try {
             val full = computeSemanticTokensFull(path)
-            val cached = semanticTokensCache[path]
-            // Unchanged document: empty edit list is the preferred no-op delta.
-            val unchanged = Either.forRight<SemanticTokens, SemanticTokensDelta>(
-                SemanticTokensDelta(emptyList(), full.resultId)
-            ).takeIf {
-                !previousResultId.isNullOrBlank() && cached != null &&
-                    cached.resultId == previousResultId && cached.data == full.data.orEmpty()
+            // computeSemanticTokensFull writes `full` into semanticTokensCache before
+            // returning, so the previous cached-vs-full data comparison always held;
+            // an unchanged payload keeps its resultId, hence an id match IS the
+            // unchanged case and everything else re-sends full tokens.
+            if (params.previousResultId == full.resultId) {
+                Either.forRight<SemanticTokens, SemanticTokensDelta>(
+                    SemanticTokensDelta(emptyList(), full.resultId)
+                )
+            } else {
+                Either.forLeft(full)
             }
-            // Unknown previousResultId or content drift: re-send full tokens.
-            unchanged ?: Either.forLeft(full)
         } catch (_: Exception) {
             Either.forLeft(SemanticTokens(emptyList()))
         }
@@ -1970,10 +1878,9 @@ class LuaLanguageService(
             sameFile.forEach { location ->
                 val range = location.range
                 // Only single-line spans of the expected identifier length are safe edits.
+                // placeholder is a validated non-empty identifier, so an equal length is > 0.
                 val length = range.end.character - range.start.character
-                if (range.start.line == range.end.line && length > 0 &&
-                    length == target.placeholder.length
-                ) {
+                if (range.start.line == range.end.line && length == target.placeholder.length) {
                     ranges[referenceLocationKey(location.uri, range)] = range
                 }
             }
@@ -2097,8 +2004,8 @@ class LuaLanguageService(
             return null
         }
         semanticFile.identifiers.firstOrNull { identifier ->
-            identifier.range.start.line == position.line &&
-                identifier.range.start.column == position.column
+            // Parser Range/Position are data classes: start equality == line+column match.
+            identifier.range.start == position
         }?.let { return it }
         return semanticFile.identifiers.lastOrNull { identifier ->
             rangeContainsHighlight(identifier.range, position)
@@ -2219,11 +2126,9 @@ class LuaLanguageService(
                 val col0 = lexer.tokenColumn.coerceAtLeast(0)
                 val text = lexer.tokenText.toString()
                 // Only single-line NAME tokens covering the caret are rename targets.
-                if (text.isEmpty() || '\n' in text || '\r' in text) {
-                    continue
-                }
-                if (line0 != lspPosition.line || lspPosition.character < col0 ||
-                    lspPosition.character >= col0 + text.length
+                if (text.isEmpty() || '\n' in text || '\r' in text ||
+                    line0 != lspPosition.line ||
+                    lspPosition.character !in col0 until col0 + text.length
                 ) {
                     continue
                 }
@@ -2336,11 +2241,8 @@ class LuaLanguageService(
             }
             .toList()
         val distinct = (parse + semantic).distinctBy { diagnostic ->
-            listOf(
-                diagnostic.range?.start?.line, diagnostic.range?.start?.character,
-                diagnostic.range?.end?.line, diagnostic.range?.end?.character,
-                diagnostic.severity, diagnostic.message
-            )
+            // lsp4j Range has structural equals, so range identity == start/end line+column.
+            listOf(diagnostic.range, diagnostic.severity, diagnostic.message)
         }
         // Bound the payload: a typo-heavy file can produce hundreds of per-site
         // unresolved-global warnings; clients choke on megabyte diagnostic arrays.
@@ -2731,23 +2633,18 @@ class LuaLanguageService(
     )
 
     private fun pathFromClientPath(pathOrUri: String): VirtualPath {
-        // Shared fallback for every branch below: the raw client text re-interpreted as a
-        // document URI (same prefix/collapse policy as [pathOf]).
-        fun fromUri(): VirtualPath = lspVirtualPathFromUri(
-            pathOrUri,
-            workspaceFolderUriPrefixes,
-            collapseSyntheticWorkspaceRoot = shouldCollapseSyntheticWorkspaceRoot()
-        )
+        // [pathOf] is the shared fallback for every branch below: the raw client text
+        // re-interpreted as a document URI (same prefix/collapse policy).
         val normalizedPath = pathOrUri.normalizeWorkspacePathPrefix()
         val workspacePath = normalizedPath.workspaceRelativePath(workspaceFolderUriPrefixes)
         if (workspacePath != normalizedPath) {
-            return workspacePath.toVirtualPathOrNull() ?: fromUri()
+            return workspacePath.toVirtualPathOrNull() ?: pathOf(pathOrUri)
         }
         if (pathOrUri.looksLikeUri()) {
-            return fromUri()
+            return pathOf(pathOrUri)
         }
         val clientPath = normalizedPath.syntheticWorkspaceRelativePath(shouldCollapseSyntheticWorkspaceRoot())
-        return clientPath.toVirtualPathOrNull() ?: fromUri()
+        return clientPath.toVirtualPathOrNull() ?: pathOf(pathOrUri)
     }
 
     private fun uriFor(path: VirtualPath): String = documentUris[path] ?: indexedWorkspaceUris[path] ?: lspFileUri(path)
@@ -2836,8 +2733,7 @@ class LuaLanguageService(
         // Exact-start/covering stages come from the shared identifierAt scan; the
         // over-extended-highlight containment stage is highlight-specific.
         semanticFile.identifiers.firstOrNull { identifier ->
-            identifier.range.start.line == range.start.line &&
-                identifier.range.start.column == range.start.column
+            identifier.range.start == range.start
         }?.let { return it }
 
         // Identifier fully contained by an over-extended highlight (declaration lines).
@@ -3152,9 +3048,8 @@ class LuaLanguageService(
     private fun parseChunkForFolding(source: String): ChunkNode? {
         return try {
             LuaParser().parseWorkspaceSnippet(source)
-        } catch (_: IllegalStateException) {
-            null
         } catch (_: Exception) {
+            // IllegalStateException and any other parser failure both degrade to null.
             null
         }
     }
@@ -3230,14 +3125,11 @@ class LuaLanguageService(
             current = current.parentOrNull()
             depth += 1
         }
-        if (chainRanges.isEmpty()) {
-            return null
+        // Nest from outermost down so the returned root is the leaf selection;
+        // an empty chain folds to null exactly like the previous early return.
+        return chainRanges.foldRight(null as SelectionRange?) { range, parent ->
+            SelectionRange(range.toLspRange(), parent)
         }
-        var nested: SelectionRange? = null
-        for (i in chainRanges.lastIndex downTo 0) {
-            nested = SelectionRange(chainRanges[i].toLspRange(), nested)
-        }
-        return nested
     }
 
     private class DocumentContext(
@@ -3467,11 +3359,8 @@ class LuaLanguageService(
             start.line,
             start.character.coerceAtMost(lineLengthAt(source, start.line))
         )
-        val endClamped = if (endLine >= lineCount) {
-            org.eclipse.lsp4j.Position(lineCount, 0)
-        } else {
-            org.eclipse.lsp4j.Position(endLine, end.character.coerceAtMost(lineLengthAt(source, endLine)))
-        }
+        val endClamped = if (endLine >= lineCount) org.eclipse.lsp4j.Position(lineCount, 0)
+        else org.eclipse.lsp4j.Position(endLine, end.character.coerceAtMost(lineLengthAt(source, endLine)))
         if (endClamped.line < startClamped.line ||
             (endClamped.line == startClamped.line && endClamped.character < startClamped.character)
         ) {
@@ -3663,10 +3552,7 @@ class LuaLanguageService(
                 var found: Identifier? = null
                 val visitor = object : UnitVisitor() {
                     override fun visitIdentifier(node: Identifier, value: Unit) {
-                        if (found == null &&
-                            node.range.start.line == range.start.line &&
-                            node.range.start.column == range.start.column
-                        ) {
+                        if (found == null && node.range.start == range.start) {
                             found = node
                         }
                         super.visitIdentifier(node, value)
@@ -3921,15 +3807,7 @@ class LuaLanguageService(
         }
         visitor.visitChunkNode(chunk, Unit)
 
-        if (calls.isEmpty()) {
-            return emptyList()
-        }
-
-        val hints = mutableListOf<InlayHint>()
-        for (call in calls) {
-            hints += parameterInlayHintsForCall(path, call, requestRange)
-        }
-        return hints
+        return calls.flatMap { call -> parameterInlayHintsForCall(path, call, requestRange) }
     }
 
     private fun parameterInlayHintsForCall(
@@ -3939,13 +3817,7 @@ class LuaLanguageService(
     ): List<InlayHint> {
         // String-call sugar (`f"str"`) carries its argument on the base expression;
         // regular call arguments follow it.
-        val stringCall = call.base as? StringCallExpression
-        val arguments = buildList {
-            if (stringCall != null) {
-                addAll(stringCall.arguments)
-            }
-            addAll(call.arguments)
-        }
+        val arguments = (call.base as? StringCallExpression)?.arguments.orEmpty() + call.arguments
         if (arguments.isEmpty()) {
             return emptyList()
         }
@@ -4011,16 +3883,10 @@ class LuaLanguageService(
     private fun lspRangesIntersect(
         left: org.eclipse.lsp4j.Range,
         right: org.eclipse.lsp4j.Range
-    ): Boolean {
+    ): Boolean =
         // Empty / inverted ranges: still accept if either endpoint is inside the other.
-        if (lspPositionInRange(left.start, right) || lspPositionInRange(left.end, right)) {
-            return true
-        }
-        if (lspPositionInRange(right.start, left) || lspPositionInRange(right.end, left)) {
-            return true
-        }
-        return false
-    }
+        lspPositionInRange(left.start, right) || lspPositionInRange(left.end, right) ||
+            lspPositionInRange(right.start, left) || lspPositionInRange(right.end, left)
 
     private fun lspPositionInRange(
         position: org.eclipse.lsp4j.Position,

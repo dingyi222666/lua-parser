@@ -285,12 +285,10 @@ class ExpressionTypeEvaluator internal constructor(
         val declaration = findVisibleValueDeclaration(node.name, node.range.start, context)
         // A source declaration shadows imports. Resolve it before consulting
         // workspace globals, which can evaluate other documents on demand.
-        val imported = if (declaration?.origin != DeclarationOrigin.AST) {
+        val imported = if (declaration?.origin != DeclarationOrigin.AST)
             workspaceContext.importedSymbols[node.name]
                 ?: workspaceContext.resolveImportedSymbol?.invoke(node.name)
-        } else {
-            null
-        }
+        else null
         if (declaration != null) {
             luaJavaLocalInitializerType(declaration, context)?.let { return it }
             val declarationType = typeOfDeclaration(declaration, context)
@@ -303,7 +301,7 @@ class ExpressionTypeEvaluator internal constructor(
         imported?.let { return it.valueType }
         // AndroLua loadlayout registers `id="..."` views into _G when no ids table is
         // passed (`loadlayout("layout/main")`); type those reads from the layout row class.
-        loadlayoutInjectedGlobalType(node.name, context)?.let { return it }
+        loadlayoutInjectedGlobals(context)[node.name]?.let { return it }
         if (node.name == "self") {
             implicitSelfType(node)?.let { return it }
         }
@@ -1185,11 +1183,7 @@ class ExpressionTypeEvaluator internal constructor(
                 declaration?.declaredType, declaredParameterType,
                 documentedParameterTypes[parameterNode.name], context.localOverrides[parameterNode.name]
             ).firstOrNull { it != null && it != UnknownType } ?: UnknownType
-            FunctionParameter(
-                name = parameterNode.name,
-                type = parameterType,
-                vararg = parameterNode.name == "..." || parameterType is VarargType
-            )
+            functionParameter(parameterNode.name, parameterType)
         }
 
         val varargType = parameters.lastOrNull { it.vararg }?.type ?: VarargType(UnknownType)
@@ -1224,12 +1218,7 @@ class ExpressionTypeEvaluator internal constructor(
 
     private fun evaluateLambdaDeclaration(node: LambdaDeclaration, context: Context): Type {
         val parameters = node.params.map { parameter ->
-            val parameterType = context.localOverrides[parameter.name] ?: UnknownType
-            FunctionParameter(
-                name = parameter.name,
-                type = parameterType,
-                vararg = parameter.name == "..." || parameterType is VarargType
-            )
+            functionParameter(parameter.name, context.localOverrides[parameter.name] ?: UnknownType)
         }
         val childContext = context.copy(
             localOverrides = context.localOverrides + parameters.associate { it.name to it.type },
@@ -1240,6 +1229,10 @@ class ExpressionTypeEvaluator internal constructor(
             returnType = evaluate(node.expression, childContext)
         )
     }
+
+    /** `...` names and VarargType-typed values stay vararg in both declaration forms. */
+    private fun functionParameter(name: String, type: Type) =
+        FunctionParameter(name = name, type = type, vararg = name == "..." || type is VarargType)
 
     private fun typeOfDeclaration(declaration: BinderDeclaration, context: Context): Type {
         if (declaration.id in context.excludedDeclarations) {
@@ -1327,19 +1320,16 @@ class ExpressionTypeEvaluator internal constructor(
     }
 
     private fun loadlayoutIdsTableType(declaration: BinderDeclaration, context: Context): Type? {
+        loadlayoutIdsTableTypeCache[declaration.id]?.let { return it }
         // Only empty/table locals can be AndroLua ids sinks (local ids = {}). Do not scan the
         // AST for every unrelated local — that re-walk was a primary OOM source under android.jar.
-        if (!isPotentialLoadlayoutIdsLocal(declaration)) {
-            return null
-        }
-        loadlayoutIdsTableTypeCache[declaration.id]?.let { return it }
-        val fields = loadlayoutSinkIdFields(LoadlayoutIdsSink.Named(declaration.name), context)
+        val fields = if (isPotentialLoadlayoutIdsLocal(declaration)) {
+            loadlayoutSinkIdFields(LoadlayoutIdsSink.Named(declaration.name), context)
+        } else emptyMap()
         if (fields.isEmpty()) {
             return null
         }
-        val result = loadlayoutIdsTableSurface(fields)
-        loadlayoutIdsTableTypeCache[declaration.id] = result
-        return result
+        return loadlayoutIdsTableSurface(fields).also { loadlayoutIdsTableTypeCache[declaration.id] = it }
     }
 
     /** The synthesized surface for a table holding loadlayout-registered view ids. */
@@ -1381,7 +1371,10 @@ class ExpressionTypeEvaluator internal constructor(
     private fun layoutTableFor(source: LoadlayoutLayoutSource, context: Context): TableConstructorExpression? = when (source) {
         is LoadlayoutLayoutSource.Inline -> source.table
         is LoadlayoutLayoutSource.LocalTable -> localTableInitializerFor(source.name, source.from, context)
-        is LoadlayoutLayoutSource.WorkspaceLayout -> loadlayoutPathLayoutTable(source.path)
+        // `loadlayout("layout/main")` — resolve the workspace `.aly` file alyloader would load;
+        // the chunk is already parsed, this only reads its wrapped `return <table>`.
+        is LoadlayoutLayoutSource.WorkspaceLayout -> workspaceContext.workspaceResolver
+            ?.workspaceLayoutChunk(source.path)?.let(::topLevelLayoutTable)
         is LoadlayoutLayoutSource.CalleeReturn -> calleeReturnLayoutTable(source.callee, source.from, context)
     }
 
@@ -1394,16 +1387,6 @@ class ExpressionTypeEvaluator internal constructor(
     private fun localTableInitializerFor(name: String, from: BaseASTNode, context: Context): TableConstructorExpression? =
         findVisibleValueDeclaration(name, from.range.start, context)
             ?.let(::localDeclarationInitializer) as? TableConstructorExpression
-
-    /**
-     * `loadlayout("layout/main")` — resolve the workspace `.aly` file alyloader would load
-     * for the path. The chunk is already parsed by the engine; this only reads its wrapped
-     * `return <table>`.
-     */
-    private fun loadlayoutPathLayoutTable(path: String): TableConstructorExpression? {
-        val resolver = workspaceContext.workspaceResolver ?: return null
-        return resolver.workspaceLayoutChunk(path)?.let(::topLevelLayoutTable)
-    }
 
     /** `.aly` layout chunks parse as `return <table>` (alyloader's bare-table wrap). */
     private fun topLevelLayoutTable(chunk: ChunkNode): TableConstructorExpression? =
@@ -1450,10 +1433,6 @@ class ExpressionTypeEvaluator internal constructor(
     }
 
     fun isLoadlayoutInjectedGlobal(name: String): Boolean = name in loadlayoutInjectedGlobalNames()
-
-    /** The typed `_G` surface for a loadlayout-injected id, when its row class resolves. */
-    fun loadlayoutInjectedGlobalType(name: String, context: Context): Type? =
-        loadlayoutInjectedGlobals(context)[name]
 
     /**
      * All typed ids loadlayout registers into `_G` for this document (no ids table
@@ -1700,16 +1679,6 @@ class ExpressionTypeEvaluator internal constructor(
             ?: (match.type as? JavaInstanceType)?.javaName?.simpleNames?.lastOrNull()
                 ?.let(extensions::get)
             ?: emptyList()
-    }
-
-    /**
-     * Valid string-literal values for a layout-table property key, grounded in the
-     * Android-Lua `loadlayout.lua` runtime converters (`toint` keyword maps, `checkint`
-     * pipe flags, `checkType` units, `checkPercent` %w/%h, boolean strings). Empty when the
-     * key has no modeled value domain (free-form keys like id/text/src).
-     */
-    fun layoutValueSuggestionsForKey(key: String): List<String> {
-        return LuaLayoutValueDomains.forKey(key)
     }
 
     /** Workspace module names usable as require / import string arguments. */
@@ -2150,11 +2119,7 @@ class ExpressionTypeEvaluator internal constructor(
         if (nested.isEmpty()) {
             return baseType
         }
-        var merged = baseType
-        nested.forEach { (path, members) ->
-            merged = attachMemberPath(merged, path, members)
-        }
-        return merged
+        return nested.entries.fold(baseType) { merged, (path, members) -> attachMemberPath(merged, path, members) }
     }
 
     /**
@@ -2484,8 +2449,9 @@ class ExpressionTypeEvaluator internal constructor(
                 is WhenStatement -> {
                     // IfClause covers ElseIfClause/ElseClause subtypes; a non-clause cause
                     // carries no return body and falls through.
-                    (statement.ifCause as? IfClause)?.let { collectReturnTypes(it.body, context, output) }
-                    (statement.elseCause as? IfClause)?.let { collectReturnTypes(it.body, context, output) }
+                    listOfNotNull(statement.ifCause, statement.elseCause)
+                        .filterIsInstance<IfClause>()
+                        .forEach { collectReturnTypes(it.body, context, output) }
                 }
 
                 else -> Unit
@@ -2621,5 +2587,3 @@ data class LuaLayoutClassMatch(
     val sourceName: String,
     val type: Type
 )
-
-/** Configuration changes (androidJar, import prefixes, metadata) invalidate shared caches. */

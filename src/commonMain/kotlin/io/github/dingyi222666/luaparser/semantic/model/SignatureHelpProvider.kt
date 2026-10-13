@@ -221,19 +221,29 @@ internal class SignatureHelpProvider(
         if (arguments.isEmpty() || comparePositions(position, arguments.first().range.start) < 0) {
             return receiverOffset
         }
+        return receiverOffset + (argumentSlotAt(arguments, position) ?: arguments.lastIndex)
+    }
 
+    /**
+     * Argument slot under [position]: the covering argument's index, else the gap index
+     * between it and the next argument. Half-open per-argument coverage keeps a cursor on
+     * an argument's exact end in the following gap slot; null when position is past the
+     * last argument's end.
+     */
+    private fun argumentSlotAt(arguments: List<ExpressionNode>, position: Position): Int? {
         arguments.forEachIndexed { index, argument ->
             if (rangeContains(argument.range, position)) {
-                return receiverOffset + index
+                return index
             }
-
             val nextArgumentStart = arguments.getOrNull(index + 1)?.range?.start
-            if (nextArgumentStart != null && comparePositions(position, argument.range.end) >= 0 && comparePositions(position, nextArgumentStart) < 0) {
-                return receiverOffset + index + 1
+            if (nextArgumentStart != null &&
+                comparePositions(position, argument.range.end) >= 0 &&
+                comparePositions(position, nextArgumentStart) < 0
+            ) {
+                return index + 1
             }
         }
-
-        return receiverOffset + arguments.lastIndex
+        return null
     }
 
     private fun receiverOffset(call: CallExpression): Int =
@@ -305,21 +315,14 @@ internal class SignatureHelpProvider(
         ) {
             return true
         }
-
-        arguments.forEachIndexed { index, argument ->
-            if (contains(argument.range, position)) {
-                return true
-            }
-
-            val nextArgumentStart = arguments.getOrNull(index + 1)?.range?.start
-            if (nextArgumentStart != null && comparePositions(position, argument.range.end) >= 0 && comparePositions(position, nextArgumentStart) < 0) {
-                return true
-            }
+        if (argumentSlotAt(arguments, position) != null) {
+            return true
         }
 
         // From the last argument through call.range.end (inclusive) and, when product policy
         // inflates past a tight `)`, through the next significant statement token start.
-        return comparePositions(position, arguments.last().range.end) >= 0 && comparePositions(position, regionEnd) <= 0
+        return comparePositions(position, arguments.last().range.end) >= 0 &&
+            comparePositions(position, regionEnd) <= 0
     }
 
     /**

@@ -52,8 +52,7 @@ data class WorkspacePublicFingerprint(
             indexSignature: Pair<Type, Type>?,
             javaClassStack: MutableSet<String>
         ): String =
-            "fields=${serializeTypeMap(fields, javaClassStack)}" +
-                ";methods=${serializeTypeMap(methods, javaClassStack)}" +
+            "fields=${serializeTypeMap(fields, javaClassStack)};methods=${serializeTypeMap(methods, javaClassStack)}" +
                 ";index=${indexSignature?.let {
                     "${serializeType(it.first, javaClassStack)}->${serializeType(it.second, javaClassStack)}"
                 }.orEmpty()}"
@@ -91,8 +90,7 @@ data class WorkspacePublicFingerprint(
             is FunctionType ->
                 "fun(typeParameters=${serializeTypeParameters(type.typeParameters, javaClassStack)}" +
                     ";parameters=${type.parameters.joinToString("|") { parameter ->
-                        "${parameter.name}:${serializeType(parameter.type, javaClassStack)}" +
-                            ":${parameter.optional}:${parameter.vararg}"
+                        "${parameter.name}:${serializeType(parameter.type, javaClassStack)}:${parameter.optional}:${parameter.vararg}"
                     }})->${serializeType(type.returnType, javaClassStack)}"
 
             is OverloadedFunctionType -> "overload(${type.callSignatures.joinToString("|") { serializeType(it, javaClassStack) }})"
@@ -102,21 +100,17 @@ data class WorkspacePublicFingerprint(
                     ";class=${serializeJavaClassType(type.classType, javaClassStack)}" +
                     ";typeArguments=${type.typeArguments.joinToString("|") { serializeType(it, javaClassStack) }})"
             is JavaConstructorType ->
-                "javaConstructor(owner=${serializeJavaTypeName(type.owner)}" +
-                    ";visibility=${type.visibility.name}" +
+                "javaConstructor(owner=${serializeJavaTypeName(type.owner)};visibility=${type.visibility.name}" +
                     ";signature=${serializeType(type.signature, javaClassStack)})"
             // JavaMemberType is sealed with exactly these two subtypes; they serialize
             // identically apart from the discriminator label.
             is JavaMemberType ->
                 "${if (type is JavaStaticMemberType) "javaStaticMember" else "javaInstanceMember"}" +
-                    "(owner=${serializeJavaTypeName(type.owner)}" +
-                    ";name=${type.memberName}" +
-                    ";kind=${type.memberKind.name}" +
-                    ";visibility=${type.visibility.name}" +
+                    "(owner=${serializeJavaTypeName(type.owner)};name=${type.memberName}" +
+                    ";kind=${type.memberKind.name};visibility=${type.visibility.name}" +
                     ";type=${serializeType(type.valueType, javaClassStack)})"
             is JavaOverloadType ->
-                "javaOverload(name=${serializeJavaTypeName(type.javaName)}" +
-                    ";overloadName=${type.overloadName}" +
+                "javaOverload(name=${serializeJavaTypeName(type.javaName)};overloadName=${type.overloadName}" +
                     ";signatures=${type.callSignatures.joinToString("|") { serializeType(it, javaClassStack) }})"
             is JavaPrimitiveType -> "javaPrimitive(${type.kind.name}:${type.name})"
             is JavaArrayType -> "javaArray(${type.dimensions}:${serializeType(type.elementType, javaClassStack)})"
@@ -160,8 +154,7 @@ data class WorkspacePublicFingerprint(
                     ";instanceMembers=${serializeTypeMap(type.instanceMembers, javaClassStack)}" +
                     ";innerClasses=${sortedEntries(type.innerClasses).joinToString("|") { (name, innerClass) ->
                         "$name:${serializeJavaClassType(innerClass, javaClassStack)}"
-                    }}" +
-                    ";superClass=${type.superClass?.let { serializeJavaClassType(it, javaClassStack) }.orEmpty()}" +
+                    }};superClass=${type.superClass?.let { serializeJavaClassType(it, javaClassStack) }.orEmpty()}" +
                     ";interfaces=${type.interfaces.map { serializeJavaClassType(it, javaClassStack) }.sorted().joinToString("|")}" +
                     ";typeParameters=${serializeTypeParameters(type.typeParameters, javaClassStack)})"
             } finally {

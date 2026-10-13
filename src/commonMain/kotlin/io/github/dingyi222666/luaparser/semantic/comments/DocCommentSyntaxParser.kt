@@ -110,7 +110,7 @@ class DocCommentSyntaxParser {
     }
 
     private fun parseParamTag(content: String, lineInfo: DocLineInfo): ParamTagSyntax {
-        val (nameToken, remainder) = splitFirstToken(content)
+        val (nameToken, remainder) = splitTopLevelToken(content.trim())
         val vararg = nameToken == "..."
         val optional = nameToken.endsWith("?")
         val parsedType = parseTypePrefix(remainder)
@@ -168,7 +168,7 @@ class DocCommentSyntaxParser {
     }
 
     private fun parseJavaClassTag(content: String, lineInfo: DocLineInfo): JavaClassTagSyntax {
-        val (className, description) = splitFirstToken(content)
+        val (className, description) = splitTopLevelToken(content.trim())
         return JavaClassTagSyntax(
             className = className,
             description = description,
@@ -178,7 +178,7 @@ class DocCommentSyntaxParser {
 
     private fun parseFieldTag(content: String, lineInfo: DocLineInfo): FieldTagSyntax {
         val stripped = stripVisibilityModifier(content)
-        val (nameToken, remainder) = splitFirstToken(stripped)
+        val (nameToken, remainder) = splitTopLevelToken(stripped.trim())
         val parsedType = parseTypePrefix(remainder)
         return FieldTagSyntax(
             name = nameToken.removeSuffix("?"),
@@ -277,7 +277,7 @@ class DocCommentSyntaxParser {
     }
 
     private fun parseAliasTag(content: String, lineInfo: DocLineInfo): AliasTagSyntax {
-        val (nameToken, remainder) = splitFirstToken(content)
+        val (nameToken, remainder) = splitTopLevelToken(content.trim())
         val parsedType = parseTypePrefix(remainder)
         val (name, declaredTypeParameters) = parseNamedTypeHeader(nameToken)
         return AliasTagSyntax(
@@ -398,8 +398,6 @@ class DocCommentSyntaxParser {
         else target.substring(0, separatorIndex) to target.substring(separatorIndex + 1)
     }
 
-    private fun splitFirstToken(text: String): Pair<String, String> = splitTopLevelToken(text.trim())
-
     /** Shared tag-tail rule: the parsed type's description, else the unconsumed remainder text. */
     private fun fallbackDescription(parsedType: ParsedTypeText?, remainder: String): String {
         // The elvis RHS is only reached when parsedType is null (description is non-null),
@@ -408,7 +406,7 @@ class DocCommentSyntaxParser {
     }
 
     private fun stripVisibilityModifier(text: String): String {
-        val (firstToken, remainder) = splitFirstToken(text)
+        val (firstToken, remainder) = splitTopLevelToken(text.trim())
         return if (firstToken in setOf("public", "private", "protected", "package")) {
             remainder
         } else {

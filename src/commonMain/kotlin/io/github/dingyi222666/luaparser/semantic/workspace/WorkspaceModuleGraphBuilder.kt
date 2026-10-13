@@ -126,9 +126,7 @@ object WorkspaceModuleGraphBuilder {
     ): List<WorkspaceModuleGraph.ModuleProvider> {
         // Always claim Android-Lua `.aly` layout modules by path, even when document facts are
         // sparse/null, so require("…layout") without a `.lua` suffix can resolve the workspace file.
-        if (facts == null) {
-            return alyPathProviders(path)
-        }
+        if (facts == null) return alyPathProviders(path)
 
         val explicit = facts.legacyModuleCalls
             .asSequence()
@@ -172,9 +170,7 @@ object WorkspaceModuleGraphBuilder {
         moduleName: String,
         builtinOverlay: BuiltinOverlaySnapshot
     ): WorkspaceModuleGraph.ModuleProvider? {
-        if (moduleName.isBlank()) {
-            return null
-        }
+        if (moduleName.isBlank()) return null
         // Prefer exact dotted moduleName claim (socket.url stays dotted).
         builtinOverlay.providerModules.entries.firstOrNull { (_, provider) ->
             provider.moduleName == moduleName
@@ -304,9 +300,7 @@ internal fun findAlyLayoutProviderIn(
     moduleName: String,
     paths: Collection<VirtualPath>
 ): WorkspaceModuleGraph.ModuleProvider? {
-    if (moduleName.isBlank()) {
-        return null
-    }
+    if (moduleName.isBlank()) return null
     val dotted = moduleName.replace('\\', '/')
     val candidates = listOf(
         "$dotted.aly",
@@ -314,9 +308,7 @@ internal fun findAlyLayoutProviderIn(
     )
     val match = paths.firstOrNull { path ->
         val value = path.value
-        if (!value.endsWith(".aly")) {
-            return@firstOrNull false
-        }
+        if (!value.endsWith(".aly")) return@firstOrNull false
         val pathModule = alyModuleNameFromPath(path)
         pathModule == moduleName ||
             candidates.any { candidate ->
@@ -328,8 +320,6 @@ internal fun findAlyLayoutProviderIn(
 
 internal fun alyModuleNameFromPath(path: VirtualPath): String? {
     val normalized = path.value.replace('\\', '/')
-    if (!normalized.endsWith(".aly")) {
-        return null
-    }
+    if (!normalized.endsWith(".aly")) return null
     return normalized.removeSuffix(".aly").replace('/', '.').ifBlank { null }
 }

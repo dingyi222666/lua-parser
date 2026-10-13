@@ -166,10 +166,8 @@ class AST2Lua : ASTVisitor<StringBuilder> {
         visitExpressionNode(node.condition, value)
         value.append(" do")
         node.causes.forEach { cause ->
-            when (cause) {
-                is CaseCause -> visitCaseCause(cause, value)
-                is DefaultCause -> visitDefaultCause(cause, value)
-            }
+            // accept() dispatches straight to visitCaseCause / visitDefaultCause.
+            cause.accept(this, value)
         }
         appendLineAndIndent(value)
         value.append("end")
@@ -486,13 +484,9 @@ class AST2Lua : ASTVisitor<StringBuilder> {
 
     private fun appendParenthesizedCallArguments(value: StringBuilder, arguments: List<ExpressionNode>) {
         value.append("(")
-        appendExpressionList(value, arguments)
+        // Comma-joined list rendered through the parenthesization-aware [appendExpression].
+        appendSeparated(value, arguments) { expression, sb -> appendExpression(sb, expression) }
         value.append(")")
-    }
-
-    /** Comma-joined list rendered through parenthesization-aware [appendExpression]. */
-    private fun appendExpressionList(value: StringBuilder, expressions: List<ExpressionNode>) {
-        appendSeparated(value, expressions) { expression, sb -> appendExpression(sb, expression) }
     }
 
     private fun appendInlineWhenCause(statement: StatementNode, value: StringBuilder) {
@@ -559,10 +553,8 @@ class AST2Lua : ASTVisitor<StringBuilder> {
 
     private fun isImplicitArrayField(node: TableKey): Boolean {
         val key = node.key as? ConstantNode ?: return false
-        if (key.constantType != ConstantNode.TYPE.INTERGER) {
-            return false
-        }
-        return key.range.start == key.range.end
+        // A synthesized integer key (single-token constant) is the implicit array form.
+        return key.constantType == ConstantNode.TYPE.INTERGER && key.range.start == key.range.end
     }
 
     private fun ExpressionNode.canStartCompactCallSuffix(): Boolean {

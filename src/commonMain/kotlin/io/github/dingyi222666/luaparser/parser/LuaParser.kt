@@ -34,16 +34,15 @@ fun CallExpression.isCompactShortCall(): Boolean {
 
 fun CallExpression.compactCallBase(): ExpressionNode {
     return when (val compactBase = base) {
-        is StringCallExpression -> compactBase.base
-        is TableCallExpression -> compactBase.base
+        // String/table compact calls both wrap the real callee in a nested call node.
+        is StringCallExpression, is TableCallExpression -> compactBase.base
         else -> compactBase
     }
 }
 
 fun CallExpression.compactCallArguments(): List<ExpressionNode> {
     return when (val compactBase = base) {
-        is StringCallExpression -> compactBase.arguments + arguments
-        is TableCallExpression -> compactBase.arguments + arguments
+        is StringCallExpression, is TableCallExpression -> compactBase.arguments + arguments
         else -> arguments
     }
 }
@@ -334,32 +333,17 @@ class LuaParser(
     }
 
     private fun currentRecoveryRange(): Range {
-        val start = Position(
-            line = lexer.line(),
-            column = max(lexer.column(), 1)
-        )
+        val start = Position(lexer.line(), max(lexer.column(), 1))
         val tokenLength = max(lexer.length(), 1)
         return Range(
             start = start,
-            end = Position(
-                line = start.line,
-                column = max(start.column + tokenLength, start.column + 1)
-            )
+            end = Position(start.line, max(start.column + tokenLength, start.column + 1))
         )
     }
 
     private fun recoveryRangeAfterCurrentToken(): Range {
-        val start = Position(
-            line = lexer.line(),
-            column = max(lexer.column() + lexer.length(), 1)
-        )
-        return Range(
-            start = start,
-            end = Position(
-                line = start.line,
-                column = start.column + 1
-            )
-        )
+        val start = Position(lexer.line(), max(lexer.column() + lexer.length(), 1))
+        return Range(start, Position(start.line, start.column + 1))
     }
 
     private inline fun assertVersion(version: LuaVersion, crossinline messageBuilder: () -> String) {
@@ -483,8 +467,7 @@ class LuaParser(
     ): ExpressionNode {
         // Capture linebreak BEFORE any peek/pushback so WrapperLuaLexer.currentState
         // is not already sitting on the next NAME (which would look past it).
-        val hasLineBreakBeforeExpression =
-            recoverStatementStartAfterLineBreak && hasLineBreakBeforeNextSignificantToken()
+        val hasLineBreakBeforeExpression = recoverStatementStartAfterLineBreak && hasLineBreakBeforeNextSignificantToken()
         val token = peek()
         return if (errorRecovery &&
             hasLineBreakBeforeExpression &&
@@ -520,14 +503,44 @@ class LuaParser(
         token: LuaTokenTypes,
         sameLineOnly: Boolean = false
     ): Boolean {
-        if (isKeywordStatementStart(token)) {
-            return true
+        // Keyword/control statement starts always recover; a bare NAME (the just-peeked,
+        // pushbacked token) recovers only when it begins a call-shaped statement.
+        return isKeywordStatementStart(token) ||
+                (token == LuaTokenTypes.NAME && isCallShapedNameStatementStart(sameLineOnly))
+    }
+
+    /**
+     * Raw-lexer walk shared by the recovery look-ahead probes ([isCallShapedNameStatementStart],
+     * [shouldLeaveBareNameAsSiblingInsteadOfCallArg], [tokenAfterMatchingParen]). Counts every
+     * advanced token — significant or ignored — so [back] restores the exact pre-walk lexer
+     * state. [next] returns the next non-ignored token (the EOF token at end of input, so
+     * callers treat EOF through their ordinary non-matching exits); under [stopAtNewLine] a
+     * crossed NEW_LINE restores the lexer and returns null, and the caller must not back up
+     * again in that case.
+     */
+    private inner class LexerScan {
+        var backSize = 0
+
+        fun next(stopAtNewLine: Boolean = false): LuaTokenTypes? {
+            while (true) {
+                val token = lexer.advance()
+                backSize++
+                if (token == LuaTokenTypes.EOF) {
+                    return LuaTokenTypes.EOF
+                }
+                if (stopAtNewLine && token == LuaTokenTypes.NEW_LINE) {
+                    back()
+                    return null
+                }
+                if (!ignoreToken(token)) {
+                    return token
+                }
+            }
         }
-        if (token != LuaTokenTypes.NAME) {
-            return false
+
+        fun back() {
+            lexer.back(backSize)
         }
-        // token is the just-peeked NAME (pushbacked). Walk member chains then call.
-        return isCallShapedNameStatementStart(sameLineOnly)
     }
 
     /**
@@ -546,63 +559,39 @@ class LuaParser(
      * by the goto-target recovery with [sameLineOnly] enabled.
      */
     private fun isCallShapedNameStatementStart(sameLineOnly: Boolean = false): Boolean {
-        var backSize = 0
-
-        // Next non-ignored token; null when the scan crossed a NEW_LINE under
-        // [sameLineOnly] (the lexer has already been restored by [WrapperLuaLexer.back],
-        // so callers must NOT back up again in that case).
-        fun nextSignificant(): LuaTokenTypes? {
-            while (true) {
-                val token = lexer.advance()
-                backSize++
-                if (token == LuaTokenTypes.EOF) {
-                    return LuaTokenTypes.EOF
-                }
-                if (sameLineOnly && token == LuaTokenTypes.NEW_LINE) {
-                    lexer.back(backSize)
-                    return null
-                }
-                if (!ignoreToken(token)) {
-                    return token
-                }
-            }
-        }
+        val scan = LexerScan()
 
         // Leading NAME (statement head).
-        val head = nextSignificant()
+        val head = scan.next(stopAtNewLine = sameLineOnly)
         if (head == null) {
             return false
         }
         if (head != LuaTokenTypes.NAME) {
-            lexer.back(backSize)
+            scan.back()
             return false
         }
 
         // Zero or more (.|:) NAME segments, then a call starter.
         while (true) {
-            when (val next = nextSignificant()) {
+            when (val next = scan.next(stopAtNewLine = sameLineOnly)) {
                 null -> return false
 
                 LuaTokenTypes.DOT,
                 LuaTokenTypes.COLON -> {
-                    val segment = nextSignificant()
+                    val segment = scan.next(stopAtNewLine = sameLineOnly)
                     if (segment == null) {
                         return false
                     }
                     if (segment != LuaTokenTypes.NAME) {
-                        lexer.back(backSize)
+                        scan.back()
                         return false
                     }
                     // Continue: more chain segments or the eventual call starter.
                 }
 
                 else -> {
-                    if (startsFuncargs(next)) {
-                        lexer.back(backSize)
-                        return true
-                    }
-                    lexer.back(backSize)
-                    return false
+                    scan.back()
+                    return startsFuncargs(next)
                 }
             }
         }
@@ -713,16 +702,9 @@ class LuaParser(
         return create()
     }
 
-    private fun currentEndPosition(): Position {
-        // Prefer the last committed (consumed) token end. WrapperLuaLexer.pushback leaves
-        // currentState on the requeued peeked token, so reading lexer.line()/column() here
-        // would incorrectly stretch ranges onto the following construct.
-        return lastCommittedEndPosition
-    }
-
     private fun <T : BaseASTNode> finishNode(node: T): T {
         val start = locations.removeFirst()
-        node.range = Range(start, currentEndPosition())
+        node.range = Range(start, lastCommittedEndPosition)
         return node
     }
 
@@ -732,7 +714,7 @@ class LuaParser(
      * Does not touch the locations stack.
      */
     private fun <T : BaseASTNode> finishNodeSpanning(node: T, start: Position): T {
-        node.range = Range(start, currentEndPosition())
+        node.range = Range(start, lastCommittedEndPosition)
         return node
     }
 
@@ -930,16 +912,13 @@ class LuaParser(
                 // next token
                 peek {
                     val node = finishNode(stat)
-                    val visibleComment = stat.comment.trimEnd('\r', '\n')
-                    val commentLines = visibleComment.split("\r\n", "\n", "\r")
-                    val endLine = node.range.start.line + commentLines.lastIndex
+                    val commentLines = stat.comment.trimEnd('\r', '\n').split("\r\n", "\n", "\r")
                     val endColumn = if (commentLines.size == 1) {
                         node.range.start.column + commentLines.last().length
                     } else {
                         commentLines.last().length + 1
                     }
-
-                    node.range = Range(node.range.start, Position(endLine, endColumn))
+                    node.range = Range(node.range.start, Position(node.range.start.line + commentLines.lastIndex, endColumn))
                 }
             } else {
                 finishNode(stat)
@@ -1070,13 +1049,14 @@ class LuaParser(
         // without popping here is the historical pattern downstream parses tolerate, and
         // an unset range made scope-by-position lookups miss switch conditions against
         // enclosing function parameters.
-        result.range = Range(startMark, currentEndPosition())
+        result.range = Range(startMark, lastCommittedEndPosition)
         return result
     }
 
     // [default block]
     private fun parseSwitchDefaultCaseStatement(parent: BaseASTNode): DefaultCause {
-        markLocation()
+        // Single mark at the `default` keyword start (the historical pre-expect duplicate
+        // push was dead: only the newest mark is popped by the caller's finishNode).
         expectToken(LuaTokenTypes.DEFAULT) { "<default> expected near ${lexerText(true)}" }
         markLocation()
         val result = DefaultCause()
@@ -1162,7 +1142,7 @@ class LuaParser(
             result.elseCause = parseExpStatement(result)
         }
 
-        result.range = Range(startMark, currentEndPosition())
+        result.range = Range(startMark, lastCommittedEndPosition)
         return result
     }
 
@@ -1217,11 +1197,8 @@ class LuaParser(
             }
         }
 
-        if (!recoverBlockEnd("if", currentLine)) {
-            result.bad = true
-        }
-
-        if (errorRecovery && result.causes.any { it.bad }) {
+        // Missing `end` or a recovered branch body marks the whole if bad.
+        if (!recoverBlockEnd("if", currentLine) || (errorRecovery && result.causes.any { it.bad })) {
             result.bad = true
         }
 
@@ -2384,42 +2361,29 @@ class LuaParser(
         if (peek() != LuaTokenTypes.LPAREN) {
             return LuaTokenTypes.EOF
         }
+        val scan = LexerScan()
         var depth = 0
         var seen = 0
-        var backSize = 0
         // Walk significant tokens via the underlying lexer, then restore.
         while (seen <= 64) {
-            val token = lexer.advance().requireNotNull()
-            backSize++
-            if (ignoreToken(token)) {
-                continue
+            val token = scan.next() ?: LuaTokenTypes.EOF
+            if (token == LuaTokenTypes.EOF) {
+                scan.back()
+                return LuaTokenTypes.EOF
             }
             seen++
             when (token) {
                 LuaTokenTypes.LPAREN -> depth++
-                LuaTokenTypes.RPAREN -> {
-                    depth--
-                    if (depth == 0) {
-                        // Next significant token after the matching ')'.
-                        while (true) {
-                            val next = lexer.advance().requireNotNull()
-                            backSize++
-                            if (ignoreToken(next)) {
-                                continue
-                            }
-                            lexer.back(backSize)
-                            return next
-                        }
-                    }
-                }
-                LuaTokenTypes.EOF -> {
-                    lexer.back(backSize)
-                    return LuaTokenTypes.EOF
+                LuaTokenTypes.RPAREN -> if (--depth == 0) {
+                    // Next significant token after the matching ')'.
+                    val next = scan.next() ?: LuaTokenTypes.EOF
+                    scan.back()
+                    return next
                 }
                 else -> Unit
             }
         }
-        lexer.back(backSize)
+        scan.back()
         return LuaTokenTypes.EOF
     }
 
@@ -2503,15 +2467,15 @@ class LuaParser(
             LuaTokenTypes.LCURLY -> ::parseTableCallExpression
             else -> null
         }
-        val isOnlyExpList = compactCallConstructor == null
         compactCallConstructor?.let { constructor ->
             result.base = finishNodeSpanning(constructor(result, base), base.range.start)
         }
 
         val findLeft = consume { it == LuaTokenTypes.LPAREN }
-        // `!findLeft && !isOnlyExpList` returns above (either a COMMA continuation or a
-        // SEMI-noop), so a plain `(`-less call never reaches the parenthesized-args path.
-        if (!findLeft && !isOnlyExpList) {
+        // `!findLeft && compactCallConstructor != null` returns above (either a COMMA
+        // continuation or a SEMI-noop), so a plain `(`-less call never reaches the
+        // parenthesized-args path.
+        if (!findLeft && compactCallConstructor != null) {
             if (consumeToken(LuaTokenTypes.COMMA)) {
                 result.arguments.addAll(parseCallArgumentList(result))
             }
@@ -2593,56 +2557,32 @@ class LuaParser(
      * Walks the lexer temporarily and restores with [WrapperLuaLexer.back].
      */
     private fun shouldLeaveBareNameAsSiblingInsteadOfCallArg(): Boolean {
-        var backSize = 0
-        var significant = 0
-        var afterNameIsStatementStart = false
+        val scan = LexerScan()
 
-        while (significant < 2) {
-            val token = lexer.advance()
-            backSize++
-            if (token == LuaTokenTypes.EOF) {
-                lexer.back(backSize)
-                return false
-            }
-            if (ignoreToken(token)) {
-                continue
-            }
-            significant++
-            if (significant == 1) {
-                if (token != LuaTokenTypes.NAME) {
-                    lexer.back(backSize)
-                    return false
-                }
-                // Line break must sit between the bare NAME and the following statement so
-                // well-formed same-line calls (and multi-line multi-arg forms) stay intact.
-                if (!lexer.hasLineBreakBeforeNextSignificantToken()) {
-                    lexer.back(backSize)
-                    return false
-                }
-            } else {
-                // significant == 2: first significant token after the bare NAME.
-                if (isKeywordStatementStart(token)) {
-                    afterNameIsStatementStart = true
-                } else if (token == LuaTokenTypes.NAME) {
-                    var nextAfterName = LuaTokenTypes.EOF
-                    while (true) {
-                        val n = lexer.advance()
-                        backSize++
-                        if (n == LuaTokenTypes.EOF) {
-                            break
-                        }
-                        if (ignoreToken(n)) {
-                            continue
-                        }
-                        nextAfterName = n
-                        break
-                    }
-                    afterNameIsStatementStart = startsFuncargs(nextAfterName)
-                }
-            }
+        // First significant token: the bare NAME. The lexer stays after it so the
+        // line-break probe below sees the break between NAME and the next statement.
+        val first = scan.next() ?: return false
+        if (first != LuaTokenTypes.NAME) {
+            scan.back()
+            return false
+        }
+        // Line break must sit between the bare NAME and the following statement so
+        // well-formed same-line calls (and multi-line multi-arg forms) stay intact.
+        if (!lexer.hasLineBreakBeforeNextSignificantToken()) {
+            scan.back()
+            return false
         }
 
-        lexer.back(backSize)
+        // Second significant token decides: keyword statement start, or a NAME whose
+        // own next significant token starts funcargs (name( / name{ / name string).
+        val second = scan.next() ?: LuaTokenTypes.EOF
+        val afterNameIsStatementStart = when {
+            isKeywordStatementStart(second) -> true
+            second == LuaTokenTypes.NAME -> startsFuncargs(scan.next() ?: LuaTokenTypes.EOF)
+            else -> false
+        }
+
+        scan.back()
         return afterNameIsStatementStart
     }
 
@@ -2699,13 +2639,13 @@ class LuaParser(
         // Parent-link the argument so import/require string-call definition walks
         // (enclosingCallExpression) resolve import "File" / import "BigDecimal".
         peek { markLocation() }
-        val argument = finishNode(
-            consume {
-                ConstantNode(ConstantNode.TYPE.STRING, lexerText())
-            }
+        result.arguments.add(
+            finishNode(
+                consume {
+                    ConstantNode(ConstantNode.TYPE.STRING, lexerText())
+                }
+            ).also { it.parent = result }
         )
-        argument.parent = result
-        result.arguments.add(argument)
 
         return result
     }
@@ -2894,11 +2834,7 @@ class LuaParser(
         // token without restoring it, so currentRecoveryRange() would mis-anchor
         // onto `return` / the next statement and fail the precise golden
         // Range(Position(1, 14), Position(1, 15)) for `local value =\nreturn value`.
-        val missingInitializerRange = if (errorRecovery) {
-            recoveryRangeAfterCurrentToken()
-        } else {
-            null
-        }
+        val missingInitializerRange = if (errorRecovery) recoveryRangeAfterCurrentToken() else null
         val firstRhsToken = peek()
         val missingFirstRhs = !isExpressionStart(firstRhsToken)
         if (errorRecovery && missingFirstRhs && missingInitializerRange != null) {

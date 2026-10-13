@@ -85,11 +85,7 @@ internal class ExpressionUsageChecker(
                 // Dead WILDCARD imports are INFO: a pkg.* import is declarative scoping
                 // whose members may come from workspace dex the analyzer cannot mount —
                 // a different epistemic state from an explicitly written bindClass string.
-                severity = if (target.fromWildcardImport) {
-                    DiagnosticSeverity.INFO
-                } else {
-                    DiagnosticSeverity.WARNING
-                },
+                severity = if (target.fromWildcardImport) DiagnosticSeverity.INFO else DiagnosticSeverity.WARNING,
                 code = LUAJAVA_TARGET_UNRESOLVED_CODE
             )
         }
@@ -223,8 +219,12 @@ internal class ExpressionUsageChecker(
         if (name.firstOrNull()?.isUpperCase() == true) {
             return // S3: UpperCamel cross-file runtime globals without require edges.
         }
-        if (isLayoutDocument()) {
-            return // T1: alyloader layout tables resolve ids at layout-load time.
+        // T1: alyloader wraps `.aly` documents as `return <table>` (LuaParser
+        // .parseTopLevelTableReturn) and injects the id names as globals at layout-load time,
+        // so free lowercase identifiers in layout tables are runtime-injected, not
+        // unresolved user globals.
+        if (workspaceContext.currentPath?.value?.endsWith(".aly") == true) {
+            return
         }
         // T5: `loadlayout(t)` / `loadlayout(t, nil)` registers the layout's `id="..."`
         // views into _G at layout-load time — same epistemic state as T1, host page side.
@@ -267,15 +267,6 @@ internal class ExpressionUsageChecker(
             code = GLOBAL_UNRESOLVED_CODE
         )
     }
-
-    /**
-     * True when the analyzed document is an AndroLua layout table (`.aly`): alyloader
-     * wraps it as `return <table>` (LuaParser.parseTopLevelTableReturn) and loadlayout
-     * injects the id names as globals at load time, so free lowercase identifiers in
-     * layout tables are runtime-injected, not unresolved user globals.
-     */
-    private fun isLayoutDocument(): Boolean =
-        workspaceContext.currentPath?.value?.endsWith(".aly") == true
 
     /**
      * True when [name] is the first segment of any active import target. Primary
@@ -348,36 +339,26 @@ internal class ExpressionUsageChecker(
     }
 
     /**
-     * Dual-path LuaJava call-site diagnostics that pair with ExpressionTypeEvaluator degrade.
-     * Structured [Diagnostic] only — never stdout.
+     * Dual-path LuaJava call-site diagnostics (TASK-525 dimension / TASK-593 loadLib arity)
+     * that pair with the evaluator's unknown[] / silent-unknown degrades — structured
+     * [Diagnostic] only, never stdout; severity ERROR is [addDiagnostic]'s default.
      */
-    private fun emitLuaJavaCallSurfaceDiagnostics(
-        node: CallExpression,
-        value: MutableList<Diagnostic>
-    ) {
-        // TASK-525: dual-path with ExpressionTypeEvaluator unknown[] degrade —
-        // also emit a dimension diagnostic so hover/diagnostics suite matchers pass
-        // even if a later dual-path rewrite reintroduces Class[] typing temporarily.
+    private fun emitLuaJavaCallSurfaceDiagnostics(node: CallExpression, value: MutableList<Diagnostic>) {
         if (evaluator.isInvalidNewArrayDimensionCall(node)) {
             addDiagnostic(
                 value,
                 key = "newarray-dimension:${node.range.start.line}:${node.range.start.column}",
                 message = LuaJavaNewArrayDimensionDiagnostics.MESSAGE,
                 range = node.range,
-                severity = DiagnosticSeverity.ERROR,
                 code = LuaJavaNewArrayDimensionDiagnostics.CODE
             )
         }
-        // TASK-593: invalid loadLib arity/shape must surface structured diagnostics
-        // (not silent unknown-only). Valid loadLib is left to unresolved-target /
-        // member typing paths.
         if (evaluator.isInvalidLoadLibArgumentCall(node)) {
             addDiagnostic(
                 value,
                 key = "loadlib-args:${node.range.start.line}:${node.range.start.column}",
                 message = LuaJavaLoadLibArgumentDiagnostics.MESSAGE,
                 range = node.range,
-                severity = DiagnosticSeverity.ERROR,
                 code = LuaJavaLoadLibArgumentDiagnostics.CODE
             )
         }

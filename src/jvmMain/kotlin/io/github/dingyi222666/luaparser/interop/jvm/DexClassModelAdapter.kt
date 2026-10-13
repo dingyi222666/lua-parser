@@ -141,6 +141,20 @@ object DexClassModelAdapter {
         "bit32", "coroutine", "debug", "io", "math", "os", "package", "string", "table", "utf8"
     )
 
+    /** `L...;` descriptor names mapping to STRING (CharSequence family) / NUMBER
+     *  (boxed numerics; BigInteger/BigDecimal sit where the reflection table's
+     *  `Number.isAssignableFrom` check would place them). `java.lang.Boolean`
+     *  maps to BOOLEAN directly in [lDescriptorToType]. */
+    private val L_STRING_DESCRIPTOR_TYPES = setOf(
+        "java.lang.Character", "java.lang.String", "java.lang.CharSequence",
+        "java.lang.StringBuilder", "java.lang.StringBuffer"
+    )
+    private val L_NUMBER_DESCRIPTOR_TYPES = setOf(
+        "java.lang.Byte", "java.lang.Short", "java.lang.Integer", "java.lang.Long",
+        "java.lang.Float", "java.lang.Double", "java.lang.Number",
+        "java.math.BigInteger", "java.math.BigDecimal"
+    )
+
     /**
      * Adapt one dex class into the reflected-shape [JavaClassType].
      *
@@ -280,7 +294,11 @@ object DexClassModelAdapter {
         groupedVisibleMethods(cls).forEach { (name, overloads) ->
             surfaceAssemblyCheckpoint()
             val signatures = overloads.map { overload ->
-                functionTypeFor(overload, dexByName, memberResolving, memberDepth)
+                FunctionType(
+                    parameters = parameterTypesFor(overload, dexByName, memberResolving, memberDepth),
+                    // void return maps to nil, mirroring javaClassToType(Void.TYPE).
+                    returnType = descriptorToType(overload.returnDescriptor, dexByName, memberResolving, memberDepth)
+                )
             }
             val signatureMetadata = overloads.map(::signatureMetadataFor)
             val member: Type = if (signatures.size == 1) {
@@ -410,18 +428,10 @@ object DexClassModelAdapter {
      * protected only; synthetic (and, for methods, bridge) members are dropped
      * so call surfaces reflect real API shapes rather than compiler artifacts.
      */
-    private fun isVisibleMember(accessFlags: Int, isMethod: Boolean): Boolean {
-        if (accessFlags and (ACC_PUBLIC or ACC_PROTECTED) == 0) {
-            return false
-        }
-        if (accessFlags and ACC_SYNTHETIC != 0) {
-            return false
-        }
-        if (isMethod && accessFlags and ACC_BRIDGE != 0) {
-            return false
-        }
-        return true
-    }
+    private fun isVisibleMember(accessFlags: Int, isMethod: Boolean): Boolean =
+        accessFlags and (ACC_PUBLIC or ACC_PROTECTED) != 0 &&
+            accessFlags and ACC_SYNTHETIC == 0 &&
+            (!isMethod || accessFlags and ACC_BRIDGE == 0)
 
     /**
      * Callable methods grouped by name in encounter order: constructor-flagged
@@ -440,19 +450,6 @@ object DexClassModelAdapter {
             grouped.getOrPut(method.name) { mutableListOf() }.add(method)
         }
         return grouped
-    }
-
-    private fun functionTypeFor(
-        method: DexMethod,
-        dexByName: Map<String, DexClass>,
-        resolving: Set<String>,
-        referenceDepth: Int
-    ): FunctionType {
-        return FunctionType(
-            parameters = parameterTypesFor(method, dexByName, resolving, referenceDepth),
-            // void return maps to nil, mirroring javaClassToType(Void.TYPE).
-            returnType = descriptorToType(method.returnDescriptor, dexByName, resolving, referenceDepth)
-        )
     }
 
     private fun parameterTypesFor(
@@ -515,16 +512,11 @@ object DexClassModelAdapter {
             'Z' -> PrimitiveType.BOOLEAN
             'C' -> PrimitiveType.STRING
             'V' -> PrimitiveType.VOID
-            'L' -> {
-                if (!descriptor.endsWith(";")) {
-                    return UnknownType
-                }
-                val binaryName = descriptor.drop(1).removeSuffix(";")
-                if (binaryName.isBlank()) {
-                    return UnknownType
-                }
-                lDescriptorToType(binaryName, dexByName, resolving, referenceDepth)
-            }
+            'L' ->
+                if (!descriptor.endsWith(";")) UnknownType
+                else descriptor.drop(1).removeSuffix(";").takeIf(String::isNotBlank)
+                    ?.let { lDescriptorToType(it, dexByName, resolving, referenceDepth) }
+                    ?: UnknownType
             '[' -> JavaArrayType(descriptorToType(descriptor.substring(1), dexByName, resolving, referenceDepth))
             else -> UnknownType
         }
@@ -553,20 +545,8 @@ object DexClassModelAdapter {
         val key = binaryNameKey(binaryName)
         when (key) {
             "java.lang.Boolean" -> return PrimitiveType.BOOLEAN
-            "java.lang.Character",
-            "java.lang.String",
-            "java.lang.CharSequence",
-            "java.lang.StringBuilder",
-            "java.lang.StringBuffer" -> return PrimitiveType.STRING
-            "java.lang.Byte",
-            "java.lang.Short",
-            "java.lang.Integer",
-            "java.lang.Long",
-            "java.lang.Float",
-            "java.lang.Double",
-            "java.lang.Number",
-            "java.math.BigInteger",
-            "java.math.BigDecimal" -> return PrimitiveType.NUMBER
+            in L_STRING_DESCRIPTOR_TYPES -> return PrimitiveType.STRING
+            in L_NUMBER_DESCRIPTOR_TYPES -> return PrimitiveType.NUMBER
         }
         val shell = typeReferenceForBinaryName(binaryName)
         if (key in resolving) {

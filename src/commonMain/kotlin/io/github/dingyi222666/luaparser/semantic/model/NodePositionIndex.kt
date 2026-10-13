@@ -95,7 +95,7 @@ internal class NodePositionIndex(root: BaseASTNode) {
     fun findInnermost(position: Position): BaseASTNode? {
         var best: Entry? = null
         entries.forEach { entry ->
-            if (contains(entry.range, position) &&
+            if (isPositionWithin(entry.range.start, entry.range.end, position) &&
                 (best == null || compareEntries(entry, best!!) < 0)
             ) {
                 best = entry
@@ -106,7 +106,7 @@ internal class NodePositionIndex(root: BaseASTNode) {
 
     fun findEnclosing(position: Position): List<BaseASTNode> {
         return entries.asSequence()
-            .filter { contains(it.range, position) }
+            .filter { isPositionWithin(it.range.start, it.range.end, position) }
             .sortedWith(::compareEntries)
             .map(Entry::node)
             .toList()
@@ -122,9 +122,6 @@ internal class NodePositionIndex(root: BaseASTNode) {
                 .thenByDescending { it.range.end.line }
                 .thenByDescending { it.range.end.column }
                 .thenBy { if (it.identifier.name.isBlank()) 1 else 0 })
-
-    private fun contains(range: Range, position: Position): Boolean =
-        isPositionWithin(range.start, range.end, position)
 
     private fun compareEntries(a: Entry, b: Entry): Int {
         val specificity = compareRangeSpecificity(a.range, b.range)

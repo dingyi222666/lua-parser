@@ -27,8 +27,7 @@ object WorkspaceDirtySetPlanner {
         val seeAllFallbackDocuments = seeAllFallbackDocumentsWithBuiltinGlobalsChanged(previous, current)
 
         val reverseDirty = reverseDependencyDirtyClosure(
-            previous = previous,
-            current = current,
+            previous = previous, current = current,
             publicSurfaceChangedFiles = publicSurfaceChangedFiles,
             activeProviderChangedModuleNames = activeProviderChangedModuleNames,
             filesWithRequireResolutionChanged = filesWithRequireResolutionChanged,
@@ -156,9 +155,9 @@ object WorkspaceDirtySetPlanner {
         }
 
         publicSurfaceChangedFiles.forEach { path ->
-            seedFiles += previous.graph.reverseDependencies[path].orEmpty()
-            seedFiles += current.graph.reverseDependencies[path].orEmpty()
-            seedFiles += currentExtraProviderConsumers(path, current)
+            seedFiles += previous.graph.reverseDependencies[path].orEmpty() +
+                current.graph.reverseDependencies[path].orEmpty() +
+                currentExtraProviderConsumers(path, current)
             val before = previous.files[path]?.publicFingerprint
             val after = current.files[path]?.publicFingerprint
             if (before?.globalSymbolsFingerprint != after?.globalSymbolsFingerprint || before?.value != after?.value) {
@@ -167,8 +166,7 @@ object WorkspaceDirtySetPlanner {
         }
 
         activeProviderChangedModuleNames.forEach { moduleName ->
-            seedFiles += consumersOfModule(moduleName, previous.graph)
-            seedFiles += consumersOfModule(moduleName, current.graph)
+            seedFiles += consumersOfModule(moduleName, previous.graph) + consumersOfModule(moduleName, current.graph)
         }
 
         val reverseEdges = linkedMapOf<VirtualPath, Set<VirtualPath>>()
@@ -198,12 +196,9 @@ object WorkspaceDirtySetPlanner {
             return emptySet()
         }
 
-        return current.files
-            .filter { (_, snapshot) ->
-                snapshot.legacyModuleEnvironment?.segments.orEmpty().any { it.hasSeeAllFallback }
-            }
-            .keys
-            .toCollection(linkedSetOf())
+        return current.files.filterTo(linkedMapOf()) { (_, snapshot) ->
+            snapshot.legacyModuleEnvironment?.segments.orEmpty().any { it.hasSeeAllFallback }
+        }.keys
     }
 
     private fun consumersOfModule(moduleName: String, graph: WorkspaceModuleGraph): Set<VirtualPath> {
@@ -228,14 +223,14 @@ object WorkspaceDirtySetPlanner {
         publicSurfaceChangedFiles: Set<VirtualPath>,
         activeProviderChangedModuleNames: Set<String>
     ): Set<String> {
-        val moduleNames = linkedSetOf<String>()
-        moduleNames += activeProviderChangedModuleNames
-        publicSurfaceChangedFiles.forEach { path ->
-            moduleNames += previous.files[path]?.publicFingerprint?.providedModuleNames.orEmpty()
-            moduleNames += previous.extraProviders[path]?.publicFingerprint?.providedModuleNames.orEmpty()
-            moduleNames += current.files[path]?.publicFingerprint?.providedModuleNames.orEmpty()
-            moduleNames += current.extraProviders[path]?.publicFingerprint?.providedModuleNames.orEmpty()
+        return buildSet {
+            addAll(activeProviderChangedModuleNames)
+            publicSurfaceChangedFiles.forEach { path ->
+                addAll(previous.files[path]?.publicFingerprint?.providedModuleNames.orEmpty())
+                addAll(previous.extraProviders[path]?.publicFingerprint?.providedModuleNames.orEmpty())
+                addAll(current.files[path]?.publicFingerprint?.providedModuleNames.orEmpty())
+                addAll(current.extraProviders[path]?.publicFingerprint?.providedModuleNames.orEmpty())
+            }
         }
-        return moduleNames
     }
 }

@@ -1,5 +1,7 @@
 package io.github.dingyi222666.luaparser.semantic.workspace
 
+import io.github.dingyi222666.luaparser.parser.ast.node.ArrayConstructorExpression
+import io.github.dingyi222666.luaparser.parser.ast.node.AttributeIdentifier
 import io.github.dingyi222666.luaparser.parser.ast.node.BaseASTNode
 import io.github.dingyi222666.luaparser.parser.ast.node.CallExpression
 import io.github.dingyi222666.luaparser.parser.ast.node.ConstantNode
@@ -10,10 +12,15 @@ import io.github.dingyi222666.luaparser.parser.ast.node.LocalStatement
 import io.github.dingyi222666.luaparser.parser.ast.node.MemberExpression
 import io.github.dingyi222666.luaparser.parser.ast.node.Position
 import io.github.dingyi222666.luaparser.parser.ast.node.Range
+import io.github.dingyi222666.luaparser.parser.ast.node.StringCallExpression
+import io.github.dingyi222666.luaparser.parser.ast.node.TableConstructorExpression
+import io.github.dingyi222666.luaparser.parser.ast.node.TableCallExpression
+import io.github.dingyi222666.luaparser.parser.ast.visitor.ASTVisitor
 import io.github.dingyi222666.luaparser.semantic.api.CompletionItem
 import io.github.dingyi222666.luaparser.semantic.api.CompletionItemKind
 import io.github.dingyi222666.luaparser.semantic.api.Diagnostic
 import io.github.dingyi222666.luaparser.semantic.api.SignatureHelp
+import io.github.dingyi222666.luaparser.semantic.api.Symbol
 import io.github.dingyi222666.luaparser.semantic.api.SymbolKind
 import io.github.dingyi222666.luaparser.semantic.api.TypeInfo
 import io.github.dingyi222666.luaparser.semantic.checker.LuaLayoutValueDomains
@@ -23,11 +30,17 @@ import io.github.dingyi222666.luaparser.semantic.importedSymbolHandle
 import io.github.dingyi222666.luaparser.semantic.binder.BinderDeclaration
 import io.github.dingyi222666.luaparser.semantic.binder.DeclarationId
 import io.github.dingyi222666.luaparser.semantic.binder.DeclarationKind
+import io.github.dingyi222666.luaparser.semantic.binder.DeclarationNamespace
 import io.github.dingyi222666.luaparser.semantic.binder.DeclarationOrigin
 import io.github.dingyi222666.luaparser.semantic.binder.DeclarationOwner
+import io.github.dingyi222666.luaparser.semantic.binder.SymbolId
 import io.github.dingyi222666.luaparser.semantic.binder.comparePositions
+import io.github.dingyi222666.luaparser.semantic.model.DefaultSemanticModel
+import io.github.dingyi222666.luaparser.semantic.model.SemanticModel
 import io.github.dingyi222666.luaparser.semantic.types.model.CallableType
 import io.github.dingyi222666.luaparser.semantic.types.model.ClassType
+import io.github.dingyi222666.luaparser.semantic.types.model.JavaClassType
+import io.github.dingyi222666.luaparser.semantic.types.model.JavaInstanceType
 import io.github.dingyi222666.luaparser.semantic.types.model.ModuleType
 import io.github.dingyi222666.luaparser.semantic.types.model.TableType
 import io.github.dingyi222666.luaparser.semantic.types.model.Type
@@ -81,12 +94,10 @@ class LuaWorkspaceQueryFacade(
         nameFilter: ((String) -> Boolean)?): List<CompletionItem> {
         val semanticFile = snapshot.files[path]?.semanticFile
         if (semanticFile != null) {
-            unterminatedStringCompletions(semanticFile, position)?.let {
-                return it
-            }
+            unterminatedStringCompletions(semanticFile, position)?.let { return it }
         }
         val model = semanticFile?.model
-        val baseCompletions = if (model is io.github.dingyi222666.luaparser.semantic.model.DefaultSemanticModel)
+        val baseCompletions = if (model is DefaultSemanticModel)
             model.getCompletionsMatching(position, nameFilter)
             else model?.getCompletionsAt(position).orEmpty().filter { nameFilter?.invoke(it.label) != false }
         if (semanticFile == null) {
@@ -835,32 +846,21 @@ class LuaWorkspaceQueryFacade(
     private fun isPreferredHoverStructuredKind(kind: TypeInfoKind): Boolean =
         kind == TypeInfoKind.FUNCTION || kind == TypeInfoKind.CLASS || kind == TypeInfoKind.MODULE
 
-    private fun memberReceiverType(
-        model: io.github.dingyi222666.luaparser.semantic.model.SemanticModel,
-        node: BaseASTNode?,
-        symbol: io.github.dingyi222666.luaparser.semantic.api.Symbol?
-    ): TypeInfo? {
+    private fun memberReceiverType(model: SemanticModel, node: BaseASTNode?, symbol: Symbol?): TypeInfo? {
         val memberExpression = node as? MemberExpression ?: return null
-        return symbol?.kind
-            ?.takeIf { it == io.github.dingyi222666.luaparser.semantic.api.SymbolKind.FIELD || it == io.github.dingyi222666.luaparser.semantic.api.SymbolKind.METHOD }
+        return symbol?.kind?.takeIf { it == SymbolKind.FIELD || it == SymbolKind.METHOD }
             ?.let { model.getTypeAt(memberExpression.base) }
     }
 
     private fun requireBackedDefinition(
-        semanticFile: WorkspaceSemanticFile,
-        path: VirtualPath,
-        node: BaseASTNode?,
-        symbol: io.github.dingyi222666.luaparser.semantic.api.Symbol?
+        semanticFile: WorkspaceSemanticFile, path: VirtualPath, node: BaseASTNode?, symbol: Symbol?
     ): WorkspaceLocation? =
         requireBackedModuleNames(semanticFile, node, symbol).firstNotNullOfOrNull { candidate ->
             requireBackedLocation(path, candidate)
         }
 
     private fun requireBackedLocalDefinition(
-        semanticFile: WorkspaceSemanticFile,
-        path: VirtualPath,
-        node: BaseASTNode?,
-        symbol: io.github.dingyi222666.luaparser.semantic.api.Symbol?
+        semanticFile: WorkspaceSemanticFile, path: VirtualPath, node: BaseASTNode?, symbol: Symbol?
     ): WorkspaceLocation? {
         val identifier = plainIdentifier(node) ?: return null
         val moduleName = resolveRequiredModuleNameForLocal(semanticFile, symbol?.symbolId, identifier) ?: return null
@@ -872,10 +872,7 @@ class LuaWorkspaceQueryFacade(
      * member on the provider module (e.g. AndroLua socket.url overlay path).
      */
     private fun requireBackedMemberLocalDefinition(
-        semanticFile: WorkspaceSemanticFile,
-        path: VirtualPath,
-        node: BaseASTNode?,
-        symbol: io.github.dingyi222666.luaparser.semantic.api.Symbol?
+        semanticFile: WorkspaceSemanticFile, path: VirtualPath, node: BaseASTNode?, symbol: Symbol?
     ): WorkspaceLocation? {
         val identifier = plainIdentifier(node) ?: return null
         val declaration = localDeclarationForSymbolOrIdentifier(semanticFile, symbol?.symbolId, identifier) ?: return null
@@ -906,9 +903,7 @@ class LuaWorkspaceQueryFacade(
         localInitializerExpression(declaration) as? MemberExpression
 
     private fun requireBackedModuleNames(
-        semanticFile: WorkspaceSemanticFile,
-        node: BaseASTNode?,
-        symbol: io.github.dingyi222666.luaparser.semantic.api.Symbol?
+        semanticFile: WorkspaceSemanticFile, node: BaseASTNode?, symbol: Symbol?
     ): List<String> {
         val identifier = node as? Identifier
         // Member-access carets (dep.missing) must not be treated as require-local aliases.
@@ -1076,9 +1071,9 @@ class LuaWorkspaceQueryFacade(
         val handle = symbolId?.toSymbolHandle() ?: return null
         return when {
             handle.binderSymbolId != null -> semanticFile.snapshot.binder.declarationIndex
-                .getPrimaryDeclaration(io.github.dingyi222666.luaparser.semantic.binder.SymbolId(handle.binderSymbolId))
+                .getPrimaryDeclaration(SymbolId(handle.binderSymbolId))
             handle.declarationId != null -> semanticFile.snapshot.binder.declarationIndex
-                .getDeclaration(io.github.dingyi222666.luaparser.semantic.binder.DeclarationId(handle.declarationId))
+                .getDeclaration(DeclarationId(handle.declarationId))
             else -> null
         }
     }
@@ -1118,9 +1113,7 @@ class LuaWorkspaceQueryFacade(
     }
 
     private fun localSymbolReferences(
-        semanticFile: WorkspaceSemanticFile,
-        path: VirtualPath,
-        symbol: io.github.dingyi222666.luaparser.semantic.api.Symbol?
+        semanticFile: WorkspaceSemanticFile, path: VirtualPath, symbol: Symbol?
     ): List<WorkspaceLocation> {
         val declaration = localDeclarationForSymbol(semanticFile, symbol?.symbolId) ?: return emptyList()
         val locations = linkedMapOf<String, WorkspaceLocation>()
@@ -1188,9 +1181,7 @@ class LuaWorkspaceQueryFacade(
         ) {
             return null
         }
-        return (callArguments(call).singleOrNull() as? ConstantNode)
-            ?.takeIf { it.constantType == ConstantNode.TYPE.STRING }
-            ?.stringOf()
+        return stringConstantOf(callArguments(call).singleOrNull())
     }
 
     /** Shared import-target ladder: this file's path-scoped import first, then the global surface. */
@@ -1222,10 +1213,13 @@ class LuaWorkspaceQueryFacade(
         return WorkspaceLocation(imported.providerPath, syntheticModuleRange(imported.alias))
     }
 
-    private fun isSameStringLiteral(
-        expression: io.github.dingyi222666.luaparser.parser.ast.node.ExpressionNode,
-        constant: ConstantNode
-    ): Boolean {
+    /** The expression's string-literal value when it is a STRING-typed [ConstantNode]. */
+    private fun stringConstantOf(expression: BaseASTNode?): String? =
+        (expression as? ConstantNode)
+            ?.takeIf { it.constantType == ConstantNode.TYPE.STRING }
+            ?.stringOf()
+
+    private fun isSameStringLiteral(expression: ExpressionNode, constant: ConstantNode): Boolean {
         val other = expression as? ConstantNode ?: return false
         return other.constantType == ConstantNode.TYPE.STRING &&
             other.stringOf() == constant.stringOf() &&
@@ -1241,7 +1235,7 @@ class LuaWorkspaceQueryFacade(
         constant: ConstantNode
     ): CallExpression? {
         var match: CallExpression? = null
-        val visitor = object : io.github.dingyi222666.luaparser.parser.ast.visitor.ASTVisitor<Unit> {
+        val visitor = object : ASTVisitor<Unit> {
             // Shared body for both call shapes (the two overrides were byte-identical):
             // claim the match and stop descending when the caret constant is an argument of
             // an import/require callee; otherwise continue traversal via super.
@@ -1262,37 +1256,28 @@ class LuaWorkspaceQueryFacade(
                 if (!visitCallLike(node)) super.visitCallExpression(node, value)
             }
 
-            override fun visitStringCallExpression(
-                node: io.github.dingyi222666.luaparser.parser.ast.node.StringCallExpression,
-                value: Unit
-            ) {
+            override fun visitStringCallExpression(node: StringCallExpression, value: Unit) {
                 if (!visitCallLike(node)) super.visitStringCallExpression(node, value)
             }
 
-            override fun visitAttributeIdentifier(
-                identifier: io.github.dingyi222666.luaparser.parser.ast.node.AttributeIdentifier,
-                value: Unit
-            ) = Unit
+            override fun visitAttributeIdentifier(identifier: AttributeIdentifier, value: Unit) = Unit
             // visitIdentifier / visitCommentStatement keep their (empty) interface defaults.
         }
         visitor.visitChunkNode(semanticFile.chunk, Unit)
         return match
     }
 
-    private fun callArguments(call: CallExpression): List<io.github.dingyi222666.luaparser.parser.ast.node.ExpressionNode> {
+    private fun callArguments(call: CallExpression): List<ExpressionNode> {
         // Flatten nested string/table-call bases so outer CallExpression(import "X") and
         // the nested StringCallExpression both surface the string argument. String/Table
         // calls recurse into any base; plain calls only into nested string/table bases.
         return buildList {
-            fun appendFrom(expression: io.github.dingyi222666.luaparser.parser.ast.node.ExpressionNode) {
+            fun appendFrom(expression: ExpressionNode) {
                 if (expression !is CallExpression) return
-                if (expression is io.github.dingyi222666.luaparser.parser.ast.node.StringCallExpression ||
-                    expression is io.github.dingyi222666.luaparser.parser.ast.node.TableCallExpression
-                ) {
+                if (expression is StringCallExpression || expression is TableCallExpression) {
                     appendFrom(expression.base)
                 } else {
-                    (expression.base as? io.github.dingyi222666.luaparser.parser.ast.node.StringCallExpression
-                        ?: expression.base as? io.github.dingyi222666.luaparser.parser.ast.node.TableCallExpression)
+                    (expression.base as? StringCallExpression ?: expression.base as? TableCallExpression)
                         ?.let(::appendFrom)
                 }
                 addAll(expression.arguments)
@@ -1301,16 +1286,13 @@ class LuaWorkspaceQueryFacade(
         }
     }
 
-    private fun effectiveCallBase(call: CallExpression): io.github.dingyi222666.luaparser.parser.ast.node.ExpressionNode {
+    private fun effectiveCallBase(call: CallExpression): ExpressionNode {
         // Flatten StringCall bases so require "mod" / import "mod" surface their callee.
         val base = call.base
-        return if (base is io.github.dingyi222666.luaparser.parser.ast.node.StringCallExpression) base.base else base
+        return if (base is StringCallExpression) base.base else base
     }
 
-    private fun isImportCallee(
-        semanticFile: WorkspaceSemanticFile,
-        expression: io.github.dingyi222666.luaparser.parser.ast.node.ExpressionNode
-    ): Boolean {
+    private fun isImportCallee(semanticFile: WorkspaceSemanticFile, expression: ExpressionNode): Boolean {
         val identifier = expression as? Identifier ?: return false
         if (identifier.name == "import") {
             val local = visibleLocalValueDeclaration(semanticFile, identifier.name, identifier.range.start)
@@ -1350,12 +1332,7 @@ class LuaWorkspaceQueryFacade(
             return false
         }
         val initExpression = localStatement.variables.getOrNull(localIndex) as? Identifier ?: return false
-        val hopExclusions = localStatement.init.mapNotNull { localId ->
-            semanticFile.snapshot.binder.declarationIndex
-                .getDeclarations(localId)
-                .firstOrNull { it.kind == DeclarationKind.LOCAL }
-                ?.id
-        }.toSet()
+        val hopExclusions = localStatementInitDeclarationIds(semanticFile, localStatement)
         return aliasResolvesToImportCallable(semanticFile, initExpression, hopExclusions, visited)
     }
 
@@ -1366,7 +1343,7 @@ class LuaWorkspaceQueryFacade(
      * the caller (the query is a pure snapshot read, so recomputing it is dead weight).
      */
     private fun importedSymbolDefinitionLocation(
-        symbol: io.github.dingyi222666.luaparser.semantic.api.Symbol?,
+        symbol: Symbol?,
         importedAt: WorkspaceImportedSymbol?
     ): WorkspaceLocation? {
         return symbol?.symbolId
@@ -1384,7 +1361,7 @@ class LuaWorkspaceQueryFacade(
     private fun navigationExportForMember(
         path: VirtualPath,
         position: Position,
-        symbol: io.github.dingyi222666.luaparser.semantic.api.Symbol?
+        symbol: Symbol?
     ): WorkspaceModuleResolver.ResolvedExportMember? {
         return symbol?.symbolId?.let(resolver::exportedMemberByHandle)
             ?: resolver.exportAt(path, position)
@@ -1427,10 +1404,7 @@ class LuaWorkspaceQueryFacade(
         return resolveRequiredModuleNameForLocal(semanticFile, symbol?.symbolId, node)
     }
 
-    private fun importRequireSymbol(
-        path: VirtualPath,
-        position: Position
-    ): io.github.dingyi222666.luaparser.semantic.api.Symbol? {
+    private fun importRequireSymbol(path: VirtualPath, position: Position): Symbol? {
         val resolved = resolveRequire(path, position) ?: return null
         if (resolved.moduleName != "import") {
             return null
@@ -1519,15 +1493,24 @@ class LuaWorkspaceQueryFacade(
     private fun exportMemberCompletionKind(
         member: ModuleExportSurface.MemberExport,
         detail: String?
-    ): CompletionItemKind {
-        val base = member.kind.toCompletionItemKind()
-        if (base == CompletionItemKind.METHOD || base == CompletionItemKind.FUNCTION) {
-            return base
+    ): CompletionItemKind = callableUpgradedCompletionKind(
+        member.kind.toCompletionItemKind(),
+        detail != null && (detail.trim().startsWith("fun(") || detail.contains(" -> "))
+    )
+
+    /**
+     * Shared callable-display upgrade for both completion producers: a callable display lifts
+     * TEXT/FIELD kinds to [CompletionItemKind.FUNCTION] so LSP clients never render callables
+     * with the plain text/value icon; METHOD/FUNCTION (and every other kind) pass through.
+     * The import producer only feeds TEXT into [callable] (a FIELD-kind import keeps FIELD),
+     * the export producer feeds FIELD as well (`function M.f()` collects as FIELD).
+     */
+    private fun callableUpgradedCompletionKind(base: CompletionItemKind, callable: Boolean): CompletionItemKind =
+        if (callable && (base == CompletionItemKind.TEXT || base == CompletionItemKind.FIELD)) {
+            CompletionItemKind.FUNCTION
+        } else {
+            base
         }
-        val callable = detail != null &&
-            (detail.trim().startsWith("fun(") || detail.contains(" -> "))
-        return if (callable) CompletionItemKind.FUNCTION else base
-    }
 
     /**
      * Hover for `local greeter = require("greeter")` aliases: surface MODULE typing from the
@@ -1537,7 +1520,7 @@ class LuaWorkspaceQueryFacade(
         semanticFile: WorkspaceSemanticFile,
         path: VirtualPath,
         node: BaseASTNode?
-    ): io.github.dingyi222666.luaparser.semantic.api.Symbol? {
+    ): Symbol? {
         val identifier = plainIdentifier(node) ?: return null
         val moduleName = resolveRequiredModuleNameForLocal(semanticFile, null, identifier)
             ?: resolveRequiredModuleNameForVisibleLocal(
@@ -1620,11 +1603,7 @@ class LuaWorkspaceQueryFacade(
                 basePath + memberName
             }
             is IndexExpression -> {
-                val key = (expression.index as? ConstantNode)
-                    ?.takeIf { it.constantType == ConstantNode.TYPE.STRING }
-                    ?.stringOf()
-                    ?.takeIf { it.isNotBlank() }
-                    ?: return null
+                val key = stringConstantOf(expression.index)?.takeIf { it.isNotBlank() } ?: return null
                 val basePath = requireBackedExportPath(semanticFile, path, expression.base, visited)
                     ?: return null
                 basePath + key
@@ -1769,29 +1748,16 @@ class LuaWorkspaceQueryFacade(
     private fun importCallStringTargets(call: CallExpression): List<String> {
         val firstArgument = callArguments(call).firstOrNull()
         return when (firstArgument) {
-            is ConstantNode ->
-                if (firstArgument.constantType == ConstantNode.TYPE.STRING) listOf(firstArgument.stringOf()) else emptyList()
-            is io.github.dingyi222666.luaparser.parser.ast.node.ArrayConstructorExpression ->
-                firstArgument.values.mapNotNull { expression ->
-                    (expression as? ConstantNode)
-                        ?.takeIf { it.constantType == ConstantNode.TYPE.STRING }
-                        ?.stringOf()
-                }
-            is io.github.dingyi222666.luaparser.parser.ast.node.TableConstructorExpression ->
-                firstArgument.fields.mapNotNull { field ->
-                    (field.value as? ConstantNode)
-                        ?.takeIf { it.constantType == ConstantNode.TYPE.STRING }
-                        ?.stringOf()
-                }
+            is ConstantNode -> stringConstantOf(firstArgument)?.let(::listOf).orEmpty()
+            is ArrayConstructorExpression -> firstArgument.values.mapNotNull(::stringConstantOf)
+            is TableConstructorExpression -> firstArgument.fields.mapNotNull { stringConstantOf(it.value) }
             else -> emptyList()
         }
     }
 
     private fun importCallTargetHoverSymbol(
-        semanticFile: WorkspaceSemanticFile,
-        path: VirtualPath,
-        node: BaseASTNode?
-    ): io.github.dingyi222666.luaparser.semantic.api.Symbol? {
+        semanticFile: WorkspaceSemanticFile, path: VirtualPath, node: BaseASTNode?
+    ): Symbol? {
         val identifier = plainIdentifier(node) ?: return null
         val declaration = exactLocalDeclarationForIdentifier(semanticFile, identifier)
             ?: visibleLocalValueDeclaration(semanticFile, identifier.name, identifier.range.start)
@@ -1832,10 +1798,7 @@ class LuaWorkspaceQueryFacade(
     }
 
     private fun importCallLocalDefinition(
-        semanticFile: WorkspaceSemanticFile,
-        path: VirtualPath,
-        node: BaseASTNode?,
-        symbol: io.github.dingyi222666.luaparser.semantic.api.Symbol?
+        semanticFile: WorkspaceSemanticFile, path: VirtualPath, node: BaseASTNode?, symbol: Symbol?
     ): WorkspaceLocation? {
         val identifier = plainIdentifier(node) ?: return null
         val declaration = localDeclarationForSymbolOrIdentifier(semanticFile, symbol?.symbolId, identifier) ?: return null
@@ -1854,10 +1817,7 @@ class LuaWorkspaceQueryFacade(
      * Lands on mounted __jvm__/classes provider when the target class was source-discovered.
      */
     private fun bindClassLocalDefinition(
-        semanticFile: WorkspaceSemanticFile,
-        path: VirtualPath,
-        node: BaseASTNode?,
-        symbol: io.github.dingyi222666.luaparser.semantic.api.Symbol?
+        semanticFile: WorkspaceSemanticFile, path: VirtualPath, node: BaseASTNode?, symbol: Symbol?
     ): WorkspaceLocation? {
         val identifier = node as? Identifier
         val declaration = when {
@@ -1964,14 +1924,8 @@ class LuaWorkspaceQueryFacade(
     private fun createProxyInterfaceTargets(call: CallExpression): List<String> {
         val targets = mutableListOf<String>()
         for (argument in callArguments(call)) {
-            val constant = argument as? ConstantNode ?: break
-            if (constant.constantType != ConstantNode.TYPE.STRING) {
-                break
-            }
-            targets += constant.stringOf()
-                .split(',')
-                .map(String::trim)
-                .filter(String::isNotEmpty)
+            val value = stringConstantOf(argument) ?: break
+            targets += value.split(',').map(String::trim).filter(String::isNotEmpty)
         }
         return targets
     }
@@ -1983,9 +1937,7 @@ class LuaWorkspaceQueryFacade(
      * [isLuaJavaClassLoadCallee] differ only in the helper name(s) they accept.
      */
     private fun isLuaJavaHelperCallBase(
-        semanticFile: WorkspaceSemanticFile,
-        expression: io.github.dingyi222666.luaparser.parser.ast.node.ExpressionNode,
-        helperName: String
+        semanticFile: WorkspaceSemanticFile, expression: ExpressionNode, helperName: String
     ): Boolean {
         return when (expression) {
             is MemberExpression ->
@@ -2009,7 +1961,7 @@ class LuaWorkspaceQueryFacade(
 
     private fun isCreateProxyCallBase(
         semanticFile: WorkspaceSemanticFile,
-        expression: io.github.dingyi222666.luaparser.parser.ast.node.ExpressionNode
+        expression: ExpressionNode
     ): Boolean {
         return isLuaJavaHelperCallBase(semanticFile, expression, "createProxy")
     }
@@ -2021,10 +1973,10 @@ class LuaWorkspaceQueryFacade(
             return true
         }
         return when (val classSurface = moduleType.fields["__class"]) {
-            is io.github.dingyi222666.luaparser.semantic.types.model.JavaClassType ->
+            is JavaClassType ->
                 memberName in classSurface.allInstanceMembers() ||
                     memberName in classSurface.allStaticMembers()
-            is io.github.dingyi222666.luaparser.semantic.types.model.JavaInstanceType ->
+            is JavaInstanceType ->
                 memberName in classSurface.allInstanceMembers() ||
                     memberName in classSurface.classType.allStaticMembers()
             else -> false
@@ -2033,13 +1985,13 @@ class LuaWorkspaceQueryFacade(
 
     private fun isLuaJavaClassLoadCallee(
         semanticFile: WorkspaceSemanticFile,
-        expression: io.github.dingyi222666.luaparser.parser.ast.node.ExpressionNode
+        expression: ExpressionNode
     ): Boolean {
         return LUA_JAVA_CLASS_LOAD_HELPERS.any { isLuaJavaHelperCallBase(semanticFile, expression, it) }
     }
 
     private fun isLuaJavaOwnerIdentifier(
-        expression: io.github.dingyi222666.luaparser.parser.ast.node.ExpressionNode
+        expression: ExpressionNode
     ): Boolean {
         val identifier = expression as? Identifier ?: return false
         return identifier.name == "luajava" || identifier.name == "LuaJava"
@@ -2227,16 +2179,15 @@ class LuaWorkspaceQueryFacade(
     }
 
     /**
-     * Import-surface kinds mirror the member rule: an unknown-kind symbol whose value is a
-     * callable display completes as FUNCTION so callables never degrade to the text icon.
+     * Import-surface kinds mirror the member rule but only lift UNKNOWN/TEXT: a FIELD-kind
+     * import keeps FIELD even when its value is a callable display.
      */
     private fun importedCompletionKind(symbol: WorkspaceImportedSymbol): CompletionItemKind {
         val base = symbol.kind.toCompletionItemKind()
-        if (base != CompletionItemKind.TEXT) {
-            return base
-        }
-        val callable = symbol.valueType.displayName.trim().startsWith("fun(")
-        return if (callable) CompletionItemKind.FUNCTION else base
+        return callableUpgradedCompletionKind(
+            base,
+            base == CompletionItemKind.TEXT && symbol.valueType.displayName.trim().startsWith("fun(")
+        )
     }
 
     private fun mergeCompletions(
@@ -2271,7 +2222,7 @@ class LuaWorkspaceQueryFacade(
         return resolver.importedSymbolFor(path, identifier.name)
     }
 
-    private fun importedSymbol(imported: WorkspaceImportedSymbol): io.github.dingyi222666.luaparser.semantic.api.Symbol =
+    private fun importedSymbol(imported: WorkspaceImportedSymbol): Symbol =
         surfaceSymbol(imported.alias, imported.kind, null, importedTypeInfo(imported.valueType), imported.valueType.displayName, importedSymbolHandle(imported))
 
     /**
@@ -2285,33 +2236,39 @@ class LuaWorkspaceQueryFacade(
         typeInfo: TypeInfo,
         detail: String?,
         symbolId: String
-    ): io.github.dingyi222666.luaparser.semantic.api.Symbol {
-        return io.github.dingyi222666.luaparser.semantic.api.Symbol(
-            name = name,
-            kind = kind,
-            range = range,
-            type = typeInfo,
-            declaredType = typeInfo,
-            detail = detail,
-            symbolId = symbolId
-        )
-    }
+    ): Symbol = Symbol(
+        name = name,
+        kind = kind,
+        range = range,
+        type = typeInfo,
+        declaredType = typeInfo,
+        detail = detail,
+        symbolId = symbolId
+    )
 
-    private fun importedTypeInfo(type: Type): TypeInfo {
-        val moduleType = type as? ModuleType
-        val kind = when (type) {
+    private fun importedTypeInfo(type: Type): TypeInfo = TypeInfo(
+        displayName = type.displayName,
+        kind = when (type) {
             is ModuleType -> TypeInfoKind.MODULE
             is CallableType -> TypeInfoKind.FUNCTION
             is ClassType -> TypeInfoKind.CLASS
             is TableType -> TypeInfoKind.TABLE
             else -> TypeInfoKind.UNKNOWN
-        }
-        return TypeInfo(
-            displayName = type.displayName,
-            kind = kind,
-            moduleName = moduleType?.moduleName
-        )
-    }
+        },
+        moduleName = (type as? ModuleType)?.moduleName
+    )
+
+    /** LOCAL declaration ids anchored at a local statement's initializer list. */
+    private fun localStatementInitDeclarationIds(
+        semanticFile: WorkspaceSemanticFile,
+        statement: LocalStatement
+    ): Set<DeclarationId> =
+        statement.init.mapNotNull { identifier ->
+            semanticFile.snapshot.binder.declarationIndex
+                .getDeclarations(identifier)
+                .firstOrNull { it.kind == DeclarationKind.LOCAL }
+                ?.id
+        }.toSet()
 
     private fun localInitializerDeclarationIds(
         semanticFile: WorkspaceSemanticFile,
@@ -2324,12 +2281,7 @@ class LuaWorkspaceQueryFacade(
                 if (parent.variables.none { it === current }) {
                     return emptySet()
                 }
-                return parent.init.mapNotNull { identifier ->
-                    semanticFile.snapshot.binder.declarationIndex
-                        .getDeclarations(identifier)
-                        .firstOrNull { it.kind == DeclarationKind.LOCAL }
-                        ?.id
-                }.toSet()
+                return localStatementInitDeclarationIds(semanticFile, parent)
             }
             current = parent as? BaseASTNode
         }
@@ -2351,7 +2303,7 @@ class LuaWorkspaceQueryFacade(
             scope.declarationIds.asReversed().asSequence()
                 .mapNotNull(semanticFile.snapshot.binder.declarationIndex::getDeclaration)
         }
-        .filter { it.kind.namespace == io.github.dingyi222666.luaparser.semantic.binder.DeclarationNamespace.VALUE }
+        .filter { it.kind.namespace == DeclarationNamespace.VALUE }
 
     private fun visibleLocalValueNames(
         semanticFile: WorkspaceSemanticFile,
@@ -2397,7 +2349,7 @@ class LuaWorkspaceQueryFacade(
         )
     }
 
-    private fun exportSymbol(export: WorkspaceModuleResolver.ResolvedExportMember): io.github.dingyi222666.luaparser.semantic.api.Symbol =
+    private fun exportSymbol(export: WorkspaceModuleResolver.ResolvedExportMember): Symbol =
         surfaceSymbol(export.member.name, export.member.kind, export.member.range, exportTypeInfo(export), export.type.displayName, export.handle)
 
     private fun exportTypeInfo(export: WorkspaceModuleResolver.ResolvedExportMember): TypeInfo {

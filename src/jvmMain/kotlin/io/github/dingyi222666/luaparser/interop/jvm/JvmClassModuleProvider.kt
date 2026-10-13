@@ -151,7 +151,6 @@ class JvmClassModuleProvider(
         configuration: JvmWorkspaceConfiguration,
         deferMembers: Boolean = false
     ): Map<VirtualPath, WorkspaceSnapshot.FileSnapshot> {
-        configuration.normalized(defaultImportPrefixes)
         val providers = linkedMapOf<VirtualPath, WorkspaceSnapshot.FileSnapshot>()
         importTargets.forEach { importText ->
             val parsed = parseImportTarget(importText) ?: return@forEach
@@ -327,11 +326,9 @@ class JvmClassModuleProvider(
         return importedClassSymbol(importText, normalized, classLoader, deferMembers)
     }
 
-    internal fun implicitClassSymbol(importText: String, configuration: JvmWorkspaceConfiguration): WorkspaceImportedSymbol? {
-        val normalized = configuration.normalized(defaultImportPrefixes)
-        val classLoader = normalized.classLoader ?: classLoaderFor(normalized)
-        return importedClassSymbol(importText, normalized, classLoader, deferMembers = deferPackageMemberReflection)
-    }
+    internal fun implicitClassSymbol(importText: String, configuration: JvmWorkspaceConfiguration): WorkspaceImportedSymbol? =
+        // Identical body to [importedSymbol] with the package-catalog defer policy applied.
+        importedSymbol(importText, configuration, deferMembers = deferPackageMemberReflection)
 
     /** Shared imported-symbol shape: caller-chosen alias, module identity from the surface. */
     private fun importedSymbolOf(
@@ -821,14 +818,10 @@ class JvmClassModuleProvider(
      * Package wildcards expose only public top-level types from the exact package.
      * Inner/anonymous/local/array classes are never package fields (BufferType, VERSION, Theme, …).
      */
-    private fun isTopLevelPackageMemberClass(clazz: Class<*>): Boolean {
-        if (!Modifier.isPublic(clazz.modifiers)) return false
-        if (clazz.isArray || clazz.isAnonymousClass || clazz.isLocalClass || clazz.isSynthetic) return false
-        if (clazz.enclosingClass != null || clazz.declaringClass != null) return false
-        // Defense-in-depth: binary names with '$' are nested even if reflection flags differ.
-        if ('$' in clazz.name) return false
-        return clazz.simpleName.isNotEmpty()
-    }
+    private fun isTopLevelPackageMemberClass(clazz: Class<*>): Boolean =
+        Modifier.isPublic(clazz.modifiers) && !clazz.isArray && !clazz.isAnonymousClass &&
+            !clazz.isLocalClass && !clazz.isSynthetic && clazz.enclosingClass == null &&
+            clazz.declaringClass == null && '$' !in clazz.name && clazz.simpleName.isNotEmpty()
 
     private fun importDiagnostic(
         importText: String,
@@ -1092,9 +1085,7 @@ class JvmClassModuleProvider(
         }
         val simpleName = binaryName.substring(lastDot + 1)
         return binaryName.substring(0, lastDot) == packageName &&
-            simpleName.isNotEmpty() &&
-            simpleName != "package-info" &&
-            simpleName != "module-info"
+            simpleName != "package-info" && simpleName != "module-info"
     }
 
     private fun collectClassesFromDirectory(directoryPath: String, packageName: String, output: MutableSet<String>) {
@@ -1166,25 +1157,19 @@ class JvmClassModuleProvider(
     }
 
     /**
-     * Extract a filesystem path from `jar:file:/...!/package` or plain `file:` URLs.
-     * Returns null for non-file jar protocols so callers can fall back to JarURLConnection.
+     * Extract a filesystem path from a `jar:file:/...!/package` URL (the only protocol
+     * reaching [collectClassesFromJar]). Returns null for non-file jar payloads so the
+     * caller falls back to JarURLConnection.
      */
     private fun jarFilePathFromUrl(url: java.net.URL): String? {
         return runCatching {
-            when (url.protocol) {
-                "jar" -> {
-                    val fileUrl = (url.openConnection() as? JarURLConnection)?.jarFileURL
-                    if (fileUrl != null && fileUrl.protocol == "file") {
-                        Paths.get(fileUrl.toURI()).toFile().path
-                    } else {
-                        val spec = url.file // e.g. file:/path/to.jar!/android/app
-                        val jarPart = spec.substringBefore('!')
-                        val fileUri = if (jarPart.startsWith("file:")) jarPart else "file:$jarPart"
-                        Paths.get(URI.create(fileUri)).toFile().path
-                    }
-                }
-                "file" -> Paths.get(url.toURI()).toFile().path
-                else -> null
+            val fileUrl = (url.openConnection() as? JarURLConnection)?.jarFileURL
+            if (fileUrl != null && fileUrl.protocol == "file") {
+                Paths.get(fileUrl.toURI()).toFile().path
+            } else {
+                val jarPart = url.file.substringBefore('!') // e.g. file:/path/to.jar!/android/app
+                val fileUri = if (jarPart.startsWith("file:")) jarPart else "file:$jarPart"
+                Paths.get(URI.create(fileUri)).toFile().path
             }
         }.getOrNull()?.takeIf { path -> path.isNotBlank() && File(path).isFile }
     }
@@ -1487,7 +1472,7 @@ class JvmClassModuleProvider(
      */
     private fun reflectedClassProviderModuleNames(clazz: Class<*>): Set<String> {
         val simple = clazz.simpleName.ifBlank { clazz.name.substringAfterLast('$').substringAfterLast('.') }
-        return simple.takeIf { it.isNotBlank() }?.let { linkedSetOf(it) } ?: emptySet()
+        return setOfNotNull(simple.takeIf(String::isNotBlank))
     }
 
     /**
@@ -1504,13 +1489,7 @@ class JvmClassModuleProvider(
         providedModuleNames: Set<String>,
         moduleType: ModuleType
     ): Pair<VirtualPath, WorkspaceSnapshot.FileSnapshot> {
-        val source = buildString {
-            append("-- reflected JVM ")
-            append(providerKind)
-            append(" provider for ")
-            append(claimName)
-            append('\n')
-        }
+        val source = "-- reflected JVM $providerKind provider for $claimName\n"
         val surface = ModuleExportSurface(
             moduleType = moduleType,
             sourceForm = ModuleExportSurface.SourceForm.RETURN_TABLE_LITERAL,
@@ -1738,7 +1717,7 @@ class JvmClassModuleProvider(
         // hierarchy identity for assignability without expanding every ancestor's member
         // graph. Otherwise recurse bounded (stack + depth) via reflectedInnerClassTypeFor.
         val nextReflectedClassStack = reflectedClassStack + clazz.name
-        return classModuleTypeFor(clazz, javaClassTypeFor(clazz)) { innerClass ->
+        return classModuleTypeFor(clazz, javaClassTypeFor(clazz, 0)) { innerClass ->
             if (deferPackageMemberReflection) {
                 deferredModuleTypeFor(innerClass)
             } else {
@@ -1800,12 +1779,10 @@ class JvmClassModuleProvider(
         innerClassDepth: Int
     ): Type {
         if (innerClass.name in reflectedClassStack || innerClassDepth >= MAX_REFLECTED_INNER_CLASS_DEPTH) {
-            return javaClassTypeFor(innerClass)
+            return javaClassTypeFor(innerClass, 0)
         }
         return moduleTypeFor(innerClass, reflectedClassStack, innerClassDepth + 1)
     }
-
-    private fun javaClassTypeFor(clazz: Class<*>): JavaClassType = javaClassTypeFor(clazz, 0)
 
     private fun javaClassTypeFor(
         clazz: Class<*>,
@@ -1900,11 +1877,9 @@ class JvmClassModuleProvider(
     }
 
     /** Public, static/instance per [static], non-synthetic/non-bridge method gate. */
-    private fun isPublicMemberMethod(method: Method, static: Boolean): Boolean {
-        return Modifier.isPublic(method.modifiers) &&
-            Modifier.isStatic(method.modifiers) == static &&
+    private fun isPublicMemberMethod(method: Method, static: Boolean): Boolean =
+        Modifier.isPublic(method.modifiers) && Modifier.isStatic(method.modifiers) == static &&
             isReflectableMethod(method)
-    }
 
     private fun isReflectableMethod(method: Method): Boolean {
         return !method.isSynthetic && !method.isBridge
@@ -2252,13 +2227,6 @@ class JvmClassModuleProvider(
         // Bounded well below the test maxHierarchyDepth guard (33) while covering JDK chains
         // such as ArrayList -> List -> Collection -> Iterable and AbstractList -> Object.
         private const val MAX_HIERARCHY_SKELETON_DEPTH = 16
-        /**
-         * Hard per-class cap on exported `__class` members (adversarial audit: Android
-         * framework types such as Context expand to ~250 members and were previously
-         * unbounded). Applied after deterministic alphabetical sorting in [classMembers],
-         * so exactly the alphabetically first members survive truncation. Internal for the
-         * robustness test corpus; treat as a product heap bound, not a tuning knob.
-         */
         const val UNSUPPORTED_PREFIXED_IMPORT_CODE = "jvm.import.prefixed.unsupported"
 
         const val CLASSES_METADATA_KEY = "jvm.classes"

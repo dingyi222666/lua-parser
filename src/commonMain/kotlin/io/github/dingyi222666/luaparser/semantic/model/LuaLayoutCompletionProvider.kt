@@ -12,6 +12,7 @@ import io.github.dingyi222666.luaparser.semantic.api.CompletionItem
 import io.github.dingyi222666.luaparser.semantic.api.CompletionItemKind
 import io.github.dingyi222666.luaparser.semantic.binder.rangeContains
 import io.github.dingyi222666.luaparser.semantic.checker.ExpressionTypeEvaluator
+import io.github.dingyi222666.luaparser.semantic.checker.LuaLayoutValueDomains
 
 /**
  * AndroLua layout-table completions: when the caret sits on a property-key position inside a
@@ -103,7 +104,7 @@ internal class LuaLayoutCompletionProvider(
 
     private fun valueDomainCompletions(key: String?): List<CompletionItem>? {
         val resolvedKey = key ?: return null
-        return simpleSuggestions(evaluator.layoutValueSuggestionsForKey(resolvedKey), CompletionItemKind.KEYWORD)
+        return simpleSuggestions(LuaLayoutValueDomains.forKey(resolvedKey), CompletionItemKind.KEYWORD)
     }
 
     private fun moduleArgumentCompletions(call: CallExpression): List<CompletionItem>? {

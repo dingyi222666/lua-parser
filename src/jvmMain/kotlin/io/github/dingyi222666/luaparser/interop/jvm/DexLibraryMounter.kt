@@ -71,7 +71,6 @@ object DexLibraryMounter {
     /** Monotonic count of newly-mounted libraries; part of target-memo cache keys. */
     val mountEpoch = java.util.concurrent.atomic.AtomicLong()
 
-
     /** True when [file] is an existing, readable dex/apk library this mounter can load. */
     fun isMountableDexLibrary(file: File): Boolean {
         return file.isFile && file.extension.lowercase() in MOUNTABLE_EXTENSIONS
@@ -119,20 +118,18 @@ object DexLibraryMounter {
      * opens the zip and merges every `classes<N>.dex` entry in name order
      * (classes.dex, classes2.dex, ...). Parse failures degrade to an empty list.
      */
-    private fun readClasses(file: File): List<DexClass> {
-        return runCatching {
-            when (file.extension.lowercase()) {
-                "apk" -> ZipFile(file).use { zip ->
-                    zip.entries().asSequence()
-                        .filter { !it.isDirectory && Regex("classes\\d*\\.dex").matches(it.name.substringAfterLast('/')) }
-                        .sortedBy { it.name }
-                        .flatMap { entry -> parseDex(zip.getInputStream(entry).readBytes()).classes.asSequence() }
-                        .toList()
-                }
-                else -> parseDex(file.readBytes()).classes
+    private fun readClasses(file: File): List<DexClass> = runCatching {
+        when (file.extension.lowercase()) {
+            "apk" -> ZipFile(file).use { zip ->
+                zip.entries().asSequence()
+                    .filter { !it.isDirectory && Regex("classes\\d*\\.dex").matches(it.name.substringAfterLast('/')) }
+                    .sortedBy { it.name }
+                    .flatMap { entry -> parseDex(zip.getInputStream(entry).readBytes()).classes.asSequence() }
+                    .toList()
             }
-        }.getOrDefault(emptyList()).distinctBy(DexClass::binaryName)
-    }
+            else -> parseDex(file.readBytes()).classes
+        }
+    }.getOrDefault(emptyList()).distinctBy(DexClass::binaryName)
 
     /**
      * A parsed dex library: name-resolution indexes plus the per-class module
@@ -148,7 +145,8 @@ object DexLibraryMounter {
         // A nested Java class has exactly one canonical spelling: package.Outer.Inner.
         // Index it once instead of trying all subsets of the target's separators.
         private val byCanonicalName = classes.groupBy { it.binaryName.replace('/', '.').replace('$', '.') }
-        private val bySimpleAlias: Map<String, List<DexClass>> = classes.groupBy(::simpleAliasOf)
+        private val bySimpleAlias: Map<String, List<DexClass>> =
+            classes.groupBy { it.binaryName.substringAfterLast('/').substringAfterLast('$') }
         private val moduleTypeCache: MutableMap<String, ModuleType> =
             Collections.synchronizedMap(LinkedHashMap())
 
@@ -207,10 +205,6 @@ object DexLibraryMounter {
             val moduleType = DexClassModelAdapter.toModuleType(cls, classes)
             moduleTypeCache[cls.binaryName] = moduleType
             return moduleType
-        }
-
-        private fun simpleAliasOf(cls: DexClass): String {
-            return cls.binaryName.substringAfterLast('/').substringAfterLast('$')
         }
     }
 }
