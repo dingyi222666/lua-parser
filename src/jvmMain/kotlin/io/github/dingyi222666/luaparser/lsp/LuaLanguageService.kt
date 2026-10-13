@@ -343,6 +343,26 @@ class LuaLanguageService(
      */
     private fun warmBuiltinOverlay() {
         if (!builtinOverlayWarmed.compareAndSet(false, true)) return
+        // Bounded-parallel overlay compile (commonMain cannot spawn threads): the
+        // cold sequential compile measured 8.8-10.3s on the emulator and delayed the
+        // first live analysis past every interactive budget.
+        io.github.dingyi222666.luaparser.semantic.workspace.std.BuiltinOverlayLoader
+            .parallelOverlayCompile = { count, compute ->
+            val workers = minOf(4, count.coerceAtLeast(1))
+            if (workers < 2) {
+                (0 until count).map(compute)
+            } else {
+                val pool = java.util.concurrent.Executors.newFixedThreadPool(workers) { task ->
+                    Thread(task, "lsp-overlay-compile").apply { isDaemon = true }
+                }
+                try {
+                    val futures = (0 until count).map { index -> pool.submit(java.util.concurrent.Callable { compute(index) }) }
+                    futures.map { it.get() }
+                } finally {
+                    pool.shutdown()
+                }
+            }
+        }
         // Surface assembly inside the dex adapter must observe the same per-thread
         // checkpoints as the engines: a framework class surface is assembled from
         // hundreds of descriptor translations (2-8s per class on the emulator) and

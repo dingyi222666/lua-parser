@@ -75,6 +75,17 @@ object BuiltinOverlayLoader {
     internal fun compiledRevision(version: LuaVersion, includeFramework: Boolean): BuiltinOverlaySnapshot =
         (if (includeFramework) completeRevisions else coreRevisions).getValue(version).value
 
+    /**
+     * Optional bounded-parallel mapper for the per-module overlay compile. commonMain
+     * cannot spawn threads; the JVM service wires a fixed pool here so the cold
+     * builtins compile (measured 8.8-10.3s sequential on the emulator — it delayed
+     * the first live analysis past every interactive budget) scales with the host
+     * cores. Each unit [compute] is self-contained (parse + bind + surface merge for
+     * one module); the default runs them sequentially in input order.
+     */
+    internal var parallelOverlayCompile:
+        ((count: Int, compute: (Int) -> BuiltinOverlaySnapshot.ProviderModuleSnapshot) -> List<BuiltinOverlaySnapshot.ProviderModuleSnapshot>)? = null
+
     private fun loadInternal(
         version: LuaVersion,
         includeAndroidFramework: Boolean,
@@ -82,43 +93,49 @@ object BuiltinOverlayLoader {
     ): BuiltinOverlaySnapshot {
         val catalog = catalogFor(version)
         val providerModules = linkedMapOf<VirtualPath, BuiltinOverlaySnapshot.ProviderModuleSnapshot>()
-        catalog.providerModuleResourcePaths.forEach { (moduleName, resourcePath) ->
+        val documentedInputs = catalog.providerModuleResourcePaths.map { (moduleName, resourcePath) ->
             val path = overlayModulePath(catalog.versionSegment, moduleName)
             val resourceText = BuiltinOverlayResourceAccess.readText(resourcePath)
             val source = documentedModuleSource(moduleName, resourceText)
-            val file = analyze(path, source).let { snapshot ->
-                snapshot.copy(
-                    moduleExportSurface = documentedModuleSurface(
-                        moduleName = moduleName,
-                        resourceText = resourceText,
-                        analyzedSurface = snapshot.moduleExportSurface,
-                        preparedBinder = snapshot.semanticFile?.snapshot?.binder
-                    )
-                )
-            }
-            providerModules[path] = BuiltinOverlaySnapshot.ProviderModuleSnapshot(
-                moduleName = moduleName,
-                file = file
-            )
+            OverlayModuleInput(moduleName, path, resourceText, source, raw = false)
         }
-        catalog.rawProviderModuleResources.forEach { (moduleName, resource) ->
+        val rawInputs = catalog.rawProviderModuleResources.map { (moduleName, resource) ->
             val path = overlayModulePath(catalog.versionSegment, moduleName)
             val source = rawModuleSource(resource)
-            val file = analyze(path, source).let { snapshot ->
+            OverlayModuleInput(moduleName, path, resourceText = null, source, raw = true,
+                syntheticSurface = resource.surface?.value)
+        }
+        val orderedInputs = documentedInputs + rawInputs
+        fun computeModule(index: Int): BuiltinOverlaySnapshot.ProviderModuleSnapshot {
+            val input = orderedInputs[index]
+            val snapshot = analyze(input.path, input.source)
+            val file = if (input.raw) {
                 snapshot.copy(
                     moduleExportSurface = mergeRawModuleSurface(
-                        moduleName = moduleName,
-                        resourceText = source,
+                        moduleName = input.moduleName,
+                        resourceText = input.source,
                         analyzedSurface = snapshot.moduleExportSurface,
-                        syntheticSurface = resource.surface?.value,
+                        syntheticSurface = input.syntheticSurface,
+                        preparedBinder = snapshot.semanticFile?.snapshot?.binder
+                    )
+                )
+            } else {
+                snapshot.copy(
+                    moduleExportSurface = documentedModuleSurface(
+                        moduleName = input.moduleName,
+                        resourceText = input.resourceText ?: "",
+                        analyzedSurface = snapshot.moduleExportSurface,
                         preparedBinder = snapshot.semanticFile?.snapshot?.binder
                     )
                 )
             }
-            providerModules[path] = BuiltinOverlaySnapshot.ProviderModuleSnapshot(
-                moduleName = moduleName,
-                file = file
-            )
+            return BuiltinOverlaySnapshot.ProviderModuleSnapshot(moduleName = input.moduleName, file = file)
+        }
+        val compiled = parallelOverlayCompile
+            ?.invoke(orderedInputs.size, ::computeModule)
+            ?: orderedInputs.indices.map(::computeModule)
+        compiled.forEachIndexed { index, moduleSnapshot ->
+            providerModules[orderedInputs[index].path] = moduleSnapshot
         }
         catalog.androidFrameworkResources?.takeIf { includeAndroidFramework }?.let {
             frameworkProviders.forEach { (path, provider) ->
@@ -595,6 +612,15 @@ object BuiltinOverlayLoader {
             source to lazy { bindDeclaration(source) }
         }
     }
+
+    private class OverlayModuleInput(
+        val moduleName: String,
+        val path: VirtualPath,
+        val resourceText: String?,
+        val source: String,
+        val raw: Boolean,
+        val syntheticSurface: ModuleExportSurface? = null
+    )
 
     private fun declarationBinding(source: String): DeclarationBinding =
         resourceBindings[source.trim()]?.value ?: bindDeclaration(source)
