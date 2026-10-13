@@ -565,3 +565,14 @@ surfaces and re-hydrates lazy imports inside the edited file's 10s budget (stack
 samples: `toModuleType`/dexIndex, `workspaceFingerprintHash`,
 `resolveWildcardImports`, `loadClassOrNull`). Next lever: per-target activation
 caching across content versions + edited-file-first check ordering.
+
+## Acceptance-gate status — 2026-10-13 (round 23 close)
+
+Final-tree evidence (HEAD + working state at commit time):
+- Android E2E: **rel51 = OK (7 tests)** — open/format/save/recreate, completions (a:b, chained, action.bar), incremental edit, file switches, dex dynamic import all green on the release build.
+- Monaco/HTML LSP smoke: green via the remote-built distribution (`printJvmLaunchClasspath` + `LUA_PARSER_LSP_CLASSPATH_FILE` bridge override; no local Gradle — E2E policy honored).
+- JVM regression: 2,929/0/0 (single fork). Kotlin/JS compile: green (JS gate caught a commonMain `System` regression in CheckerPass phase timing → TimeSource.Monotonic). External corpus: UpstreamLuaparseCorpusTest green.
+- Diagnostics latency: the edited-file warning lands 8.9-10.1s after insert on the emulator (two-lane worker, memoized activation, serialized warmups); the dex dynamic-import completion passes inside the calibrated 15s cold budget.
+
+**OPEN: the −12,000-line target.** Production Kotlin is 46,144 vs the 53,562 baseline (−7,418). ~4,580 lines remain. Verified-uncuttable-so-far: the model/ and api/ dirs are dedup-clean (mechanical similarity scan: zero ≥6-line pairs); the facade completion-kind ladders are semantically distinct per symbol kind; require-shadow resolution merges change behavior (5 test regressions — reverted). Candidate areas for the remaining cut, in order of prior audit evidence: workspace/engine duplicated facades, LSP-layer legacy compat bridges, the checker's three visibility-family variants (needs a gate-mode predicate), and the LSP kind-mapper + LuaJava facade delegation (~110 lines, queued). Every cut must keep the 7/7 E2E and the 2,929-test JVM suite green.
+
