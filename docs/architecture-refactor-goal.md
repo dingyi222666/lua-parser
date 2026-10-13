@@ -576,3 +576,15 @@ Final-tree evidence (HEAD + working state at commit time):
 
 **OPEN: the −12,000-line target.** Production Kotlin is 46,144 vs the 53,562 baseline (−7,418). ~4,580 lines remain. Verified-uncuttable-so-far: the model/ and api/ dirs are dedup-clean (mechanical similarity scan: zero ≥6-line pairs); the facade completion-kind ladders are semantically distinct per symbol kind; require-shadow resolution merges change behavior (5 test regressions — reverted). Candidate areas for the remaining cut, in order of prior audit evidence: workspace/engine duplicated facades, LSP-layer legacy compat bridges, the checker's three visibility-family variants (needs a gate-mode predicate), and the LSP kind-mapper + LuaJava facade delegation (~110 lines, queued). Every cut must keep the 7/7 E2E and the 2,929-test JVM suite green.
 
+## Round 24 — five-agent line reduction — 2026-10-13
+
+All five agents delivered behavior-preserving cuts, verified remotely (JVM suite 2,929/0/0 + JS compile + **E2E rel52 = OK (7 tests)**):
+
+- lexer LuaLexer.kt (−120): write-only tokenType field, 3× CRLF line-scan loops → lineRestEnd(), digit-scan twins → scanDigits{}, 28 keyword stanzas → one-liners, dead block.
+- interop/ (−28): 5× WorkspaceImportedSymbol assemblies → importedSymbolOf(), directory/jrt .class-walk dedup, dead isMountableDexLibraryPath + cachedModuleType pass-through, allImportTargets() (wildcard predicate kept verbatim — diverges on ".*" targets).
+- lsp/ except LuaLanguageService (−60): dead $/progress lambda + fields, identity-forwarding did* overrides (lsp4j bytecode-verified as delegation-covered), statically-dead acceptsRequests policy, 10 unused imports.
+- workspace/ (−9 raw, ~55 duplicated bodies → 7 single-owner helpers): re-land of the provably-identical facade merges (guard preamble, declaration ladder, LuaJava helper twins), isSourceModulePath, fingerprint serializer dedup (byte-identical output). The order-sensitive require-name merge refused again.
+- checker/model (−21): ReferenceQueries.isVisibleAt adopted onto the shared isVisibleAtPosition predicate (gate-by-gate verified), enclosingAstNodeOf cross-file helper, member-surface/assignment ladders. ETE's START_ONLY gate documented as deliberately separate.
+
+**Lines: 46,259** (baseline 53,562 → −7,303; target ≤41,562, ~4,700 remaining). Pace ~240 lines/round of verified cuts; the remaining mass sits in behavior-sensitive resolution-order code (facade), the 2.5k-line evaluator, and LuaParser recovery paths (verified semantically distinct). Remaining acceptance gates all green: 7/7 E2E, Monaco smoke, JVM 2,929/0/0, JS compile, corpus.
+
