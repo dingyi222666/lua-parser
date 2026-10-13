@@ -95,7 +95,7 @@ class LuaWorkspaceQueryFacade(
         if (semanticFile == null) {
             return baseCompletions
         }
-        val memberExpression = memberExpressionAt(semanticFile, position)
+        val memberExpression = semanticFile.nodeIndex.completionMemberAt(position)
         if (memberExpression != null) {
             // Member-context completions must not merge lexical/import free-identifier
             // candidates (Monaco demo: greeter. flooded with locals + builtins). Prefer
@@ -282,13 +282,9 @@ class LuaWorkspaceQueryFacade(
             }
         }
         val memberExport = semanticFile?.let { navigationExportedMemberAt(it, path, position, node) }
-        val importDefinition = symbol?.symbolId?.let(::importedSymbolLocation)
-            ?: importedAt?.let {
-                WorkspaceLocation(it.providerPath, syntheticModuleRange(it.alias))
-            }
-            ?: semanticFile?.let { importedSymbolAt(path, position, node, it) }?.let {
-                WorkspaceLocation(it.providerPath, syntheticModuleRange(it.alias))
-            }
+        // The third ladder rung below was a byte-identical recompute of `importedAt`
+        // (same arguments, pure snapshot read) — removed.
+        val importDefinition = importedSymbolDefinitionLocation(symbol, importedAt)
             ?: semanticFile?.let { importCallLocalDefinition(it, path, node, symbol) }
             ?: semanticFile?.let { bindClassLocalDefinition(it, path, node, symbol) }
         if (importDefinition != null) {
@@ -301,12 +297,7 @@ class LuaWorkspaceQueryFacade(
         if (memberExport != null) {
             return listOf(exportLocation(memberExport))
         }
-        val export = symbol?.symbolId?.let(resolver::exportedMemberByHandle)
-            ?: resolver.exportAt(path, position)
-            ?: exportFromMemberBase(node, symbol)
-        if (export != null) {
-            return listOf(exportLocation(export))
-        }
+        navigationExportForMember(path, position, node, symbol)?.let { return listOf(exportLocation(it)) }
         // On require-backed member access, never invent a definition from the provider module
         // root / local range when the export member itself is missing (TASK-664).
         if (memberAccess != null && semanticFile != null) {
@@ -336,8 +327,9 @@ class LuaWorkspaceQueryFacade(
         if (importTargetDefinition != null) {
             return listOf(importTargetDefinition)
         }
+        val importedAt = semanticFile?.let { importedSymbolAt(path, position, node, it) }
         val symbol = semanticFile?.model?.getSymbolAt(position)
-            ?: semanticFile?.let { importedSymbolAt(path, position, node, it)?.let(::importedSymbol) }
+            ?: importedAt?.let(::importedSymbol)
         val memberExport = semanticFile?.let { navigationExportedMemberAt(it, path, position, node) }
 
         if (memberExport != null) {
@@ -359,20 +351,12 @@ class LuaWorkspaceQueryFacade(
             return listOf(bindClassLocalDeclaration)
         }
 
-        val importDeclaration = symbol?.symbolId?.let(::importedSymbolLocation)
-            ?: semanticFile?.let { importedSymbolAt(path, position, node, it) }?.let {
-                WorkspaceLocation(it.providerPath, syntheticModuleRange(it.alias))
-            }
+        val importDeclaration = importedSymbolDefinitionLocation(symbol, importedAt)
         if (importDeclaration != null) {
             return listOf(importDeclaration)
         }
 
-        val export = symbol?.symbolId?.let(resolver::exportedMemberByHandle)
-            ?: resolver.exportAt(path, position)
-            ?: exportFromMemberBase(node, symbol)
-        if (export != null) {
-            return listOf(exportLocation(export))
-        }
+        navigationExportForMember(path, position, node, symbol)?.let { return listOf(exportLocation(it)) }
 
         val requireCallDeclaration = requireCallDefinition(path, position)
         if (requireCallDeclaration != null) {
@@ -426,9 +410,7 @@ class LuaWorkspaceQueryFacade(
 
         val locations = linkedMapOf<String, WorkspaceLocation>()
         resolver.exportedMemberByHandle(targetHandle)?.let { export ->
-            val range = export.member.range ?: syntheticModuleRange(export.member.name)
-            val providerPath = providerPathForExport(export)
-            locations["${providerPath.value}:${range.start.line}:${range.start.column}"] = WorkspaceLocation(providerPath, range)
+            locations.putLocation(exportLocation(export))
         }
 
         snapshot.files.values
@@ -438,8 +420,7 @@ class LuaWorkspaceQueryFacade(
                     val usage = file.model.getSymbolAt(expression.identifier.range.start)
                     val workspaceExport = exportedMemberForExpression(file, file.path, expression)
                     if (usage?.symbolId == targetHandle || workspaceExport?.handle == targetHandle) {
-                        locations["${file.path.value}:${expression.identifier.range.start.line}:${expression.identifier.range.start.column}"] =
-                            WorkspaceLocation(file.path, expression.identifier.range)
+                        locations.putLocation(WorkspaceLocation(file.path, expression.identifier.range))
                     }
                 }
             }
@@ -460,16 +441,12 @@ class LuaWorkspaceQueryFacade(
             symbol?.symbolId?.let { isImportedSymbolHandle(it) || ModuleExportIdentity.parse(it) != null } == true ||
                 resolver.exportAt(path, position) != null
 
-        symbol?.range?.let { range ->
-            highlights["${path.value}:${range.start.line}:${range.start.column}"] = WorkspaceLocation(path, range)
-        }
+        symbol?.range?.let { range -> highlights.putLocation(WorkspaceLocation(path, range)) }
 
         references(path, position)
             .asSequence()
             .filter { includeCrossFileHighlights || it.path == path }
-            .forEach { location ->
-                highlights["${location.path.value}:${location.range.start.line}:${location.range.start.column}"] = location
-            }
+            .forEach { highlights.putLocation(it) }
 
         if (highlights.isNotEmpty()) {
             return highlights.values.toList()
@@ -588,16 +565,12 @@ class LuaWorkspaceQueryFacade(
                 addAll(fileSymbolEntries(path, file))
             }
         }
+        // Same key shape as workspaceSymbolEntryKey + the container suffix; the inline copy
+        // duplicated that helper field-for-field.
         return entries
             .distinctBy { entry ->
-                listOf(
-                    entry.path.value,
-                    entry.name,
-                    entry.kind.name,
-                    entry.range.start.line.toString(),
-                    entry.range.start.column.toString(),
-                    entry.containerName.orEmpty()
-                ).joinToString(":")
+                workspaceSymbolEntryKey(entry.path, entry.name, entry.kind, entry.range) +
+                    ":${entry.containerName.orEmpty()}"
             }
             .sortedWith(
                 compareBy<WorkspaceSymbolEntry>(
@@ -930,10 +903,10 @@ class LuaWorkspaceQueryFacade(
             primary.displayName.endsWith("[]") &&
                 fallback?.displayName?.startsWith("Array<") == true -> fallback
             // Bare unknown/any must lose to any richer fallback (FunctionType/ClassType/MODULE/fun).
-            isBareWeakHoverType(primary) &&
+            primary.isBareWeakType() &&
                 fallback != null &&
-                !isBareWeakHoverType(fallback) -> fallback
-            isBareWeakHoverType(primary) &&
+                !fallback.isBareWeakType() -> fallback
+            primary.isBareWeakType() &&
                 fallback != null &&
                 (isPreferredHoverStructuredKind(fallback.kind) ||
                     fallback.displayName.contains("fun(") ||
@@ -951,19 +924,10 @@ class LuaWorkspaceQueryFacade(
                     } ?: fallback.detail
                 )
             }
-            !isPreferredHoverStructuredKind(primary.kind) &&
-                fallback != null &&
-                isPreferredHoverStructuredKind(fallback.kind) &&
-                isBareWeakHoverType(primary) -> fallback
             !primary.displayName.contains("fun(") &&
                 fallback?.displayName?.contains("fun(") == true -> fallback
             !primary.displayName.contains("fun(") &&
                 fallback?.displayName?.contains("fun<") == true -> fallback
-            isBareWeakHoverType(primary) &&
-                fallback != null &&
-                (fallback.kind == TypeInfoKind.CLASS ||
-                    fallback.kind == TypeInfoKind.FUNCTION ||
-                    fallback.kind == TypeInfoKind.MODULE) -> fallback
             // Prefer declared/inferred CLASS/FUNCTION kinds when primary is only UNKNOWN.
             primary.kind == TypeInfoKind.UNKNOWN &&
                 fallback != null &&
@@ -971,8 +935,6 @@ class LuaWorkspaceQueryFacade(
             else -> primary
         }
     }
-
-    private fun isBareWeakHoverType(type: TypeInfo): Boolean = type.isBareWeakType()
 
     private fun isPreferredHoverStructuredKind(kind: TypeInfoKind): Boolean {
         return kind == TypeInfoKind.FUNCTION ||
@@ -1292,9 +1254,7 @@ class LuaWorkspaceQueryFacade(
         val declaration = localDeclarationForSymbol(semanticFile, symbol?.symbolId) ?: return emptyList()
         val locations = linkedMapOf<String, WorkspaceLocation>()
 
-        declarationReferenceLocation(path, declaration)?.let { location ->
-            locations["${location.path.value}:${location.range.start.line}:${location.range.start.column}"] = location
-        }
+        declarationReferenceLocation(path, declaration)?.let { locations.putLocation(it) }
 
         semanticFile.identifiers
             .asSequence()
@@ -1302,8 +1262,7 @@ class LuaWorkspaceQueryFacade(
             .forEach { identifier ->
                 val usage = semanticFile.model.getSymbolAt(identifier.range.start) ?: return@forEach
                 if (usage.symbolId == symbol?.symbolId) {
-                    locations["${path.value}:${identifier.range.start.line}:${identifier.range.start.column}"] =
-                        WorkspaceLocation(path, identifier.range)
+                    locations.putLocation(WorkspaceLocation(path, identifier.range))
                 }
             }
 
@@ -1399,31 +1358,31 @@ class LuaWorkspaceQueryFacade(
     ): CallExpression? {
         var match: CallExpression? = null
         val visitor = object : io.github.dingyi222666.luaparser.parser.ast.visitor.ASTVisitor<Unit> {
-            override fun visitCallExpression(node: CallExpression, value: Unit) {
-                if (callArguments(node).any { it === constant || isSameStringLiteral(it, constant) }) {
-                    if (isImportCallee(semanticFile, effectiveCallBase(node)) ||
-                        (effectiveCallBase(node) as? Identifier)?.name == "require"
-                    ) {
-                        match = node
-                        return
-                    }
+            // Shared body for both call shapes (the two overrides were byte-identical):
+            // claim the match and stop descending when the caret constant is an argument of
+            // an import/require callee; otherwise continue traversal via super.
+            fun visitCallLike(node: CallExpression): Boolean {
+                if (callArguments(node).none { it === constant || isSameStringLiteral(it, constant) }) {
+                    return false
                 }
-                super.visitCallExpression(node, value)
+                if (isImportCallee(semanticFile, effectiveCallBase(node)) ||
+                    (effectiveCallBase(node) as? Identifier)?.name == "require"
+                ) {
+                    match = node
+                    return true
+                }
+                return false
+            }
+
+            override fun visitCallExpression(node: CallExpression, value: Unit) {
+                if (!visitCallLike(node)) super.visitCallExpression(node, value)
             }
 
             override fun visitStringCallExpression(
                 node: io.github.dingyi222666.luaparser.parser.ast.node.StringCallExpression,
                 value: Unit
             ) {
-                if (callArguments(node).any { it === constant || isSameStringLiteral(it, constant) }) {
-                    if (isImportCallee(semanticFile, effectiveCallBase(node)) ||
-                        (effectiveCallBase(node) as? Identifier)?.name == "require"
-                    ) {
-                        match = node
-                        return
-                    }
-                }
-                super.visitStringCallExpression(node, value)
+                if (!visitCallLike(node)) super.visitStringCallExpression(node, value)
             }
 
             override fun visitIdentifier(node: Identifier, value: Unit) = Unit
@@ -1532,12 +1491,36 @@ class LuaWorkspaceQueryFacade(
         return WorkspaceLocation(identity.providerPath, syntheticModuleRange(identity.alias))
     }
 
+    /**
+     * Shared imported-alias definition ladder: symbol-handle location first, else the
+     * provider site of the resolved import under the caret. [importedAt] must be the
+     * `importedSymbolAt(path, position, node, semanticFile)` result already computed by
+     * the caller (the query is a pure snapshot read, so recomputing it is dead weight).
+     */
+    private fun importedSymbolDefinitionLocation(
+        symbol: io.github.dingyi222666.luaparser.semantic.api.Symbol?,
+        importedAt: WorkspaceImportedSymbol?
+    ): WorkspaceLocation? {
+        return symbol?.symbolId?.let(::importedSymbolLocation)
+            ?: importedAt?.let { WorkspaceLocation(it.providerPath, syntheticModuleRange(it.alias)) }
+    }
+
+    /** Shared export-member navigation ladder: handle → caret export → member-base export. */
+    private fun navigationExportForMember(
+        path: VirtualPath,
+        position: Position,
+        node: BaseASTNode?,
+        symbol: io.github.dingyi222666.luaparser.semantic.api.Symbol?
+    ): WorkspaceModuleResolver.ResolvedExportMember? {
+        return symbol?.symbolId?.let(resolver::exportedMemberByHandle)
+            ?: resolver.exportAt(path, position)
+            ?: exportFromMemberBase(node, symbol)
+    }
+
     private fun importedSymbolReferences(symbolId: String): List<WorkspaceLocation> {
         val identity = ImportedSymbolIdentity.parse(symbolId) ?: return emptyList()
         val locations = linkedMapOf<String, WorkspaceLocation>()
-        val providerRange = syntheticModuleRange(identity.alias)
-        locations["${identity.providerPath.value}:${providerRange.start.line}:${providerRange.start.column}"] =
-            WorkspaceLocation(identity.providerPath, providerRange)
+        locations.putLocation(WorkspaceLocation(identity.providerPath, syntheticModuleRange(identity.alias)))
 
         snapshot.files.values
             .mapNotNull { it.semanticFile }
@@ -1548,8 +1531,7 @@ class LuaWorkspaceQueryFacade(
                     .forEach { identifier ->
                         val usage = file.model.getSymbolAt(identifier.range.start) ?: return@forEach
                         if (usage.symbolId == symbolId) {
-                            locations["${file.path.value}:${identifier.range.start.line}:${identifier.range.start.column}"] =
-                                WorkspaceLocation(file.path, identifier.range)
+                            locations.putLocation(WorkspaceLocation(file.path, identifier.range))
                         }
                     }
             }
@@ -1632,6 +1614,14 @@ class LuaWorkspaceQueryFacade(
         val providerPath = providerPathForExport(export)
         val range = export.member.range ?: syntheticModuleRange(export.member.name)
         return WorkspaceLocation(providerPath, range)
+    }
+
+    /** Dedup key for reference/highlight locations: "path:line:column". */
+    private fun MutableMap<String, WorkspaceLocation>.putLocation(location: WorkspaceLocation) {
+        put(
+            "${location.path.value}:${location.range.start.line}:${location.range.start.column}",
+            location
+        )
     }
 
     private fun workspaceMemberCompletions(
@@ -2134,9 +2124,8 @@ class LuaWorkspaceQueryFacade(
         semanticFile: WorkspaceSemanticFile,
         call: CallExpression
     ): List<String> {
-        if (!isLuaJavaClassLoadCallee(semanticFile, effectiveCallBase(call))) {
-            return emptyList()
-        }
+        // Precondition: the only caller (luaJavaClassLoadTarget) has already verified
+        // isLuaJavaClassLoadCallee(effectiveCallBase(call)) — do not re-walk the callee.
         return if (isCreateProxyCallBase(semanticFile, effectiveCallBase(call))) {
             createProxyInterfaceTargets(call)
         } else {
@@ -2265,12 +2254,6 @@ class LuaWorkspaceQueryFacade(
         )
     }
 
-    private fun memberExpressionAt(semanticFile: WorkspaceSemanticFile, position: Position): MemberExpression? =
-        semanticFile.nodeIndex.completionMemberAt(position)
-
-    private fun isMemberCompletionSite(expression: MemberExpression, position: Position): Boolean =
-        expression.isCompletionSite(position)
-
     /**
      * Mid-typing string literals (`import "mo`, `orientation = "verti`) are unterminated, so
      * the lexer produces no STRING token and AST-based completion cannot see them. Detect the
@@ -2372,7 +2355,7 @@ class LuaWorkspaceQueryFacade(
         if (!onMemberName) {
             return null
         }
-        return memberExpression.takeIf { isMemberCompletionSite(it, position) }
+        return memberExpression.takeIf { it.isCompletionSite(position) }
     }
 
     private fun SymbolKind.toCompletionItemKind(): CompletionItemKind {

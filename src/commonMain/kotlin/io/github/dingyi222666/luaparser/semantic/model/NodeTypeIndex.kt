@@ -52,15 +52,11 @@ internal class NodeTypeIndex(
      * body can infer a concrete return (e.g. `local function build() return TextView() end`).
      * Documented/Emmy returns keep declaredType priority.
      */
-    private fun shouldPreferInferredCallable(declaration: BinderDeclaration, declared: Type?): Boolean {
-        if (declaration.kind != DeclarationKind.FUNCTION &&
-            declaration.kind != DeclarationKind.GLOBAL &&
-            declaration.kind != DeclarationKind.METHOD
-        ) {
-            return false
-        }
-        return declared?.isUnknownReturnOnlyCallable() == true
-    }
+    private fun shouldPreferInferredCallable(declaration: BinderDeclaration, declared: Type?): Boolean =
+        (declaration.kind == DeclarationKind.FUNCTION ||
+            declaration.kind == DeclarationKind.GLOBAL ||
+            declaration.kind == DeclarationKind.METHOD) &&
+        declared?.isUnknownReturnOnlyCallable() == true
 
     fun getInferredType(declaration: BinderDeclaration): io.github.dingyi222666.luaparser.semantic.api.TypeInfo? {
         return adapters.toTypeInfo(evaluator.inferDeclarationType(declaration), declaration)

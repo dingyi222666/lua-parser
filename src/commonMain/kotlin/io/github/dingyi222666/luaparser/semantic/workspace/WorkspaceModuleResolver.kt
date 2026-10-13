@@ -122,11 +122,7 @@ internal class WorkspaceModuleResolver(
             ?: snapshot.extraProviders.entries.firstOrNull { (_, file) ->
                 file.moduleExportSurface?.moduleType?.moduleName == moduleName
             }?.let { (path, _) ->
-                WorkspaceModuleGraph.ModuleProvider(
-                    moduleName = moduleName,
-                    path = path,
-                    source = WorkspaceModuleGraph.ProviderSource.EXTRA_WORKSPACE_PROVIDER
-                )
+                WorkspaceModuleGraph.ModuleProvider(moduleName, path, WorkspaceModuleGraph.ProviderSource.EXTRA_WORKSPACE_PROVIDER)
             }
             // Free-form Android-Lua layout modules (.aly) may exist in the workspace without a
             // pre-built dependency edge (e.g. partial graph rebuilds). Recover by path/module alias.
@@ -216,11 +212,7 @@ internal class WorkspaceModuleResolver(
         if (moduleName == "import" && "import" in snapshot.builtinOverlay.globals.globalNames) {
             return resolvedRequire(
                 moduleName = moduleName,
-                provider = WorkspaceModuleGraph.ModuleProvider(
-                    moduleName = moduleName,
-                    path = snapshot.builtinOverlay.globals.path,
-                    source = WorkspaceModuleGraph.ProviderSource.STANDARD_LIBRARY_OVERLAY
-                ),
+                provider = WorkspaceModuleGraph.ModuleProvider(moduleName, snapshot.builtinOverlay.globals.path, WorkspaceModuleGraph.ProviderSource.STANDARD_LIBRARY_OVERLAY),
                 surface = syntheticImportSurface(),
                 resolutionPath = resolutionPath
             )
@@ -891,11 +883,7 @@ internal class WorkspaceModuleResolver(
                 path.value == "__jvm__/packages/${packageName.replace('.', '/')}.lua" ||
                     file.moduleExportSurface?.moduleType?.moduleName == packageName
             }?.let { (path, _) ->
-                WorkspaceModuleGraph.ModuleProvider(
-                    moduleName = packageName,
-                    path = path,
-                    source = WorkspaceModuleGraph.ProviderSource.EXTRA_WORKSPACE_PROVIDER
-                )
+                WorkspaceModuleGraph.ModuleProvider(packageName, path, WorkspaceModuleGraph.ProviderSource.EXTRA_WORKSPACE_PROVIDER)
             }
             ?: return null
         val surface = exportSurface(provider) ?: return null
@@ -930,11 +918,7 @@ internal class WorkspaceModuleResolver(
             snapshot.extraProviders.forEach { (path, file) ->
                 val value = path.value
                 val moduleName = file.moduleExportSurface?.moduleType?.moduleName
-                val provider = WorkspaceModuleGraph.ModuleProvider(
-                    moduleName = moduleName ?: simpleAlias,
-                    path = path,
-                    source = WorkspaceModuleGraph.ProviderSource.EXTRA_WORKSPACE_PROVIDER
-                )
+                val provider = WorkspaceModuleGraph.ModuleProvider(moduleName ?: simpleAlias, path, WorkspaceModuleGraph.ProviderSource.EXTRA_WORKSPACE_PROVIDER)
                 val index = if (value.startsWith("__jvm__/classes/")) classEntries else otherEntries
                 moduleName?.let { name ->
                     register(index, name, provider)
@@ -973,11 +957,7 @@ internal class WorkspaceModuleResolver(
         snapshot.builtinOverlay.providerModules.entries.firstOrNull { (_, provider) ->
             provider.moduleName == moduleName
         }?.let { (path, provider) ->
-            return WorkspaceModuleGraph.ModuleProvider(
-                moduleName = provider.moduleName,
-                path = path,
-                source = WorkspaceModuleGraph.ProviderSource.STANDARD_LIBRARY_OVERLAY
-            )
+            return WorkspaceModuleGraph.ModuleProvider(provider.moduleName, path, WorkspaceModuleGraph.ProviderSource.STANDARD_LIBRARY_OVERLAY)
         }
         // Path-suffix recovery: __lua_std__/<ver>/socket.url.lua for module "socket.url".
         // Also accept nested historical paths (__lua_std__/<ver>/socket/url.lua) when present.
@@ -991,11 +971,7 @@ internal class WorkspaceModuleResolver(
             val pathMatches = value.endsWith("$dotted.lua") || value.endsWith("$slash.lua")
             pathMatches && (nameMatches || provider.moduleName.isBlank())
         }?.let { (path, provider) ->
-            return WorkspaceModuleGraph.ModuleProvider(
-                moduleName = moduleName,
-                path = path,
-                source = WorkspaceModuleGraph.ProviderSource.STANDARD_LIBRARY_OVERLAY
-            )
+            return WorkspaceModuleGraph.ModuleProvider(moduleName, path, WorkspaceModuleGraph.ProviderSource.STANDARD_LIBRARY_OVERLAY)
         }
         return null
     }

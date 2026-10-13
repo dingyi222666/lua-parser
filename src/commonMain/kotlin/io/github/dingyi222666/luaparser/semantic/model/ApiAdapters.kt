@@ -12,8 +12,6 @@ import io.github.dingyi222666.luaparser.semantic.binder.BinderDeclaration
 import io.github.dingyi222666.luaparser.semantic.binder.BinderPassResult
 import io.github.dingyi222666.luaparser.semantic.binder.BinderSymbol
 import io.github.dingyi222666.luaparser.semantic.binder.DeclarationKind
-import io.github.dingyi222666.luaparser.semantic.binder.DeclarationId
-import io.github.dingyi222666.luaparser.semantic.binder.ScopeId
 import io.github.dingyi222666.luaparser.semantic.comments.AliasTagSyntax
 import io.github.dingyi222666.luaparser.semantic.comments.ClassTagSyntax
 import io.github.dingyi222666.luaparser.semantic.comments.FieldTagSyntax
@@ -85,7 +83,7 @@ internal class ApiAdapters(
             type = declaredTypeInfo,
             declaredType = declaredTypeInfo,
             detail = declaration.declaredType?.displayName,
-            symbolId = binderHandle(symbol.id.value)
+            symbolId = "binder:${symbol.id.value}"
         )
     }
 
@@ -103,7 +101,7 @@ internal class ApiAdapters(
                 type = toTypeInfo(declaration.declaredType, declaration),
                 declaredType = toTypeInfo(declaration.declaredType, declaration),
                 detail = declaration.declaredType?.displayName,
-                symbolId = declarationHandle(declaration.id)
+                symbolId = "declaration:${declaration.id.value}"
             )
         }
     }
@@ -157,7 +155,7 @@ internal class ApiAdapters(
             range = scope.range,
             symbols = symbols,
             name = ownerName,
-            scopeId = scopeHandle(scope.id)
+            scopeId = "scope:${scope.id.value}"
         )
     }
 
@@ -183,12 +181,6 @@ internal class ApiAdapters(
             }
         }
     }
-
-    fun binderHandle(value: Int): String = "binder:$value"
-
-    fun declarationHandle(value: DeclarationId): String = "declaration:${value.value}"
-
-    fun scopeHandle(scopeId: ScopeId): String = "scope:${scopeId.value}"
 
     fun declarationDisplayRange(declaration: BinderDeclaration): Range? {
         if (declaration.origin != io.github.dingyi222666.luaparser.semantic.binder.DeclarationOrigin.DOC_COMMENT) {

@@ -76,8 +76,7 @@ internal class LuaLayoutCompletionProvider(
         position: Position
     ): List<CompletionItem>? {
         if (innermost is ConstantNode && innermost.constantType == ConstantNode.TYPE.STRING) {
-            val parent = runCatching { innermost.parent }.getOrNull()
-            when (parent) {
+            when (val parent = runCatching { innermost.parent }.getOrNull()) {
                 is TableKey ->
                     if (parent.value === innermost) {
                         valueDomainCompletions(tableKeyName(parent))?.let { return it }
@@ -166,14 +165,14 @@ internal class LuaLayoutCompletionProvider(
         if (parent.value !== innermost) {
             return false
         }
-        if (isPositionalField(parent)) {
-            // Bare word being typed as a property key — but the first positional entry is
-            // the view class slot, not a property.
-            return !isClassSlot(parent, innermostTable)
+        if (!isPositionalField(parent)) {
+            // Named-key value position (`gravity = cen|`, `onClick = handl|`): completing a
+            // value expression, not a key — keep the regular completion pipeline.
+            return false
         }
-        // Named-key value position (`gravity = cen|`, `onClick = handl|`): completing a
-        // value expression, not a key — keep the regular completion pipeline.
-        return false
+        // Bare word being typed as a property key — but the first positional entry is
+        // the view class slot, not a property.
+        return !isClassSlot(parent, innermostTable)
     }
 
     private fun isClassSlot(field: TableKey, table: TableConstructorExpression): Boolean {

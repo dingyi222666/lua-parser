@@ -56,7 +56,7 @@ internal class SymbolTableBuilder {
     ): ScopeId {
         val scopeId = ScopeId(nextScopeId++)
         val parentId = scopeStack.lastOrNull()
-        val scope = MutableScope(
+        scopes[scopeId] = MutableScope(
             id = scopeId,
             kind = kind,
             range = range,
@@ -64,7 +64,6 @@ internal class SymbolTableBuilder {
             ownerDeclarationId = ownerDeclarationId,
             parentId = parentId
         )
-        scopes[scopeId] = scope
         if (parentId != null) {
             scopes.getValue(parentId).childIds += scopeId
         }

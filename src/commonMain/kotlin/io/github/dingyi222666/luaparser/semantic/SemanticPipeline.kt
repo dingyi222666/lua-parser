@@ -55,10 +55,10 @@ class SemanticPipeline(
     ): BinderPassResult {
         return prepareBinding(
             chunk = chunk,
+            // The context carries the snapshot globals, so the binder reads them from there.
             context = SemanticWorkspaceContext(overlayGlobals = globals),
             preparedBinder = null,
-            comments = comments,
-            builtinGlobals = globals
+            comments = comments
         ).binder
     }
 
@@ -87,12 +87,6 @@ class SemanticPipeline(
             else CheckerPassResult(resolvedBinder, emptyList())
         effectiveContext.analysisCheckpoint()
         val model = semanticModelBuilder.build(chunk, checker.binder, checker.diagnostics, effectiveContext)
-        val publicDiagnostics = model.getDiagnostics()
-        val result = SemanticAnalysisResult(
-            model = model,
-            // Summary mirrors the diagnostics published by the model.
-            summary = SemanticAnalysisSummary.from(publicDiagnostics)
-        )
 
         return SemanticPipelineSnapshot(
             chunk = chunk,
@@ -100,7 +94,8 @@ class SemanticPipeline(
             binder = checker.binder,
             checker = checker,
             model = model,
-            result = result,
+            // Summary mirrors the diagnostics published by the model.
+            result = SemanticAnalysisResult(model, SemanticAnalysisSummary.from(model.getDiagnostics())),
             workspaceContext = effectiveContext
         )
     }
@@ -114,8 +109,7 @@ class SemanticPipeline(
         chunk: ChunkNode,
         context: SemanticWorkspaceContext,
         preparedBinder: BinderPassResult?,
-        comments: CommentAttachmentIndex?,
-        builtinGlobals: BuiltinOverlaySnapshot.GlobalsSnapshot? = null
+        comments: CommentAttachmentIndex?
     ): DocumentAnalysisState {
         require(preparedBinder == null || preparedBinder.scopeGraph.rootScope.ownerNode === chunk.body) {
             "Prepared binding must belong to the analyzed chunk"
@@ -127,11 +121,7 @@ class SemanticPipeline(
         // full parse+attach+bind+resolve chain (on the emulated device that chain
         // is ~12s for a 5KB document — longer than a client's whole request budget).
         effectiveContext.analysisCheckpoint()
-        val bound = preparedBinder ?: binderPass.bind(
-            chunk,
-            attachments,
-            builtinGlobals ?: effectiveContext.overlayGlobals
-        )
+        val bound = preparedBinder ?: binderPass.bind(chunk, attachments, effectiveContext.overlayGlobals)
         effectiveContext.analysisCheckpoint()
         return DocumentAnalysisState(
             context = effectiveContext,
@@ -201,11 +191,10 @@ internal data class SemanticWorkspaceContext(
         val path = currentPath ?: return this
         val resolver = workspaceResolver ?: return this
         val documentImports = if (lazyImportedSymbols) emptyMap() else resolver.importedSymbolsFor(path)
-        val activeImports = linkedMapOf<String, WorkspaceImportedSymbol>().apply {
-            putAll(importedSymbols)
-            putAll(documentImports)
-        }
-        resolver.deferredDependencyGlobalNamesFor(path).forEach(activeImports::remove)
+        val deferredGlobalNames = resolver.deferredDependencyGlobalNamesFor(path)
+        // Later keys overwrite (keeping first insertion order); deferred dependency globals
+        // are stripped — same result as putAll + remove.
+        val activeImports = importedSymbols + documentImports - deferredGlobalNames
         // The context's own lambdas win; baseResolve* only backs the re-pointed case where the
         // composed lambdas were stripped because they captured the stale per-update resolver.
         val fallbackResolveImportedSymbol = resolveImportedSymbol ?: baseResolveImportedSymbol

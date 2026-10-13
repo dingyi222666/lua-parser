@@ -34,7 +34,12 @@ object WorkspaceDirtySetPlanner {
             filesWithRequireResolutionChanged = filesWithRequireResolutionChanged,
             seeAllFallbackDocuments = seeAllFallbackDocuments
         )
-        val sccExpanded = expandThroughStronglyConnectedComponents(previous.graph, current.graph, reverseDirty)
+        // Each dirty file inherits its previous AND current SCC members as dirty (cycles must
+        // re-analyze together in both graph revisions).
+        val sccExpanded = reverseDirty.flatMapTo(linkedSetOf()) { path ->
+            previous.graph.stronglyConnectedComponentByFile[path].orEmpty() +
+                current.graph.stronglyConnectedComponentByFile[path].orEmpty()
+        }
         val affectedDocuments = (
             changedFiles.filterTo(linkedSetOf()) { it in current.files } +
                 sccExpanded +
@@ -205,19 +210,6 @@ object WorkspaceDirtySetPlanner {
             .keys
             .toCollection(linkedSetOf())
     }
-
-    private fun expandThroughStronglyConnectedComponents(
-        previous: WorkspaceModuleGraph,
-        current: WorkspaceModuleGraph,
-        dirtyFiles: Set<VirtualPath>
-    ): Set<VirtualPath> {
-        return dirtyFiles.flatMapTo(linkedSetOf()) { path ->
-            previous.graphComponent(path) + current.graphComponent(path)
-        }
-    }
-
-    private fun WorkspaceModuleGraph.graphComponent(path: VirtualPath): Set<VirtualPath> =
-        stronglyConnectedComponentByFile[path].orEmpty()
 
     private fun reverseDependentsOf(path: VirtualPath, graph: WorkspaceModuleGraph): Set<VirtualPath> =
         graph.reverseDependencies[path].orEmpty()

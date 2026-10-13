@@ -419,21 +419,12 @@ class LuaLanguageService(
     private var backgroundRebuildRunning = false
     private var backgroundRebuildThread: Thread? = null
     private val firstLivePublication = java.util.concurrent.CountDownLatch(1)
-    /**
-     * Bumped by every snapshot-affecting mutation (incremental apply, metadata
-     * change). The background cold build records the generation when it starts
-     * and discards its result if the generation moved — a stale full build must
-     * never stomp a newer incremental snapshot.
-     */
-    private var workspaceGeneration: Long = 0
-    private var backgroundBuildGeneration: Long = -1
     private fun scheduleBackgroundRebuild() {
         synchronized(rebuildLock) {
             if (closed || backgroundRebuildRunning) {
                 return
             }
             backgroundRebuildRunning = true
-            backgroundBuildGeneration = workspaceGeneration
         }
         val thread = Thread({
             try {
@@ -656,7 +647,6 @@ class LuaLanguageService(
     fun setWorkspaceMetadata(metadata: Map<String, String>): Unit = synchronized(stateLock) {
         // Synchronous by contract: callers/tests expect the snapshot settled
         // when this returns. Config changes are rare (connect-time push).
-        workspaceGeneration += 1
         workspaceMetadata = metadata.toMap()
         warmUpConfiguredDexLibraries(workspaceMetadata)
         rebuildFull()
@@ -716,7 +706,6 @@ class LuaLanguageService(
      * unsaved buffers. Non-Lua/ALY files are ignored.
      */
     fun applyWatchedFileChanges(changes: List<FileEvent>): Unit = synchronized(stateLock) {
-        workspaceGeneration += 1
         var mutated = false
         changes.forEach { event ->
             val uri = event.uri?.takeIf { it.isNotBlank() } ?: return@forEach
@@ -1605,11 +1594,11 @@ class LuaLanguageService(
      * metadata. Never renames the label, never blanks insertText when set, and soft-degrades
      * to an identity-preserving item on missing/unknown input (no throw).
      */
+    // Soft identity: resolve must not hard-fail once advertised.
     fun resolveCompletionItem(item: CompletionItem): CompletionItem = synchronized(stateLock) {
         try {
             enrichResolvedCompletionItem(item)
         } catch (_: Exception) {
-            // Soft identity: resolve must not hard-fail once advertised.
             item
         }
     }
@@ -1811,10 +1800,8 @@ class LuaLanguageService(
      * Empty / unknown / malformed sources soft-degrade to empty data without throw.
      * Caches the payload + resultId so semanticTokens/full/delta can answer (TASK-252).
      */
-    fun semanticTokensFull(params: SemanticTokensParams): SemanticTokens = synchronized(stateLock) {
-        val path = pathOf(params.textDocument)
-        return@synchronized computeSemanticTokensFull(path)
-    }
+    fun semanticTokensFull(params: SemanticTokensParams): SemanticTokens =
+        synchronized(stateLock) { computeSemanticTokensFull(pathOf(params.textDocument)) }
 
     /**
      * TASK-252 — textDocument/semanticTokens/full/delta.
@@ -1859,11 +1846,8 @@ class LuaLanguageService(
     fun onTypeFormatting(params: DocumentOnTypeFormattingParams): List<TextEdit> = synchronized(stateLock) {
         try {
             val ch = params.ch.orEmpty()
-            if (ch.isEmpty()) {
-                return@synchronized emptyList()
-            }
             // Accept advertised triggers: d (end), n (then), and newline after keyword line.
-            if (ch != "d" && ch != "n" && ch != "\n") {
+            if (ch.isEmpty() || (ch != "d" && ch != "n" && ch != "\n")) {
                 return@synchronized emptyList()
             }
             formatDocument(params.textDocument, params.options, range = null)
@@ -1913,11 +1897,7 @@ class LuaLanguageService(
      * without throwing. Reuses SignatureHelp formal metadata (no extra ranking).
      */
     fun inlayHints(params: InlayHintParams): List<InlayHint> = synchronized(stateLock) {
-        try {
-            collectParameterInlayHints(params)
-        } catch (_: Exception) {
-            emptyList()
-        }
+        try { collectParameterInlayHints(params) } catch (_: Exception) { emptyList() }
     }
 
     /**
@@ -1926,11 +1906,7 @@ class LuaLanguageService(
      * An unsupported source produces no replacement.
      */
     fun formatting(params: DocumentFormattingParams): List<TextEdit> = synchronized(stateLock) {
-        try {
-            formatDocument(params.textDocument, params.options, range = null)
-        } catch (_: Exception) {
-            emptyList()
-        }
+        try { formatDocument(params.textDocument, params.options, range = null) } catch (_: Exception) { emptyList() }
     }
 
     /**
@@ -1940,11 +1916,7 @@ class LuaLanguageService(
      * missing-document, and empty ranges soft-degrade to an empty list.
      */
     fun rangeFormatting(params: DocumentRangeFormattingParams): List<TextEdit> = synchronized(stateLock) {
-        try {
-            formatDocument(params.textDocument, params.options, range = params.range)
-        } catch (_: Exception) {
-            emptyList()
-        }
+        try { formatDocument(params.textDocument, params.options, range = params.range) } catch (_: Exception) { emptyList() }
     }
 
     /**
@@ -1958,8 +1930,7 @@ class LuaLanguageService(
     fun prepareCallHierarchy(params: CallHierarchyPrepareParams): List<CallHierarchyItem> =
         synchronized(stateLock) {
             try {
-                val item = resolveCallHierarchyItem(params.textDocument, params.position)
-                if (item == null) emptyList() else listOf(item)
+                listOfNotNull(resolveCallHierarchyItem(params.textDocument, params.position))
             } catch (_: Exception) {
                 emptyList()
             }
@@ -1976,8 +1947,7 @@ class LuaLanguageService(
         params: CallHierarchyIncomingCallsParams
     ): List<CallHierarchyIncomingCall> = synchronized(stateLock) {
         try {
-            val item = params.item ?: return@synchronized emptyList()
-            collectIncomingCalls(item)
+            collectIncomingCalls(params.item ?: return@synchronized emptyList())
         } catch (_: Exception) {
             emptyList()
         }
@@ -1994,8 +1964,7 @@ class LuaLanguageService(
         params: CallHierarchyOutgoingCallsParams
     ): List<CallHierarchyOutgoingCall> = synchronized(stateLock) {
         try {
-            val item = params.item ?: return@synchronized emptyList()
-            collectOutgoingCalls(item)
+            collectOutgoingCalls(params.item ?: return@synchronized emptyList())
         } catch (_: Exception) {
             emptyList()
         }
@@ -2016,10 +1985,8 @@ class LuaLanguageService(
             val all = queries.references(path, position).map { it.toLspLocation() }
             // LSP defaults includeDeclaration to true when clients omit context.
             val includeDeclaration = params.context?.isIncludeDeclaration ?: true
-            if (includeDeclaration || all.isEmpty()) {
-                return@synchronized all
-            }
-            filterOutDeclarationLocations(path, position, all)
+            if (includeDeclaration || all.isEmpty()) all
+            else filterOutDeclarationLocations(path, position, all)
         } catch (_: Exception) {
             emptyList()
         }
@@ -2171,10 +2138,9 @@ class LuaLanguageService(
         document: TextDocumentIdentifier?,
         lspPosition: org.eclipse.lsp4j.Position?
     ): RenameTarget? {
-        if (document == null || lspPosition == null) {
-            return null
-        }
-        if (lspPosition.line < 0 || lspPosition.character < 0) {
+        if (document == null || lspPosition == null ||
+            lspPosition.line < 0 || lspPosition.character < 0
+        ) {
             return null
         }
         val path = pathOf(document)
@@ -2313,17 +2279,13 @@ class LuaLanguageService(
         }
     }
 
-    /** True when [identifier] is a declaration-site local / param / for-var / local function name. */
-    private fun isLocalBindingIdentifier(identifier: Identifier): Boolean =
-        isLocalBindingSite(identifier)
-
     /**
      * True when a same-file AST local binding of [name] exists — the gate that
      * rejects free globals / builtins in the rename paths.
      */
     private fun hasSameFileLocalBinding(semanticFile: WorkspaceSemanticFile?, name: String): Boolean =
         semanticFile?.identifiers?.any { other ->
-            other.name == name && isLocalBindingIdentifier(other)
+            other.name == name && isLocalBindingSite(other)
         } == true
 
     private fun isValidLuaIdentifier(name: String): Boolean {
@@ -2425,27 +2387,21 @@ class LuaLanguageService(
      * Whether the client advertised hierarchical DocumentSymbol support at initialize.
      * Used by [LuaTextDocumentService.documentSymbol] to choose Either.right vs left.
      */
-    fun supportsHierarchicalDocumentSymbols(): Boolean = synchronized(stateLock) {
-        hierarchicalDocumentSymbolSupport
-    }
+    fun supportsHierarchicalDocumentSymbols(): Boolean = synchronized(stateLock) { hierarchicalDocumentSymbolSupport }
 
     /**
      * Whether the client advertised modern WorkspaceSymbol support at initialize
      * (`workspace.symbol.resolveSupport` present). Used by [LuaWorkspaceService.symbol]
      * to choose Either.right([modernWorkspaceSymbols]) vs Either.left([workspaceSymbols]).
      */
-    fun supportsModernWorkspaceSymbols(): Boolean = synchronized(stateLock) {
-        modernWorkspaceSymbolSupport
-    }
+    fun supportsModernWorkspaceSymbols(): Boolean = synchronized(stateLock) { modernWorkspaceSymbolSupport }
 
     /**
      * Whether the client advertised `textDocument.definition.linkSupport` at initialize.
      * Used by [LuaTextDocumentService.definition] to choose Either.right([LocationLink])
      * vs Either.left([Location]). Absent/false keeps Location lists (no inventing links).
      */
-    fun supportsDefinitionLink(): Boolean = synchronized(stateLock) {
-        definitionLinkSupport
-    }
+    fun supportsDefinitionLink(): Boolean = synchronized(stateLock) { definitionLinkSupport }
 
     /**
      * Legacy workspace/symbol surface (Either.left SymbolInformation payloads).
@@ -2699,13 +2655,11 @@ class LuaLanguageService(
             // Analyze only the live buffers while the authoritative JVM index
             // builds. A separate Lua engine avoids both the dex cost and access
             // to the background engine's mutable caches.
-            workspaceGeneration += 1
             val result = analyzeLiveBuffers(openDocuments.toMap())
             snapshot = result.snapshot
             queries = LuaWorkspaceQueryFacade(snapshot)
             return result.affectedDocuments
         }
-        workspaceGeneration += 1
 
         val delta = workspaceDelta(lastSyncedFiles, files)
         if (delta.upserts.isEmpty() && delta.removals.isEmpty()) {
@@ -2927,7 +2881,6 @@ class LuaLanguageService(
             // Multi-root: advertise workspace folder support + change notifications so
             // clients send workspace/didChangeWorkspaceFolders (TASK-516).
             workspace = WorkspaceServerCapabilities(
-
                 WorkspaceFoldersOptions().apply {
                     supported = true
                     setChangeNotifications(true)
@@ -3140,8 +3093,7 @@ class LuaLanguageService(
             }
             is FunctionDeclaration ->
                 // Global function names are write sites too (they assign the global).
-                parent.identifier === identifier ||
-                    functionDeclarationNameIs(parent.identifier, identifier)
+                functionDeclarationNameIs(parent.identifier, identifier)
             is MemberExpression ->
                 // Member assignment LHS: t.field = ... where highlight is on `field`.
                 parent.identifier === identifier && isAssignmentLhsExpression(parent)
@@ -3350,34 +3302,13 @@ class LuaLanguageService(
             )
 
             // Keywords (incl. literals true/false/nil and operators and/or/not/in).
-            LuaTokenTypes.AND,
-            LuaTokenTypes.BREAK,
-            LuaTokenTypes.CASE,
-            LuaTokenTypes.CONTINUE,
-            LuaTokenTypes.DEFAULT,
-            LuaTokenTypes.DO,
-            LuaTokenTypes.ELSE,
-            LuaTokenTypes.ELSEIF,
-            LuaTokenTypes.END,
-            LuaTokenTypes.FALSE,
-            LuaTokenTypes.FOR,
-            LuaTokenTypes.FUNCTION,
-            LuaTokenTypes.GOTO,
-            LuaTokenTypes.IF,
-            LuaTokenTypes.IN,
-            LuaTokenTypes.LAMBDA,
-            LuaTokenTypes.LOCAL,
-            LuaTokenTypes.NIL,
-            LuaTokenTypes.NOT,
-            LuaTokenTypes.OR,
-            LuaTokenTypes.REPEAT,
-            LuaTokenTypes.RETURN,
-            LuaTokenTypes.SWITCH,
-            LuaTokenTypes.THEN,
-            LuaTokenTypes.TRUE,
-            LuaTokenTypes.UNTIL,
-            LuaTokenTypes.WHEN,
-            LuaTokenTypes.WHILE -> TYPE_KEYWORD
+            LuaTokenTypes.AND, LuaTokenTypes.BREAK, LuaTokenTypes.CASE, LuaTokenTypes.CONTINUE,
+            LuaTokenTypes.DEFAULT, LuaTokenTypes.DO, LuaTokenTypes.ELSE, LuaTokenTypes.ELSEIF,
+            LuaTokenTypes.END, LuaTokenTypes.FALSE, LuaTokenTypes.FOR, LuaTokenTypes.FUNCTION,
+            LuaTokenTypes.GOTO, LuaTokenTypes.IF, LuaTokenTypes.IN, LuaTokenTypes.LAMBDA,
+            LuaTokenTypes.LOCAL, LuaTokenTypes.NIL, LuaTokenTypes.NOT, LuaTokenTypes.OR,
+            LuaTokenTypes.REPEAT, LuaTokenTypes.RETURN, LuaTokenTypes.SWITCH, LuaTokenTypes.THEN,
+            LuaTokenTypes.TRUE, LuaTokenTypes.UNTIL, LuaTokenTypes.WHEN, LuaTokenTypes.WHILE -> TYPE_KEYWORD
 
             else -> null
         }
@@ -3576,7 +3507,9 @@ class LuaLanguageService(
                 val previous = chainRanges.lastOrNull()
                 if (previous == null) {
                     chainRanges += range
-                } else if (previous != range && selectionRangeContains(range, previous)) {
+                } else if (previous != range && rangeContainsHighlight(range, previous.start) &&
+                    rangeContainsHighlight(range, previous.end)
+                ) {
                     // Only expand when the parent strictly contains the prior span.
                     chainRanges += range
                 }
@@ -3661,21 +3594,6 @@ class LuaLanguageService(
     }
 
     /**
-     * True when [outer] fully contains [inner] (inclusive). Used to enforce the
-     * LSP SelectionRange parent/child containment contract while walking AST parents.
-     * (Equality of AST ranges is the data-class [Range] equals — start/end pair.)
-     */
-    private fun selectionRangeContains(outer: Range, inner: Range): Boolean {
-        val startOk =
-            inner.start.line > outer.start.line ||
-                (inner.start.line == outer.start.line && inner.start.column >= outer.start.column)
-        val endOk =
-            inner.end.line < outer.end.line ||
-                (inner.end.line == outer.end.line && inner.end.column <= outer.end.column)
-        return startOk && endOk
-    }
-
-    /**
      * Shared document / range formatting pipeline (TASK-544).
      * [range] null → full document. Invalid ranges (inverted, OOB, negative) → empty.
      * Returns at most one full-span replacement TextEdit when the formatted text differs.
@@ -3722,9 +3640,6 @@ class LuaLanguageService(
         val selectedFormatted = formatSourceText(selected, tabSize, insertSpaces)
             ?: return emptyList()
         if (selectedFormatted == selected) {
-            return emptyList()
-        }
-        if (!isOrderedLspRange(clamped)) {
             return emptyList()
         }
         return listOf(TextEdit(clamped, selectedFormatted))
@@ -3867,22 +3782,8 @@ class LuaLanguageService(
         if (start.line >= lineCount) {
             return null
         }
-        return clampFormatRange(range, source, lineCount)
-    }
-
-    /**
-     * Clamp an already-validated range to document bounds. The single caller
-     * ([validateAndClampFormatRange]) guarantees non-null, non-negative, ordered
-     * endpoints, lineCount > 0 and start.line < lineCount, so those re-checks are
-     * not repeated here. Returns null when clamping inverts the span.
-     */
-    private fun clampFormatRange(
-        range: org.eclipse.lsp4j.Range,
-        source: String,
-        lineCount: Int
-    ): org.eclipse.lsp4j.Range? {
-        val start = range.start ?: return null
-        val end = range.end ?: return null
+        // Clamp the validated range to document bounds; lineCount > 0 and
+        // start.line < lineCount hold here. Returns null when clamping inverts the span.
         val startLine = start.line.coerceIn(0, lineCount - 1)
         val endLine = end.line.coerceIn(0, lineCount) // exclusive EOF line allowed
         val startChar = start.character.coerceAtLeast(0)
@@ -3934,15 +3835,6 @@ class LuaLanguageService(
             return source.length - lineStart
         }
         return 0
-    }
-
-    private fun isOrderedLspRange(range: org.eclipse.lsp4j.Range): Boolean {
-        val start = range.start ?: return false
-        val end = range.end ?: return false
-        if (start.line < 0 || start.character < 0 || end.line < 0 || end.character < 0) {
-            return false
-        }
-        return end.line > start.line || (end.line == start.line && end.character >= start.character)
     }
 
     private fun buildHoverContent(name: String?, detail: String?, typeDisplayName: String?): String? {
@@ -3997,10 +3889,9 @@ class LuaLanguageService(
         document: TextDocumentIdentifier?,
         lspPosition: org.eclipse.lsp4j.Position?
     ): CallHierarchyItem? {
-        if (document == null || lspPosition == null) {
-            return null
-        }
-        if (lspPosition.line < 0 || lspPosition.character < 0) {
+        if (document == null || lspPosition == null ||
+            lspPosition.line < 0 || lspPosition.character < 0
+        ) {
             return null
         }
         val context = documentContextFor(document, requireSource = true) ?: return null
@@ -4194,17 +4085,7 @@ class LuaLanguageService(
     private fun containsRangeLsp(
         outer: org.eclipse.lsp4j.Range,
         inner: org.eclipse.lsp4j.Range
-    ): Boolean {
-        val startsOk =
-            inner.start.line > outer.start.line ||
-                (inner.start.line == outer.start.line &&
-                    inner.start.character >= outer.start.character)
-        val endsOk =
-            inner.end.line < outer.end.line ||
-                (inner.end.line == outer.end.line &&
-                    inner.end.character <= outer.end.character)
-        return startsOk && endsOk
-    }
+    ): Boolean = lspPositionInRange(inner.start, outer) && lspPositionInRange(inner.end, outer)
 
     private fun rangesOverlapParser(left: Range, right: Range): Boolean {
         val leftStartsBeforeRightEnds =
@@ -4382,27 +4263,23 @@ class LuaLanguageService(
         val requestRange = params.range
         val calls = mutableListOf<CallExpression>()
         val visitor = object : UnitVisitor() {
+            // String/Table call subclasses still visit through their own hooks below.
             override fun visitCallExpression(node: CallExpression, value: Unit) {
-                // String/Table call subclasses still visit through here after their own hooks.
-                if (node !is StringCallExpression && node !is TableCallExpression) {
-                    if (callIntersectsRequestRange(node, requestRange)) {
-                        calls += node
-                    }
+                if (node !is StringCallExpression && node !is TableCallExpression &&
+                    callIntersectsRequestRange(node, requestRange)
+                ) {
+                    calls += node
                 }
                 super.visitCallExpression(node, value)
             }
 
             override fun visitStringCallExpression(node: StringCallExpression, value: Unit) {
-                if (callIntersectsRequestRange(node, requestRange)) {
-                    calls += node
-                }
+                if (callIntersectsRequestRange(node, requestRange)) calls += node
                 super.visitStringCallExpression(node, value)
             }
 
             override fun visitTableCallExpression(node: TableCallExpression, value: Unit) {
-                if (callIntersectsRequestRange(node, requestRange)) {
-                    calls += node
-                }
+                if (callIntersectsRequestRange(node, requestRange)) calls += node
                 super.visitTableCallExpression(node, value)
             }
         }

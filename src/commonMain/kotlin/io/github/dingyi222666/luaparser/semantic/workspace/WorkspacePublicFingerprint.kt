@@ -1,36 +1,6 @@
 package io.github.dingyi222666.luaparser.semantic.workspace
 
-import io.github.dingyi222666.luaparser.semantic.types.model.AliasType
-import io.github.dingyi222666.luaparser.semantic.types.model.AppliedType
-import io.github.dingyi222666.luaparser.semantic.types.model.ArrayType
-import io.github.dingyi222666.luaparser.semantic.types.model.CallableType
-import io.github.dingyi222666.luaparser.semantic.types.model.ClassType
-import io.github.dingyi222666.luaparser.semantic.types.model.CustomType
-import io.github.dingyi222666.luaparser.semantic.types.model.ErrorType
-import io.github.dingyi222666.luaparser.semantic.types.model.FunctionType
-import io.github.dingyi222666.luaparser.semantic.types.model.IntersectionType
-import io.github.dingyi222666.luaparser.semantic.types.model.JavaArrayType
-import io.github.dingyi222666.luaparser.semantic.types.model.JavaClassType
-import io.github.dingyi222666.luaparser.semantic.types.model.JavaConstructorType
-import io.github.dingyi222666.luaparser.semantic.types.model.JavaInstanceMemberType
-import io.github.dingyi222666.luaparser.semantic.types.model.JavaInstanceType
-import io.github.dingyi222666.luaparser.semantic.types.model.JavaOverloadType
-import io.github.dingyi222666.luaparser.semantic.types.model.JavaPrimitiveType
-import io.github.dingyi222666.luaparser.semantic.types.model.JavaStaticMemberType
-import io.github.dingyi222666.luaparser.semantic.types.model.JavaTypeName
-import io.github.dingyi222666.luaparser.semantic.types.model.LiteralType
-import io.github.dingyi222666.luaparser.semantic.types.model.ModuleType
-import io.github.dingyi222666.luaparser.semantic.types.model.MultiReturnType
-import io.github.dingyi222666.luaparser.semantic.types.model.NeverType
-import io.github.dingyi222666.luaparser.semantic.types.model.OverloadedFunctionType
-import io.github.dingyi222666.luaparser.semantic.types.model.PrimitiveType
-import io.github.dingyi222666.luaparser.semantic.types.model.TableType
-import io.github.dingyi222666.luaparser.semantic.types.model.TupleType
-import io.github.dingyi222666.luaparser.semantic.types.model.Type
-import io.github.dingyi222666.luaparser.semantic.types.model.TypeParameterType
-import io.github.dingyi222666.luaparser.semantic.types.model.UnknownType
-import io.github.dingyi222666.luaparser.semantic.types.model.UnionType
-import io.github.dingyi222666.luaparser.semantic.types.model.VarargType
+import io.github.dingyi222666.luaparser.semantic.types.model.*
 
 data class WorkspacePublicFingerprint(
     val providedModuleNames: Set<String>,
@@ -179,21 +149,11 @@ data class WorkspacePublicFingerprint(
                 append(serializeType(type.signature, javaClassStack))
                 append(')')
             }
-            is JavaStaticMemberType -> buildString {
-                append("javaStaticMember(owner=")
-                append(serializeJavaTypeName(type.owner))
-                append(";name=")
-                append(type.memberName)
-                append(";kind=")
-                append(type.memberKind.name)
-                append(";visibility=")
-                append(type.visibility.name)
-                append(";type=")
-                append(serializeType(type.valueType, javaClassStack))
-                append(')')
-            }
-            is JavaInstanceMemberType -> buildString {
-                append("javaInstanceMember(owner=")
+            // JavaMemberType is sealed with exactly these two subtypes; they serialize
+            // identically apart from the discriminator label.
+            is JavaMemberType -> buildString {
+                append(if (type is JavaStaticMemberType) "javaStaticMember(" else "javaInstanceMember(")
+                append("owner=")
                 append(serializeJavaTypeName(type.owner))
                 append(";name=")
                 append(type.memberName)

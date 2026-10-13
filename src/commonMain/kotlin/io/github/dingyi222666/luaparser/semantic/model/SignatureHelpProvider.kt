@@ -7,9 +7,7 @@ import io.github.dingyi222666.luaparser.parser.ast.node.AssignmentStatement
 import io.github.dingyi222666.luaparser.parser.ast.node.BaseASTNode
 import io.github.dingyi222666.luaparser.parser.ast.node.BlockNode
 import io.github.dingyi222666.luaparser.parser.ast.node.CallExpression
-import io.github.dingyi222666.luaparser.parser.ast.node.CallStatement
 import io.github.dingyi222666.luaparser.parser.ast.node.ExpressionNode
-import io.github.dingyi222666.luaparser.parser.ast.node.FunctionDeclaration
 import io.github.dingyi222666.luaparser.parser.ast.node.Identifier
 import io.github.dingyi222666.luaparser.parser.ast.node.LocalStatement
 import io.github.dingyi222666.luaparser.parser.ast.node.MemberExpression
@@ -24,6 +22,7 @@ import io.github.dingyi222666.luaparser.semantic.binder.BinderDeclaration
 import io.github.dingyi222666.luaparser.semantic.binder.BinderPassResult
 import io.github.dingyi222666.luaparser.semantic.binder.ScopeId
 import io.github.dingyi222666.luaparser.semantic.binder.comparePositions
+import io.github.dingyi222666.luaparser.semantic.binder.positionLt
 import io.github.dingyi222666.luaparser.semantic.binder.positionLte
 import io.github.dingyi222666.luaparser.semantic.binder.rangeContains
 import io.github.dingyi222666.luaparser.semantic.checker.CallChecker
@@ -71,7 +70,7 @@ internal class SignatureHelpProvider(
             return null
         }
 
-        val methodName = callableMethodName(callableBase, declaration)
+        val methodName = callableMethodName(callableBase)
         // FunctionType -> presentation signature: canonical label + per-parameter labels.
         val signatures = resolutionSignatures.map { signature ->
             SignatureInformation(
@@ -110,9 +109,7 @@ internal class SignatureHelpProvider(
         // Other rows need no callable expansion, normalization, or argument analysis.
         if (type !is CallableType && type !is AliasType && type !is IntersectionType &&
             type !is UnionType && type !is AppliedType && type !is TypeParameterType && type !is ModuleType) return type.displayName
-        if (type is CallableType && expression == null && declaration == null) {
-            return callableSummary(type.callSignatures)
-        }
+        if (type is CallableType && expression == null && declaration == null) return callableSummary(type.callSignatures)
         val call = expression?.let { node ->
             (runCatching { node.parent }.getOrNull() as? CallExpression)
                 ?.takeIf { callableBase(it) === node }
@@ -168,38 +165,24 @@ internal class SignatureHelpProvider(
         }
         callResolution.selectedSignatureIndex?.takeIf { it in signatures.indices }?.let { return it }
         val selected = callResolution.selectedSignature ?: return 0
-        val exact = signatures.indexOf(selected)
-        if (exact >= 0) {
-            return exact
-        }
-        val byLabel = signatures.indexOfFirst { candidate ->
+        signatures.indexOf(selected).takeIf { it >= 0 }?.let { return it }
+        signatures.indexOfFirst { candidate ->
             candidate.displayName == selected.displayName || candidate.name == selected.name
-        }
-        if (byLabel >= 0) {
-            return byLabel
-        }
-        val byShape = signatures.indexOfFirst { candidate ->
+        }.takeIf { it >= 0 }?.let { return it }
+        return signatures.indexOfFirst { candidate ->
             signatureShapeMatches(candidate, selected)
-        }
-        return byShape.takeIf { it >= 0 } ?: 0
+        }.takeIf { it >= 0 } ?: 0
     }
 
-    private fun signatureShapeMatches(left: FunctionType, right: FunctionType): Boolean {
-        if (left.parameters.size != right.parameters.size) {
-            return false
-        }
-        if (left.returnType != right.returnType &&
-            left.returnType.displayName != right.returnType.displayName
-        ) {
-            return false
-        }
-        return left.parameters.zip(right.parameters).all { (a, b) ->
-            a.name == b.name &&
-                a.optional == b.optional &&
-                a.vararg == b.vararg &&
-                (a.type == b.type || a.type.displayName == b.type.displayName)
-        }
-    }
+    private fun signatureShapeMatches(left: FunctionType, right: FunctionType): Boolean =
+        left.parameters.size == right.parameters.size &&
+            (left.returnType == right.returnType || left.returnType.displayName == right.returnType.displayName) &&
+            left.parameters.zip(right.parameters).all { (a, b) ->
+                a.name == b.name &&
+                    a.optional == b.optional &&
+                    a.vararg == b.vararg &&
+                    (a.type == b.type || a.type.displayName == b.type.displayName)
+            }
 
     /** Vararg / trailing optionals: keep the cursor index inside the active signature. */
     private fun clampActiveParameter(signature: FunctionType?, activeParameter: Int): Int =
@@ -212,28 +195,21 @@ internal class SignatureHelpProvider(
         return if (signature.typeParameters.isNotEmpty() && !methodName.isNullOrBlank()) "$methodName $display" else display
     }
 
-    private fun callableMethodName(
-        callableBase: ExpressionNode,
-        declaration: BinderDeclaration?
-    ): String? {
+    private fun callableMethodName(callableBase: ExpressionNode): String? =
         // Only member-access call sites need a discoverable method-name prefix on generic
         // labels (Arrays.asList, receiver:method). Bare Identifier/local function calls must
         // keep the pure fun(...) / fun<T>(...) form expected by workspace exact-label asserts.
-        return (callableBase as? MemberExpression)
-            ?.identifier?.name?.takeIf { it.isNotBlank() }
-    }
+        (callableBase as? MemberExpression)?.identifier?.name?.takeIf { it.isNotBlank() }
 
-    private fun parameterLabel(parameter: FunctionParameter): String {
-        return buildString {
-            if (parameter.name != "...") {
-                append(parameter.name)
-                if (parameter.optional) append('?')
-                append(": ")
-            }
-            append(parameter.type.displayName)
-            if (parameter.vararg && parameter.type !is VarargType) {
-                append("...")
-            }
+    private fun parameterLabel(parameter: FunctionParameter): String = buildString {
+        if (parameter.name != "...") {
+            append(parameter.name)
+            if (parameter.optional) append('?')
+            append(": ")
+        }
+        append(parameter.type.displayName)
+        if (parameter.vararg && parameter.type !is VarargType) {
+            append("...")
         }
     }
 
@@ -245,20 +221,17 @@ internal class SignatureHelpProvider(
         if (arguments.isEmpty()) {
             return receiverOffset
         }
-
-        val firstArgumentStart = arguments.first().range.start
-        if (comparePositions(position, firstArgumentStart) < 0) {
+        if (comparePositions(position, arguments.first().range.start) < 0) {
             return receiverOffset
         }
 
         arguments.forEachIndexed { index, argument ->
-            val range = argument.range
-            if (rangeContains(range, position)) {
+            if (rangeContains(argument.range, position)) {
                 return receiverOffset + index
             }
 
             val nextArgumentStart = arguments.getOrNull(index + 1)?.range?.start
-            if (nextArgumentStart != null && comparePositions(position, range.end) >= 0 && comparePositions(position, nextArgumentStart) < 0) {
+            if (nextArgumentStart != null && comparePositions(position, argument.range.end) >= 0 && comparePositions(position, nextArgumentStart) < 0) {
                 return receiverOffset + index + 1
             }
         }
@@ -266,9 +239,8 @@ internal class SignatureHelpProvider(
         return receiverOffset + arguments.lastIndex
     }
 
-    private fun receiverOffset(call: CallExpression): Int {
-        return if ((callableBase(call) as? MemberExpression)?.indexer == ":") 1 else 0
-    }
+    private fun receiverOffset(call: CallExpression): Int =
+        if ((callableBase(call) as? MemberExpression)?.indexer == ":") 1 else 0
 
     private fun argumentTypesForResolution(call: CallExpression, lexicalScopeId: ScopeId): List<Type> = buildList {
         evaluator.callArgumentValues(call, lexicalScopeId).forEach { it.appendToCallArguments(this) }
@@ -317,9 +289,7 @@ internal class SignatureHelpProvider(
     private fun argumentRegionSpan(call: CallExpression): Int {
         val start = call.base.range.end
         val end = effectiveArgumentRegionEnd(call)
-        val lineDelta = (end.line - start.line).coerceAtLeast(0)
-        val columnDelta = end.column - start.column
-        return lineDelta * 1_000_000 + columnDelta
+        return (end.line - start.line).coerceAtLeast(0) * 1_000_000 + (end.column - start.column)
     }
 
     private fun isWithinCallArguments(call: CallExpression, position: Position): Boolean {
@@ -328,12 +298,14 @@ internal class SignatureHelpProvider(
         if (arguments.isEmpty()) {
             // End-inclusive argument region (empty `f()` and inflated next-token end).
             val start = call.base.range.end
-            return comparePositions(start, regionEnd) < 0 &&
-                comparePositions(position, start) >= 0 && comparePositions(position, regionEnd) <= 0
+            return positionLt(start, regionEnd) &&
+                positionLte(start, position) && positionLte(position, regionEnd)
         }
 
-        val firstArgumentStart = arguments.first().range.start
-        if (comparePositions(position, call.base.range.end) >= 0 && comparePositions(position, firstArgumentStart) < 0) {
+        // Gap between the call base and the first argument.
+        if (comparePositions(position, call.base.range.end) >= 0 &&
+            comparePositions(position, arguments.first().range.start) < 0
+        ) {
             return true
         }
 
@@ -371,58 +343,39 @@ internal class SignatureHelpProvider(
         var current: BaseASTNode = call
         while (true) {
             val parent = runCatching { current.parent }.getOrNull() ?: return null
-            when (parent) {
-                is CallExpression -> {
-                    val args = callArguments(parent)
-                    val idx = args.indexOf(current)
-                    if (idx >= 0 && idx + 1 < args.size) {
-                        // Nested call followed by another argument: do not inflate into the
-                        // outer call's later args (outer call owns that region).
-                        return null
-                    }
-                    current = parent
+            // Expression slots (nested call arguments, local/assignment initializers, return
+            // arguments): a later slot owns the following token, so do not inflate into it.
+            val expressionSlots: List<ExpressionNode>? = when (parent) {
+                is CallExpression -> callArguments(parent)
+                is LocalStatement -> parent.variables
+                is AssignmentStatement -> parent.variables
+                is ReturnStatement -> parent.arguments
+                else -> null
+            }
+            if (expressionSlots != null) {
+                val idx = expressionSlots.indexOf(current)
+                if (idx >= 0 && idx + 1 < expressionSlots.size) {
+                    return null
                 }
-                is LocalStatement,
-                is AssignmentStatement,
-                is ReturnStatement -> {
-                    // Same "nested call is not the last slot" rule for local/assignment
-                    // initializers and return arguments: a later slot owns the following
-                    // token, so do not inflate into it.
-                    val slots = when (parent) {
-                        is LocalStatement -> parent.variables
-                        is AssignmentStatement -> parent.variables
-                        else -> (parent as ReturnStatement).arguments
+                current = parent
+                continue
+            }
+            if (parent is BlockNode) {
+                val statements = parent.statements
+                val idx = statements.indexOf(current)
+                if (idx >= 0) {
+                    if (idx + 1 < statements.size) {
+                        return statements[idx + 1].range.start
                     }
-                    val idx = slots.indexOf(current)
-                    if (idx >= 0 && idx + 1 < slots.size) {
-                        return null
-                    }
-                    current = parent
+                    return parent.returnStatement?.range?.start
                 }
-                is BlockNode -> {
-                    val statements = parent.statements
-                    val idx = statements.indexOf(current)
-                    if (idx >= 0) {
-                        if (idx + 1 < statements.size) {
-                            return statements[idx + 1].range.start
-                        }
-                        return parent.returnStatement?.range?.start
-                    }
-                    if (parent.returnStatement === current) {
-                        return null
-                    }
-                    current = parent
-                }
-                // Wrapper statements / member chains: climb through them unchanged.
-                is CallStatement,
-                is MemberExpression,
-                is FunctionDeclaration -> {
-                    current = parent
-                }
-                else -> {
-                    current = parent
+                if (parent.returnStatement === current) {
+                    return null
                 }
             }
+            // Wrapper statements (CallStatement), member chains and any other container:
+            // climb through them unchanged.
+            current = parent
         }
     }
 

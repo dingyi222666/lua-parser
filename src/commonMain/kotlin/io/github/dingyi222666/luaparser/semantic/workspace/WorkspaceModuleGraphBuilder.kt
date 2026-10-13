@@ -22,21 +22,13 @@ object WorkspaceModuleGraphBuilder {
 
         builtinOverlay.providerModules.forEach { (path, overlayModule) ->
             graphFiles[path] = overlayModule.file
-            providerClaims.getOrPut(overlayModule.moduleName) { mutableListOf() } += WorkspaceModuleGraph.ModuleProvider(
-                moduleName = overlayModule.moduleName,
-                path = path,
-                source = WorkspaceModuleGraph.ProviderSource.STANDARD_LIBRARY_OVERLAY
-            )
+            providerClaims.getOrPut(overlayModule.moduleName) { mutableListOf() } += WorkspaceModuleGraph.ModuleProvider(overlayModule.moduleName, path, WorkspaceModuleGraph.ProviderSource.STANDARD_LIBRARY_OVERLAY)
         }
 
         extraProviders.forEach { (path, snapshot) ->
             graphFiles[path] = snapshot
             snapshot.moduleExportSurface?.moduleType?.moduleName?.let { moduleName ->
-                providerClaims.getOrPut(moduleName) { mutableListOf() } += WorkspaceModuleGraph.ModuleProvider(
-                    moduleName = moduleName,
-                    path = path,
-                    source = WorkspaceModuleGraph.ProviderSource.EXTRA_WORKSPACE_PROVIDER
-                )
+                providerClaims.getOrPut(moduleName) { mutableListOf() } += WorkspaceModuleGraph.ModuleProvider(moduleName, path, WorkspaceModuleGraph.ProviderSource.EXTRA_WORKSPACE_PROVIDER)
             }
         }
 
@@ -117,11 +109,7 @@ object WorkspaceModuleGraphBuilder {
             resolvedDependencies = resolvedDependencies
         )
         val componentByFile = linkedMapOf<VirtualPath, Set<VirtualPath>>()
-        components.forEach { component ->
-            component.forEach { path ->
-                componentByFile[path] = component
-            }
-        }
+        components.forEach { component -> component.forEach { path -> componentByFile[path] = component } }
 
         return WorkspaceModuleGraph(
             activeProviders = activeProviders,
@@ -152,11 +140,7 @@ object WorkspaceModuleGraphBuilder {
             .map { it.moduleName }
             .distinct()
             .map {
-                WorkspaceModuleGraph.ModuleProvider(
-                    moduleName = it,
-                    path = path,
-                    source = WorkspaceModuleGraph.ProviderSource.LEGACY_TOP_LEVEL
-                )
+                WorkspaceModuleGraph.ModuleProvider(it, path, WorkspaceModuleGraph.ProviderSource.LEGACY_TOP_LEVEL)
             }
         val derived = facts.moduleNameCandidates
             .asSequence()
@@ -165,11 +149,7 @@ object WorkspaceModuleGraphBuilder {
             .distinct()
             .flatMap { moduleName ->
                 virtualPathModuleAliases(moduleName).map { alias ->
-                    WorkspaceModuleGraph.ModuleProvider(
-                        moduleName = alias,
-                        path = path,
-                        source = WorkspaceModuleGraph.ProviderSource.VIRTUAL_PATH
-                    )
+                    WorkspaceModuleGraph.ModuleProvider(alias, path, WorkspaceModuleGraph.ProviderSource.VIRTUAL_PATH)
                 }
             }
 
@@ -188,11 +168,7 @@ object WorkspaceModuleGraphBuilder {
     private fun alyPathProviders(path: VirtualPath): List<WorkspaceModuleGraph.ModuleProvider> {
         val moduleName = alyModuleNameFromPath(path) ?: return emptyList()
         return listOf(
-            WorkspaceModuleGraph.ModuleProvider(
-                moduleName = moduleName,
-                path = path,
-                source = WorkspaceModuleGraph.ProviderSource.VIRTUAL_PATH
-            )
+            WorkspaceModuleGraph.ModuleProvider(moduleName, path, WorkspaceModuleGraph.ProviderSource.VIRTUAL_PATH)
         )
     }
 
@@ -211,11 +187,7 @@ object WorkspaceModuleGraphBuilder {
         builtinOverlay.providerModules.entries.firstOrNull { (_, provider) ->
             provider.moduleName == moduleName
         }?.let { (path, provider) ->
-            return WorkspaceModuleGraph.ModuleProvider(
-                moduleName = provider.moduleName,
-                path = path,
-                source = WorkspaceModuleGraph.ProviderSource.STANDARD_LIBRARY_OVERLAY
-            )
+            return WorkspaceModuleGraph.ModuleProvider(provider.moduleName, path, WorkspaceModuleGraph.ProviderSource.STANDARD_LIBRARY_OVERLAY)
         }
         val suffix = "/$moduleName.lua"
         val bare = "$moduleName.lua"
@@ -224,11 +196,7 @@ object WorkspaceModuleGraphBuilder {
             (value.endsWith(suffix) || value == bare) &&
                 (provider.moduleName == moduleName || provider.moduleName.replace('/', '.') == moduleName)
         }?.let { (path, _) ->
-            return WorkspaceModuleGraph.ModuleProvider(
-                moduleName = moduleName,
-                path = path,
-                source = WorkspaceModuleGraph.ProviderSource.STANDARD_LIBRARY_OVERLAY
-            )
+            return WorkspaceModuleGraph.ModuleProvider(moduleName, path, WorkspaceModuleGraph.ProviderSource.STANDARD_LIBRARY_OVERLAY)
         }
         return null
     }
@@ -363,11 +331,7 @@ internal fun findAlyLayoutProviderIn(
                 value == candidate || value.endsWith("/$candidate")
             }
     } ?: return null
-    return WorkspaceModuleGraph.ModuleProvider(
-        moduleName = moduleName,
-        path = match,
-        source = WorkspaceModuleGraph.ProviderSource.VIRTUAL_PATH
-    )
+    return WorkspaceModuleGraph.ModuleProvider(moduleName, match, WorkspaceModuleGraph.ProviderSource.VIRTUAL_PATH)
 }
 
 internal fun alyModuleNameFromPath(path: VirtualPath): String? {

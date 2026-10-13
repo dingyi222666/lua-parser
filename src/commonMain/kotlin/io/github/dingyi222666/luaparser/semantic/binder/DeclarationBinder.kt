@@ -170,19 +170,18 @@ internal class DeclarationBinder(
                 is Identifier -> bindBareGlobalAssignmentTarget(target, documentation, declaredTypeSyntax)
                 is MemberExpression -> {
                     visitExpressionNode(target.base, value)
-                    val assignedValue = node.variables.getOrNull(index)
                     // Function-valued writes are METHOD declarations; other member writes
                     // are FIELD declarations (table/module surfaces must include fields
                     // installed with `owner.name = value`, not only `function owner.name()`).
+                    val kind = when (node.variables.getOrNull(index)) {
+                        is FunctionDeclaration, is LambdaDeclaration -> DeclarationKind.METHOD
+                        else -> DeclarationKind.FIELD
+                    }
                     builder.addDeclarationWithSymbol(
                         BinderDeclaration(
                             id = builder.nextDeclarationId(),
                             name = target.identifier.name,
-                            kind = if (assignedValue is FunctionDeclaration || assignedValue is LambdaDeclaration) {
-                                DeclarationKind.METHOD
-                            } else {
-                                DeclarationKind.FIELD
-                            },
+                            kind = kind,
                             origin = DeclarationOrigin.AST,
                             owner = DeclarationOwner.Lexical(currentLexicalOwnerNode()),
                             anchorNode = target.identifier,
@@ -247,18 +246,14 @@ internal class DeclarationBinder(
         }
     }
 
-    override fun visitDoStatement(node: DoStatement, value: Unit) {
-        bindBodyScope(node.body, ScopeKind.BLOCK, value)
-    }
+    override fun visitDoStatement(node: DoStatement, value: Unit) = bindBodyScope(node.body, ScopeKind.BLOCK, value)
 
     override fun visitIfClause(node: IfClause, value: Unit) {
         visitExpressionNode(node.condition, value)
         bindBodyScope(node.body, ScopeKind.CONDITIONAL, value)
     }
 
-    override fun visitElseClause(node: ElseClause, value: Unit) {
-        bindBodyScope(node.body, ScopeKind.CONDITIONAL, value)
-    }
+    override fun visitElseClause(node: ElseClause, value: Unit) = bindBodyScope(node.body, ScopeKind.CONDITIONAL, value)
 
     override fun visitElseIfClause(node: ElseIfClause, value: Unit) {
         visitExpressionNode(node.condition, value)
@@ -270,9 +265,7 @@ internal class DeclarationBinder(
         bindBodyScope(node.body, ScopeKind.CONDITIONAL, value)
     }
 
-    override fun visitDefaultCause(node: DefaultCause, value: Unit) {
-        bindBodyScope(node.body, ScopeKind.CONDITIONAL, value)
-    }
+    override fun visitDefaultCause(node: DefaultCause, value: Unit) = bindBodyScope(node.body, ScopeKind.CONDITIONAL, value)
 
     override fun visitWhileStatement(node: WhileStatement, value: Unit) {
         visitExpressionNode(node.condition, value)
@@ -778,13 +771,8 @@ internal class DeclarationBinder(
         return requireNotNull(builder.currentScope.ownerNode) { "Current scope is missing an owner node." }
     }
 
-    private fun parseTypeSyntax(text: String?): TypeSyntax? {
-        val normalized = text?.trim().orEmpty()
-        if (normalized.isEmpty()) {
-            return null
-        }
-        return TypeSyntaxParser.parseOrNull(normalized)
-    }
+    private fun parseTypeSyntax(text: String?): TypeSyntax? =
+        text?.trim()?.takeIf { it.isNotEmpty() }?.let(TypeSyntaxParser::parseOrNull)
 
     /**
      * `---@type` on a multi-name local is positional: `---@type boolean, string` above
@@ -798,42 +786,23 @@ internal class DeclarationBinder(
         inlineTypeText: String?
     ): List<TypeSyntax?> {
         val normalized = inlineTypeText?.trim().orEmpty()
-        if (normalized.isEmpty()) {
-            return emptyList()
-        }
-
-        if (declaredNameCount == 1) {
-            return listOf(parseTypeSyntax(normalized))
-        }
+        if (normalized.isEmpty()) return emptyList()
+        if (declaredNameCount == 1) return listOf(parseTypeSyntax(normalized))
 
         val positionalTexts = splitTopLevelTypeText(normalized, ',')
-        if (positionalTexts.size <= 1) {
-            return List(declaredNameCount) { null }
-        }
+        if (positionalTexts.size <= 1) return List(declaredNameCount) { null }
 
         return List(declaredNameCount) { index -> parseTypeSyntax(positionalTexts.getOrNull(index)) }
     }
 
-    private fun documentationForTags(
-        attachment: CommentAttachment,
-        tags: List<DocTagSyntax>
-    ): DeclarationDocumentation {
-        val docComment = attachment.docComment
-        return DeclarationDocumentation(
-            comments = attachment.comments,
-            docComment = docComment?.let { DocCommentSyntax(description = it.description, tags = tags) },
-            inlineTypeText = attachment.inlineTypeText
-        )
-    }
+    private fun documentationForTags(attachment: CommentAttachment, tags: List<DocTagSyntax>) = DeclarationDocumentation(
+        comments = attachment.comments,
+        docComment = attachment.docComment?.let { DocCommentSyntax(description = it.description, tags = tags) },
+        inlineTypeText = attachment.inlineTypeText
+    )
 
-    private fun commentRange(attachment: CommentAttachment): Range? {
-        val comments = attachment.comments
-        if (comments.isEmpty()) {
-            return null
+    private fun commentRange(attachment: CommentAttachment): Range? =
+        attachment.comments.takeIf { it.isNotEmpty() }?.let { comments ->
+            Range(start = comments.first().range.start, end = comments.last().range.end)
         }
-        return Range(
-            start = comments.first().range.start,
-            end = comments.last().range.end
-        )
-    }
 }

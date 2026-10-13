@@ -95,36 +95,26 @@ class BinderPositionQueries(
         }
     }
 
-    private fun loopBodyTailScopeAt(position: Position): Scope? {
-        var innermost: Scope? = null
-        forLoopBodyScopes.forEach { scope ->
-            // `forLoopBodyScopes` only yields LOOP scopes whose ownerNode is a BlockNode.
-            val body = scope.ownerNode as BlockNode
-            // `parent` is a not-null delegate that can still throw on synthetic/detached
-            // trees; treat those as non-candidates like CompletionProvider does.
-            val statement = runCatching { body.parent }.getOrNull() ?: return@forEach
-            if (
-                statement !is ForNumericStatement &&
-                statement !is ForGenericStatement &&
-                statement !is WhileStatement
-            ) {
-                return@forEach
-            }
-            // Tail only: inside the statement's full range (end-exclusive) but at/after the
-            // body's end-exclusive end. Header positions stay in the enclosing scope so
-            // `for i = 1, #i do` keeps resolving the OUTER `i`.
-            if (!isPositionWithin(statement.range.start, statement.range.end, position)) {
-                return@forEach
-            }
-            if (comparePositions(body.range.end, position) > 0) {
-                return@forEach
-            }
-            val current = innermost
-            if (current == null || comparePositions(current.range.start, scope.range.start) < 0) {
-                innermost = scope
-            }
-        }
-        return innermost
+    private fun loopBodyTailScopeAt(position: Position): Scope? =
+        forLoopBodyScopes.asSequence()
+            .mapNotNull { scope -> tailGapCandidate(scope, position) }
+            .maxWithOrNull(compareBy({ it.range.start.line }, { it.range.start.column }))
+
+    /**
+     * [scope] when [position] sits in its statement's tail gap, else `null`. Tail only:
+     * inside the statement's full range (end-exclusive) but at/after the body's
+     * end-exclusive end — header positions stay in the enclosing scope so
+     * `for i = 1, #i do` keeps resolving the OUTER `i`. Ties keep the first-seen scope.
+     */
+    private fun tailGapCandidate(scope: Scope, position: Position): Scope? {
+        // `forLoopBodyScopes` only yields LOOP scopes whose ownerNode is a BlockNode, and
+        // `parent` is a not-null delegate that can still throw on synthetic/detached trees —
+        // treat both as non-candidates like CompletionProvider does.
+        val statement = runCatching { (scope.ownerNode as BlockNode).parent }.getOrNull() ?: return null
+        if (statement !is ForNumericStatement && statement !is ForGenericStatement && statement !is WhileStatement) return null
+        if (!isPositionWithin(statement.range.start, statement.range.end, position)) return null
+        if (comparePositions((scope.ownerNode as BlockNode).range.end, position) > 0) return null
+        return scope
     }
 
     fun getDeclarationsAt(position: Position): List<BinderDeclaration> {

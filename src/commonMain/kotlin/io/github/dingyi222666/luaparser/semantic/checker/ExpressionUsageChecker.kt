@@ -346,19 +346,13 @@ internal class ExpressionUsageChecker(
 
     override fun visitCallExpression(node: CallExpression, value: MutableList<Diagnostic>) {
         when (node) {
-            is StringCallExpression -> {
-                visitStringCallExpression(node, value)
-                emitLuaJavaCallSurfaceDiagnostics(node, value)
-                return
-            }
-            is TableCallExpression -> {
-                visitTableCallExpression(node, value)
-                emitLuaJavaCallSurfaceDiagnostics(node, value)
-                return
+            is StringCallExpression -> visitStringCallExpression(node, value)
+            is TableCallExpression -> visitTableCallExpression(node, value)
+            else -> {
+                visitExpressionNode(node.base, value)
+                visitExpressionNodes(node.arguments, value)
             }
         }
-        visitExpressionNode(node.base, value)
-        visitExpressionNodes(node.arguments, value)
         emitLuaJavaCallSurfaceDiagnostics(node, value)
     }
 
