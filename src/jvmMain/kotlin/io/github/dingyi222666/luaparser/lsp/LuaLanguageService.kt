@@ -347,26 +347,11 @@ class LuaLanguageService(
      */
     private fun warmBuiltinOverlay() {
         if (!builtinOverlayWarmed.compareAndSet(false, true)) return
-        // Bounded-parallel overlay compile (commonMain cannot spawn threads): the
-        // cold sequential compile measured 8.8-10.3s on the emulator and delayed the
-        // first live analysis past every interactive budget.
-        io.github.dingyi222666.luaparser.semantic.workspace.std.BuiltinOverlayLoader
-            .parallelOverlayCompile = { count, compute ->
-            val workers = minOf(4, count.coerceAtLeast(1))
-            if (workers < 2) {
-                (0 until count).map(compute)
-            } else {
-                val pool = java.util.concurrent.Executors.newFixedThreadPool(workers) { task ->
-                    Thread(task, "lsp-overlay-compile").apply { isDaemon = true }
-                }
-                try {
-                    val futures = (0 until count).map { index -> pool.submit(java.util.concurrent.Callable { compute(index) }) }
-                    futures.map { it.get() }
-                } finally {
-                    pool.shutdown()
-                }
-            }
-        }
+        // The bounded-parallel overlay compile is wired OFF on this host, measured:
+        // 4 compile workers on the TCG emulator ran 10.0-16.2s vs 8.8-10.3s
+        // sequential (rel43-49) — the workers' allocation rate thrashes the
+        // emulator's concurrent-copying GC, which serializes them anyway. The
+        // injectable hook stays for hosts with real cores.
         // The globals-document analysis is the dominant sequential tail after the
         // per-module loop: one ~21KB concatenated _G document (lua53 global.lua +
         // androlua _G.lua + compat) paying a full parse + bind + facts pass, then a
