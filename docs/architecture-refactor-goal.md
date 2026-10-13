@@ -588,3 +588,17 @@ All five agents delivered behavior-preserving cuts, verified remotely (JVM suite
 
 **Lines: 46,259** (baseline 53,562 → −7,303; target ≤41,562, ~4,700 remaining). Pace ~240 lines/round of verified cuts; the remaining mass sits in behavior-sensitive resolution-order code (facade), the 2.5k-line evaluator, and LuaParser recovery paths (verified semantically distinct). Remaining acceptance gates all green: 7/7 E2E, Monaco smoke, JVM 2,929/0/0, JS compile, corpus.
 
+## Round 25 — five-agent line reduction — 2026-10-13 (2/2)
+
+All five agents delivered; verified remotely (JVM suite 2,929/0/0 + JS compile + **E2E rel53 = OK (7 tests)**):
+
+- binder/ (−136): 10 declaration-factory pass-throughs inlined, 7× push/try/finally-pop scope scaffolding → inline inScope{}, shared buildBinderPassResult (derived-result assembly can no longer diverge between bind and withDeclarations), dead BuiltinSymbolSeeder branch/fallback, PositionOrdering ladder tails.
+- types/ (−125): PrimitiveType.canonicalByKind (3 ladders), isMemberBearingTargetAssignable (table/module assignability, zero-allocation), Lua-sequence→Java trio, ModuleType.toTableShape, substitution/dropper twins, resolver materialization ladders, JavaTypeName dead surface @Deprecated.
+- LuaLanguageService.kt (−102): dead reporter/fields, resolveLocalFunctionDeclaration copy ladder, UnitVisitor base, rename ladders, format-range re-validation dedup, lineSequence()-based fullDocumentLspRange, 6 single-use wrappers inlined.
+- comments/ (−22): method-tag split ladders, dead overloads, collector flush unification, write-only range field.
+- LuaParser.kt (−15): marked-statement prologs, dead comment arms (provably unreachable), loop-body triplet.
+
+Integrated compile fixes by the parent (canonicalByKind receiver style — extensions can't be called as top-level fns; globals-join typing; a stale progressSink tail the reporter extraction had orphaned).
+
+**Lines: 45,863** (baseline 53,562 → −7,699; target ≤41,562, ~4,300 remaining). E2E rel53 = OK (7 tests) on the reduced tree; all gates green.
+
