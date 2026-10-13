@@ -55,8 +55,7 @@ internal class ApiAdapters(
         val moduleType = type as? ModuleType
         val typeKind = when {
             declaration?.kind == DeclarationKind.MODULE || moduleType != null -> TypeInfoKind.MODULE
-            type is ClassType -> TypeInfoKind.CLASS
-            type is JavaClassType || type is JavaInstanceType -> TypeInfoKind.CLASS
+            type is ClassType || type is JavaClassType || type is JavaInstanceType -> TypeInfoKind.CLASS
             type is FunctionType || type is OverloadedFunctionType -> TypeInfoKind.FUNCTION
             type is TableType -> TypeInfoKind.TABLE
             else -> TypeInfoKind.UNKNOWN

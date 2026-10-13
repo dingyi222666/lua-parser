@@ -16,7 +16,6 @@ import io.github.dingyi222666.luaparser.parser.ast.node.MemberExpression
 import io.github.dingyi222666.luaparser.parser.ast.node.Position
 import io.github.dingyi222666.luaparser.parser.ast.node.Range
 import io.github.dingyi222666.luaparser.parser.ast.node.ReturnStatement
-import io.github.dingyi222666.luaparser.parser.ast.node.StringCallExpression
 import io.github.dingyi222666.luaparser.semantic.api.ParameterInformation
 import io.github.dingyi222666.luaparser.semantic.api.SignatureHelp
 import io.github.dingyi222666.luaparser.semantic.api.SignatureInformation
@@ -73,7 +72,13 @@ internal class SignatureHelpProvider(
         }
 
         val methodName = callableMethodName(callableBase, declaration)
-        val signatures = resolutionSignatures.map { toSignatureInformation(it, methodName) }
+        // FunctionType -> presentation signature: canonical label + per-parameter labels.
+        val signatures = resolutionSignatures.map { signature ->
+            SignatureInformation(
+                label = signatureHelpLabel(signature, methodName),
+                parameters = signature.parameters.map { ParameterInformation(parameterLabel(it)) }
+            )
+        }
         val activeParameter = activeParameterIndex(call, position)
         val activeSignature = selectActiveSignatureIndex(resolutionSignatures, callResolution)
             .coerceIn(0, signatures.lastIndex)
@@ -196,23 +201,10 @@ internal class SignatureHelpProvider(
         }
     }
 
-    private fun clampActiveParameter(signature: FunctionType?, activeParameter: Int): Int {
-        if (signature == null || signature.parameters.isEmpty()) {
-            return 0
-        }
-        // Vararg / trailing optionals: keep the cursor index inside the active signature.
-        return activeParameter.coerceIn(0, signature.parameters.lastIndex)
-    }
-
-    private fun toSignatureInformation(
-        signature: FunctionType,
-        methodName: String? = null
-    ): SignatureInformation {
-        return SignatureInformation(
-            label = signatureHelpLabel(signature, methodName),
-            parameters = signature.parameters.map(::toParameterInformation)
-        )
-    }
+    /** Vararg / trailing optionals: keep the cursor index inside the active signature. */
+    private fun clampActiveParameter(signature: FunctionType?, activeParameter: Int): Int =
+        if (signature == null || signature.parameters.isEmpty()) 0
+        else activeParameter.coerceIn(0, signature.parameters.lastIndex)
 
     /** Render canonical type parameters and the call-site member name. */
     private fun signatureHelpLabel(signature: FunctionType, methodName: String?): String {
@@ -227,14 +219,8 @@ internal class SignatureHelpProvider(
         // Only member-access call sites need a discoverable method-name prefix on generic
         // labels (Arrays.asList, receiver:method). Bare Identifier/local function calls must
         // keep the pure fun(...) / fun<T>(...) form expected by workspace exact-label asserts.
-        return when (callableBase) {
-            is MemberExpression -> callableBase.identifier.name.takeIf { it.isNotBlank() }
-            else -> null
-        }
-    }
-
-    private fun toParameterInformation(parameter: FunctionParameter): ParameterInformation {
-        return ParameterInformation(parameterLabel(parameter))
+        return (callableBase as? MemberExpression)
+            ?.identifier?.name?.takeIf { it.isNotBlank() }
     }
 
     private fun parameterLabel(parameter: FunctionParameter): String {
@@ -316,13 +302,11 @@ internal class SignatureHelpProvider(
     }
 
     private fun findCallInEnclosingNodes(indexPosition: Position, argumentPosition: Position): CallExpression? {
-        val enclosing = nodePositionIndex.findEnclosing(indexPosition)
-        return enclosing
+        // StringCallExpression is a CallExpression subclass, so one filter covers both
+        // `f(args)` and `f"str"` call shapes in enclosing-order.
+        return nodePositionIndex.findEnclosing(indexPosition)
             .filterIsInstance<CallExpression>()
             .firstOrNull { isWithinCallArguments(it, argumentPosition) }
-            ?: enclosing
-                .filterIsInstance<StringCallExpression>()
-                .firstOrNull { isWithinCallArguments(it, argumentPosition) }
     }
 
     private fun findCallCoveringFromEnclosingContext(position: Position): CallExpression? =
@@ -342,12 +326,10 @@ internal class SignatureHelpProvider(
         val arguments = callArguments(call)
         val regionEnd = effectiveArgumentRegionEnd(call)
         if (arguments.isEmpty()) {
-            val start = call.base.range.end
-            if (comparePositions(start, regionEnd) >= 0) {
-                return false
-            }
             // End-inclusive argument region (empty `f()` and inflated next-token end).
-            return comparePositions(position, start) >= 0 && comparePositions(position, regionEnd) <= 0
+            val start = call.base.range.end
+            return comparePositions(start, regionEnd) < 0 &&
+                comparePositions(position, start) >= 0 && comparePositions(position, regionEnd) <= 0
         }
 
         val firstArgumentStart = arguments.first().range.start
@@ -417,12 +399,6 @@ internal class SignatureHelpProvider(
                     }
                     current = parent
                 }
-                is CallStatement -> {
-                    current = parent
-                }
-                is MemberExpression -> {
-                    current = parent
-                }
                 is BlockNode -> {
                     val statements = parent.statements
                     val idx = statements.indexOf(current)
@@ -437,6 +413,9 @@ internal class SignatureHelpProvider(
                     }
                     current = parent
                 }
+                // Wrapper statements / member chains: climb through them unchanged.
+                is CallStatement,
+                is MemberExpression,
                 is FunctionDeclaration -> {
                     current = parent
                 }

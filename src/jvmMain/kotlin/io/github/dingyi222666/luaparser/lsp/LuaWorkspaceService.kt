@@ -77,18 +77,18 @@ class LuaWorkspaceService(
     override fun symbol(params: WorkspaceSymbolParams): CompletableFuture<Either<MutableList<out SymbolInformation>, MutableList<out WorkspaceSymbol>>> {
         val query = params.query.orEmpty()
         // Dual-path (TASK-397): client workspace.symbol.resolveSupport → modern
-        // WorkspaceSymbol (Either.right via modernWorkspaceSymbols); else legacy
-        // SymbolInformation (Either.left via workspaceSymbols). Reuses existing helpers.
-        if (languageService.supportsModernWorkspaceSymbols()) {
+        // WorkspaceSymbol (Either.right); else legacy SymbolInformation (Either.left).
+        return if (languageService.supportsModernWorkspaceSymbols()) {
             val symbols = synchronized(stateLock) {
                 languageService.modernWorkspaceSymbols(query).toMutableList()
             }
-            return completedModernWorkspaceSymbols(symbols)
+            CompletableFuture.completedFuture(Either.forRight(symbols))
+        } else {
+            val symbols = synchronized(stateLock) {
+                languageService.workspaceSymbols(query).toMutableList()
+            }
+            CompletableFuture.completedFuture(Either.forLeft(symbols))
         }
-        val symbols = synchronized(stateLock) {
-            languageService.workspaceSymbols(query).toMutableList()
-        }
-        return completedLegacyWorkspaceSymbols(symbols)
     }
 
     fun currentWorkspaceMetadata(): Map<String, String> {
@@ -214,18 +214,6 @@ class LuaWorkspaceService(
 
             else -> emptyList()
         }
-    }
-
-    private fun completedLegacyWorkspaceSymbols(
-        symbols: MutableList<out SymbolInformation>
-    ): CompletableFuture<Either<MutableList<out SymbolInformation>, MutableList<out WorkspaceSymbol>>> {
-        return CompletableFuture.completedFuture(Either.forLeft(symbols))
-    }
-
-    private fun completedModernWorkspaceSymbols(
-        symbols: MutableList<out WorkspaceSymbol>
-    ): CompletableFuture<Either<MutableList<out SymbolInformation>, MutableList<out WorkspaceSymbol>>> {
-        return CompletableFuture.completedFuture(Either.forRight(symbols))
     }
 
     private companion object {

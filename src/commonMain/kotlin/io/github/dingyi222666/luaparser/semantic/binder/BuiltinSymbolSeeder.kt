@@ -40,31 +40,29 @@ internal object BuiltinSymbolSeeder {
                         member.kind == SymbolKind.METHOD ||
                         member.type != UnknownType
                 }
-            val declaration = when {
-                documented != null && isDocumentedCallableGlobal(documented.type) ->
-                    functionDeclaration(
-                        id = builder.nextDeclarationId(),
-                        name = name,
-                        origin = DeclarationOrigin.BUILTIN,
-                        owner = DeclarationOwner.Root,
-                        range = documented.range,
-                        declaredType = documented.type
-                    )
-
-                documented != null -> globalDeclaration(
-                    id = builder.nextDeclarationId(),
-                    name = name,
-                    origin = DeclarationOrigin.BUILTIN,
-                    owner = DeclarationOwner.Root,
-                    range = documented.range,
-                    declaredType = documented.type
-                )
-
-                else -> globalDeclaration(
+            // Documented FunctionType/OverloadedFunctionType free-ids (env_import, import,
+            // loadlayout…) must seed as FUNCTION even when EmmyLua parse marks them FIELD via
+            // assignment forms.
+            val declaration = if (documented == null) {
+                globalDeclaration(
                     id = builder.nextDeclarationId(),
                     name = name,
                     origin = DeclarationOrigin.BUILTIN,
                     owner = DeclarationOwner.Root
+                )
+            } else {
+                BinderDeclaration(
+                    id = builder.nextDeclarationId(),
+                    name = name,
+                    kind = if (isDocumentedCallableGlobal(documented.type)) {
+                        DeclarationKind.FUNCTION
+                    } else {
+                        DeclarationKind.GLOBAL
+                    },
+                    origin = DeclarationOrigin.BUILTIN,
+                    owner = DeclarationOwner.Root,
+                    range = documented.range,
+                    declaredType = documented.type
                 )
             }
             builder.addDeclarationWithSymbol(declaration)

@@ -13,26 +13,19 @@ class BlockNode : ASTNode() {
 
     var returnStatement: ReturnStatement? = null
 
-    fun addStatement(statement: StatementNode) {
-        statements.add(statement)
-    }
+    fun addStatement(statement: StatementNode) { statements.add(statement) }
 
     override fun <T> accept(visitor: ASTVisitor<T>, value: T) {
         visitor.visitBlockNode(this, value)
     }
 
-    override fun toString(): String {
-        return "BlockNode(statements=$statements, returnStatement=$returnStatement)"
-    }
+    override fun toString(): String = "BlockNode(statements=$statements, returnStatement=$returnStatement)"
 
-    override fun clone(): BlockNode {
-        return BlockNode().copyCloneMetadataFrom(this).also { block ->
-            statements.forEach {
-                block.statements.add(it.clone().withCloneParent(block))
-            }
+    override fun clone(): BlockNode =
+        BlockNode().copyCloneMetadataFrom(this).also { block ->
+            block.statements.addClonedStatementsFrom(statements, block)
             block.returnStatement = returnStatement?.clone()?.withCloneParent(block)
         }
-    }
 
 }
 
@@ -49,14 +42,11 @@ class ChunkNode : ASTNode() {
         visitor.visitChunkNode(this, value)
     }
 
-    override fun toString(): String {
-        return "ChunkNode(body=$body)"
-    }
+    override fun toString(): String = "ChunkNode(body=$body)"
 
-    override fun clone(): ChunkNode {
-        return ChunkNode().copyCloneMetadataFrom(this).also { chunk ->
+    override fun clone(): ChunkNode =
+        ChunkNode().copyCloneMetadataFrom(this).also { chunk ->
             chunk.body = body.clone().withCloneParent(chunk)
         }
-    }
 
 }

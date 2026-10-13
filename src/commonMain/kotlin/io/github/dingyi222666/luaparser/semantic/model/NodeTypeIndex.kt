@@ -21,19 +21,15 @@ internal class NodeTypeIndex(
 
         val declaration = binder.declarationIndex.getDeclarations(node).firstOrNull()
         val type = when {
-            declaration?.declaredType != null -> {
+            declaration != null -> {
+                val declared = declaration.declaredType
                 // Unannotated local/global functions bind as fun(...): unknown. Prefer body
                 // inference (TextView after `return tv`) so hover matches call-result typing.
-                val declared = declaration.declaredType
-                if (shouldPreferInferredCallable(declaration, declared)) {
-                    adapters.toTypeInfo(evaluator.inferDeclarationType(declaration), declaration)
-                } else {
-                    adapters.toTypeInfo(declared, declaration)
-                }
-            }
-
-            declaration != null -> {
-                adapters.toTypeInfo(evaluator.inferDeclarationType(declaration), declaration)
+                val preferInferred = declared == null || shouldPreferInferredCallable(declaration, declared)
+                adapters.toTypeInfo(
+                    if (preferInferred) evaluator.inferDeclarationType(declaration) else declared,
+                    declaration
+                )
             }
 
             node is ExpressionNode -> adapters.toTypeInfo(evaluator.evaluate(node))

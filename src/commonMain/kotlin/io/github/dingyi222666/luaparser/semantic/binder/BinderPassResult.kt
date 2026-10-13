@@ -12,11 +12,7 @@ data class BinderPassResult(
     val positionQueries: BinderPositionQueries
 ) {
     fun withDeclarations(declarations: List<BinderDeclaration>): BinderPassResult {
-        val rebuiltDeclarationIndex = DeclarationIndex(
-            declarations = declarations,
-            symbols = declarationIndex.symbols
-        )
-        return buildBinderPassResult(scopeGraph, rebuiltDeclarationIndex, commentAttachments)
+        return buildBinderPassResult(scopeGraph, declarationIndex.withDeclarations(declarations), commentAttachments)
     }
 }
 

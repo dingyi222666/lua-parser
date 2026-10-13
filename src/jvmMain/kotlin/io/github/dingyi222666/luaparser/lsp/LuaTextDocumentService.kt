@@ -10,7 +10,6 @@ import org.eclipse.lsp4j.CallHierarchyPrepareParams
 import org.eclipse.lsp4j.CodeActionParams
 import org.eclipse.lsp4j.Command
 import org.eclipse.lsp4j.CompletionItem
-
 import org.eclipse.lsp4j.CompletionList
 import org.eclipse.lsp4j.CompletionParams
 import org.eclipse.lsp4j.DeclarationParams
@@ -33,7 +32,6 @@ import org.eclipse.lsp4j.HoverParams
 import org.eclipse.lsp4j.InlayHint
 import org.eclipse.lsp4j.InlayHintParams
 import org.eclipse.lsp4j.Location
-
 import org.eclipse.lsp4j.LocationLink
 import org.eclipse.lsp4j.PrepareRenameParams
 import org.eclipse.lsp4j.PrepareRenameResult
@@ -49,7 +47,6 @@ import org.eclipse.lsp4j.SemanticTokens
 import org.eclipse.lsp4j.SemanticTokensDelta
 import org.eclipse.lsp4j.SemanticTokensDeltaParams
 import org.eclipse.lsp4j.SignatureHelp
-
 import org.eclipse.lsp4j.SignatureHelpParams
 import org.eclipse.lsp4j.SymbolInformation
 import org.eclipse.lsp4j.TextDocumentContentChangeEvent
@@ -155,19 +152,15 @@ class LuaTextDocumentService(
         }
     }
 
-    override fun hover(params: HoverParams): CompletableFuture<Hover> {
-        return guardedRequest(
-            quietResponse = { nullFuture<Hover>() }
-        ) {
-            nullablePayloadFuture(languageService.hover(params))
-        }
+    override fun hover(params: HoverParams): CompletableFuture<Hover> = guardedRequest(
+        quietResponse = { completedFuture<Hover>(null) }
+    ) {
+        completedFuture(languageService.hover(params))
     }
 
     override fun completion(params: CompletionParams): CompletableFuture<Either<MutableList<CompletionItem>, CompletionList>> {
         return guardedRequest(
-            quietResponse = {
-                CompletableFuture.completedFuture(Either.forRight(CompletionList(false, mutableListOf<CompletionItem>())))
-            }
+            quietResponse = { completedFuture(Either.forRight(CompletionList(false, mutableListOf<CompletionItem>()))) }
         ) {
             // Pass the client URI through unchanged. pathFromUri() strips workspace-folder
             // prefixes incorrectly (no access to initialize-time workspaceFolderUriPrefixes),
@@ -182,176 +175,92 @@ class LuaTextDocumentService(
         }
     }
 
-    /**
-     * TASK-514 — completionItem/resolve.
-     * Enriches detail/documentation for unresolved items without dropping label/kind.
-     * Quiet policy returns the unresolved item identity-preserving (no throw).
-     */
-    override fun resolveCompletionItem(unresolved: CompletionItem): CompletableFuture<CompletionItem> {
-        return guardedRequest(
-            quietResponse = { CompletableFuture.completedFuture(unresolved) }
-        ) {
-            CompletableFuture.completedFuture(languageService.resolveCompletionItem(unresolved))
-        }
-    }
+    /** TASK-514 — completionItem/resolve: enriches detail/documentation without dropping label/kind; quiet policy returns the unresolved item identity-preserving (no throw). */
+    override fun resolveCompletionItem(unresolved: CompletionItem): CompletableFuture<CompletionItem> =
+        simpleRequest(unresolved) { languageService.resolveCompletionItem(unresolved) }
 
-    override fun signatureHelp(params: SignatureHelpParams): CompletableFuture<SignatureHelp> {
-        return guardedRequest(
-            quietResponse = { nullFuture<SignatureHelp>() }
-        ) {
-            nullablePayloadFuture(languageService.signatureHelp(params))
-        }
+    override fun signatureHelp(params: SignatureHelpParams): CompletableFuture<SignatureHelp> = guardedRequest(
+        quietResponse = { completedFuture<SignatureHelp>(null) }
+    ) {
+        completedFuture(languageService.signatureHelp(params))
     }
 
     override fun definition(params: DefinitionParams): CompletableFuture<Either<MutableList<out Location>, MutableList<out LocationLink>>> {
         return guardedRequest(
             quietResponse = {
-                CompletableFuture.completedFuture(
-                    Either.forLeft<MutableList<out Location>, MutableList<out LocationLink>>(mutableListOf<Location>())
-                )
+                completedFuture(Either.forLeft<MutableList<out Location>, MutableList<out LocationLink>>(mutableListOf()))
             }
         ) {
             // TASK-515: dual-path Location vs LocationLink based on client linkSupport.
             val locations = languageService.definition(params)
-            if (languageService.supportsDefinitionLink()) {
-                val links = locations.map { location ->
-                    LocationLink(
-                        /* targetUri = */ location.uri,
-                        /* targetRange = */ location.range,
-                        /* targetSelectionRange = */ location.range
+            completedFuture(
+                if (languageService.supportsDefinitionLink()) {
+                    Either.forRight<MutableList<out Location>, MutableList<out LocationLink>>(
+                        locations.map { LocationLink(it.uri, it.range, it.range) }.toMutableList()
                     )
-                }.toMutableList()
-                CompletableFuture.completedFuture(
-                    Either.forRight<MutableList<out Location>, MutableList<out LocationLink>>(links)
-                )
-            } else {
-                CompletableFuture.completedFuture(
-                    Either.forLeft(locations.toMutableList())
-                )
-            }
-        }
-    }
-
-    override fun declaration(params: DeclarationParams): CompletableFuture<Either<MutableList<out Location>, MutableList<out LocationLink>>> {
-        return guardedRequest(
-            quietResponse = {
-                CompletableFuture.completedFuture(
-                    Either.forLeft<MutableList<out Location>, MutableList<out LocationLink>>(mutableListOf<Location>())
-                )
-            }
-        ) {
-            CompletableFuture.completedFuture(
-                Either.forLeft(languageService.declaration(params).toMutableList())
+                } else {
+                    Either.forLeft<MutableList<out Location>, MutableList<out LocationLink>>(locations.toMutableList())
+                }
             )
         }
     }
 
-    override fun documentHighlight(params: DocumentHighlightParams): CompletableFuture<MutableList<out DocumentHighlight>> {
-        return guardedRequest(
-            quietResponse = { CompletableFuture.completedFuture(mutableListOf()) }
+    override fun declaration(params: DeclarationParams): CompletableFuture<Either<MutableList<out Location>, MutableList<out LocationLink>>> =
+        guardedRequest(
+            quietResponse = {
+                completedFuture(Either.forLeft<MutableList<out Location>, MutableList<out LocationLink>>(mutableListOf()))
+            }
         ) {
-            CompletableFuture.completedFuture(languageService.documentHighlights(params).toMutableList())
+            completedFuture(Either.forLeft(languageService.declaration(params).toMutableList()))
         }
-    }
 
-    override fun references(params: ReferenceParams): CompletableFuture<MutableList<out Location>> {
-        return guardedRequest(
-            quietResponse = { CompletableFuture.completedFuture(mutableListOf()) }
-        ) {
-            CompletableFuture.completedFuture(languageService.references(params).toMutableList())
-        }
-    }
+    override fun documentHighlight(params: DocumentHighlightParams): CompletableFuture<MutableList<out DocumentHighlight>> =
+        simpleRequest(mutableListOf()) { languageService.documentHighlights(params).toMutableList() }
 
-    /**
-     * TASK-518 — textDocument/prepareRename.
-     * Returns identifier-span PrepareRenameResult for renamable locals/params/functions;
-     * null (reject) for keywords / non-identifiers / free globals. Quiet policy → null.
-     * Never throws UnsupportedOperationException once wired.
-     */
+    override fun references(params: ReferenceParams): CompletableFuture<MutableList<out Location>> =
+        simpleRequest(mutableListOf()) { languageService.references(params).toMutableList() }
+
+    /** TASK-518 — textDocument/prepareRename: identifier-span PrepareRenameResult for renamable locals/params/functions; null for keywords / non-identifiers / free globals; quiet → null. Never throws UOE once wired. */
     override fun prepareRename(
         params: PrepareRenameParams
     ): CompletableFuture<Either3<Range, PrepareRenameResult, PrepareRenameDefaultBehavior>> {
+        val nullResult = completedFuture<Either3<Range, PrepareRenameResult, PrepareRenameDefaultBehavior>>(null)
         return guardedRequest(
-            quietResponse = {
-                @Suppress("UNCHECKED_CAST")
-                CompletableFuture.completedFuture(null)
-                    as CompletableFuture<Either3<Range, PrepareRenameResult, PrepareRenameDefaultBehavior>>
-            }
+            quietResponse = { nullResult }
         ) {
             val prepared = languageService.prepareRename(params)
             if (prepared == null) {
-                @Suppress("UNCHECKED_CAST")
-                return@guardedRequest CompletableFuture.completedFuture(null)
-                    as CompletableFuture<Either3<Range, PrepareRenameResult, PrepareRenameDefaultBehavior>>
+                nullResult
+            } else {
+                completedFuture(
+                    Either3.forSecond<Range, PrepareRenameResult, PrepareRenameDefaultBehavior>(prepared)
+                )
             }
-            CompletableFuture.completedFuture(
-                Either3.forSecond<Range, PrepareRenameResult, PrepareRenameDefaultBehavior>(prepared)
-            )
         }
     }
 
-    /**
-     * TASK-518 — textDocument/rename.
-     * WorkspaceEdit of identifier-span TextEdits for same-file locals (declaration + refs).
-     * Missing / unsafe positions → empty WorkspaceEdit (no crash). Quiet → empty edit.
-     * Multi-file rename stays limited to same-file lexical sites.
-     */
-    override fun rename(params: RenameParams): CompletableFuture<WorkspaceEdit> {
-        return guardedRequest(
-            quietResponse = { CompletableFuture.completedFuture(WorkspaceEdit(emptyMap())) }
-        ) {
-            CompletableFuture.completedFuture(languageService.rename(params))
-        }
-    }
+    /** TASK-518 — textDocument/rename: WorkspaceEdit of identifier-span TextEdits for same-file locals (declaration + refs); missing / unsafe positions → empty edit (no crash); quiet → empty edit. Multi-file rename stays limited to same-file lexical sites. */
+    override fun rename(params: RenameParams): CompletableFuture<WorkspaceEdit> =
+        simpleRequest(WorkspaceEdit(emptyMap())) { languageService.rename(params) }
 
+    /** TASK-520 — textDocument/prepareCallHierarchy: CallHierarchyItem for local functions (definitions or call sites); non-function positions soft-degrade to empty without throw. */
+    override fun prepareCallHierarchy(params: CallHierarchyPrepareParams): CompletableFuture<List<CallHierarchyItem>> =
+        simpleRequest(emptyList()) { languageService.prepareCallHierarchy(params) }
 
-    /**
-     * TASK-520 — textDocument/prepareCallHierarchy.
-     * Yields CallHierarchyItem for local functions (definitions or call sites);
-     * non-function positions soft-degrade to empty without throw.
-     */
-    override fun prepareCallHierarchy(
-        params: CallHierarchyPrepareParams
-    ): CompletableFuture<List<CallHierarchyItem>> {
-        return guardedRequest(
-            quietResponse = { CompletableFuture.completedFuture(emptyList()) }
-        ) {
-            CompletableFuture.completedFuture(languageService.prepareCallHierarchy(params))
-        }
-    }
-
-    /**
-     * TASK-520 — callHierarchy/incomingCalls for same-file local call graph subset.
-     * Unknown / non-function items → empty list (no crash).
-     */
+    /** TASK-520 — callHierarchy/incomingCalls for same-file local call graph subset; unknown / non-function items → empty list (no crash). */
     override fun callHierarchyIncomingCalls(
         params: CallHierarchyIncomingCallsParams
-    ): CompletableFuture<List<CallHierarchyIncomingCall>> {
-        return guardedRequest(
-            quietResponse = { CompletableFuture.completedFuture(emptyList()) }
-        ) {
-            CompletableFuture.completedFuture(languageService.callHierarchyIncomingCalls(params))
-        }
-    }
+    ): CompletableFuture<List<CallHierarchyIncomingCall>> =
+        simpleRequest(emptyList()) { languageService.callHierarchyIncomingCalls(params) }
 
-    /**
-     * TASK-520 — callHierarchy/outgoingCalls for same-file local call graph subset.
-     * Unknown / non-function items → empty list (no crash).
-     */
+    /** TASK-520 — callHierarchy/outgoingCalls for same-file local call graph subset; unknown / non-function items → empty list (no crash). */
     override fun callHierarchyOutgoingCalls(
         params: CallHierarchyOutgoingCallsParams
-    ): CompletableFuture<List<CallHierarchyOutgoingCall>> {
-        return guardedRequest(
-            quietResponse = { CompletableFuture.completedFuture(emptyList()) }
-        ) {
-            CompletableFuture.completedFuture(languageService.callHierarchyOutgoingCalls(params))
-        }
-    }
+    ): CompletableFuture<List<CallHierarchyOutgoingCall>> =
+        simpleRequest(emptyList()) { languageService.callHierarchyOutgoingCalls(params) }
 
-    override fun documentSymbol(params: DocumentSymbolParams): CompletableFuture<MutableList<Either<SymbolInformation, org.eclipse.lsp4j.DocumentSymbol>>> {
-        return guardedRequest(
-            quietResponse = { CompletableFuture.completedFuture(mutableListOf()) }
-        ) {
+    override fun documentSymbol(params: DocumentSymbolParams): CompletableFuture<MutableList<Either<SymbolInformation, org.eclipse.lsp4j.DocumentSymbol>>> =
+        simpleRequest(mutableListOf()) {
             // Same URI-pass-through as completion: languageService pathOf/pathFromClientPath
             // owns workspace-folder prefix stripping; pathFromUri() does not.
             val path = params.textDocument.uri
@@ -368,136 +277,50 @@ class LuaTextDocumentService(
                         .map { Either.forLeft<SymbolInformation, org.eclipse.lsp4j.DocumentSymbol>(it) }
                         .toMutableList()
                 }
-            CompletableFuture.completedFuture(symbols)
+            symbols
         }
-    }
 
-    /**
-     * TASK-539 — textDocument/foldingRange for multi-line functions and tables.
-     * Soft-degrades to an empty list under quiet policies; never throws
-     * UnsupportedOperationException once wired.
-     */
-    override fun foldingRange(params: FoldingRangeRequestParams): CompletableFuture<List<FoldingRange>> {
-        return guardedRequest(
-            quietResponse = { CompletableFuture.completedFuture(emptyList()) }
-        ) {
-            CompletableFuture.completedFuture(languageService.foldingRanges(params))
-        }
-    }
+    /** TASK-539 — textDocument/foldingRange for multi-line functions and tables; soft-degrades to an empty list under quiet policies; never throws UOE once wired. */
+    override fun foldingRange(params: FoldingRangeRequestParams): CompletableFuture<List<FoldingRange>> =
+        simpleRequest(emptyList()) { languageService.foldingRanges(params) }
 
-    /**
-     * TASK-540 — textDocument/selectionRange nested AST parent chains.
-     * Soft-degrades to an empty list under quiet policies / unknown positions;
-     * never throws UnsupportedOperationException once wired. Unresolvable positions
-     * are dropped by the service, so the list never carries null slots.
-     */
-    override fun selectionRange(params: SelectionRangeParams): CompletableFuture<List<SelectionRange>> {
-        return guardedRequest(
-            quietResponse = { CompletableFuture.completedFuture(emptyList()) }
-        ) {
-            CompletableFuture.completedFuture(languageService.selectionRanges(params))
-        }
-    }
+    /** TASK-540 — textDocument/selectionRange nested AST parent chains; unresolvable positions are dropped by the service, so the list never carries null slots. */
+    override fun selectionRange(params: SelectionRangeParams): CompletableFuture<List<SelectionRange>> =
+        simpleRequest(emptyList()) { languageService.selectionRanges(params) }
 
-    /**
-     * TASK-541 — textDocument/semanticTokens/full.
-     * Soft-degrades to empty SemanticTokens under quiet policies; never throws
-     * UnsupportedOperationException once wired.
-     */
-    override fun semanticTokensFull(params: SemanticTokensParams): CompletableFuture<SemanticTokens> {
-        return guardedRequest(
-            quietResponse = { CompletableFuture.completedFuture(SemanticTokens(emptyList())) }
-        ) {
-            CompletableFuture.completedFuture(languageService.semanticTokensFull(params))
-        }
-    }
+    /** TASK-541 — textDocument/semanticTokens/full; soft-degrades to empty tokens under quiet policies; never throws UOE once wired. */
+    override fun semanticTokensFull(params: SemanticTokensParams): CompletableFuture<SemanticTokens> =
+        simpleRequest(SemanticTokens(emptyList())) { languageService.semanticTokensFull(params) }
 
-    /**
-     * TASK-252 — textDocument/semanticTokens/full/delta.
-     * Soft-degrades to empty full tokens under quiet policies; never throws
-     * UnsupportedOperationException once wired.
-     */
+    /** TASK-252 — textDocument/semanticTokens/full/delta; soft-degrades to empty full tokens under quiet policies; never throws UOE once wired. */
     override fun semanticTokensFullDelta(
         params: SemanticTokensDeltaParams
-    ): CompletableFuture<Either<SemanticTokens, SemanticTokensDelta>> {
-        return guardedRequest(
-            quietResponse = {
-                CompletableFuture.completedFuture(
-                    Either.forLeft(SemanticTokens(emptyList()))
-                )
-            }
-        ) {
-            CompletableFuture.completedFuture(languageService.semanticTokensFullDelta(params))
+    ): CompletableFuture<Either<SemanticTokens, SemanticTokensDelta>> =
+        simpleRequest(Either.forLeft(SemanticTokens(emptyList()))) {
+            languageService.semanticTokensFullDelta(params)
         }
-    }
 
-    /**
-     * TASK-542 — textDocument/codeAction for published diagnostics (quickFix).
-     * Soft-degrades to an empty list under quiet policies / when no safe fix exists;
-     * never throws UnsupportedOperationException once wired.
-     */
-    override fun codeAction(params: CodeActionParams): CompletableFuture<List<Either<Command, CodeAction>>> {
-        return guardedRequest(
-            quietResponse = { CompletableFuture.completedFuture(emptyList()) }
-        ) {
-            CompletableFuture.completedFuture(languageService.codeActions(params))
-        }
-    }
+    /** TASK-542 — textDocument/codeAction for published diagnostics (quickFix); soft-degrades to an empty list under quiet policies / when no safe fix exists; never throws UOE once wired. */
+    override fun codeAction(params: CodeActionParams): CompletableFuture<List<Either<Command, CodeAction>>> =
+        simpleRequest(emptyList()) { languageService.codeActions(params) }
 
-    /**
-     * TASK-543 — textDocument/inlayHint parameter-name surface for call arguments.
-     * Soft-degrades to an empty list under quiet policies / outside calls / unknown
-     * callees; never throws UnsupportedOperationException once wired.
-     */
-    override fun inlayHint(params: InlayHintParams): CompletableFuture<List<InlayHint>> {
-        return guardedRequest(
-            quietResponse = { CompletableFuture.completedFuture(emptyList()) }
-        ) {
-            CompletableFuture.completedFuture(languageService.inlayHints(params))
-        }
-    }
+    /** TASK-543 — textDocument/inlayHint parameter-name surface for call arguments; soft-degrades to an empty list under quiet policies / outside calls / unknown callees; never throws UOE once wired. */
+    override fun inlayHint(params: InlayHintParams): CompletableFuture<List<InlayHint>> =
+        simpleRequest(emptyList()) { languageService.inlayHints(params) }
 
+    /** TASK-544 — textDocument/formatting full-document surface; soft-degrades to an empty list under quiet policies / unknown docs / malformed sources; never throws UOE once wired. */
+    override fun formatting(params: DocumentFormattingParams): CompletableFuture<MutableList<out TextEdit>> =
+        simpleRequest(mutableListOf()) { languageService.formatting(params).toMutableList() }
 
-    /**
-     * TASK-544 — textDocument/formatting full-document surface.
-     * Soft-degrades to an empty list under quiet policies / unknown docs / malformed
-     * sources; never throws UnsupportedOperationException once wired.
-     */
-    override fun formatting(params: DocumentFormattingParams): CompletableFuture<MutableList<out TextEdit>> {
-        return guardedRequest(
-            quietResponse = { CompletableFuture.completedFuture(mutableListOf()) }
-        ) {
-            CompletableFuture.completedFuture(languageService.formatting(params).toMutableList())
-        }
-    }
+    /** TASK-544 — textDocument/rangeFormatting surface (table bodies / selections); soft-degrades to an empty list for quiet policies, missing docs, inverted / OOB ranges, and malformed buffers. */
+    override fun rangeFormatting(params: DocumentRangeFormattingParams): CompletableFuture<MutableList<out TextEdit>> =
+        simpleRequest(mutableListOf()) { languageService.rangeFormatting(params).toMutableList() }
 
-    /**
-     * TASK-544 — textDocument/rangeFormatting surface (table bodies / selections).
-     * Soft-degrades to an empty list for quiet policies, missing docs, inverted /
-     * OOB ranges, and malformed buffers; never throws UnsupportedOperationException.
-     */
-    override fun rangeFormatting(params: DocumentRangeFormattingParams): CompletableFuture<MutableList<out TextEdit>> {
-        return guardedRequest(
-            quietResponse = { CompletableFuture.completedFuture(mutableListOf()) }
-        ) {
-            CompletableFuture.completedFuture(languageService.rangeFormatting(params).toMutableList())
-        }
-    }
-
-    /**
-     * TASK-274 — textDocument/onTypeFormatting for Lua `end` / `then` triggers.
-     * Soft-degrades to an empty list under quiet policies / unknown triggers /
-     * malformed buffers; never throws UnsupportedOperationException once wired.
-     */
+    /** TASK-274 — textDocument/onTypeFormatting for Lua `end` / `then` triggers; soft-degrades to an empty list under quiet policies / unknown triggers / malformed buffers. */
     override fun onTypeFormatting(
         params: DocumentOnTypeFormattingParams
-    ): CompletableFuture<List<out TextEdit>> {
-        return guardedRequest(
-            quietResponse = { CompletableFuture.completedFuture(emptyList()) }
-        ) {
-            CompletableFuture.completedFuture(languageService.onTypeFormatting(params))
-        }
-    }
+    ): CompletableFuture<List<out TextEdit>> =
+        simpleRequest(emptyList()) { languageService.onTypeFormatting(params) }
 
     private fun <T> guardedRequest(
         quietResponse: () -> CompletableFuture<T>,
@@ -510,12 +333,20 @@ class LuaTextDocumentService(
         }
     }
 
-    private fun <T> nullFuture(): CompletableFuture<T> {
-        @Suppress("UNCHECKED_CAST")
-        return CompletableFuture.completedFuture(null) as CompletableFuture<T>
+    /**
+     * The common endpoint shape: quiet policy returns [quiet], accepted path completes
+     * synchronously with the lambda result. Endpoints with an async accepted path
+     * (completion) or a nullable quiet payload (hover, signatureHelp, prepareRename)
+     * keep [guardedRequest].
+     */
+    private fun <T> simpleRequest(quiet: T, accepted: () -> T): CompletableFuture<T> {
+        return guardedRequest(
+            quietResponse = { completedFuture(quiet) },
+            acceptedRequest = { completedFuture(accepted()) }
+        )
     }
 
-    private fun <T> nullablePayloadFuture(value: T?): CompletableFuture<T> {
+    private fun <T> completedFuture(value: T?): CompletableFuture<T> {
         @Suppress("UNCHECKED_CAST")
         return CompletableFuture.completedFuture(value) as CompletableFuture<T>
     }

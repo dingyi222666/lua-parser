@@ -3,6 +3,7 @@ package io.github.dingyi222666.luaparser.semantic.model
 import io.github.dingyi222666.luaparser.parser.compactCallArguments
 
 import io.github.dingyi222666.luaparser.parser.ast.node.BaseASTNode
+import io.github.dingyi222666.luaparser.parser.ast.node.CallExpression
 import io.github.dingyi222666.luaparser.parser.ast.node.ConstantNode
 import io.github.dingyi222666.luaparser.parser.ast.node.ExpressionNode
 import io.github.dingyi222666.luaparser.parser.ast.node.Identifier
@@ -10,6 +11,7 @@ import io.github.dingyi222666.luaparser.parser.ast.node.IndexExpression
 import io.github.dingyi222666.luaparser.parser.ast.node.LocalStatement
 import io.github.dingyi222666.luaparser.parser.ast.node.MemberExpression
 import io.github.dingyi222666.luaparser.parser.ast.node.Position
+import io.github.dingyi222666.luaparser.parser.ast.node.Range
 import io.github.dingyi222666.luaparser.semantic.SemanticWorkspaceContext
 import io.github.dingyi222666.luaparser.semantic.WorkspaceImportedSymbol
 import io.github.dingyi222666.luaparser.semantic.api.Symbol
@@ -80,7 +82,7 @@ internal class ReferenceQueries(
         val accessKind: MemberAccessKind,
         val declaration: BinderDeclaration? = null,
         val declaredType: Type? = declaration?.declaredType,
-        val syntheticRange: io.github.dingyi222666.luaparser.parser.ast.node.Range? = null,
+        val syntheticRange: Range? = null,
         val syntheticHandle: String? = null
     )
 
@@ -104,9 +106,7 @@ internal class ReferenceQueries(
         if (declarationSymbol != null) {
             // Prefer MODULE-kind imported symbols over synthetic/global fallbacks when the
             // identifier is an activated import alias (not a true local/parameter declaration).
-            if (
-                (declarationSymbol.kind == io.github.dingyi222666.luaparser.semantic.api.SymbolKind.VARIABLE ||
-                    declarationSymbol.kind == io.github.dingyi222666.luaparser.semantic.api.SymbolKind.UNKNOWN) &&
+            if ((declarationSymbol.kind == SymbolKind.VARIABLE || declarationSymbol.kind == SymbolKind.UNKNOWN) &&
                 importedSymbol != null
             ) {
                 return toImportedSymbol(importedSymbol)
@@ -226,29 +226,22 @@ internal class ReferenceQueries(
             is JavaClassType,
             is JavaInstanceType,
             is ModuleType -> true
-            else -> {
-                val display = type.displayName
-                display.contains("fun(") ||
-                    display.contains("fun<") ||
+            else -> type.displayName.let { display ->
+                display.contains("fun(") || display.contains("fun<") ||
                     (display.isNotBlank() && display != "unknown" && display != "any")
             }
         }
     }
 
     private fun resolveDeclarationTokenStartAt(position: Position): BinderDeclaration? {
-        return binder.declarationIndex.declarations
-            .asSequence()
-            .mapNotNull { declaration ->
-                val range = exactDeclarationTokenRange(declaration) ?: return@mapNotNull null
-                if (range.start == position) declaration to range else null
-            }
-            .sortedWith(compareBy<Pair<BinderDeclaration, io.github.dingyi222666.luaparser.parser.ast.node.Range>>(
-                { declarationRank(it.first) },
-                { rangeSpan(it.second) },
-                { it.first.id.value }
-            ))
-            .map { it.first }
-            .firstOrNull()
+        return declarationCovering(
+            covers = { it.start == position },
+            rangeOf = ::exactDeclarationTokenRange,
+            originFilter = null,
+            comparator = compareBy(
+                { declarationRank(it.first) }, { rangeSpan(it.second) }, { it.first.id.value }
+            )
+        )
     }
 
     fun visibleValueSymbols(position: Position): List<Symbol> {
@@ -420,29 +413,21 @@ internal class ReferenceQueries(
                 ModuleExportIdentity.parse(handle)?.providerPath?.value ==
                     importedProviderPathValue(owningImportedHandle)
         }
-        // workspaceMember?.handle needs no fallback slot here: when acceptable it already is
-        // preferredWorkspaceHandle, and when the takeIf rejects it owningImportedHandle wins.
-        val fallbackSymbolId = preferredWorkspaceHandle
-            ?: owningImportedHandle
-            ?: surfaceHandle
+        // Single synthetic-member construction for both handle tiers. When a workspace
+        // handle is preferred it is also the fallback head (preferredWorkspaceHandle is
+        // fallbackSymbolId's first branch) and carries the member range + declaredType;
+        // without one, declaredType/range stay unset and the handle seed is the display key.
+        val fallbackSymbolId = preferredWorkspaceHandle ?: owningImportedHandle ?: surfaceHandle
         return declaration?.let { adapters.toDeclarationSymbol(it, memberType, memberType) }
-            ?: preferredWorkspaceHandle?.let { handle ->
-                adapters.syntheticMemberSymbol(
-                    name = expression.identifier.name,
-                    kind = resolution.accessKind ?: MemberAccessKind.FIELD,
-                    type = memberType,
-                    declaredType = memberType,
-                    handleSeed = handle,
-                    symbolId = handle,
-                    range = workspaceMember?.member?.range
-                )
-            }
             ?: adapters.syntheticMemberSymbol(
                 name = expression.identifier.name,
                 kind = resolution.accessKind ?: MemberAccessKind.FIELD,
                 type = memberType,
-                handleSeed = "${baseType.displayName}:${expression.indexer}:${expression.identifier.name}",
-                symbolId = fallbackSymbolId
+                declaredType = preferredWorkspaceHandle?.let { memberType },
+                handleSeed = preferredWorkspaceHandle
+                    ?: "${baseType.displayName}:${expression.indexer}:${expression.identifier.name}",
+                symbolId = fallbackSymbolId,
+                range = preferredWorkspaceHandle?.let { workspaceMember?.member?.range }
             )
     }
 
@@ -492,18 +477,18 @@ internal class ReferenceQueries(
         )
     }
 
-    private fun bindClassTargetLocalSymbolAt(node: BaseASTNode?): Symbol? {
+    /** The string-constant node [node] together with its enclosing call, when it is a literal. */
+    private fun stringConstantCallAt(node: BaseASTNode?): Pair<ConstantNode, CallExpression>? {
         val constant = node as? ConstantNode ?: return null
-        if (constant.constantType != ConstantNode.TYPE.STRING) {
-            return null
-        }
+        if (constant.constantType != ConstantNode.TYPE.STRING) return null
         val call = enclosingCallExpression(constant) ?: return null
-        if (callArguments(call).firstOrNull() !== constant) {
-            return null
-        }
-        if (!isLuaJavaBindClassCall(call)) {
-            return null
-        }
+        return constant to call
+    }
+
+    private fun bindClassTargetLocalSymbolAt(node: BaseASTNode?): Symbol? {
+        val (constant, call) = stringConstantCallAt(node) ?: return null
+        if (callArguments(call).firstOrNull() !== constant) return null
+        if (!isLuaJavaBindClassCall(call)) return null
         val localStatement = enclosingLocalStatement(call) ?: return null
         val initializerIndex = localStatement.variables.indexOf(call)
         if (initializerIndex < 0) {
@@ -520,17 +505,9 @@ internal class ReferenceQueries(
     }
 
     private fun importTargetStringSymbolAt(node: BaseASTNode?): Symbol? {
-        val constant = node as? ConstantNode ?: return null
-        if (constant.constantType != ConstantNode.TYPE.STRING) {
-            return null
-        }
-        val call = enclosingCallExpression(constant) ?: return null
-        if (!callArguments(call).any { it === constant }) {
-            return null
-        }
-        if (!evaluator.isImportCall(call)) {
-            return null
-        }
+        val (constant, call) = stringConstantCallAt(node) ?: return null
+        if (!callArguments(call).any { it === constant }) return null
+        if (!evaluator.isImportCall(call)) return null
         val target = constant.stringOf()
         val imported = resolveLuaJavaImportTarget(target) ?: return null
         return toImportedSymbol(imported)
@@ -556,16 +533,16 @@ internal class ReferenceQueries(
         (runCatching { node.parent }.getOrNull() as? MemberExpression)?.takeIf { it.identifier === node }
 
     /** Walk-parent ladder is shared with the evaluator: see [enclosingAstNodeOf]. */
-    private fun enclosingCallExpression(node: BaseASTNode): io.github.dingyi222666.luaparser.parser.ast.node.CallExpression? =
+    private fun enclosingCallExpression(node: BaseASTNode): CallExpression? =
         enclosingAstNodeOf(node)
 
     private fun enclosingLocalStatement(node: BaseASTNode): LocalStatement? =
         enclosingAstNodeOf(node)
 
-    private fun callArguments(node: io.github.dingyi222666.luaparser.parser.ast.node.CallExpression): List<ExpressionNode> =
+    private fun callArguments(node: CallExpression): List<ExpressionNode> =
         node.compactCallArguments()
 
-    private fun isLuaJavaBindClassCall(node: io.github.dingyi222666.luaparser.parser.ast.node.CallExpression): Boolean =
+    private fun isLuaJavaBindClassCall(node: CallExpression): Boolean =
         evaluator.isLuaJavaHelperCall(node, "bindClass")
 
     private fun resolveLuaJavaImportTarget(target: String) =
@@ -577,19 +554,23 @@ internal class ReferenceQueries(
         val baseType = evaluator.evaluate(expression.base)
                 .hydrateJavaProviderType(workspaceContext.resolveImportTarget)
         val members = getMembers(baseType, lexicalScopeId)
-        return if (expression.indexer == ":") {
+        // `:` promotes METHOD to the first sort group; `.` promotes FIELD.
+        val sorted = members.sortedWith(
+            compareBy<Symbol>(
+                { if (it.kind == (if (expression.indexer == ":") SymbolKind.METHOD else SymbolKind.FIELD)) 0 else 1 },
+                { it.name }
+            )
+        )
+        return if (expression.indexer != ":") sorted
+        else sorted.filterNot { symbol ->
             // `obj:` is a method call site: a FIELD whose value is KNOWN to be non-callable
             // (JavaBean property aliases such as File.path / File.name, plain data fields)
             // cannot be invoked, so it is dropped here. Callable field surfaces (Lua
             // functions stored in table/module fields, `fun(...)` typed @field) stay, as
             // does every METHOD — and so does every field whose type is unknown/absent,
-            // because unknown does not imply non-callable. The `.` surface below keeps the
+            // because unknown does not imply non-callable. The `.` surface keeps the
             // full member list including the aliases.
-            members
-                .filterNot { symbol -> symbol.kind == SymbolKind.FIELD && !hasCallableMemberDisplay(symbol) }
-                .sortedWith(compareBy<Symbol>({ if (it.kind == io.github.dingyi222666.luaparser.semantic.api.SymbolKind.METHOD) 0 else 1 }, { it.name }))
-        } else {
-            members.sortedWith(compareBy<Symbol>({ if (it.kind == io.github.dingyi222666.luaparser.semantic.api.SymbolKind.FIELD) 0 else 1 }, { it.name }))
+            symbol.kind == SymbolKind.FIELD && !hasCallableMemberDisplay(symbol)
         }
     }
 
@@ -865,7 +846,7 @@ internal class ReferenceQueries(
         reservedNames: Set<String> = emptySet()
     ): Map<String, MemberSurface> = buildMap {
         members.forEach { (name, member) ->
-            val accessKind = javaAccessKind(member.memberKind, member.valueType)
+            val accessKind = javaAccessKind(member.memberKind)
             val surfaceType = if (accessKind == MemberAccessKind.METHOD) {
                 // withJavaCallableSurface's defaults (receiverType = null, includeReceiver
                 // = false) are exactly the pre-merge static-branch call shape.
@@ -944,19 +925,16 @@ internal class ReferenceQueries(
         }
     }
 
-    private fun javaAccessKind(kind: JavaMemberKind, @Suppress("UNUSED_PARAMETER") valueType: Type): MemberAccessKind {
-        // Trust reflected memberKind for Java static/instance members.
-        // Do NOT promote JavaMemberKind.FIELD to METHOD merely because the field's
-        // value type is CallableType (JavaClassType implements CallableType for
-        // constructors). That mis-classification demotes real static fields
-        // (System.out/err, Integer.TYPE-like Class constants) to METHOD and can
-        // overwrite the module-table FIELD surface during static expansion.
-        // Callable static helpers are already modeled as JavaMemberKind.METHOD.
-        return when (kind) {
-            JavaMemberKind.METHOD -> MemberAccessKind.METHOD
-            JavaMemberKind.FIELD -> MemberAccessKind.FIELD
-        }
-    }
+    /**
+     * Trust reflected memberKind for Java static/instance members. Do NOT promote
+     * JavaMemberKind.FIELD to METHOD merely because the field's value type is CallableType
+     * (JavaClassType implements CallableType for constructors): that mis-classification
+     * demotes real static fields (System.out/err, Integer.TYPE-like Class constants) to
+     * METHOD and can overwrite the module-table FIELD surface during static expansion.
+     * Callable static helpers are already modeled as JavaMemberKind.METHOD.
+     */
+    private fun javaAccessKind(kind: JavaMemberKind): MemberAccessKind =
+        if (kind == JavaMemberKind.METHOD) MemberAccessKind.METHOD else MemberAccessKind.FIELD
 
     private fun resolveExactNodeDeclaration(node: BaseASTNode?): BinderDeclaration? {
         node ?: return null
@@ -968,14 +946,10 @@ internal class ReferenceQueries(
             return null
         }
 
-        return exactMatches.sortedWith(Comparator { a, b ->
-            val rangeComparison = compareSpecificity(declarationSiteRange(a), declarationSiteRange(b))
-            if (rangeComparison != 0) {
-                rangeComparison
-            } else {
-                a.id.value.compareTo(b.id.value)
-            }
-        }).firstOrNull()
+        return exactMatches.sortedWith { a, b ->
+            compareSpecificity(declarationSiteRange(a), declarationSiteRange(b))
+                .takeIf { it != 0 } ?: a.id.value.compareTo(b.id.value)
+        }.firstOrNull()
     }
 
     private fun exactAstIdentifierDeclarations(node: Identifier): List<BinderDeclaration> {
@@ -996,22 +970,23 @@ internal class ReferenceQueries(
      * Single owner for the "declaration whose site range covers the caret, most specific
      * wins" picker shared by exact doc-comment matching and fallback position resolution.
      */
+    /**
+     * Single owner for the "declaration whose site range satisfies [covers], best comparator
+     * order wins" picker shared by exact doc-comment matching, fallback position resolution,
+     * and exact-token-start matching.
+     */
     private fun declarationCovering(
-        position: Position,
-        rangeOf: (BinderDeclaration) -> io.github.dingyi222666.luaparser.parser.ast.node.Range?,
+        covers: (Range) -> Boolean,
+        rangeOf: (BinderDeclaration) -> Range?,
         originFilter: ((BinderDeclaration) -> Boolean)?,
-        comparator: Comparator<Pair<BinderDeclaration, io.github.dingyi222666.luaparser.parser.ast.node.Range>>
+        comparator: Comparator<Pair<BinderDeclaration, Range>>
     ): BinderDeclaration? {
         return binder.declarationIndex.declarations
             .asSequence()
             .filter { originFilter?.invoke(it) ?: true }
             .mapNotNull { declaration ->
                 val range = rangeOf(declaration) ?: return@mapNotNull null
-                if (isPositionWithin(range.start, range.end, position)) {
-                    declaration to range
-                } else {
-                    null
-                }
+                if (covers(range)) declaration to range else null
             }
             .sortedWith(comparator)
             .map { it.first }
@@ -1020,30 +995,25 @@ internal class ReferenceQueries(
 
     private fun resolveExactDocDeclaration(position: Position): BinderDeclaration? {
         return declarationCovering(
-            position,
-            BinderDeclaration::declarationSpecificRange,
+            covers = { isPositionWithin(it.start, it.end, position) },
+            rangeOf = BinderDeclaration::declarationSpecificRange,
             originFilter = { it.origin == io.github.dingyi222666.luaparser.semantic.binder.DeclarationOrigin.DOC_COMMENT },
-            comparator = compareBy(
-                { pair: Pair<BinderDeclaration, io.github.dingyi222666.luaparser.parser.ast.node.Range> -> rangeSpan(pair.second) },
-                { pair: Pair<BinderDeclaration, io.github.dingyi222666.luaparser.parser.ast.node.Range> -> pair.first.id.value }
-            )
+            comparator = compareBy({ rangeSpan(it.second) }, { it.first.id.value })
         )
     }
 
     private fun resolveDeclarationAtPosition(position: Position): BinderDeclaration? {
         return declarationCovering(
-            position,
-            this::declarationSiteRange,
+            covers = { isPositionWithin(it.start, it.end, position) },
+            rangeOf = this::declarationSiteRange,
             originFilter = null,
             comparator = compareBy(
-                { pair: Pair<BinderDeclaration, io.github.dingyi222666.luaparser.parser.ast.node.Range> -> declarationRank(pair.first) },
-                { pair: Pair<BinderDeclaration, io.github.dingyi222666.luaparser.parser.ast.node.Range> -> rangeSpan(pair.second) },
-                { pair: Pair<BinderDeclaration, io.github.dingyi222666.luaparser.parser.ast.node.Range> -> pair.first.id.value }
+                { declarationRank(it.first) }, { rangeSpan(it.second) }, { it.first.id.value }
             )
         )
     }
 
-    private fun declarationSiteRange(declaration: BinderDeclaration): io.github.dingyi222666.luaparser.parser.ast.node.Range? {
+    private fun declarationSiteRange(declaration: BinderDeclaration): Range? {
         return when (declaration.origin) {
             io.github.dingyi222666.luaparser.semantic.binder.DeclarationOrigin.AST -> declaration.anchorNode?.range ?: declaration.range
             io.github.dingyi222666.luaparser.semantic.binder.DeclarationOrigin.DOC_COMMENT -> declaration.declarationSpecificRange() ?: declaration.range
@@ -1051,11 +1021,9 @@ internal class ReferenceQueries(
         }
     }
 
-    private fun exactDeclarationTokenRange(declaration: BinderDeclaration): io.github.dingyi222666.luaparser.parser.ast.node.Range? {
+    private fun exactDeclarationTokenRange(declaration: BinderDeclaration): Range? {
         return when (declaration.origin) {
-            io.github.dingyi222666.luaparser.semantic.binder.DeclarationOrigin.AST -> {
-                (declaration.anchorNode as? Identifier)?.range ?: declaration.anchorNode?.range
-            }
+            io.github.dingyi222666.luaparser.semantic.binder.DeclarationOrigin.AST -> declaration.anchorNode?.range
 
             io.github.dingyi222666.luaparser.semantic.binder.DeclarationOrigin.DOC_COMMENT -> declaration.declarationSpecificRange()
             else -> null
@@ -1161,13 +1129,8 @@ internal class ReferenceQueries(
     private fun visibleValueDeclarationsWithoutImports(position: Position): List<BinderDeclaration> =
         lexicalValueDeclarations(position).map { it.declaration }
 
-    private fun importedSymbolAt(position: Position, node: BaseASTNode?): WorkspaceImportedSymbol? {
-        val identifier = when (node) {
-            is Identifier -> node.name
-            else -> null
-        } ?: return null
-        return importedSymbolNamed(identifier, position)
-    }
+    private fun importedSymbolAt(position: Position, node: BaseASTNode?): WorkspaceImportedSymbol? =
+        (node as? Identifier)?.let { importedSymbolNamed(it.name, position) }
 
     private fun importedSymbolNamed(name: String, position: Position): WorkspaceImportedSymbol? {
         if (name.isBlank()) {
@@ -1204,7 +1167,7 @@ internal class ReferenceQueries(
         return body.substring(0, separator)
     }
 
-    private fun rangeSpan(range: io.github.dingyi222666.luaparser.parser.ast.node.Range): Int {
+    private fun rangeSpan(range: Range): Int {
         val lineSpan = (range.end.line - range.start.line) * 10_000
         return lineSpan + (range.end.column - range.start.column)
     }
@@ -1222,7 +1185,7 @@ internal class ReferenceQueries(
             chunkGlobalIsFileGlobal = true
         )
 
-    private fun compareSpecificity(a: io.github.dingyi222666.luaparser.parser.ast.node.Range?, b: io.github.dingyi222666.luaparser.parser.ast.node.Range?): Int {
+    private fun compareSpecificity(a: Range?, b: Range?): Int {
         if (a == null) return if (b == null) 0 else 1
         if (b == null) return -1
         return compareRangeSpecificity(a, b)
@@ -1248,17 +1211,9 @@ internal class ReferenceQueries(
                 val provider = resolver.activeProvider(baseType.name.substringAfterLast('.')) ?: return null
                 resolver.exportedMember(provider.path, listOf("__class", memberName))
             }
-            is JavaClassType -> {
-                val provider = javaProviderFor(baseType) ?: return null
-                resolver.exportedMember(provider.path, listOf(memberName))
-                    ?: resolver.exportedMember(provider.path, listOf("__class", memberName))
-            }
-            is JavaInstanceType -> {
-                val provider = javaProviderFor(baseType.classType) ?: return null
-                // Static helpers live on the class module surface; instance members under __class.
-                resolver.exportedMember(provider.path, listOf(memberName))
-                    ?: resolver.exportedMember(provider.path, listOf("__class", memberName))
-            }
+            is JavaClassType -> javaClassExportMember(baseType, memberName)
+            // Static helpers live on the class module surface; instance members under __class.
+            is JavaInstanceType -> javaClassExportMember(baseType.classType, memberName)
             is IntersectionType -> {
                 // Prefer the branch that owns the member for multi-interface createProxy definitions.
                 baseType.types.firstNotNullOfOrNull { branch ->
@@ -1279,6 +1234,16 @@ internal class ReferenceQueries(
             }
             else -> null
         }
+    }
+
+    /** Class-module member lookup: direct export first, then the __class static slot. */
+    private fun javaClassExportMember(
+        classType: JavaClassType,
+        memberName: String
+    ): io.github.dingyi222666.luaparser.semantic.workspace.WorkspaceModuleResolver.ResolvedExportMember? {
+        val provider = javaProviderFor(classType) ?: return null
+        return workspaceContext.workspaceResolver?.exportedMember(provider.path, listOf(memberName))
+            ?: workspaceContext.workspaceResolver?.exportedMember(provider.path, listOf("__class", memberName))
     }
 
     private fun indexedJavaCompletionMember(

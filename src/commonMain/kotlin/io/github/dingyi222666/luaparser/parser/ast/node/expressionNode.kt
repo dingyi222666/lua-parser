@@ -9,9 +9,7 @@ import kotlin.properties.Delegates
 private fun <T : CallExpression> T.copyCallExpressionFrom(source: CallExpression): T =
     copyCloneMetadataFrom(source).also { expression ->
         expression.base = source.base.clone().withCloneParent(expression)
-        for (argument in source.arguments) {
-            expression.arguments.add(argument.clone().withCloneParent(expression))
-        }
+        expression.arguments.addClonedExpressionsFrom(source.arguments, expression)
     }
 
 
@@ -23,19 +21,16 @@ private fun <T : CallExpression> T.copyCallExpressionFrom(source: CallExpression
 open class Identifier(open var name: String = "") : ExpressionNode, ASTNode() {
     open var isLocal = false
 
-    override fun toString(): String {
-        return "Identifier(name='$name')"
-    }
+    override fun toString(): String = "Identifier(name='$name')"
 
     override fun <T> accept(visitor: ASTVisitor<T>, value: T) {
         visitor.visitIdentifier(this, value)
     }
 
-    override fun clone(): Identifier {
-        return Identifier(name = name).copyCloneMetadataFrom(this).also {
+    override fun clone(): Identifier =
+        Identifier(name = name).copyCloneMetadataFrom(this).also {
             it.isLocal = isLocal
         }
-    }
 
 }
 
@@ -53,11 +48,10 @@ class AttributeIdentifier(
         visitor.visitAttributeIdentifier(this, value)
     }
 
-    override fun clone(): AttributeIdentifier {
-        return AttributeIdentifier(name = name, attributeName = attributeName).copyCloneMetadataFrom(this).also {
+    override fun clone(): AttributeIdentifier =
+        AttributeIdentifier(name = name, attributeName = attributeName).copyCloneMetadataFrom(this).also {
             it.isLocal = true
         }
-    }
 }
 
 /**
@@ -151,9 +145,7 @@ class ConstantNode(
         }
     }
 
-    override fun toString(): String {
-        return "ConstantsNode(type=$constantType, value=$_value)"
-    }
+    override fun toString(): String = "ConstantsNode(type=$constantType, value=$_value)"
 
     override fun clone(): ConstantNode =
         ConstantNode(constantType = this.constantType, value = this.rawValue).copyCloneMetadataFrom(this)
@@ -373,48 +365,36 @@ private fun Char.hexValue(): Int = when (this) {
 open class CallExpression : ExpressionNode, ASTNode() {
     lateinit var base: ExpressionNode
     val arguments = mutableListOf<ExpressionNode>()
-    override fun toString(): String {
-        return "CallExpression(base=$base, arguments=$arguments)"
-    }
+    override fun toString(): String = "CallExpression(base=$base, arguments=$arguments)"
 
     override fun <T> accept(visitor: ASTVisitor<T>, value: T) {
         visitor.visitCallExpression(this, value)
     }
 
-    override fun clone(): CallExpression {
-        return CallExpression().copyCallExpressionFrom(this)
-    }
+    override fun clone(): CallExpression = CallExpression().copyCallExpressionFrom(this)
 }
 
 class StringCallExpression : CallExpression() {
 
-    override fun toString(): String {
-        return "StringCallExpression(base=$base, arguments=$arguments)"
-    }
+    override fun toString(): String = "StringCallExpression(base=$base, arguments=$arguments)"
 
     override fun <T> accept(visitor: ASTVisitor<T>, value: T) {
         visitor.visitStringCallExpression(this, value)
     }
 
-    override fun clone(): StringCallExpression {
-        return StringCallExpression().copyCallExpressionFrom(this)
-    }
+    override fun clone(): StringCallExpression = StringCallExpression().copyCallExpressionFrom(this)
 }
 
 
 class TableCallExpression : CallExpression() {
 
-    override fun toString(): String {
-        return "TableCallExpression(base=$base, arguments=$arguments)"
-    }
+    override fun toString(): String = "TableCallExpression(base=$base, arguments=$arguments)"
 
     override fun <T> accept(visitor: ASTVisitor<T>, value: T) {
         visitor.visitTableCallExpression(this, value)
     }
 
-    override fun clone(): TableCallExpression {
-        return TableCallExpression().copyCallExpressionFrom(this)
-    }
+    override fun clone(): TableCallExpression = TableCallExpression().copyCallExpressionFrom(this)
 }
 
 
@@ -422,21 +402,18 @@ class MemberExpression : ExpressionNode, ASTNode() {
     lateinit var identifier: Identifier
     var indexer: String = "."
     lateinit var base: ExpressionNode
-    override fun toString(): String {
-        return "MemberExpression(identifier=$identifier, indexer='$indexer', base=$base)"
-    }
+    override fun toString(): String = "MemberExpression(identifier=$identifier, indexer='$indexer', base=$base)"
 
     override fun <T> accept(visitor: ASTVisitor<T>, value: T) {
         visitor.visitMemberExpression(this, value)
     }
 
-    override fun clone(): MemberExpression {
-        return MemberExpression().copyCloneMetadataFrom(this).also {
+    override fun clone(): MemberExpression =
+        MemberExpression().copyCloneMetadataFrom(this).also {
             it.identifier = identifier.clone().withCloneParent(it)
             it.base = base.clone().withCloneParent(it)
             it.indexer = indexer
         }
-    }
 }
 
 class IndexExpression : ExpressionNode, ASTNode() {
@@ -444,54 +421,44 @@ class IndexExpression : ExpressionNode, ASTNode() {
     lateinit var index: ExpressionNode
     lateinit var base: ExpressionNode
 
-    override fun toString(): String {
-        return "IndexExpression(index=$index, base=$base)"
-    }
+    override fun toString(): String = "IndexExpression(index=$index, base=$base)"
 
     override fun <T> accept(visitor: ASTVisitor<T>, value: T) {
         visitor.visitIndexExpression(this, value)
     }
 
-    override fun clone(): IndexExpression {
-        return IndexExpression().copyCloneMetadataFrom(this).also {
+    override fun clone(): IndexExpression =
+        IndexExpression().copyCloneMetadataFrom(this).also {
             it.base = base.clone().withCloneParent(it)
             it.index = index.clone().withCloneParent(it)
         }
-    }
 }
 
 class VarargLiteral : ExpressionNode, ASTNode() {
 
-    override fun toString(): String {
-        return "VarargLiteral()"
-    }
+    override fun toString(): String = "VarargLiteral()"
 
     override fun <T> accept(visitor: ASTVisitor<T>, value: T) {
         visitor.visitVarargLiteral(this, value)
     }
 
-    override fun clone(): VarargLiteral {
-        return VarargLiteral().copyCloneMetadataFrom(this)
-    }
+    override fun clone(): VarargLiteral = VarargLiteral().copyCloneMetadataFrom(this)
 }
 
 class UnaryExpression : ExpressionNode, ASTNode() {
     lateinit var operator: ExpressionOperator
     lateinit var arg: ExpressionNode
-    override fun toString(): String {
-        return "UnaryExpression(operator=$operator, arg=$arg)"
-    }
+    override fun toString(): String = "UnaryExpression(operator=$operator, arg=$arg)"
 
     override fun <T> accept(visitor: ASTVisitor<T>, value: T) {
         visitor.visitUnaryExpression(this, value)
     }
 
-    override fun clone(): UnaryExpression {
-        return UnaryExpression().copyCloneMetadataFrom(this).also {
+    override fun clone(): UnaryExpression =
+        UnaryExpression().copyCloneMetadataFrom(this).also {
             it.operator = operator
             it.arg = arg.clone().withCloneParent(it)
         }
-    }
 
 
 }
@@ -500,61 +467,48 @@ class BinaryExpression : ExpressionNode, ASTNode() {
     var left /*by Delegates.notNull<*/: ExpressionNode? = null
     var right: ExpressionNode? = null
     lateinit var operator: ExpressionOperator/*? = null*/
-    override fun toString(): String {
-        return "BinaryExpression(left=$left, right=$right, operator=$operator)"
-    }
+    override fun toString(): String = "BinaryExpression(left=$left, right=$right, operator=$operator)"
 
     override fun <T> accept(visitor: ASTVisitor<T>, value: T) {
         visitor.visitBinaryExpression(this, value)
     }
 
-    override fun clone(): BinaryExpression {
-        return BinaryExpression().copyCloneMetadataFrom(this).also {
+    override fun clone(): BinaryExpression =
+        BinaryExpression().copyCloneMetadataFrom(this).also {
             it.operator = operator
             it.left = left?.clone()?.withCloneParent(it)
             it.right = right?.clone()?.withCloneParent(it)
         }
-    }
 }
 
 class TableConstructorExpression : ExpressionNode, ASTNode() {
     val fields = mutableListOf<TableKey>()
 
-    override fun toString(): String {
-        return "TableConstructorExpression(fields=$fields)"
-    }
+    override fun toString(): String = "TableConstructorExpression(fields=$fields)"
 
     override fun <T> accept(visitor: ASTVisitor<T>, value: T) {
         visitor.visitTableConstructorExpression(this, value)
     }
 
-    override fun clone(): TableConstructorExpression {
-        return TableConstructorExpression().copyCloneMetadataFrom(this).also {
-            for (field in fields) {
-                it.fields.add(field.clone().withCloneParent(it))
-            }
+    override fun clone(): TableConstructorExpression =
+        TableConstructorExpression().copyCloneMetadataFrom(this).also {
+            it.fields.addClonedExpressionsFrom(fields, it)
         }
-    }
 }
 
 class ArrayConstructorExpression : ExpressionNode, ASTNode() {
     val values = mutableListOf<ExpressionNode>()
 
-    override fun toString(): String {
-        return "ArrayConstructorExpression(values=$values)"
-    }
+    override fun toString(): String = "ArrayConstructorExpression(values=$values)"
 
     override fun <T> accept(visitor: ASTVisitor<T>, value: T) {
         visitor.visitArrayConstructorExpression(this, value)
     }
 
-    override fun clone(): ArrayConstructorExpression {
-        return ArrayConstructorExpression().copyCloneMetadataFrom(this).also {
-            for (value in values) {
-                it.values.add(value.clone().withCloneParent(it))
-            }
+    override fun clone(): ArrayConstructorExpression =
+        ArrayConstructorExpression().copyCloneMetadataFrom(this).also {
+            it.values.addClonedExpressionsFrom(values, it)
         }
-    }
 }
 
 enum class ExpressionOperator(val value: String) {
@@ -564,32 +518,24 @@ enum class ExpressionOperator(val value: String) {
     BIT_AND("&"), CONCAT(".."), LE("<="), GE(">="), EQ("=="),
     NE("~="), DOUBLE_DIV("//"), MOD("%"), AND("and");
 
-    override fun toString(): String {
-        return value
-    }
+    override fun toString(): String = value
 }
 
 class LambdaDeclaration : ExpressionNode, ASTNode() {
     val params = mutableListOf<Identifier>()
     lateinit var expression: ExpressionNode
 
-    override fun toString(): String {
-        return "LambdaDeclaration(params=$params, expression=$expression)"
-    }
+    override fun toString(): String = "LambdaDeclaration(params=$params, expression=$expression)"
 
     override fun <T> accept(visitor: ASTVisitor<T>, value: T) {
         visitor.visitLambdaDeclaration(this, value)
     }
 
-    override fun clone(): LambdaDeclaration {
-        return LambdaDeclaration().copyCloneMetadataFrom(this).also { declaration ->
-            params.forEach {
-                declaration.params.add(it.clone().withCloneParent(declaration))
-            }
-
+    override fun clone(): LambdaDeclaration =
+        LambdaDeclaration().copyCloneMetadataFrom(this).also { declaration ->
+            declaration.params.addClonedExpressionsFrom(params, declaration)
             declaration.expression = expression.clone().withCloneParent(declaration)
         }
-    }
 }
 
 
@@ -598,23 +544,18 @@ class FunctionDeclaration : ExpressionNode, StatementNode, ASTNode() {
     val params = mutableListOf<Identifier>()
     var identifier: ExpressionNode? = null
     var isLocal = false
-    override fun toString(): String {
-        return "FunctionDeclaration(body=$body, params=$params, identifier=$identifier, isLocal=$isLocal)"
-    }
+    override fun toString(): String = "FunctionDeclaration(body=$body, params=$params, identifier=$identifier, isLocal=$isLocal)"
 
     override fun <T> accept(visitor: ASTVisitor<T>, value: T) {
         visitor.visitFunctionDeclaration(this, value)
     }
 
-    override fun clone(): FunctionDeclaration {
-        return FunctionDeclaration().copyCloneMetadataFrom(this).also { declaration ->
+    override fun clone(): FunctionDeclaration =
+        FunctionDeclaration().copyCloneMetadataFrom(this).also { declaration ->
             declaration.body = body?.cloneBlockFor(declaration)
-            params.forEach {
-                declaration.params.add(it.clone().withCloneParent(declaration))
-            }
+            declaration.params.addClonedExpressionsFrom(params, declaration)
             declaration.identifier = identifier?.clone()?.withCloneParent(declaration)
             declaration.isLocal = isLocal
         }
-    }
 }
 

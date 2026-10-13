@@ -192,6 +192,11 @@ class BinderPositionQueries(
         return compareRangeSpecificity(aRange, bRange)
     }
 
+    /**
+     * Every scope the binder creates is a child of the root scope chain (createScope always
+     * parents to the pushed scope, and the root is pushed before any binding), so the tree
+     * walk from the root covers all scopes and compareScopesAtPosition's `getValue` is total.
+     */
     private fun buildScopeDepths(scopeGraph: ScopeGraph): Map<ScopeId, Int> {
         val depths = mutableMapOf<ScopeId, Int>()
 
@@ -201,13 +206,6 @@ class BinderPositionQueries(
         }
 
         visit(scopeGraph.rootScope, 0)
-
-        scopeGraph.scopes.forEach { scope ->
-            if (scope.id !in depths) {
-                val parentDepth = scope.parentId?.let(depths::get)?.plus(1) ?: 0
-                depths[scope.id] = parentDepth
-            }
-        }
 
         return depths
     }

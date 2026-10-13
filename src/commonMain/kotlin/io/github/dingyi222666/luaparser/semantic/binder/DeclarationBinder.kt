@@ -52,7 +52,7 @@ internal class DeclarationBinder(
 ) : ASTVisitor<Unit> {
 
     fun bind(chunk: ChunkNode) {
-        bindOrphanTypeDeclarations()
+        comments.orphanAttachments.forEach(::bindRootTypeDeclarations)
         visitChunkNode(chunk, Unit)
     }
 
@@ -62,7 +62,7 @@ internal class DeclarationBinder(
     }
 
     override fun visitStatementNode(node: StatementNode, value: Unit) {
-        bindAttachedRootTypeDeclarations(node)
+        comments.getAttachment(node)?.let(::bindRootTypeDeclarations)
         super<ASTVisitor>.visitStatementNode(node, value)
     }
 
@@ -171,28 +171,25 @@ internal class DeclarationBinder(
                 is MemberExpression -> {
                     visitExpressionNode(target.base, value)
                     val assignedValue = node.variables.getOrNull(index)
-                    val declaration = if (assignedValue is FunctionDeclaration || assignedValue is LambdaDeclaration) {
-                        methodDeclaration(
+                    // Function-valued writes are METHOD declarations; other member writes
+                    // are FIELD declarations (table/module surfaces must include fields
+                    // installed with `owner.name = value`, not only `function owner.name()`).
+                    builder.addDeclarationWithSymbol(
+                        BinderDeclaration(
                             id = builder.nextDeclarationId(),
                             name = target.identifier.name,
+                            kind = if (assignedValue is FunctionDeclaration || assignedValue is LambdaDeclaration) {
+                                DeclarationKind.METHOD
+                            } else {
+                                DeclarationKind.FIELD
+                            },
                             origin = DeclarationOrigin.AST,
                             owner = DeclarationOwner.Lexical(currentLexicalOwnerNode()),
                             anchorNode = target.identifier,
                             documentation = documentation,
                             declaredTypeSyntax = declaredTypeSyntax
                         )
-                    } else {
-                        fieldDeclaration(
-                            id = builder.nextDeclarationId(),
-                            name = target.identifier.name,
-                            origin = DeclarationOrigin.AST,
-                            owner = DeclarationOwner.Lexical(currentLexicalOwnerNode()),
-                            anchorNode = target.identifier,
-                            documentation = documentation,
-                            declaredTypeSyntax = declaredTypeSyntax
-                        )
-                    }
-                    builder.addDeclarationWithSymbol(declaration)
+                    )
                 }
                 else -> visitExpressionNode(target, value)
             }
@@ -222,7 +219,11 @@ internal class DeclarationBinder(
 
         inScope(functionScopeId) {
             bindFunctionTypeParameters(functionDeclaration, attachment)
-            bindFunctionParameters(node, functionDeclaration, documentation)
+            val owner = functionDeclaration?.let { DeclarationOwner.Declaration(it.id) }
+                ?: DeclarationOwner.Lexical(node.body ?: node)
+            node.params.forEach { parameter ->
+                bindParameter(parameter, owner, documentation)
+            }
             visitBlockNode(body, value)
         }
     }
@@ -499,19 +500,6 @@ internal class DeclarationBinder(
         }
     }
 
-    private fun bindFunctionParameters(
-        node: FunctionDeclaration,
-        functionDeclaration: BinderDeclaration?,
-        documentation: DeclarationDocumentation?
-    ) {
-        val owner = functionDeclaration?.let { DeclarationOwner.Declaration(it.id) }
-            ?: DeclarationOwner.Lexical(node.body ?: node)
-
-        node.params.forEach { parameter ->
-            bindParameter(parameter, owner, documentation)
-        }
-    }
-
     /** Shared parameter binding for function declarations and lambda expressions. */
     private fun bindParameter(
         parameter: Identifier,
@@ -529,6 +517,27 @@ internal class DeclarationBinder(
         )
     }
 
+    /** Shared owner-anchored `@generic`/type-parameter declaration used by all three tag-binding sites. */
+    private fun addTypeParameterDeclaration(
+        ownerId: DeclarationId,
+        parameterName: String,
+        attachment: CommentAttachment,
+        documentationTags: List<DocTagSyntax>,
+        constraintText: String? = null
+    ) {
+        builder.addDeclarationWithSymbol(
+            typeParameterDeclaration(
+                id = builder.nextDeclarationId(),
+                name = parameterName,
+                owner = DeclarationOwner.Declaration(ownerId),
+                range = commentRange(attachment),
+                documentation = documentationForTags(attachment, documentationTags),
+                declaredTypeSyntax = parseTypeSyntax(constraintText)
+            ),
+            scopeId = null
+        )
+    }
+
     private fun bindFunctionTypeParameters(
         functionDeclaration: BinderDeclaration?,
         attachment: CommentAttachment?
@@ -537,29 +546,15 @@ internal class DeclarationBinder(
         val docComment = attachment?.docComment ?: return
         docComment.tags.filterIsInstance<GenericTagSyntax>().forEach { genericTag ->
             genericTag.parameters.forEach { parameter ->
-                builder.addDeclarationWithSymbol(
-                    typeParameterDeclaration(
-                        id = builder.nextDeclarationId(),
-                        name = parameter.name,
-                        owner = DeclarationOwner.Declaration(ownerId),
-                        range = commentRange(attachment),
-                        documentation = documentationForTags(attachment, listOf(genericTag)),
-                        declaredTypeSyntax = parseTypeSyntax(parameter.constraintText)
-                    ),
-                    scopeId = null
+                addTypeParameterDeclaration(
+                    ownerId = ownerId,
+                    parameterName = parameter.name,
+                    attachment = attachment,
+                    documentationTags = listOf(genericTag),
+                    constraintText = parameter.constraintText
                 )
             }
         }
-    }
-
-    private fun bindOrphanTypeDeclarations() {
-        comments.orphanAttachments.forEach { attachment ->
-            bindRootTypeDeclarations(attachment)
-        }
-    }
-
-    private fun bindAttachedRootTypeDeclarations(node: StatementNode) {
-        comments.getAttachment(node)?.let(::bindRootTypeDeclarations)
     }
 
     private fun bindRootTypeDeclarations(attachment: CommentAttachment) {
@@ -581,15 +576,11 @@ internal class DeclarationBinder(
             )
 
             aliasTag.declaredTypeParameters.forEach { parameterName ->
-                builder.addDeclarationWithSymbol(
-                    typeParameterDeclaration(
-                        id = builder.nextDeclarationId(),
-                        name = parameterName,
-                        owner = DeclarationOwner.Declaration(aliasDeclaration.id),
-                        range = commentRange(attachment),
-                        documentation = documentationForTags(attachment, listOf(aliasTag))
-                    ),
-                    scopeId = null
+                addTypeParameterDeclaration(
+                    ownerId = aliasDeclaration.id,
+                    parameterName = parameterName,
+                    attachment = attachment,
+                    documentationTags = listOf(aliasTag)
                 )
             }
         }
@@ -642,16 +633,12 @@ internal class DeclarationBinder(
         }
 
         typeParameterBindings.values.forEach { binding ->
-            builder.addDeclarationWithSymbol(
-                typeParameterDeclaration(
-                    id = builder.nextDeclarationId(),
-                    name = binding.name,
-                    owner = DeclarationOwner.Declaration(classDeclaration.id),
-                    range = commentRange(attachment),
-                    documentation = documentationForTags(attachment, binding.documentationTags),
-                    declaredTypeSyntax = parseTypeSyntax(binding.constraintText)
-                ),
-                scopeId = null
+            addTypeParameterDeclaration(
+                ownerId = classDeclaration.id,
+                parameterName = binding.name,
+                attachment = attachment,
+                documentationTags = binding.documentationTags,
+                constraintText = binding.constraintText
             )
         }
 
@@ -687,67 +674,63 @@ internal class DeclarationBinder(
         }
     }
 
-    private fun sliceMethodBindings(tags: List<DocTagSyntax>): List<MethodBinding> {
-        val bindings = mutableListOf<MethodBinding>()
-        var currentMethod: MethodTagSyntax? = null
-        var currentOverloads = mutableListOf<OverloadTagSyntax>()
+    /**
+     * Shared doc-tag grouping walk behind [sliceMethodBindings] and [sliceClassBindings]:
+     * [startOf] opens a new group (flushing the previous one), [isOwnedTag] accumulates a
+     * tag into the currently open group, and a non-owned tag with no open group is dropped.
+     */
+    private fun <S : DocTagSyntax, T> sliceTagGroups(
+        tags: List<DocTagSyntax>,
+        startOf: (DocTagSyntax) -> S?,
+        isOwnedTag: (DocTagSyntax) -> Boolean,
+        build: (S, List<DocTagSyntax>) -> T
+    ): List<T> {
+        val groups = mutableListOf<T>()
+        var currentStart: S? = null
+        var currentOwned = mutableListOf<DocTagSyntax>()
 
         fun flushCurrent() {
-            val methodTag = currentMethod ?: return
-            bindings += MethodBinding(methodTag = methodTag, overloadTags = currentOverloads.toList())
+            val start = currentStart ?: return
+            groups += build(start, currentOwned.toList())
         }
 
         tags.forEach { tag ->
-            when (tag) {
-                is MethodTagSyntax -> {
+            val start = startOf(tag)
+            when {
+                start != null -> {
                     flushCurrent()
-                    currentMethod = tag
-                    currentOverloads = mutableListOf()
+                    currentStart = start
+                    currentOwned = mutableListOf()
                 }
 
-                is OverloadTagSyntax -> if (currentMethod != null) {
-                    currentOverloads += tag
+                isOwnedTag(tag) -> if (currentStart != null) {
+                    currentOwned += tag
                 }
-
-                else -> Unit
             }
         }
 
         flushCurrent()
-        return bindings
+        return groups
     }
 
-    private fun sliceClassBindings(tags: List<DocTagSyntax>): List<ClassBindingSlice> {
-        val bindings = mutableListOf<ClassBindingSlice>()
-        var currentClass: ClassTagSyntax? = null
-        var currentOwnedTags = mutableListOf<DocTagSyntax>()
-
-        fun flushCurrent() {
-            val classTag = currentClass ?: return
-            bindings += ClassBindingSlice(classTag = classTag, tags = currentOwnedTags.toList())
+    private fun sliceMethodBindings(tags: List<DocTagSyntax>): List<MethodBinding> =
+        sliceTagGroups(
+            tags,
+            startOf = { it as? MethodTagSyntax },
+            isOwnedTag = { it is OverloadTagSyntax }
+        ) { methodTag, ownedTags ->
+            MethodBinding(methodTag, ownedTags.filterIsInstance<OverloadTagSyntax>())
         }
 
-        tags.forEach { tag ->
-            when (tag) {
-                is ClassTagSyntax -> {
-                    flushCurrent()
-                    currentClass = tag
-                    currentOwnedTags = mutableListOf()
-                }
-
-                is GenericTagSyntax, is JavaClassTagSyntax, is FieldTagSyntax, is MethodTagSyntax, is OverloadTagSyntax -> {
-                    if (currentClass != null) {
-                        currentOwnedTags += tag
-                    }
-                }
-
-                else -> Unit
+    private fun sliceClassBindings(tags: List<DocTagSyntax>): List<ClassBindingSlice> =
+        sliceTagGroups(
+            tags,
+            startOf = { it as? ClassTagSyntax },
+            isOwnedTag = {
+                it is GenericTagSyntax || it is JavaClassTagSyntax || it is FieldTagSyntax ||
+                    it is MethodTagSyntax || it is OverloadTagSyntax
             }
-        }
-
-        flushCurrent()
-        return bindings
-    }
+        ) { classTag, tags -> ClassBindingSlice(classTag, tags) }
 
     private data class ClassBindingSlice(
         val classTag: ClassTagSyntax,

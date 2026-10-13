@@ -1,58 +1,11 @@
 package io.github.dingyi222666.luaparser.lsp
-import org.eclipse.lsp4j.CallHierarchyIncomingCall
-import org.eclipse.lsp4j.CallHierarchyIncomingCallsParams
-import org.eclipse.lsp4j.CallHierarchyItem
-import org.eclipse.lsp4j.CallHierarchyOutgoingCall
-import org.eclipse.lsp4j.CallHierarchyOutgoingCallsParams
-import org.eclipse.lsp4j.CallHierarchyPrepareParams
-import org.eclipse.lsp4j.CodeAction
-import org.eclipse.lsp4j.CodeActionParams
-import org.eclipse.lsp4j.Command
-import org.eclipse.lsp4j.DocumentFormattingParams
-import org.eclipse.lsp4j.DocumentOnTypeFormattingParams
-import org.eclipse.lsp4j.DocumentRangeFormattingParams
-import org.eclipse.lsp4j.FoldingRange
-import org.eclipse.lsp4j.FoldingRangeRequestParams
-import org.eclipse.lsp4j.InlayHint
-import org.eclipse.lsp4j.InlayHintParams
-import org.eclipse.lsp4j.PrepareRenameDefaultBehavior
-import org.eclipse.lsp4j.PrepareRenameParams
-import org.eclipse.lsp4j.PrepareRenameResult
-import org.eclipse.lsp4j.RenameParams
-import org.eclipse.lsp4j.SelectionRange
-import org.eclipse.lsp4j.SelectionRangeParams
-import org.eclipse.lsp4j.SemanticTokens
-import org.eclipse.lsp4j.SemanticTokensDelta
-import org.eclipse.lsp4j.SemanticTokensDeltaParams
-import org.eclipse.lsp4j.SemanticTokensParams
-import org.eclipse.lsp4j.TextEdit
-import org.eclipse.lsp4j.WorkspaceEdit
-import org.eclipse.lsp4j.jsonrpc.messages.Either3
-
 import io.github.dingyi222666.luaparser.interop.jvm.JvmWorkspaceEngine
-import org.eclipse.lsp4j.CompletionItem
-import org.eclipse.lsp4j.CompletionList
-import org.eclipse.lsp4j.CompletionParams
-import org.eclipse.lsp4j.DeclarationParams
-import org.eclipse.lsp4j.DefinitionParams
 import org.eclipse.lsp4j.DidChangeConfigurationParams
-import org.eclipse.lsp4j.DidChangeTextDocumentParams
 import org.eclipse.lsp4j.DidChangeWatchedFilesParams
 import org.eclipse.lsp4j.DidChangeWorkspaceFoldersParams
-import org.eclipse.lsp4j.DocumentHighlight
-import org.eclipse.lsp4j.DocumentHighlightParams
-import org.eclipse.lsp4j.DocumentSymbol
-import org.eclipse.lsp4j.DocumentSymbolParams
-import org.eclipse.lsp4j.Hover
-import org.eclipse.lsp4j.HoverParams
 import org.eclipse.lsp4j.InitializeParams
 import org.eclipse.lsp4j.InitializeResult
 import org.eclipse.lsp4j.InitializedParams
-import org.eclipse.lsp4j.Location
-import org.eclipse.lsp4j.LocationLink
-import org.eclipse.lsp4j.ReferenceParams
-import org.eclipse.lsp4j.SignatureHelp
-import org.eclipse.lsp4j.SignatureHelpParams
 import org.eclipse.lsp4j.SymbolInformation
 import org.eclipse.lsp4j.WorkspaceSymbol
 import org.eclipse.lsp4j.WorkspaceSymbolParams
@@ -80,107 +33,22 @@ class LuaLanguageServer(
     private var lifecycleState = LifecycleState.CREATED
     @Volatile
     private var client: LanguageClient? = null
+
+    /**
+     * Returned directly by [getTextDocumentService]. (An earlier pass wrapped this in a
+     * `TextDocumentService by` delegation object; that wrapper was a pure transparent
+     * proxy — lsp4j class delegation forwards the abstract didOpen/didChange/didClose/
+     * didSave and every request override just re-forwarded to this instance, adding no
+     * behavior. The UOE-throwing lsp4j default members are all overridden inside
+     * [LuaTextDocumentService] itself, and lifecycle gating lives in its
+     * acceptsNotifications/requestPolicy hooks.)
+     */
     private val textDocuments = LuaTextDocumentService(
         languageService = languageService,
         publishDiagnostics = ::publishDiagnostics,
         acceptsNotifications = ::acceptsMessages,
         requestPolicy = ::textDocumentRequestPolicy
     )
-    private val textDocumentService = object : TextDocumentService by textDocuments {
-        // didOpen/didChange/didClose/didSave are lsp4j's only ABSTRACT members here, so
-        // the `by` delegation above forwards them to [textDocuments] unchanged; lifecycle
-        // gating lives in the service's acceptsNotifications policy. Every request method
-        // below is a default (UOE-throwing) lsp4j member, so it must be forwarded
-        // explicitly or the capability lies (smoke audit: textDocument/foldingRange
-        // returned "Internal error: null").
-        override fun hover(params: HoverParams): CompletableFuture<Hover> {
-            return textDocuments.hover(params)
-        }
-
-        override fun completion(params: CompletionParams): CompletableFuture<Either<MutableList<CompletionItem>, CompletionList>> {
-            return textDocuments.completion(params)
-        }
-
-        override fun signatureHelp(params: SignatureHelpParams): CompletableFuture<SignatureHelp> {
-            return textDocuments.signatureHelp(params)
-        }
-
-        override fun definition(params: DefinitionParams): CompletableFuture<Either<MutableList<out Location>, MutableList<out LocationLink>>> {
-            return textDocuments.definition(params)
-        }
-
-        override fun declaration(params: DeclarationParams): CompletableFuture<Either<MutableList<out Location>, MutableList<out LocationLink>>> {
-            return textDocuments.declaration(params)
-        }
-
-        override fun documentHighlight(params: DocumentHighlightParams): CompletableFuture<MutableList<out DocumentHighlight>> {
-            return textDocuments.documentHighlight(params)
-        }
-
-        override fun references(params: ReferenceParams): CompletableFuture<MutableList<out Location>> {
-            return textDocuments.references(params)
-        }
-
-        override fun documentSymbol(params: DocumentSymbolParams): CompletableFuture<MutableList<Either<SymbolInformation, DocumentSymbol>>> {
-            return textDocuments.documentSymbol(params)
-        }
-        override fun resolveCompletionItem(unresolved: CompletionItem): CompletableFuture<CompletionItem> =
-            textDocuments.resolveCompletionItem(unresolved)
-
-        override fun prepareRename(
-            params: PrepareRenameParams
-        ): CompletableFuture<Either3<org.eclipse.lsp4j.Range, PrepareRenameResult, PrepareRenameDefaultBehavior>> =
-            textDocuments.prepareRename(params)
-
-        override fun rename(params: RenameParams): CompletableFuture<WorkspaceEdit> =
-            textDocuments.rename(params)
-
-        override fun prepareCallHierarchy(
-            params: CallHierarchyPrepareParams
-        ): CompletableFuture<List<CallHierarchyItem>> =
-            textDocuments.prepareCallHierarchy(params)
-
-        override fun callHierarchyIncomingCalls(
-            params: CallHierarchyIncomingCallsParams
-        ): CompletableFuture<List<CallHierarchyIncomingCall>> =
-            textDocuments.callHierarchyIncomingCalls(params)
-
-        override fun callHierarchyOutgoingCalls(
-            params: CallHierarchyOutgoingCallsParams
-        ): CompletableFuture<List<CallHierarchyOutgoingCall>> =
-            textDocuments.callHierarchyOutgoingCalls(params)
-
-        override fun foldingRange(params: FoldingRangeRequestParams): CompletableFuture<List<FoldingRange>> =
-            textDocuments.foldingRange(params)
-
-        override fun selectionRange(params: SelectionRangeParams): CompletableFuture<List<SelectionRange>> =
-            textDocuments.selectionRange(params)
-
-        override fun semanticTokensFull(params: SemanticTokensParams): CompletableFuture<SemanticTokens> =
-            textDocuments.semanticTokensFull(params)
-
-        override fun semanticTokensFullDelta(
-            params: SemanticTokensDeltaParams
-        ): CompletableFuture<Either<SemanticTokens, SemanticTokensDelta>> =
-            textDocuments.semanticTokensFullDelta(params)
-
-        override fun codeAction(params: CodeActionParams): CompletableFuture<List<Either<Command, CodeAction>>> =
-            textDocuments.codeAction(params)
-
-        override fun inlayHint(params: InlayHintParams): CompletableFuture<List<InlayHint>> =
-            textDocuments.inlayHint(params)
-
-        override fun formatting(params: DocumentFormattingParams): CompletableFuture<MutableList<out TextEdit>> =
-            textDocuments.formatting(params)
-
-        override fun rangeFormatting(params: DocumentRangeFormattingParams): CompletableFuture<MutableList<out TextEdit>> =
-            textDocuments.rangeFormatting(params)
-
-        override fun onTypeFormatting(
-            params: DocumentOnTypeFormattingParams
-        ): CompletableFuture<List<out TextEdit>> =
-            textDocuments.onTypeFormatting(params)
-    }
     private val workspaceDelegate = LuaWorkspaceService(
         languageService = languageService,
         onConfigurationChanged = textDocuments::republishDiagnostics
@@ -289,7 +157,7 @@ class LuaLanguageServer(
         exitCode?.let(processExit)
     }
 
-    override fun getTextDocumentService(): TextDocumentService = textDocumentService
+    override fun getTextDocumentService(): TextDocumentService = textDocuments
 
     override fun getWorkspaceService(): WorkspaceService = workspace
 
@@ -367,6 +235,4 @@ class LuaLanguageServer(
         future.completeExceptionally(throwable)
         return future
     }
-
-
 }

@@ -34,13 +34,12 @@ internal class NodePositionIndex(root: BaseASTNode) {
         }
 
         var order = 0
-        val visitor = object : ASTVisitor<Unit> {
-            private fun record(node: BaseASTNode) {
-                if (isValidNonEmptyRange(node.range)) {
-                    collected += Entry(node = node, range = node.range, order = order++)
-                }
+        fun record(node: BaseASTNode) {
+            if (isValidNonEmptyRange(node.range)) {
+                collected += Entry(node = node, range = node.range, order = order++)
             }
-
+        }
+        val visitor = object : ASTVisitor<Unit> {
             override fun visitChunkNode(node: ChunkNode, value: Unit) {
                 record(node)
                 super.visitChunkNode(node, value)
@@ -81,11 +80,7 @@ internal class NodePositionIndex(root: BaseASTNode) {
             is BlockNode -> visitor.visitBlockNode(startNode, Unit)
             is io.github.dingyi222666.luaparser.parser.ast.node.ExpressionNode -> visitor.visitExpressionNode(startNode, Unit)
             is io.github.dingyi222666.luaparser.parser.ast.node.StatementNode -> visitor.visitStatementNode(startNode, Unit)
-            else -> {
-                if (isValidNonEmptyRange(startNode.range)) {
-                    collected += Entry(startNode, startNode.range, order)
-                }
-            }
+            else -> record(startNode)
         }
 
         // Keep AST entries in traversal order. Sorting every node by range made

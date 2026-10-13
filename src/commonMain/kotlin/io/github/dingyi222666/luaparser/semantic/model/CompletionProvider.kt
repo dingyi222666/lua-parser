@@ -1,6 +1,7 @@
 package io.github.dingyi222666.luaparser.semantic.model
 
 import io.github.dingyi222666.luaparser.parser.ast.node.BaseASTNode
+import io.github.dingyi222666.luaparser.semantic.binder.DeclarationKind
 import io.github.dingyi222666.luaparser.semantic.checker.ExpressionTypeEvaluator
 import io.github.dingyi222666.luaparser.parser.ast.node.Identifier
 import io.github.dingyi222666.luaparser.parser.ast.node.MemberExpression
@@ -23,11 +24,8 @@ internal class CompletionProvider(
         val node = nodePositionIndex.findInnermost(position)
         val memberExpression = nodePositionIndex.completionMemberAt(position)
 
-        return if (memberExpression != null) {
-            memberCompletions(memberExpression, position, nameFilter)
-        } else {
-            lexicalCompletions(position, node, nameFilter)
-        }
+        return if (memberExpression != null) memberCompletions(memberExpression, position, nameFilter)
+        else lexicalCompletions(position, node, nameFilter)
     }
 
     private fun lexicalCompletions(position: Position, node: BaseASTNode?, nameFilter: ((String) -> Boolean)?): List<CompletionItem> {
@@ -36,20 +34,19 @@ internal class CompletionProvider(
                 // Prefer declaredType-backed detail/kind for ambient binder builtins
                 // (activity/service VARIABLE, load* FUNCTION, luajava MODULE).
                 val declared = visible.declaration.declaredType
-                val isCallableDeclaration = visible.declaration.kind == io.github.dingyi222666.luaparser.semantic.binder.DeclarationKind.FUNCTION ||
-                    visible.declaration.kind == io.github.dingyi222666.luaparser.semantic.binder.DeclarationKind.GLOBAL ||
-                    visible.declaration.kind == io.github.dingyi222666.luaparser.semantic.binder.DeclarationKind.METHOD ||
-                    declared is CallableType
+                val kind = visible.declaration.kind
+                val isCallableDeclaration = kind == DeclarationKind.FUNCTION || kind == DeclarationKind.GLOBAL ||
+                    kind == DeclarationKind.METHOD || declared is CallableType
                 if (!isCallableDeclaration) {
                     val symbol = adapters.toDeclarationSymbol(visible.declaration)
-                    completionItem(symbol, categoryPrefix(symbol), visible.lexicalDepth)
+                    buildCompletionItem(symbol, lexicalCompletionKind(symbol), categoryPrefix(symbol), visible.lexicalDepth)
                 } else {
                     val type = declared.takeIf { candidate ->
                         candidate is CallableType && candidate.callSignatures.all { it.returnType.displayName != "unknown" }
                     } ?: evaluator.declarationValueType(visible.declaration)
                     adapters.toDeclarationSymbol(visible.declaration, typeOverride = type).let { symbol ->
                         val expression = (node as? Identifier)?.takeIf { it.name == symbol.name }
-                        completionItem(symbol, categoryPrefix(symbol), visible.lexicalDepth).copy(
+                        buildCompletionItem(symbol, lexicalCompletionKind(symbol), categoryPrefix(symbol), visible.lexicalDepth).copy(
                             detail = signatures.callableDetail(type, expression, position, visible.declaration)
                         )
                     }
@@ -58,7 +55,7 @@ internal class CompletionProvider(
         val lazyImportItem = (node as? Identifier)
             ?.let { identifier -> referenceQueries.importedCompletionSymbol(identifier.name, position) }
             ?.let { symbol ->
-                val item = completionItem(symbol, categoryPrefix(symbol), 0)
+                val item = buildCompletionItem(symbol, lexicalCompletionKind(symbol), categoryPrefix(symbol), 0)
                 val importedType = adapters.typeByKey(symbol.declaredType?.typeKey ?: symbol.type?.typeKey)
                 if (importedType is CallableType) {
                     item.copy(detail = signatures.callableDetail(importedType, null, position))
@@ -79,18 +76,14 @@ internal class CompletionProvider(
         return referenceQueries.resolveMemberCompletionSurface(expression)
             .filter { nameFilter?.invoke(it.name) != false }
             .mapIndexed { index, symbol ->
-                val prefix = if (expression.indexer == ":") {
-                    if (symbol.kind == SymbolKind.METHOD) "0" else "1"
-                } else {
-                    // Prefer fields (including Java static fields and JavaBean aliases on
-                    // bindClass targets) over methods for `.` members.
-                    if (symbol.kind == SymbolKind.FIELD ||
-                        symbol.kind == SymbolKind.LOCAL ||
-                        symbol.kind == SymbolKind.VARIABLE
-                    ) "0" else "1"
-                }
+                // Prefer fields (including Java static fields and JavaBean aliases on
+                // bindClass targets) over methods for `.` members; `:` is a call site.
+                val firstGroupKind = if (expression.indexer == ":") SymbolKind.METHOD else SymbolKind.FIELD
+                val prefix = if (symbol.kind == firstGroupKind ||
+                    (expression.indexer != ":" && (symbol.kind == SymbolKind.LOCAL || symbol.kind == SymbolKind.VARIABLE))
+                ) "0" else "1"
                 val type = adapters.typeByKey(symbol.declaredType?.typeKey ?: symbol.type?.typeKey)
-                memberCompletionItem(symbol, prefix, index).let { item ->
+                buildCompletionItem(symbol, memberCompletionKind(symbol), prefix, index).let { item ->
                     if (type == null || (type !is CallableType && symbol.kind != SymbolKind.METHOD && symbol.kind != SymbolKind.FUNCTION)) {
                         item
                     } else item.copy(detail = signatures.callableDetail(
@@ -100,9 +93,6 @@ internal class CompletionProvider(
             }
             .sortedBy(CompletionItem::sortText)
     }
-
-    private fun completionItem(symbol: Symbol, category: String, depth: Int): CompletionItem =
-        buildCompletionItem(symbol, lexicalCompletionKind(symbol), category, depth)
 
     /**
      * Free-identifier completions should surface binder declaredType when present:
@@ -114,10 +104,7 @@ internal class CompletionProvider(
         when (declared?.kind) {
             TypeInfoKind.MODULE -> return CompletionItemKind.MODULE
             TypeInfoKind.FUNCTION -> return CompletionItemKind.FUNCTION
-            TypeInfoKind.CLASS,
-            TypeInfoKind.TABLE,
-            TypeInfoKind.UNKNOWN,
-            null -> Unit
+            else -> Unit
         }
         return when (symbol.kind) {
             SymbolKind.MODULE -> CompletionItemKind.MODULE
@@ -140,9 +127,6 @@ internal class CompletionProvider(
      * declarations sometimes arrive as value kinds (LOCAL/VARIABLE); hover still reports
      * [SymbolKind.FIELD] via member resolution.
      */
-    private fun memberCompletionItem(symbol: Symbol, category: String, depth: Int): CompletionItem =
-        buildCompletionItem(symbol, memberCompletionKind(symbol), category, depth)
-
     /** Shared item construction; lexical and member surfaces differ only in kind mapping. */
     private fun buildCompletionItem(
         symbol: Symbol,
