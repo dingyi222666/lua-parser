@@ -602,3 +602,15 @@ Integrated compile fixes by the parent (canonicalByKind receiver style — exten
 
 **Lines: 45,863** (baseline 53,562 → −7,699; target ≤41,562, ~4,300 remaining). E2E rel53 = OK (7 tests) on the reduced tree; all gates green.
 
+## Round 26 — five-agent line reduction — 2026-10-13 (3/3)
+
+Verified remotely (JVM 2,929/0/0 + JS compile + **E2E rel54 = OK (7 tests)**):
+
+- lsp/ second pass (−319): the transparent `TextDocumentService by textDocuments` proxy deleted (39/39 override surface verified identical; lsp4j abstract-vs-default members bytecode-checked), `simpleRequest(quiet, accepted)` collapsed 16 endpoint ladders byte-preserving each quiet payload, nullFuture merge, LuaWorkspaceService symbol-path inlining.
+- parser/ast (−183): 43 toString + 27 clone overrides → expression bodies, shared addCloned*From list helpers, Range/Position hand-rolled equals/hashCode deleted (byte-identical to compiler-generated; runtime smoke: 138-node clone equality + AST2Lua round-trip vs HEAD build).
+- model/ second pass (−82): SignatureHelpProvider dead branch + helper inlines, ReferenceQueries comparator ladders + declarationCovering generalization, CompletionProvider/NodeTypeIndex/NodePositionIndex/ApiAdapters compaction.
+- binder/ second pass (−25): sliceTagGroups (30-line twins), type-parameter assembly helper, assignment kind conditional, BinderPassResult → DeclarationIndex.withDelegates, dead unreachable-scope fallback removed (ScopeGraph construction grep-proven absent).
+- workspace/ second pass (−82) REVERTED: DocumentFactsCollector/ModuleExportCollector merges changed legacy-module-call environment semantics (4 test regressions) — the require/alias boundary layer is proven behavior-sensitive for the THIRD time; recorded as a hard no-go zone for future merges.
+
+**Lines: 45,258** (baseline 53,562 → −8,304; target ≤41,562, ~3,700 remaining). All gates green on the final tree.
+
