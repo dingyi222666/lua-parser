@@ -95,23 +95,20 @@ class LuaWorkspaceQueryFacade(
             model.getCompletionsMatching(position, nameFilter)
             else model?.getCompletionsAt(position).orEmpty().filter { nameFilter?.invoke(it.label) != false }
         if (semanticFile == null) { return baseCompletions }
-        val memberExpression = semanticFile.nodeIndex.completionMemberAt(position)
-        if (memberExpression != null) {
-            // Member-context completions must not merge lexical/import free-identifier
-            // candidates (Monaco demo: greeter. flooded with locals + builtins). Prefer
-            // require-backed export members when available; otherwise keep model member surface.
-            val workspaceMembers = workspaceMemberCompletions(path, semanticFile, memberExpression, nameFilter)
-            if (workspaceMembers.isNotEmpty()) {
-                val callableDetails = baseCompletions.filter {
-                    it.kind == CompletionItemKind.FUNCTION || it.kind == CompletionItemKind.METHOD
-                }.associateBy(CompletionItem::label)
-                return workspaceMembers.map { item ->
-                    callableDetails[item.label]?.detail?.let { item.copy(detail = it) } ?: item
-                }
-            }
-            return baseCompletions
+        val memberExpression = semanticFile.nodeIndex.completionMemberAt(position) ?: return mergeCompletions(
+            baseCompletions, importCompletions(path, position, semanticFile, nameFilter)
+        )
+        // Member-context completions must not merge lexical/import free-identifier
+        // candidates (Monaco demo: greeter. flooded with locals + builtins). Prefer
+        // require-backed export members when available; otherwise keep model member surface.
+        val workspaceMembers = workspaceMemberCompletions(path, semanticFile, memberExpression, nameFilter)
+        if (workspaceMembers.isEmpty()) { return baseCompletions }
+        val callableDetails = baseCompletions.filter {
+            it.kind == CompletionItemKind.FUNCTION || it.kind == CompletionItemKind.METHOD
+        }.associateBy(CompletionItem::label)
+        return workspaceMembers.map { item ->
+            callableDetails[item.label]?.detail?.let { item.copy(detail = it) } ?: item
         }
-        return mergeCompletions(baseCompletions, importCompletions(path, position, semanticFile, nameFilter))
     }
 
     fun signatureHelp(path: VirtualPath, position: Position): SignatureHelp? {
@@ -175,8 +172,7 @@ class LuaWorkspaceQueryFacade(
         // Prefer path-scoped imported MODULE aliases over weak free-global VARIABLE symbols so
         // table/dynamic import mounts (File/Locale) still resolve to JVM providers.
         val symbol = when {
-            modelSymbol != null &&
-                modelSymbol.kind != SymbolKind.VARIABLE &&
+            modelSymbol != null && modelSymbol.kind != SymbolKind.VARIABLE &&
                 modelSymbol.kind != SymbolKind.UNKNOWN -> modelSymbol
             importedAt != null -> importedSymbol(importedAt)
             else -> modelSymbol ?: importedAt?.let(::importedSymbol)
@@ -394,13 +390,8 @@ class LuaWorkspaceQueryFacade(
         }
 
         fun buildNode(declaration: BinderDeclaration): WorkspaceDocumentSymbol {
-            val range = declaration.range
-                ?: declaration.anchorNode?.range
-                ?: syntheticModuleRange(declaration.name)
-            val children = childrenByOwner[declaration.id]
-                .orEmpty()
-                .sortedWith(declarationSourceOrder)
-                .map(::buildNode)
+            val range = declaration.range ?: declaration.anchorNode?.range ?: syntheticModuleRange(declaration.name)
+            val children = childrenByOwner[declaration.id].orEmpty().sortedWith(declarationSourceOrder).map(::buildNode)
             return WorkspaceDocumentSymbol(
                 declaration.name,
                 declaration.kind.toWorkspaceSymbolKind(),
@@ -475,24 +466,18 @@ class LuaWorkspaceQueryFacade(
         }
         // Same key shape as workspaceSymbolEntryKey + the container suffix.
         return entries
-            .distinctBy { entry ->
-                workspaceSymbolEntryKey(entry, ":${entry.containerName.orEmpty()}")
-            }
-            .sortedWith(
-                compareBy<WorkspaceSymbolEntry>({ it.name }, { it.path.value }, { it.range.start.line }, { it.range.start.column })
-            )
+            .distinctBy { entry -> workspaceSymbolEntryKey(entry, ":${entry.containerName.orEmpty()}") }
+            .sortedWith(compareBy<WorkspaceSymbolEntry>({ it.name }, { it.path.value }, { it.range.start.line }, { it.range.start.column }))
     }
 
     private fun fileSymbolEntries(
         path: VirtualPath,
         file: WorkspaceSnapshot.FileSnapshot
     ): List<WorkspaceSymbolEntry> {
-        val semanticFile = file.semanticFile
-        val declarations = semanticFile
+        val declarations = file.semanticFile
             ?.let { declarationWorkspaceSymbolEntries(path, it.snapshot.binder.declarationIndex.declarations, it.chunk.body) }
             ?: emptyList()
-        val exports = moduleExportWorkspaceSymbolEntries(path, file, declarations)
-        return declarations + exports
+        return declarations + moduleExportWorkspaceSymbolEntries(path, file, declarations)
     }
 
     private fun declarationWorkspaceSymbolEntries(
@@ -501,8 +486,7 @@ class LuaWorkspaceQueryFacade(
         chunkBody: BaseASTNode?
     ): List<WorkspaceSymbolEntry> {
         val declarationsById = declarations.associateBy(BinderDeclaration::id)
-        return declarations
-            .asSequence()
+        return declarations.asSequence()
             .filter { isNavigableWorkspaceSymbolDeclaration(it, chunkBody) }
             .mapNotNull { declaration ->
                 declaration.range?.let { range ->
@@ -553,17 +537,10 @@ class LuaWorkspaceQueryFacade(
     private fun hierarchicalExportSymbols(path: VirtualPath): List<WorkspaceDocumentSymbol> {
         val file = snapshot.files[path] ?: snapshot.extraProviders[path] ?: return emptyList()
         val surface = file.moduleExportSurface ?: return emptyList()
-        val members = surface.members
-            .asSequence()
+        val members = surface.members.asSequence()
             .filter { isUserFacingExportName(it.name) && it.exportPath.isNotEmpty() }
-            .sortedWith(
-                compareBy(
-                    { it.exportPath.size },
-                    { it.range?.start?.line ?: Int.MAX_VALUE },
-                    { it.range?.start?.column ?: Int.MAX_VALUE },
-                    { it.exportPath.joinToString(".") }
-                )
-            )
+            .sortedWith(compareBy({ it.exportPath.size }, { it.range?.start?.line ?: Int.MAX_VALUE },
+                { it.range?.start?.column ?: Int.MAX_VALUE }, { it.exportPath.joinToString(".") }))
             .toList()
 
         data class MutableSymbol(
@@ -588,19 +565,16 @@ class LuaWorkspaceQueryFacade(
             exportPath.forEachIndexed { index, segment ->
                 val isLeaf = index == exportPath.lastIndex
                 val existing = currentChildren[segment]
-                current = if (existing == null) {
-                    MutableSymbol(
-                        name = segment,
-                        kind = if (isLeaf) kind else SymbolKind.FIELD,
-                        range = if (isLeaf) range else syntheticModuleRange(segment)
-                    ).also { currentChildren[segment] = it }
-                } else {
+                current = existing?.also { leaf ->
                     if (isLeaf) {
-                        existing.kind = preferredDocumentSymbolKind(existing.kind, kind)
-                        existing.range = range
+                        leaf.kind = preferredDocumentSymbolKind(leaf.kind, kind)
+                        leaf.range = range
                     }
-                    existing
-                }
+                } ?: MutableSymbol(
+                    name = segment,
+                    kind = if (isLeaf) kind else SymbolKind.FIELD,
+                    range = if (isLeaf) range else syntheticModuleRange(segment)
+                ).also { currentChildren[segment] = it }
                 currentChildren = current!!.children
             }
             return current ?: error("export path must not be empty")
@@ -627,14 +601,10 @@ class LuaWorkspaceQueryFacade(
 
         exports.forEach { export ->
             val existing = byName[export.name]
-            if (existing == null) {
-                byName[export.name] = export
-            } else {
-                byName[export.name] = existing.copy(
-                    kind = preferredDocumentSymbolKind(existing.kind, export.kind),
-                    children = mergeDocumentSymbolRoots(existing.children, export.children)
-                )
-            }
+            byName[export.name] = if (existing == null) export else existing.copy(
+                kind = preferredDocumentSymbolKind(existing.kind, export.kind),
+                children = mergeDocumentSymbolRoots(existing.children, export.children)
+            )
         }
 
         return byName.values
@@ -658,11 +628,10 @@ class LuaWorkspaceQueryFacade(
     private fun preferredDocumentSymbolKind(left: SymbolKind, right: SymbolKind): SymbolKind =
         listOf(left, right).minBy { symbolKindRank.indexOf(it).takeIf { index -> index >= 0 } ?: Int.MAX_VALUE }
 
-    private fun isNavigableDocumentSymbolDeclaration(declaration: BinderDeclaration): Boolean {
-        if (declaration.name.isBlank() || declaration.range == null) { return false }
-        if (declaration.origin == DeclarationOrigin.BUILTIN) { return false }
-        return declaration.kind != DeclarationKind.PARAMETER && declaration.kind != DeclarationKind.TYPE_PARAMETER
-    }
+    private fun isNavigableDocumentSymbolDeclaration(declaration: BinderDeclaration): Boolean =
+        declaration.name.isNotBlank() && declaration.range != null &&
+            declaration.origin != DeclarationOrigin.BUILTIN &&
+            declaration.kind != DeclarationKind.PARAMETER && declaration.kind != DeclarationKind.TYPE_PARAMETER
 
     /**
      * Workspace/symbol navigability narrows the document-symbol rule (workspace-symbol
@@ -699,14 +668,12 @@ class LuaWorkspaceQueryFacade(
         "${entry.path.value}:${entry.name}:${entry.kind.name}:${entry.range.start.line}:${entry.range.start.column}$containerSuffix"
 
     private fun DeclarationKind.toWorkspaceSymbolKind(): SymbolKind = when (this) {
-        DeclarationKind.LOCAL,
-        DeclarationKind.GLOBAL -> SymbolKind.VARIABLE
+        DeclarationKind.LOCAL, DeclarationKind.GLOBAL -> SymbolKind.VARIABLE
         DeclarationKind.PARAMETER -> SymbolKind.PARAMETER
         DeclarationKind.FUNCTION -> SymbolKind.FUNCTION
         DeclarationKind.MODULE -> SymbolKind.MODULE
         DeclarationKind.CLASS -> SymbolKind.CLASS
-        DeclarationKind.TYPE_ALIAS -> SymbolKind.TYPE_ALIAS
-        DeclarationKind.TYPE_PARAMETER -> SymbolKind.TYPE_ALIAS
+        DeclarationKind.TYPE_ALIAS, DeclarationKind.TYPE_PARAMETER -> SymbolKind.TYPE_ALIAS
         DeclarationKind.FIELD -> SymbolKind.FIELD
         DeclarationKind.METHOD -> SymbolKind.METHOD
     }
@@ -717,19 +684,16 @@ class LuaWorkspaceQueryFacade(
             primary == null -> fallback
             // Prefer coarse table kind for local table shadows so hover does not expose
             // the concrete structural table literal display (kind may be TABLE or UNKNOWN).
-            primary.displayName.startsWith("{") -> {
-                TypeInfo(
-                    displayName = "table",
-                    detail = "table",
-                    typeKey = primary.typeKey,
-                    kind = TypeInfoKind.TABLE,
-                    moduleName = primary.moduleName ?: fallback?.moduleName
-                )
-            }
+            primary.displayName.startsWith("{") -> TypeInfo(
+                displayName = "table",
+                detail = "table",
+                typeKey = primary.typeKey,
+                kind = TypeInfoKind.TABLE,
+                moduleName = primary.moduleName ?: fallback?.moduleName
+            )
             // Prefer Android-Lua multi-import Array<> display over the structural union[] form
             // produced by generic ArrayType.displayName ("T[]").
-            primary.displayName.endsWith("[]") &&
-                fallback?.displayName?.startsWith("Array<") == true -> fallback
+            primary.displayName.endsWith("[]") && fallback?.displayName?.startsWith("Array<") == true -> fallback
             // Bare unknown/any must lose to any richer fallback (FunctionType/ClassType/MODULE/fun).
             // The structured-kind/fun/moduleName clauses also cover non-bare fallbacks, so the
             // two former bare-weak arms collapse into one condition (arm 1 ∪ arm 2).
@@ -741,16 +705,14 @@ class LuaWorkspaceQueryFacade(
                     !fallback.moduleName.isNullOrBlank()) -> fallback
             // Dynamic import() locals often evaluate as unknown/any at the node while the
             // symbol surface already carries the resolved MODULE type (moduleName / fun(...)).
-            primary.moduleName.isNullOrBlank() && !fallback?.moduleName.isNullOrBlank() -> {
-                fallback!!.copy(
-                    displayName = primary.displayName.takeUnless {
-                        it.isBlank() || it == "unknown" || it == "any"
-                    } ?: fallback.displayName,
-                    detail = primary.detail?.takeUnless {
-                        it.isBlank() || it == "unknown" || it == "any"
-                    } ?: fallback.detail
-                )
-            }
+            primary.moduleName.isNullOrBlank() && !fallback?.moduleName.isNullOrBlank() -> fallback!!.copy(
+                displayName = primary.displayName.takeUnless {
+                    it.isBlank() || it == "unknown" || it == "any"
+                } ?: fallback.displayName,
+                detail = primary.detail?.takeUnless {
+                    it.isBlank() || it == "unknown" || it == "any"
+                } ?: fallback.detail
+            )
             !primary.displayName.isCallableDisplay() &&
                 fallback?.displayName?.isCallableDisplay() == true -> fallback
             // Prefer declared/inferred CLASS/FUNCTION kinds when primary is only UNKNOWN.
@@ -794,16 +756,12 @@ class LuaWorkspaceQueryFacade(
         val declaration = localDeclarationForSymbolOrIdentifier(semanticFile, symbol?.symbolId, identifier) ?: return null
         if (declaration.kind != DeclarationKind.LOCAL || declaration.anchorNode !is Identifier) { return null }
         val memberInitializer = memberInitializerForLocal(declaration) ?: return null
-        val exportPath = requireBackedExportPath(semanticFile, path, memberInitializer)
-            ?.takeIf { it.isNotEmpty() } ?: return null
+        val exportPath = requireBackedExportPath(semanticFile, path, memberInitializer)?.takeIf { it.isNotEmpty() } ?: return null
         // Both walkers used to be byte-identical (resolvedRequireForExportPathRoot was
         // folded into resolveRequireByWalkingExpressionBases), so one call resolves the root.
-        val resolved = resolveRequireByWalkingExpressionBases(semanticFile, path, memberInitializer)
-            ?: return null
+        val resolved = resolveRequireByWalkingExpressionBases(semanticFile, path, memberInitializer) ?: return null
         val export = resolver.exportedMember(resolved.provider.path, exportPath)
-            ?: exportPath.lastOrNull()?.let { leaf ->
-                resolver.exportedMember(resolved.provider.path, listOf(leaf))
-            }
+            ?: exportPath.lastOrNull()?.let { leaf -> resolver.exportedMember(resolved.provider.path, listOf(leaf)) }
         export?.let { return exportLocation(it) }
         // Still navigate to the require-backed provider (e.g. AndroLua socket.url overlay)
         // when the export member range is not yet collected, rather than the local binding site.
@@ -823,15 +781,9 @@ class LuaWorkspaceQueryFacade(
             return emptyList()
         }
         return buildList {
-            identifier
-                ?.let { resolveRequiredModuleNameForLocal(semanticFile, symbol?.symbolId, it) }
-                ?.let(::add)
-            symbol?.type?.moduleName
-                ?.takeIf { it.isNotBlank() && it !in this }
-                ?.let(::add)
-            exportedModuleNameFromMemberBase(semanticFile, node)
-                ?.takeIf { it.isNotBlank() && it !in this }
-                ?.let(::add)
+            identifier?.let { resolveRequiredModuleNameForLocal(semanticFile, symbol?.symbolId, it) }?.let(::add)
+            symbol?.type?.moduleName?.takeIf { it.isNotBlank() && it !in this }?.let(::add)
+            exportedModuleNameFromMemberBase(semanticFile, node)?.takeIf { it.isNotBlank() && it !in this }?.let(::add)
             // Do NOT fall back to bare identifier names. Source-activated JVM class providers are
             // mounted workspace-wide for hydration, but simple-name visibility must stay scoped to
             // the file that performed the import (TASK-155 / TASK-176 sibling isolation).
@@ -909,8 +861,7 @@ class LuaWorkspaceQueryFacade(
                     val symbol = semanticFile.model.getSymbolAt(current.range.start)
                     val declaration = localDeclarationForSymbolOrIdentifier(semanticFile, symbol?.symbolId, current)
                         ?: return null
-                    val initializer = localInitializerExpression(declaration) ?: return null
-                    current = initializer
+                    current = localInitializerExpression(declaration) ?: return null
                 }
                 is CallExpression -> return resolvedRequireForReceiver(semanticFile, path, current)
                 else -> return null
@@ -1030,14 +981,11 @@ class LuaWorkspaceQueryFacade(
         name: String,
         symbolId: String?
     ) {
-        semanticFile.identifiers
-            .asSequence()
+        semanticFile.identifiers.asSequence()
             .filter { it.name == name }
             .forEach { identifier ->
                 val usage = semanticFile.model.getSymbolAt(identifier.range.start) ?: return@forEach
-                if (usage.symbolId == symbolId) {
-                    putLocation(WorkspaceLocation(path, identifier.range))
-                }
+                if (usage.symbolId == symbolId) { putLocation(WorkspaceLocation(path, identifier.range)) }
             }
     }
 
@@ -1128,14 +1076,11 @@ class LuaWorkspaceQueryFacade(
             // claim the match and stop descending when the caret constant is an argument of
             // an import/require callee; otherwise continue traversal via super.
             fun visitCallLike(node: CallExpression): Boolean {
-                if (callArguments(node).none { it === constant || isSameStringLiteral(it, constant) }) { return false }
-                if (isImportCallee(semanticFile, effectiveCallBase(node)) ||
-                    (effectiveCallBase(node) as? Identifier)?.name == "require"
-                ) {
-                    match = node
-                    return true
-                }
-                return false
+                val claimed = callArguments(node).any { it === constant || isSameStringLiteral(it, constant) } &&
+                    (isImportCallee(semanticFile, effectiveCallBase(node)) ||
+                        (effectiveCallBase(node) as? Identifier)?.name == "require")
+                if (claimed) { match = node }
+                return claimed
             }
 
             override fun visitCallExpression(node: CallExpression, value: Unit) {
@@ -1160,12 +1105,8 @@ class LuaWorkspaceQueryFacade(
         return buildList {
             fun appendFrom(expression: ExpressionNode) {
                 if (expression !is CallExpression) return
-                if (expression is StringCallExpression || expression is TableCallExpression) {
-                    appendFrom(expression.base)
-                } else {
-                    (expression.base as? StringCallExpression ?: expression.base as? TableCallExpression)
-                        ?.let(::appendFrom)
-                }
+                if (expression is StringCallExpression || expression is TableCallExpression) appendFrom(expression.base)
+                else (expression.base as? StringCallExpression ?: expression.base as? TableCallExpression)?.let(::appendFrom)
                 addAll(expression.arguments)
             }
             appendFrom(call)
@@ -1217,8 +1158,7 @@ class LuaWorkspaceQueryFacade(
         symbol: Symbol?,
         importedAt: WorkspaceImportedSymbol?
     ): WorkspaceLocation? {
-        return symbol?.symbolId
-            ?.let { ImportedSymbolIdentity.parse(it) }
+        return symbol?.symbolId?.let { ImportedSymbolIdentity.parse(it) }
             ?.let { WorkspaceLocation(it.providerPath, syntheticModuleRange(it.alias)) }
             ?: importedAt?.let { WorkspaceLocation(it.providerPath, syntheticModuleRange(it.alias)) }
     }
@@ -1281,9 +1221,9 @@ class LuaWorkspaceQueryFacade(
         val callType = resolved.exportSurface?.moduleType?.fields?.get("__call") ?: return null
         // Normalize Android-Lua import callable display regardless of vararg name formatting
         // (the exact normalized form itself also matches the second arm's predicate).
-        val rawDisplay = callType.displayName
-        val displayName =
-            if (rawDisplay.contains("any...") || rawDisplay.startsWith("fun(")) "fun(...: any...): any" else rawDisplay
+        val displayName = callType.displayName.let { raw ->
+            if (raw.contains("any...") || raw.startsWith("fun(")) "fun(...: any...): any" else raw
+        }
         return surfaceSymbol(
             "import", SymbolKind.FUNCTION, null,
             TypeInfo(displayName, displayName, null, TypeInfoKind.FUNCTION),
@@ -1325,8 +1265,7 @@ class LuaWorkspaceQueryFacade(
                 ?: resolvedRequireForCompletionReceiver(semanticFile, path, base)
         } ?: return emptyList()
         val expectedDepth = prefixPath.size + 1
-        return resolved.surface.members
-            .asSequence()
+        return resolved.surface.members.asSequence()
             .filter { member ->
                 member.exportPath.size == expectedDepth &&
                     member.exportPath.take(prefixPath.size) == prefixPath &&
@@ -1335,8 +1274,7 @@ class LuaWorkspaceQueryFacade(
             .distinctBy { it.name }
             .map { member ->
                 val resolvedMember = resolver.exportedMember(resolved.provider.path, member.exportPath)
-                val detail = resolvedMember?.type?.displayName
-                    ?: member.type.displayName
+                val detail = resolvedMember?.type?.displayName ?: member.type.displayName
                 completionItem(member.name, exportMemberCompletionKind(member, detail), detail, "0:0000")
             }
             .toList()
@@ -1443,15 +1381,11 @@ class LuaWorkspaceQueryFacade(
         return when (expression) {
             is MemberExpression -> {
                 val memberName = expression.identifier.name.takeIf { it.isNotBlank() } ?: return null
-                val basePath = requireBackedExportPath(semanticFile, path, expression.base, visited)
-                    ?: return null
-                basePath + memberName
+                requireBackedExportPath(semanticFile, path, expression.base, visited)?.plus(memberName)
             }
             is IndexExpression -> {
                 val key = stringConstantOf(expression.index)?.takeIf { it.isNotBlank() } ?: return null
-                val basePath = requireBackedExportPath(semanticFile, path, expression.base, visited)
-                    ?: return null
-                basePath + key
+                requireBackedExportPath(semanticFile, path, expression.base, visited)?.plus(key)
             }
             is Identifier -> {
                 val key = "${expression.range.start.line}:${expression.range.start.column}:${expression.name}"
@@ -1463,8 +1397,8 @@ class LuaWorkspaceQueryFacade(
                         // Root require-backed local: export path is empty before the member segment.
                         return emptyList()
                     }
-                    val initializer = localInitializerExpression(declaration)
-                    if (initializer != null) { requireBackedExportPath(semanticFile, path, initializer, visited)?.let { return it } }
+                    localInitializerExpression(declaration)
+                        ?.let { requireBackedExportPath(semanticFile, path, it, visited) }?.let { return it }
                 }
                 // Direct require module name typing on the identifier (no local declaration path).
                 resolveRequiredModuleNameForVisibleLocal(semanticFile, symbol?.symbolId, expression)
@@ -1493,28 +1427,20 @@ class LuaWorkspaceQueryFacade(
             val declaration = localDeclarationForSymbol(semanticFile, receiverSymbol?.symbolId)
                 ?: visibleLocalValueDeclaration(semanticFile, receiver.name, receiver.range.start)
             // Direct require("mod") initializer.
-            declaration
-                ?.let { requireInitializerForLocal(it) }
-                ?.let { builtinRequireModuleName(semanticFile, it) }
-                ?.let { moduleName -> resolveWorkspaceRequire(path, moduleName) }
-                ?.let { return it }
+            declaration?.let { requireInitializerForLocal(it) }?.let { builtinRequireModuleName(semanticFile, it) }
+                ?.let { moduleName -> resolveWorkspaceRequire(path, moduleName) }?.let { return it }
             // Follow local rebinding / nested require-alias chains:
             // local first = dep; local second = first.nested
-            declaration
-                ?.let { localInitializerExpression(it) }
-                ?.let { initializer ->
-                    when (initializer) {
-                        is Identifier ->
-                            resolvedRequireForWorkspaceMemberReceiver(semanticFile, path, initializer)
-                        is MemberExpression, is IndexExpression, is CallExpression ->
-                            resolvedRequireForExportPathRootFromExpression(semanticFile, path, initializer)
-                        else -> null
-                    }
+            declaration?.let { localInitializerExpression(it) }?.let { initializer ->
+                when (initializer) {
+                    is Identifier -> resolvedRequireForWorkspaceMemberReceiver(semanticFile, path, initializer)
+                    is MemberExpression, is IndexExpression, is CallExpression ->
+                        resolvedRequireForExportPathRootFromExpression(semanticFile, path, initializer)
+                    else -> null
                 }
-                ?.let { return it }
+            }?.let { return it }
             resolveRequiredModuleNameForVisibleLocal(semanticFile, receiverSymbol?.symbolId, receiver)
-                ?.let { moduleName -> resolveWorkspaceRequire(path, moduleName) }
-                ?.let { return it }
+                ?.let { moduleName -> resolveWorkspaceRequire(path, moduleName) }?.let { return it }
         }
         return resolvedRequireForReceiver(semanticFile, path, receiver)
     }
@@ -1539,8 +1465,7 @@ class LuaWorkspaceQueryFacade(
                 ?.takeIf { it.isNotBlank() }
                 ?.let(::add)
         }
-        return candidates
-            .asSequence()
+        return candidates.asSequence()
             .filter { it.isNotBlank() }
             .distinct()
             .firstNotNullOfOrNull { moduleName -> resolveWorkspaceRequire(path, moduleName) }
@@ -1849,13 +1774,9 @@ class LuaWorkspaceQueryFacade(
         while (index < prefix.length) {
             when (val ch = prefix[index]) {
                 '\\' -> index++
-                '"', '\'' -> {
-                    if (openQuote == ch) {
-                        openQuote = null
-                    } else if (openQuote == null) {
-                        openQuote = ch
-                        openIndex = index
-                    }
+                '"', '\'' -> when {
+                    openQuote == ch -> openQuote = null
+                    openQuote == null -> { openQuote = ch; openIndex = index }
                 }
             }
             index++
@@ -1865,7 +1786,6 @@ class LuaWorkspaceQueryFacade(
         return when {
             moduleCallBeforeQuote.containsMatchIn(before) ->
                 resolver.completionModuleNames().map { plainCompletionItem(it, CompletionItemKind.MODULE) }
-
             else -> {
                 val key = tableKeyBeforeQuote.find(before)?.groupValues?.get(1)
                 key?.let { LuaLayoutValueDomains.forKey(it) }.orEmpty()
@@ -2049,14 +1969,12 @@ class LuaWorkspaceQueryFacade(
     ): Set<DeclarationId> {
         var current: BaseASTNode? = node
         while (current != null) {
-            val parent = runCatching { current.parent }.getOrNull()
+            val parent = runCatching { current.parent }.getOrNull() as? BaseASTNode ?: return emptySet()
             if (parent is LocalStatement) {
-                if (parent.variables.none { it === current }) {
-                    return emptySet()
-                }
+                if (parent.variables.none { it === current }) { return emptySet() }
                 return localStatementInitDeclarationIds(semanticFile, parent)
             }
-            current = parent as? BaseASTNode
+            current = parent
         }
         return emptySet()
     }

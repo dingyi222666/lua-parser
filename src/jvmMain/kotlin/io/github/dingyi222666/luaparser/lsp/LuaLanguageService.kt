@@ -432,12 +432,6 @@ class LuaLanguageService(
         }
     }
 
-    /**
-     * The heavy build, called with stateLock HELD (thread is the state owner).
-     * Split from [rebuildFull] so the background thread can hold the lock for
-     * the whole build while request threads queue briefly on it — same
-     * semantics as the old synchronous path, just off the initialize response.
-     */
     /** Editor-visible build progress sink (AnalysisProgress), throttled upstream. */
     internal var onBuildProgress: ((AnalysisProgress) -> Unit)? = null
 
@@ -623,7 +617,6 @@ class LuaLanguageService(
         if (mutated) {
             refreshIncremental()
         }
-        Unit
     }
 
     /**
@@ -659,7 +652,6 @@ class LuaLanguageService(
         refreshWorkspaceFolderUriPrefixes()
         refreshWorkspaceFolderIndex()
         refreshIncremental()
-        Unit
     }
 
     private fun folderUriKey(folder: WorkspaceFolder): String? {
@@ -1464,10 +1456,8 @@ class LuaLanguageService(
         }
 
         // Fill detail from kind when the list path left it empty (reuse kind metadata only).
-        if (resolved.detail.isNullOrBlank()) {
-            completionKindPresentation[resolved.kind]?.first
-                ?.takeIf(String::isNotBlank)?.let { resolved.detail = it }
-        }
+        resolved.detail = resolved.detail?.takeIf(String::isNotBlank)
+            ?: completionKindPresentation[resolved.kind]?.first?.takeIf(String::isNotBlank)
 
         // Enrich documentation when absent; keep client-provided docs intact.
         // Markdown reuses label/kind/detail already on the item (no new ranking);
@@ -1837,16 +1827,16 @@ class LuaLanguageService(
             // Multi-file field rename may stay empty (documented limit).
             val sameFile = referenceLocations.filter { it.uri == requestUri || it.uri == uriFor(requestPath) }
 
-            val ranges = linkedMapOf<String, org.eclipse.lsp4j.Range>()
+            val ranges = linkedMapOf<Pair<String, org.eclipse.lsp4j.Range>, org.eclipse.lsp4j.Range>()
             // Always include the prepared identifier span at the caret.
-            ranges[referenceLocationKey(requestUri, target.identifierRange)] = target.identifierRange
+            ranges[requestUri to target.identifierRange] = target.identifierRange
             sameFile.forEach { location ->
                 val range = location.range
                 // Only single-line spans of the expected identifier length are safe edits.
                 // placeholder is a validated non-empty identifier, so an equal length is > 0.
                 val length = range.end.character - range.start.character
                 if (range.start.line == range.end.line && length == target.placeholder.length) {
-                    ranges[referenceLocationKey(location.uri, range)] = range
+                    ranges[location.uri to range] = range
                 }
             }
 
@@ -1871,15 +1861,17 @@ class LuaLanguageService(
      * [org.eclipse.lsp4j.ReferenceContext.isIncludeDeclaration] is false.
      * Prefer [LuaWorkspaceQueryFacade.declaration] keys; fall back to
      * [LuaWorkspaceQueryFacade.gotoDefinition] when declaration is empty
-     * (provider-backed members / synthetic module ranges).
+     * (provider-backed members / synthetic module ranges). Dedup keys are
+     * `(uri, lsp4j Range)` pairs — lsp4j Range has structural equals, so the
+     * pair key matches the previous line/column string key exactly.
      */
     private fun filterOutDeclarationLocations(
         path: VirtualPath,
         position: Position,
         locations: List<Location>
     ): List<Location> {
-        fun declarationKeysOf(query: (VirtualPath, Position) -> List<WorkspaceLocation>): Set<String> =
-            query(path, position).mapTo(mutableSetOf()) { referenceLocationKey(it) }
+        fun declarationKeysOf(query: (VirtualPath, Position) -> List<WorkspaceLocation>): Set<Pair<String, org.eclipse.lsp4j.Range>> =
+            query(path, position).mapTo(mutableSetOf()) { uriFor(it.path) to it.range.toLspRange() }
         val declarationKeys = declarationKeysOf(queries::declaration).ifEmpty {
             declarationKeysOf(queries::gotoDefinition)
         }
@@ -1888,16 +1880,9 @@ class LuaLanguageService(
             return locations
         }
         return locations.filterNot { location ->
-            referenceLocationKey(location.uri, location.range) in declarationKeys
+            location.uri to location.range in declarationKeys
         }
     }
-
-    private fun referenceLocationKey(location: WorkspaceLocation): String =
-        referenceLocationKey(uriFor(location.path), location.range.toLspRange())
-
-    private fun referenceLocationKey(uri: String, range: org.eclipse.lsp4j.Range): String =
-        "${uri}|${range.start.line}:${range.start.character}|" +
-            "${range.end.line}:${range.end.character}"
 
     /**
      * Resolve a renamable identifier at [lspPosition]. Returns null for non-identifiers,
@@ -1907,9 +1892,7 @@ class LuaLanguageService(
         document: TextDocumentIdentifier?,
         lspPosition: org.eclipse.lsp4j.Position?
     ): RenameTarget? {
-        if (document == null || lspPosition == null ||
-            lspPosition.line < 0 || lspPosition.character < 0
-        ) {
+        if (document == null || lspPosition == null || lspPosition.line < 0 || lspPosition.character < 0) {
             return null
         }
         val path = pathOf(document)
@@ -2086,22 +2069,16 @@ class LuaLanguageService(
                 val col0 = lexer.tokenColumn.coerceAtLeast(0)
                 val text = lexer.tokenText.toString()
                 // Only single-line NAME tokens covering the caret are rename targets.
-                if (text.isEmpty() || '\n' in text || '\r' in text ||
-                    line0 != lspPosition.line ||
+                if (text.isEmpty() || '\n' in text || '\r' in text || line0 != lspPosition.line ||
                     lspPosition.character !in col0 until col0 + text.length
                 ) {
                     continue
                 }
-                if (type != LuaTokenTypes.NAME || !isValidLuaIdentifier(text)) {
-                    return null
-                }
-                return LexerNameToken(
-                    text = text,
-                    range = org.eclipse.lsp4j.Range(
-                        org.eclipse.lsp4j.Position(line0, col0),
-                        org.eclipse.lsp4j.Position(line0, col0 + text.length)
-                    )
-                )
+                if (type != LuaTokenTypes.NAME || !isValidLuaIdentifier(text)) return null
+                return LexerNameToken(text, org.eclipse.lsp4j.Range(
+                    org.eclipse.lsp4j.Position(line0, col0),
+                    org.eclipse.lsp4j.Position(line0, col0 + text.length)
+                ))
             }
         } catch (_: Exception) {
             return null
@@ -2119,24 +2096,13 @@ class LuaLanguageService(
         hierarchicalDocumentSymbols(pathFromClientPath(path))
     }
 
-    /**
-     * Whether the client advertised hierarchical DocumentSymbol support at initialize.
-     * Used by [LuaTextDocumentService.documentSymbol] to choose Either.right vs left.
-     */
+    /** Client advertised hierarchical DocumentSymbol support (Either.right vs left in [LuaTextDocumentService.documentSymbol]). */
     fun supportsHierarchicalDocumentSymbols(): Boolean = synchronized(stateLock) { hierarchicalDocumentSymbolSupport }
 
-    /**
-     * Whether the client advertised modern WorkspaceSymbol support at initialize
-     * (`workspace.symbol.resolveSupport` present). Used by [LuaWorkspaceService.symbol]
-     * to choose Either.right([modernWorkspaceSymbols]) vs Either.left([workspaceSymbols]).
-     */
+    /** Client advertised workspace/symbol resolveSupport (Either.right vs left in [LuaWorkspaceService.symbol]). */
     fun supportsModernWorkspaceSymbols(): Boolean = synchronized(stateLock) { modernWorkspaceSymbolSupport }
 
-    /**
-     * Whether the client advertised `textDocument.definition.linkSupport` at initialize.
-     * Used by [LuaTextDocumentService.definition] to choose Either.right([LocationLink])
-     * vs Either.left([Location]). Absent/false keeps Location lists (no inventing links).
-     */
+    /** Client advertised definition.linkSupport (Either.right LocationLink vs left in [LuaTextDocumentService.definition]). */
     fun supportsDefinitionLink(): Boolean = synchronized(stateLock) { definitionLinkSupport }
 
     /**
@@ -2174,16 +2140,15 @@ class LuaLanguageService(
         uri: String? = null,
         checkedFile: WorkspaceSnapshot.FileSnapshot? = null
     ): PublishDiagnosticsParams {
-        // Publish findings from the current revision. A recoverable syntax error in one
-        // region must not hide valid semantic findings elsewhere in the document.
         val buffer = sourceFor(path)
         val semanticFile = (checkedFile ?: snapshot.files[path])?.semanticFile
         val bufferAnalyzed = semanticFile != null && buffer != null && semanticFile.source == buffer
         val parse = parseDiagnostics(path)
+        // A recoverable syntax error in one region must not hide valid semantic
+        // findings elsewhere; only analyzed buffers contribute semantic findings.
         val semantic = (semanticFile?.model?.getDiagnostics().orEmpty())
-            .asSequence()
-            .filter { bufferAnalyzed }
-            .map { diagnostic ->
+            .takeIf { bufferAnalyzed }
+            ?.map { diagnostic ->
                 Diagnostic().apply {
                     message = diagnostic.message
                     severity = diagnostic.severity.toLspSeverity()
@@ -2192,14 +2157,14 @@ class LuaLanguageService(
                         ?.takeIf { range -> range.start != range.end }
                         ?.toLspRange()
                         ?: fallbackDiagnosticRange(buffer)
-                    // api Diagnostic.tags carry raw LSP DiagnosticTag Ints (the common api
-                    // stays lsp4j-free); unused-local publishes Unnecessary so clients fade it.
+                    // Raw LSP DiagnosticTag Ints (see toLspDiagnosticTag): unused-local
+                    // publishes Unnecessary so clients fade it.
                     if (diagnostic.tags.isNotEmpty()) {
                         tags = diagnostic.tags.mapNotNull { tag -> tag.toLspDiagnosticTag() }
                     }
                 }
             }
-            .toList()
+            .orEmpty()
         val distinct = (parse + semantic).distinctBy { diagnostic ->
             // lsp4j Range has structural equals, so range identity == start/end line+column.
             listOf(diagnostic.range, diagnostic.severity, diagnostic.message)
@@ -2231,14 +2196,11 @@ class LuaLanguageService(
     private fun fallbackDiagnosticRange(source: String?): org.eclipse.lsp4j.Range =
         source.orEmpty().lineSequence()
             .mapIndexedNotNull { lineIndex, lineText ->
-                val column = lineText.indexOfFirst { char -> !char.isWhitespace() }
-                if (column >= 0) {
+                lineText.indexOfFirst { char -> !char.isWhitespace() }.takeIf { it >= 0 }?.let { column ->
                     org.eclipse.lsp4j.Range(
                         org.eclipse.lsp4j.Position(lineIndex, column),
                         org.eclipse.lsp4j.Position(lineIndex, column + 1)
                     )
-                } else {
-                    null
                 }
             }
             .firstOrNull()
@@ -2553,9 +2515,8 @@ class LuaLanguageService(
         }
     }
 
-    private fun hierarchicalDocumentSymbols(path: VirtualPath): List<DocumentSymbol> {
-        return queries.documentSymbols(path).map(::toDocumentSymbol)
-    }
+    private fun hierarchicalDocumentSymbols(path: VirtualPath): List<DocumentSymbol> =
+        queries.documentSymbols(path).map(::toDocumentSymbol)
 
     private fun flattenDocumentSymbol(
         symbol: DocumentSymbol,
@@ -2865,13 +2826,8 @@ class LuaLanguageService(
         return NameClassification(parameters = parameters, functions = functions)
     }
 
-    private fun nameKey(identifier: Identifier): NameKey {
-        return NameKey(
-            line = identifier.range.start.line,
-            column = identifier.range.start.column,
-            name = identifier.name
-        )
-    }
+    private fun nameKey(identifier: Identifier): NameKey =
+        NameKey(identifier.range.start.line, identifier.range.start.column, identifier.name)
 
     private fun mapLexerTokenToSemanticType(
         type: LuaTokenTypes,
@@ -2920,9 +2876,7 @@ class LuaLanguageService(
         text: String,
         tokenType: Int
     ) {
-        if (text.isEmpty()) {
-            return
-        }
+        if (text.isEmpty()) return
         var line = startLine
         var col = startChar
         var index = 0
@@ -2930,12 +2884,7 @@ class LuaLanguageService(
             // Span end = next line break (or end of text).
             val end = text.indexOfAny(charArrayOf('\n', '\r'), index).takeIf { it >= 0 } ?: text.length
             if (end > index) {
-                out += AbsoluteSemanticToken(
-                    line = line,
-                    startChar = col,
-                    length = end - index,
-                    tokenType = tokenType
-                )
+                out += AbsoluteSemanticToken(line, col, end - index, tokenType)
             }
             if (end >= text.length) {
                 break
@@ -2983,7 +2932,6 @@ class LuaLanguageService(
         return try {
             LuaParser().parseWorkspaceSnippet(source)
         } catch (_: Exception) {
-            // IllegalStateException and any other parser failure both degrade to null.
             null
         }
     }
@@ -3016,20 +2964,17 @@ class LuaLanguageService(
         out: MutableList<FoldingRange>,
         lineCount: Int?
     ) {
-        // Parser positions are 1-based; LSP FoldingRange lines are 0-based.
+        // Parser positions are 1-based; LSP FoldingRange lines are 0-based. The end
+        // position is exclusive-ish in some recoveries: clamp to the last character
+        // line first, then require a strictly multi-line span (a pre-clamp check is
+        // subsumed — clamping never extends endLine).
         val startLine = (range.start.line - 1).coerceAtLeast(0)
-        // End position is exclusive-ish in some recoveries; clamp to the last
-        // character line and convert carefully so endLine stays in-bounds.
         var endLine = (range.end.line - 1).coerceAtLeast(0)
-        // When the end column is 1 on a line after content, the fold still ends
-        // on that line; same-line (or inverted) spans are not foldable here.
-        if (endLine <= startLine) return
         if (lineCount != null) {
-            // (lineCount <= 0 is subsumed: startLine is always >= 0.)
             if (startLine >= lineCount) return
             endLine = endLine.coerceAtMost(lineCount - 1)
-            if (endLine <= startLine) return
         }
+        if (endLine <= startLine) return
         out += FoldingRange(startLine, endLine)
     }
 
@@ -3059,8 +3004,6 @@ class LuaLanguageService(
             current = current.parentOrNull()
             depth += 1
         }
-        // Nest from outermost down so the returned root is the leaf selection;
-        // an empty chain folds to null exactly like the previous early return.
         return chainRanges.foldRight(null as SelectionRange?) { range, parent ->
             SelectionRange(range.toLspRange(), parent)
         }
@@ -3209,15 +3152,11 @@ class LuaLanguageService(
                 if (source.contains("\r\n")) {
                     printed = printed.replace("\r\n", "\n").replace("\n", "\r\n")
                 }
-                // Verify the exact text about to replace the document: it must parse back
-                // without recovery diagnostics under the same default parser used above.
-                // Any diagnostic (or parser throw) means the printer produced a surface the
-                // parser does not accept, so no replacement is published.
-                val printedReparsesCleanly = try {
+                // The exact replacement text must re-parse cleanly (the KDoc guard rail);
+                // any diagnostic (or throw) means no replacement is published.
+                val printedReparsesCleanly = runCatching {
                     LuaParser().parseWithDiagnostics(printed).recoveryDiagnostics.isEmpty()
-                } catch (_: Exception) {
-                    false
-                }
+                }.getOrDefault(false)
                 if (printedReparsesCleanly) {
                     return printed
                 }
@@ -3239,13 +3178,7 @@ class LuaLanguageService(
         }
     }
 
-    /**
-     * Whole-document replacement span. Equivalent to walking the source counting
-     * lines/columns: the end position is (lastLineIndex, lastLineLength).
-     * [lineSequence] splits on LF, CR and CRLF — the same break set the previous
-     * hand-rolled walk handled — so a trailing line break yields an empty last line,
-     * exactly as before.
-     */
+    /** Whole-document replacement span: end position is (lastLineIndex, lastLineLength). */
     private fun fullDocumentLspRange(source: String): org.eclipse.lsp4j.Range {
         if (source.isEmpty()) {
             return org.eclipse.lsp4j.Range(org.eclipse.lsp4j.Position(0, 0), org.eclipse.lsp4j.Position(0, 0))
@@ -3268,9 +3201,7 @@ class LuaLanguageService(
     ): org.eclipse.lsp4j.Range? {
         val start = range.start ?: return null
         val end = range.end ?: return null
-        if (start.line < 0 || start.character < 0 || end.line < 0 || end.character < 0) {
-            return null
-        }
+        if (start.line < 0 || start.character < 0 || end.line < 0 || end.character < 0) return null
         // Inverted: end before start.
         if (end.line < start.line || (end.line == start.line && end.character < start.character)) {
             return null
@@ -3306,18 +3237,15 @@ class LuaLanguageService(
         if (source.isEmpty() || line < 0) {
             return 0
         }
-        var currentLine = 0
         var lineStart = 0
-        for ((index, ch) in source.withIndex()) {
-            if (ch != '\n') continue
-            if (currentLine == line) {
-                val end = if (index > lineStart && source[index - 1] == '\r') index - 1 else index
-                return end - lineStart
-            }
-            currentLine += 1
-            lineStart = index + 1
+        repeat(line) {
+            val nl = source.indexOf('\n', lineStart)
+            if (nl < 0) return 0
+            lineStart = nl + 1
         }
-        return if (currentLine == line) source.length - lineStart else 0
+        val nl = source.indexOf('\n', lineStart)
+        val end = if (nl < 0) source.length else nl
+        return (if (end > lineStart && source[end - 1] == '\r') end - 1 else end) - lineStart
     }
 
     private fun buildHoverContent(name: String?, detail: String?, typeDisplayName: String?): String? {
@@ -3370,9 +3298,7 @@ class LuaLanguageService(
         document: TextDocumentIdentifier?,
         lspPosition: org.eclipse.lsp4j.Position?
     ): CallHierarchyItem? {
-        if (document == null || lspPosition == null ||
-            lspPosition.line < 0 || lspPosition.character < 0
-        ) {
+        if (document == null || lspPosition == null || lspPosition.line < 0 || lspPosition.character < 0) {
             return null
         }
         val context = documentContextFor(document, requireSource = true) ?: return null
@@ -3481,15 +3407,12 @@ class LuaLanguageService(
             else -> {
                 // Walk all identifiers via visitor.
                 var found: Identifier? = null
-                val visitor = object : UnitVisitor() {
+                object : UnitVisitor() {
                     override fun visitIdentifier(node: Identifier, value: Unit) {
-                        if (found == null && node.range.start == range.start) {
-                            found = node
-                        }
+                        if (found == null && node.range.start == range.start) found = node
                         super.visitIdentifier(node, value)
                     }
-                }
-                visitor.visitChunkNode(chunk, Unit)
+                }.visitChunkNode(chunk, Unit)
                 found
             }
         }
@@ -3497,15 +3420,12 @@ class LuaLanguageService(
 
     private fun collectLocalFunctionDeclarations(chunk: ChunkNode): List<FunctionDeclaration> {
         val out = mutableListOf<FunctionDeclaration>()
-        val visitor = object : UnitVisitor() {
+        object : UnitVisitor() {
             override fun visitFunctionDeclaration(node: FunctionDeclaration, value: Unit) {
-                if (isLocalFunctionDeclaration(node)) {
-                    out += node
-                }
+                if (isLocalFunctionDeclaration(node)) out += node
                 super.visitFunctionDeclaration(node, value)
             }
-        }
-        visitor.visitChunkNode(chunk, Unit)
+        }.visitChunkNode(chunk, Unit)
         return out
     }
 
@@ -3554,15 +3474,12 @@ class LuaLanguageService(
         inner: org.eclipse.lsp4j.Range
     ): Boolean = lspPositionInRange(inner.start, outer) && lspPositionInRange(inner.end, outer)
 
-    private fun rangesOverlapParser(left: Range, right: Range): Boolean {
-        val leftStartsBeforeRightEnds =
-            left.start.line < right.end.line ||
-                (left.start.line == right.end.line && left.start.column <= right.end.column)
-        val rightStartsBeforeLeftEnds =
-            right.start.line < left.end.line ||
-                (right.start.line == left.end.line && right.start.column <= left.end.column)
-        return leftStartsBeforeRightEnds && rightStartsBeforeLeftEnds
-    }
+    private fun rangesOverlapParser(left: Range, right: Range): Boolean =
+        // Standard interval overlap over 1-based (line, column) positions.
+        (left.start.line < right.end.line ||
+            (left.start.line == right.end.line && left.start.column <= right.end.column)) &&
+            (right.start.line < left.end.line ||
+                (right.start.line == left.end.line && right.start.column <= left.end.column))
 
     /**
      * Shared call-hierarchy preamble for [collectIncomingCalls] / [collectOutgoingCalls]:
@@ -3598,10 +3515,9 @@ class LuaLanguageService(
         val byCaller = linkedMapOf<FunctionDeclaration, MutableList<org.eclipse.lsp4j.Range>>()
 
         for (site in sites) {
-            // Skip the declaration name itself.
-            if (rangesOverlapParser(site.range, targetName.range) &&
-                site.range.start.line == targetName.range.start.line &&
-                site.range.start.column == targetName.range.start.column
+            // Skip the declaration name itself (same start position as the target name).
+            if (site.range.start == targetName.range.start &&
+                rangesOverlapParser(site.range, targetName.range)
             ) {
                 continue
             }
@@ -3684,13 +3600,11 @@ class LuaLanguageService(
 
     private fun enclosingLocalFunctionAllowSelf(node: BaseASTNode): FunctionDeclaration? {
         var current: BaseASTNode? = node
-        var depth = 0
-        while (current != null && depth < 256) {
+        repeat(256) {
             if (current is FunctionDeclaration && isLocalFunctionDeclaration(current)) {
                 return current
             }
-            current = current!!.parentOrNull()
-            depth += 1
+            current = current?.parentOrNull() ?: return null
         }
         return null
     }
@@ -3857,36 +3771,27 @@ private val LUA_KEYWORDS: Set<String> = setOf(
     "case", "continue", "default", "lambda", "switch", "when"
 )
 
-private fun org.eclipse.lsp4j.Position.toParserPosition(): Position {
-    return Position(line + 1, character + 1)
-}
+private fun org.eclipse.lsp4j.Position.toParserPosition(): Position = Position(line + 1, character + 1)
 
-private fun Range.toLspRange(): org.eclipse.lsp4j.Range {
-    return org.eclipse.lsp4j.Range(start.toLspPosition(), end.toLspPosition())
-}
+private fun Range.toLspRange(): org.eclipse.lsp4j.Range =
+    org.eclipse.lsp4j.Range(start.toLspPosition(), end.toLspPosition())
 
-private fun Position.toLspPosition(): org.eclipse.lsp4j.Position {
-    return org.eclipse.lsp4j.Position(line - 1, column - 1)
-}
+private fun Position.toLspPosition(): org.eclipse.lsp4j.Position = org.eclipse.lsp4j.Position(line - 1, column - 1)
 
-private fun DiagnosticSeverity.toLspSeverity(): org.eclipse.lsp4j.DiagnosticSeverity {
-    return when (this) {
-        DiagnosticSeverity.ERROR -> org.eclipse.lsp4j.DiagnosticSeverity.Error
-        DiagnosticSeverity.WARNING -> org.eclipse.lsp4j.DiagnosticSeverity.Warning
-        DiagnosticSeverity.INFO -> org.eclipse.lsp4j.DiagnosticSeverity.Information
-    }
+private fun DiagnosticSeverity.toLspSeverity(): org.eclipse.lsp4j.DiagnosticSeverity = when (this) {
+    DiagnosticSeverity.ERROR -> org.eclipse.lsp4j.DiagnosticSeverity.Error
+    DiagnosticSeverity.WARNING -> org.eclipse.lsp4j.DiagnosticSeverity.Warning
+    DiagnosticSeverity.INFO -> org.eclipse.lsp4j.DiagnosticSeverity.Information
 }
 
 /**
  * api Diagnostic.tags (raw LSP DiagnosticTag values as Ints, so the common api stays
  * lsp4j-free) → lsp4j DiagnosticTag. Unknown values are dropped, not crash the publish pass.
  */
-private fun Int.toLspDiagnosticTag(): org.eclipse.lsp4j.DiagnosticTag? {
-    return when (this) {
-        DIAGNOSTIC_TAG_UNNECESSARY -> org.eclipse.lsp4j.DiagnosticTag.Unnecessary
-        DIAGNOSTIC_TAG_DEPRECATED -> org.eclipse.lsp4j.DiagnosticTag.Deprecated
-        else -> null
-    }
+private fun Int.toLspDiagnosticTag(): org.eclipse.lsp4j.DiagnosticTag? = when (this) {
+    DIAGNOSTIC_TAG_UNNECESSARY -> org.eclipse.lsp4j.DiagnosticTag.Unnecessary
+    DIAGNOSTIC_TAG_DEPRECATED -> org.eclipse.lsp4j.DiagnosticTag.Deprecated
+    else -> null
 }
 
 /** Name-derived bridge; only the two non-identity constants need explicit arms. */

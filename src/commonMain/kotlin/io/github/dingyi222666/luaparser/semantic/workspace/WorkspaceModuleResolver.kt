@@ -111,8 +111,7 @@ internal class WorkspaceModuleResolver(
                 file.moduleExportSurface?.moduleType?.moduleName == moduleName
             }?.let { (path, _) ->
                 WorkspaceModuleGraph.ModuleProvider(moduleName, path, WorkspaceModuleGraph.ProviderSource.EXTRA_WORKSPACE_PROVIDER)
-            }
-            // Free-form Android-Lua layout modules (.aly) may exist in the workspace without a
+            } // Free-form Android-Lua layout modules (.aly) may exist in the workspace without a
             // pre-built dependency edge (e.g. partial graph rebuilds). Recover by path/module alias.
             ?: findAlyLayoutProvider(moduleName)
         activeProviderCache[moduleName] = provider
@@ -154,12 +153,10 @@ internal class WorkspaceModuleResolver(
     private fun layoutFileCandidates(relative: String): List<VirtualPath> {
         val suffix = "/$relative"
         val matches = (snapshot.files.keys.asSequence() + snapshot.extraProviders.keys.asSequence())
-            .filter { it.value == relative || it.value.endsWith(suffix) }
-            .toMutableList()
+            .filter { it.value == relative || it.value.endsWith(suffix) }.toMutableList()
         runCatching { VirtualPath.of(relative) }.getOrNull()?.let(matches::add)
         activeProvider(relative.removeSuffix(".aly").replace('/', '.'))
-            ?.takeIf { it.path.value.endsWith(".aly") }
-            ?.let { matches.add(it.path) }
+            ?.takeIf { it.path.value.endsWith(".aly") }?.let { matches.add(it.path) }
         return matches
     }
 
@@ -272,12 +269,8 @@ internal class WorkspaceModuleResolver(
         // Structural exports retain identity, ranges and explicitly declared types.
         // Resolve only their unknown values against the provider's own import context.
         return declaredModule.copy(
-            fields = declaredModule.fields.mapValues { (name, type) ->
-                enrichUnknownExportType(type, inferred.fields[name] ?: inferred.methods[name])
-            },
-            methods = declaredModule.methods.mapValues { (name, type) ->
-                enrichUnknownExportType(type, inferred.methods[name] ?: inferred.fields[name])
-            }
+            fields = declaredModule.fields.mapValues { (name, type) -> enrichUnknownExportType(type, inferred.fields[name] ?: inferred.methods[name]) },
+            methods = declaredModule.methods.mapValues { (name, type) -> enrichUnknownExportType(type, inferred.methods[name] ?: inferred.fields[name]) }
         )
     }
 
@@ -286,19 +279,13 @@ internal class WorkspaceModuleResolver(
         if (structural === UnknownType) return inferred
         if (structural is TableType && inferred is TableType) {
             return TableType(
-                fields = structural.fields.mapValues { (name, type) ->
-                    enrichUnknownExportType(type, inferred.fields[name] ?: inferred.methods[name])
-                },
-                methods = structural.methods.mapValues { (name, type) ->
-                    enrichUnknownExportType(type, inferred.methods[name] ?: inferred.fields[name])
-                },
+                fields = structural.fields.mapValues { (name, type) -> enrichUnknownExportType(type, inferred.fields[name] ?: inferred.methods[name]) },
+                methods = structural.methods.mapValues { (name, type) -> enrichUnknownExportType(type, inferred.methods[name] ?: inferred.fields[name]) },
                 indexSignature = structural.indexSignature
             )
         }
         return structural
-    }
-
-    private fun resolvedExportType(
+    }    private fun resolvedExportType(
         structuralType: Type,
         exportPath: List<String>,
         resolvedTypes: Map<List<String>, Type>
@@ -306,21 +293,13 @@ internal class WorkspaceModuleResolver(
         resolvedTypes[exportPath]?.let { return it }
         return when (structuralType) {
             is TableType -> TableType(
-                fields = structuralType.fields.mapValues { (name, type) ->
-                    resolvedExportType(type, exportPath + name, resolvedTypes)
-                },
-                methods = structuralType.methods.mapValues { (name, type) ->
-                    resolvedExportType(type, exportPath + name, resolvedTypes)
-                },
+                fields = structuralType.fields.mapValues { (name, type) -> resolvedExportType(type, exportPath + name, resolvedTypes) },
+                methods = structuralType.methods.mapValues { (name, type) -> resolvedExportType(type, exportPath + name, resolvedTypes) },
                 indexSignature = structuralType.indexSignature
             )
             is ModuleType -> structuralType.copy(
-                fields = structuralType.fields.mapValues { (name, type) ->
-                    resolvedExportType(type, exportPath + name, resolvedTypes)
-                },
-                methods = structuralType.methods.mapValues { (name, type) ->
-                    resolvedExportType(type, exportPath + name, resolvedTypes)
-                }
+                fields = structuralType.fields.mapValues { (name, type) -> resolvedExportType(type, exportPath + name, resolvedTypes) },
+                methods = structuralType.methods.mapValues { (name, type) -> resolvedExportType(type, exportPath + name, resolvedTypes) }
             )
             else -> structuralType
         }
@@ -332,12 +311,10 @@ internal class WorkspaceModuleResolver(
     ): Type? {
         val range = member.range ?: return null
         val binder = file.semanticFile?.snapshot?.binder ?: return null
-        val declaration = binder.declarationIndex.declarations
-            .asSequence()
+        val declaration = binder.declarationIndex.declarations.asSequence()
             .filter { it.name == member.name && it.declaredType != null }
             .sortedBy { if (it.anchorNode?.range == range) 0 else 1 }
-            .firstOrNull { it.anchorNode?.range == range || it.range == range }
-            ?: return null
+            .firstOrNull { it.anchorNode?.range == range || it.range == range } ?: return null
         return mergeResolvedType(member.type, declaration.declaredType ?: return null)
     }
 
@@ -347,9 +324,7 @@ internal class WorkspaceModuleResolver(
         val structuralParameters = structuralType.parameters.associateBy { it.name }
         val parameters = resolvedType.parameters.map { parameter ->
             val structural = structuralParameters[parameter.name]
-            if (parameter.type == UnknownType && structural?.type != null) {
-                parameter.copy(type = structural.type)
-            } else { parameter }
+            if (parameter.type == UnknownType && structural?.type != null) parameter.copy(type = structural.type) else parameter
         }
         return FunctionType(
             parameters = parameters,
@@ -374,15 +349,11 @@ internal class WorkspaceModuleResolver(
     fun importedSymbolsFor(path: VirtualPath, includeDependencyGlobals: Boolean = !deferDependencyGlobals,
         nameFilter: ((String) -> Boolean)? = null): Map<String, WorkspaceImportedSymbol> {
         val key = path to includeDependencyGlobals
-        importedSymbolsCache[key]?.let { values ->
-            return if (nameFilter == null) values else values.filterKeys(nameFilter)
-        }
+        importedSymbolsCache[key]?.let { values -> return if (nameFilter == null) values else values.filterKeys(nameFilter) }
         val facts = snapshot.files[path]?.documentFacts ?: return emptyMap()
         val imported = linkedMapOf<String, WorkspaceImportedSymbol>()
         activeImportTargets(facts).forEach { target ->
-            importedSymbolsForTarget(target).forEach { symbol ->
-                imported[symbol.alias] = symbol
-            }
+            importedSymbolsForTarget(target).forEach { symbol -> imported[symbol.alias] = symbol }
         }
         // Also index by the last path segment so bare Locale/File lookups succeed even when a
         // provider surface temporarily reports a non-simple moduleName alias.
@@ -396,9 +367,7 @@ internal class WorkspaceModuleResolver(
             if (normalized.endsWith(".*")) { return@forEach }
             val simpleName = explicitImportSimpleName(normalized)
             if (simpleName.isNotBlank()) {
-                importTargetSymbol(normalized)?.let { symbol ->
-                    imported[simpleName] = symbol.copy(alias = simpleName)
-                }
+                importTargetSymbol(normalized)?.let { symbol -> imported[simpleName] = symbol.copy(alias = simpleName) }
             }
         }
         (if (includeDependencyGlobals) dependencyGlobalSymbolsFor(path, nameFilter = nameFilter) else emptyList()).forEach { symbol ->
@@ -475,9 +444,7 @@ internal class WorkspaceModuleResolver(
         }
         val evaluator = candidates.evaluator
         val providerModuleType = file.moduleExportSurface?.moduleType ?: ModuleType(provider.moduleName)
-        val globals = globalsToEvaluate
-            .asReversed()
-            .asSequence()
+        val globals = globalsToEvaluate.asReversed().asSequence()
             .distinctBy { it.name }
             .mapNotNull { declaration ->
                 val anchor = declaration.anchorNode as? ExpressionNode ?: return@mapNotNull null
@@ -495,10 +462,7 @@ internal class WorkspaceModuleResolver(
             }
             .toList()
         val extendedGlobals = providerGlobalObjectExtensions(
-            provider = provider,
-            providerModuleType = providerModuleType,
-            evaluator = evaluator,
-            extensionsByRoot = allowedExtensions
+            provider, providerModuleType, evaluator, allowedExtensions
         )
         return (globals + extendedGlobals).also { candidates.symbols[alias] = it }
     }
@@ -518,9 +482,7 @@ internal class WorkspaceModuleResolver(
                     ?: evaluator.evaluate(member).takeUnless { it === UnknownType }
                     ?: declaration.declaredType?.takeUnless { it === UnknownType }
                     ?: return@forEach
-                if (declaration.kind == DeclarationKind.METHOD) {
-                    methods[declaration.name] = memberType
-                } else { fields[declaration.name] = memberType }
+                if (declaration.kind == DeclarationKind.METHOD) methods[declaration.name] = memberType else fields[declaration.name] = memberType
             }
             if (fields.isEmpty() && methods.isEmpty()) { return@mapNotNull null }
             val extensionType = TableType(fields = fields, methods = methods)
@@ -752,7 +714,7 @@ internal class WorkspaceModuleResolver(
         val normalized = normalizeImportTarget(importText)
         if (normalized.isBlank() || normalized.endsWith(".*")) return null
         val provider = activeProvider(normalized) ?: return null
-        if (provider.path !in snapshot.files || !isSourceModulePath(provider.path.value)) { return null }
+        if (provider.path !in snapshot.files || !isSourceModulePath(provider.path.value)) return null
         val surface = exportSurface(provider) ?: return null
         val alias = normalized.replace('\\', '/').substringAfterLast('/').substringAfterLast('.').ifBlank { return null }
         return importedSymbol(alias, resolvedModuleType(provider.path, surface), provider.path)
@@ -800,8 +762,7 @@ internal class WorkspaceModuleResolver(
                     file.moduleExportSurface?.moduleType?.moduleName == packageName
             }?.let { (path, _) ->
                 WorkspaceModuleGraph.ModuleProvider(packageName, path, WorkspaceModuleGraph.ProviderSource.EXTRA_WORKSPACE_PROVIDER)
-            }
-            ?: return null
+            } ?: return null
         val surface = exportSurface(provider) ?: return null
         return if (surface.moduleType.moduleName == packageName) provider else null
     }
@@ -855,25 +816,19 @@ internal class WorkspaceModuleResolver(
     private fun findOverlayProvider(moduleName: String): WorkspaceModuleGraph.ModuleProvider? {
         if (moduleName.isBlank()) return null
         snapshot.graph.providersByModuleName[moduleName].orEmpty()
-            .firstOrNull { it.source == WorkspaceModuleGraph.ProviderSource.STANDARD_LIBRARY_OVERLAY }
-            ?.let { return it }
+            .firstOrNull { it.source == WorkspaceModuleGraph.ProviderSource.STANDARD_LIBRARY_OVERLAY }?.let { return it }
         // Match by explicit overlay moduleName first (keeps dotted names like socket.url).
-        snapshot.builtinOverlay.providerModules.entries.firstOrNull { (_, provider) ->
-            provider.moduleName == moduleName
-        }?.let { (path, provider) ->
-            return WorkspaceModuleGraph.ModuleProvider(provider.moduleName, path, WorkspaceModuleGraph.ProviderSource.STANDARD_LIBRARY_OVERLAY)
-        }
+        snapshot.builtinOverlay.providerModules.entries.firstOrNull { (_, provider) -> provider.moduleName == moduleName }
+            ?.let { (path, provider) -> return WorkspaceModuleGraph.ModuleProvider(provider.moduleName, path, WorkspaceModuleGraph.ProviderSource.STANDARD_LIBRARY_OVERLAY) }
         // Path-suffix recovery: __lua_std__/<ver>/socket.url.lua for module "socket.url".
         // Also accept nested historical paths (__lua_std__/<ver>/socket/url.lua) when present.
         // endsWith(subsumes) both the equality case and the leading-slash candidate spellings.
         val dotted = moduleName.replace('\\', '/').replace('/', '.')
         val slash = dotted.replace('.', '/')
         snapshot.builtinOverlay.providerModules.entries.firstOrNull { (path, provider) ->
-            val value = path.value
             val providerDotted = provider.moduleName.replace('\\', '/').replace('/', '.')
-            val nameMatches = providerDotted == dotted || provider.moduleName == moduleName
-            val pathMatches = value.endsWith("$dotted.lua") || value.endsWith("$slash.lua")
-            pathMatches && (nameMatches || provider.moduleName.isBlank())
+            (path.value.endsWith("$dotted.lua") || path.value.endsWith("$slash.lua")) &&
+                (providerDotted == dotted || provider.moduleName == moduleName || provider.moduleName.isBlank())
         }?.let { (path, provider) ->
             return WorkspaceModuleGraph.ModuleProvider(moduleName, path, WorkspaceModuleGraph.ProviderSource.STANDARD_LIBRARY_OVERLAY)
         }

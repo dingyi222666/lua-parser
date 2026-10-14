@@ -407,9 +407,7 @@ class JvmClassModuleProvider(
         deferMembers: Boolean
     ): WorkspaceImportedSymbol? {
         val parsed = parseImportTarget(importText) ?: return null
-        if (parsed.pathPrefix != null) {
-            return null
-        }
+        if (parsed.pathPrefix != null) return null
         val importStart = System.currentTimeMillis()
         val library = bareDexLibrary(parsed.className)?.let { DexLibraryMounter.libraryFor(it) }
         val mountMs = System.currentTimeMillis() - importStart
@@ -417,10 +415,8 @@ class JvmClassModuleProvider(
             // Diagnostic for dynamically imported libraries: without the mount the
             // imported module's members can never complete, and the failure is silent.
             if (parsed.className.endsWith(".dex") || parsed.className.endsWith(".apk")) {
-                System.err.println(
-                    "LSP-DEVICE: dex library import did not mount: " + parsed.className +
-                        " (exists=" + java.io.File(parsed.className).exists() + ")"
-                )
+                System.err.println("LSP-DEVICE: dex library import did not mount: " + parsed.className +
+                    " (exists=" + java.io.File(parsed.className).exists() + ")")
             }
             return null
         }
@@ -429,15 +425,11 @@ class JvmClassModuleProvider(
         val (providerPath, snapshot) = providerForDexLibrary(library, parsed.className.trim(), deferMembers)
         val surfaceMs = System.currentTimeMillis() - registerStart
         if (mountMs > 500 || surfaceMs > 500) {
-            System.err.println(
-                "DEX-PERF: ${parsed.className} mount=${mountMs}ms register+surface=${surfaceMs}ms"
-            )
+            System.err.println("DEX-PERF: ${parsed.className} mount=${mountMs}ms register+surface=${surfaceMs}ms")
         }
         val moduleType = snapshot.moduleExportSurface?.moduleType
         if (moduleType == null) {
-            System.err.println(
-                "LSP-DEVICE: dex library mounted without export surface: " + library.cacheIdentity
-            )
+            System.err.println("LSP-DEVICE: dex library mounted without export surface: " + library.cacheIdentity)
             return null
         }
         return importedSymbolOf(moduleType.moduleName, providerPath, moduleType)
@@ -679,10 +671,12 @@ class JvmClassModuleProvider(
             append('#')
             configuration.androluaImports.forEach { append(it).append(';') }
         }
-        dexLibrariesCache[cacheKey]?.let { configured ->
-            return (configured + mountedDexLibraries.values).distinctBy(DexLibraryMounter.DexLibrary::cacheIdentity)
-        }
-        val configured = buildList {
+        val configured = dexLibrariesCache.getOrPut(cacheKey) { configuredDexLibraries(configuration) }
+        return (configured + mountedDexLibraries.values).distinctBy(DexLibraryMounter.DexLibrary::cacheIdentity)
+    }
+
+    private fun configuredDexLibraries(configuration: JvmWorkspaceConfiguration): List<DexLibraryMounter.DexLibrary> =
+        buildList {
             configuration.androidDex?.let { path ->
                 DexLibraryMounter.libraryFor(File(path.trim()))?.let(::add)
             }
@@ -693,9 +687,6 @@ class JvmClassModuleProvider(
                 bareDexLibrary(target)?.let { path -> DexLibraryMounter.libraryFor(path)?.let(::add) }
             }
         }.distinctBy(DexLibraryMounter.DexLibrary::cacheIdentity)
-        dexLibrariesCache[cacheKey] = configured
-        return (configured + mountedDexLibraries.values).distinctBy(DexLibraryMounter.DexLibrary::cacheIdentity)
-    }
 
     /**
      * Expand AndroLua short-name import targets under a single import prefix.
@@ -865,14 +856,12 @@ class JvmClassModuleProvider(
      * Cached loader for prefixed import targets (`/path/to.jar:com.example.Foo`).
      *
      * Leak bound (adversarial audit): this path used to construct a fresh, uncached,
-     * never-closed [URLClassLoader] on every import resolution, leaking one loader (plus
-     * every class it defined) per resolve and thrashing the reflected-class caches, which
-     * key on loader identity. Loaders are now cached per (entry path, parent identity) in
-     * [classLoaderCache] — the same policy as [classLoaderFor] and
-     * [classLoaderForPackageEnumeration] — so the same jar path never produces a duplicate
-     * loader for the same parent chain. Entries are intentionally never closed, including
-     * when a provider instance is discarded: classes defined by these loaders may still be
-     * live in cached module types and provider snapshots.
+     * never-closed [URLClassLoader] per resolve, leaking one loader (plus every class
+     * it defined) per resolve and thrashing the loader-identity-keyed reflected-class
+     * caches. Loaders are cached per (entry path, parent identity) in [classLoaderCache]
+     * — the same policy as [classLoaderFor] / [classLoaderForPackageEnumeration]. Entries
+     * are intentionally never closed, including when a provider instance is discarded:
+     * classes defined by these loaders may still be live in cached module types.
      */
     internal fun cachedImportTargetClassLoader(entry: File, parent: ClassLoader): ClassLoader? {
         val cacheKey = classLoaderCacheKey("importTarget", parent, listOf(entry))
@@ -933,16 +922,13 @@ class JvmClassModuleProvider(
         // super/interface graph expand). Instance surface still flattens public inherited
         // methods/fields so Button()/button. after wildcards exposes View APIs.
         // Full deep moduleTypeFor remains for explicitly requested/bindClass class providers.
+        // [classes] always comes from [resolvedPackageClasses], which already enforced the
+        // exact-package membership and non-blank simple-name gates.
         val members = linkedMapOf<String, Type>()
         classes.forEach { clazz ->
             analysisCheckpoint()
             val simpleName = clazz.simpleName
-            if (simpleName.isEmpty() || simpleName in members) {
-                return@forEach
-            }
-            // Enforce exact package membership so subpackage types never leak into parent wildcards.
-            val ownerPackage = clazz.name.substringBeforeLast('.', missingDelimiterValue = "")
-            if (ownerPackage != packageName) {
+            if (simpleName in members) {
                 return@forEach
             }
             val memberType = runCatching { shallowModuleTypeFor(clazz) }.getOrNull()
@@ -958,22 +944,14 @@ class JvmClassModuleProvider(
     }
 
     /**
-     * Candidate binary names for AndroLua / LuaJava nested class aliases.
-     *
-     * Supports:
-     * - binary `$` names: `java.util.Map$Entry`, `android.view.View$OnClickListener`,
-     *   `android.content.Context$BindServiceFlags`
-     * - dotted nested names: `java.util.Map.Entry`, `android.view.View.OnClickListener`,
-     *   `android.content.Context.BindServiceFlags`
-     * - underscore nested aliases: `java.util.Map_Entry`, `android.view.View_OnClickListener`,
-     *   `android.content.Context_BindServiceFlags`
-     * - prefix + short-name combinations for `importPrefixes` such as `android.view.View` +
-     *   `OnClickListener` → `android.view.View$OnClickListener` or `android.content.Context` +
-     *   `BindServiceFlags` → `android.content.Context$BindServiceFlags`
-     *
-     * Try the exact binary name before generating nested aliases. Successful ordinary
-     * imports must not probe every possible package separator as a nested-class boundary.
-     * Never invents non-loadable names; callers must still Class.forName each candidate.
+     * Candidate binary names for AndroLua / LuaJava nested class aliases:
+     * binary `$` names (`java.util.Map$Entry`), dotted nested names
+     * (`java.util.Map.Entry`), underscore aliases (`Map_Entry`), and prefix +
+     * short-name combinations (`android.view.View` + `OnClickListener`). Exact
+     * binary name first; then package-preceding dot-boundary `$` rewrites, once
+     * per boundary — valid nested binary names replace a suffix of dots, never an
+     * arbitrary subset. Never invents non-loadable names; callers must still
+     * Class.forName each candidate.
      */
     private fun candidateClassNames(className: String): Sequence<String> = sequence {
         val trimmed = className.trim()
@@ -1374,16 +1352,8 @@ class JvmClassModuleProvider(
         cls: DexClass,
         deferMembers: Boolean = false
     ): Pair<VirtualPath, WorkspaceSnapshot.FileSnapshot> {
-        // Process-wide snapshot cache (dex-first activation perf): provider instances
-        // are recreated per workspace update, so the instance caches below missed on
-        // every content version and this call re-ran the full snapshot assembly —
-        // library.moduleTypeFor (first build: full descriptor-to-type surface expand),
-        // moduleMembers(__class) → classMembers instance/static expand and the
-        // workspaceFingerprintHash member-by-member payload — measured 3.4s per
-        // simple-alias 'Greeter' hit on the device for a tiny runtime dex. After the
-        // first build for a (library revision, class, deferMembers) triple this is a
-        // map lookup. library.cacheIdentity embeds path#lastModified#length, so
-        // rewriting the dex file changes the identity and busts stale entries.
+        // Process-wide snapshot cache (see dexProviderSnapshotCache): the per-instance
+        // caches miss on every workspace update, so re-assembly dominated activation.
         val processKey = "dex#${library.cacheIdentity}#${cls.binaryName}#$deferMembers"
         dexProviderSnapshotCache[processKey]?.let { return it }
         val cacheKey = "dex#${library.cacheIdentity}#${cls.binaryName}"
@@ -1412,10 +1382,8 @@ class JvmClassModuleProvider(
         deferMembers: Boolean
     ): Pair<VirtualPath, WorkspaceSnapshot.FileSnapshot> {
         val cacheKey = "dexlib#${library.cacheIdentity}#$target#$deferMembers"
-        // Process-wide snapshot (see providerForDexClass): the library module rebuilds
-        // every class member wrapper + surface + fingerprint per provider instance
-        // otherwise. Deterministic providerPath (pure function of target) and
-        // revision-keyed by library.cacheIdentity (path#lastModified#length).
+        // Process-wide snapshot (see dexProviderSnapshotCache); providerPath is a pure
+        // function of target and the key embeds library.cacheIdentity.
         dexProviderSnapshotCache[cacheKey]?.let { return it }
         packageProviderCache[cacheKey]?.let { return it }
         val moduleAlias = File(target).nameWithoutExtension.ifBlank { target }
@@ -1963,19 +1931,17 @@ class JvmClassModuleProvider(
         range = null
     )
 
-    private fun moduleMembers(moduleType: ModuleType): List<ModuleExportSurface.MemberExport> {
-        val output = mutableListOf<ModuleExportSurface.MemberExport>()
+    private fun moduleMembers(moduleType: ModuleType): List<ModuleExportSurface.MemberExport> = buildList {
         moduleType.fields.forEach { (name, type) ->
-            output += memberExport(name, type, SymbolKind.FIELD)
+            add(memberExport(name, type, SymbolKind.FIELD))
             if (name == "__class") {
-                output += classMembers(type)
+                addAll(classMembers(type))
             }
         }
         moduleType.methods.forEach { (name, type) ->
-            output += memberExport(name, type, SymbolKind.METHOD)
+            add(memberExport(name, type, SymbolKind.METHOD))
         }
-        return output.sortedWith(compareBy<ModuleExportSurface.MemberExport>({ it.exportPath.size }, { it.name }))
-    }
+    }.sortedWith(compareBy<ModuleExportSurface.MemberExport>({ it.exportPath.size }, { it.name }))
 
     internal fun classMembers(type: Type, exportPathPrefix: List<String> = listOf("__class")): List<ModuleExportSurface.MemberExport> {
         val output = mutableListOf<ModuleExportSurface.MemberExport>()
@@ -2133,14 +2099,13 @@ class JvmClassModuleProvider(
         private const val MAX_REFLECTED_INNER_CLASS_DEPTH = 1
 
         /**
-         * Process-wide dex provider snapshot cache (DEX-PERF: device sample measured
-         * `simple-alias 'Greeter' hit=true took 3425ms` because provider instances are
-         * recreated per workspace update and every content version re-assembled the
-         * dex snapshot: DexClassModelAdapter module surface (first build), the
-         * moduleMembers(__class) expand and the workspaceFingerprintHash member
-         * payload). Keyed by (library cacheIdentity, class binaryName, deferMembers)
-         * for class providers and (cacheIdentity, target, deferMembers) for library
-         * module providers; LRU-bounded because entries hold full member surfaces.
+         * Process-wide dex provider snapshot cache (DEX-PERF: provider instances are
+         * recreated per workspace update, so without it every content version re-assembled
+         * the dex snapshot — adapter surface, moduleMembers(__class) expand and the
+         * member-by-member fingerprint hash; measured 3.4s per simple-alias hit on-device).
+         * Keyed by (library cacheIdentity, class binaryName, deferMembers) for class
+         * providers and (cacheIdentity, target, deferMembers) for library module providers;
+         * LRU-bounded because entries hold full member surfaces.
          *
          * Staleness: `DexLibraryMounter.DexLibrary.cacheIdentity` embeds
          * `path#lastModified#length`, so rewriting a dex library produces a new

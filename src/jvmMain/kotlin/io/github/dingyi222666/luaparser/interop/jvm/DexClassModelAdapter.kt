@@ -29,27 +29,22 @@ import io.github.dingyi222666.luaparser.semantic.types.model.UnknownType
  * module-provider machinery (module tables with `__class`/`__call`, static vs
  * instance member surfaces, constructor overload sets, nested-type fields).
  *
- * Mirrors of `JvmClassModuleProvider` behaviors (all of its helpers are
- * `private`, so the primitive table and name construction are replicated here
- * rather than reused — keep the two in sync):
- * - [JvmClassModuleProvider.javaClassToType] primitive table: numeric
- *   descriptors (B/S/I/J/F/D) and boxed numeric wrappers map to
- *   [PrimitiveType.NUMBER], Z/[Boolean] to [PrimitiveType.BOOLEAN],
- *   C plus String/CharSequence-family object types to [PrimitiveType.STRING],
- *   V to [PrimitiveType.VOID]; every other `L...;` descriptor becomes a
- *   [JavaInstanceType] over a name-only [JavaClassType] shell.
- * - [JvmClassModuleProvider.shallowJavaClassTypeFor] super/interface policy:
- *   superclasses and interfaces are always shallow, name-only type references.
- * - [JvmClassModuleProvider.classModuleTypeFor] module shape: `__class` field,
- *   `__call` field when constructors exist, public static field values as
- *   module fields, static method overloads as module methods, nested types as
- *   module fields keyed by simple name.
- * - [JvmClassModuleProvider] inner-class depth policy
- *   (`MAX_REFLECTED_INNER_CLASS_DEPTH = 1`): only direct `$` children of the
- *   adapted class are surfaced; deeper nesting never appears.
- * - [JvmClassModuleProvider.classModuleSimpleName] std-library collision
- *   guard: nested classes whose simple name collides with a Lua std module
- *   name (`android.R$string`) claim the qualified `Outer.name` module name.
+ * All provider helpers are `private`, so their behaviors are mirrored here —
+ * keep the two in sync:
+ * - `javaClassToType` primitive table: numeric descriptors (B/S/I/J/F/D) and
+ *   boxed numeric wrappers → [PrimitiveType.NUMBER], Z/[Boolean] → BOOLEAN,
+ *   C plus String/CharSequence-family → STRING, V → VOID; every other `L...;`
+ *   descriptor becomes a [JavaInstanceType] over a name-only shell.
+ * - `shallowJavaClassTypeFor`: superclasses/interfaces are always shallow,
+ *   name-only type references (android.jar shallow policy).
+ * - `classModuleTypeFor` module shape: `__class`, `__call` when constructors
+ *   exist, public static fields as module fields, static method overloads as
+ *   module methods, nested types as module fields keyed by simple name.
+ * - inner-class depth policy (`MAX_REFLECTED_INNER_CLASS_DEPTH = 1`): only
+ *   direct `$` children are surfaced.
+ * - `classModuleSimpleName` Lua-std collision guard: nested classes whose
+ *   simple name collides with a std module name (`android.R$string`) claim the
+ *   qualified `Outer.name` module name.
  *
  * Descriptor-driven dex classes carry no generic signatures, so
  * [JavaClassType.typeParameters] is always empty; dex L-references resolve
@@ -186,14 +181,11 @@ object DexClassModelAdapter {
 
     /**
      * Build the [JavaTypeName] for a raw dex binary name, splitting `$`-joined
-     * nested segments into [JavaTypeName.simpleNames] exactly like
-     * [JvmClassModuleProvider] `javaTypeNameFor` does for reflected classes.
-     *
-     * Dex binary names are slash-form (`com/foo/Bar`), while the JVM-shape
-     * model (and every downstream consumer, e.g. dotted `java.util.Map`
-     * container detection) uses reflection-style dotted names, so `/` is
-     * normalized to `.` before splitting. [JavaTypeName.binaryName] therefore
-     * comes out dotted.
+     * nested segments into [JavaTypeName.simpleNames] exactly like the provider's
+     * `javaTypeNameFor` does for reflected classes. Dex binary names are slash-form
+     * (`com/foo/Bar`) while the type model uses reflection-style dotted names, so `/`
+     * is normalized to `.` before splitting and [JavaTypeName.binaryName] comes out
+     * dotted.
      */
     fun javaTypeNameFor(binaryName: String): JavaTypeName {
         val dotted = binaryName.trim().replace('/', '.')
@@ -207,12 +199,10 @@ object DexClassModelAdapter {
     /**
      * Name-only [JavaClassType] shell for a binary name (mirror of the
      * provider's `typeReferenceForJavaClass`): no members, no hierarchy.
+     * Cached by binaryName — shells are referenced for every L-descriptor
+     * parameter/return of every assembled class (dominant per-method allocation
+     * churn on the emulator otherwise).
      */
-    // Name-only shells are immutable and referenced for every L-descriptor
-    // parameter/return of every method of every assembled class: caching them by
-    // binaryName removes the per-member JavaTypeName/JavaClassType allocation
-    // churn (measured as the dominant per-method cost on the emulator —
-    // buildJavaBinaryName/buildJavaCanonicalName samples inside checks).
     private val binaryNameShells = java.util.concurrent.ConcurrentHashMap<String, JavaClassType>()
 
     private fun typeReferenceForBinaryName(binaryName: String): JavaClassType =
@@ -470,19 +460,14 @@ object DexClassModelAdapter {
     }
 
     /**
-     * Descriptor translation core.
-     *
-     * Primitive descriptors mirror [JvmClassModuleProvider] `javaClassToType`:
-     * B/S/I/J/F/D (and boxed numeric wrappers on the `L` branch) map to
-     * [PrimitiveType.NUMBER], Z to [PrimitiveType.BOOLEAN], C to
-     * [PrimitiveType.STRING], V to [PrimitiveType.VOID]; String and the
-     * CharSequence family stay [PrimitiveType.STRING] on the `L` branch so dex
-     * strings behave exactly like reflected android.jar strings. Every other
-     * `L<binary>;` becomes [JavaInstanceType] over a name-only shell — or, when
-     * the binary name is in the same dex set, over a member-carrying
+     * Descriptor translation core. Primitive descriptors mirror the provider's
+     * `javaClassToType` (see the class KDoc); String and the CharSequence family stay
+     * STRING on the `L` branch so dex strings behave exactly like reflected android.jar
+     * strings. Every other `L<binary>;` becomes [JavaInstanceType] over a name-only shell —
+     * or, when the binary name is in the same dex set, over a member-carrying
      * [JavaClassType] hydrated transitively across the in-set reference graph.
-     * `[X` nests single-rank [JavaArrayType] wrappers. Malformed descriptors
-     * degrade to [UnknownType].
+     * `[X` nests single-rank [JavaArrayType] wrappers; malformed descriptors degrade to
+     * [UnknownType].
      *
      * [resolving] holds binary names whose members are currently being built
      * (normalized via [binaryNameKey]): a descriptor whose key is already on
@@ -516,18 +501,15 @@ object DexClassModelAdapter {
     }
 
     /**
-     * Object-type branch of the primitive table: Boolean/[String]/
-     * CharSequence-family/Character map to primitives, boxed numerics map to
-     * [PrimitiveType.NUMBER] (the reflection table reaches the same result via
-     * `Number::class.java.isAssignableFrom`), everything else resolves as a
-     * [JavaInstanceType] shell — member-carrying only when the referenced
-     * class is in the same dex set.
+     * Object-type branch of the primitive table: Boolean/String/CharSequence-family/
+     * Character map to primitives, boxed numerics map to [PrimitiveType.NUMBER] (the
+     * reflection table reaches the same result via `Number::class.java.isAssignableFrom`),
+     * everything else resolves as a [JavaInstanceType] shell — member-carrying only when
+     * the referenced class is in the same dex set.
      *
-     * [binaryName] is the raw descriptor body (slash-form for dex); dex-set
-     * lookups accept both slash and dotted spellings — dex binary names and
-     * descriptor bodies come from the same dex string pool so they always
-     * share one form, and the fallback makes a form mismatch impossible —
-     * while type-model names normalize to dots via [javaTypeNameFor].
+     * [binaryName] is the raw descriptor body (slash-form for dex); dex-set lookups accept
+     * both slash and dotted spellings (see [binaryNameKey]) while type-model names
+     * normalize to dots via [javaTypeNameFor].
      */
     private fun lDescriptorToType(
         binaryName: String,

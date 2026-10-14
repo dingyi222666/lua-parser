@@ -50,15 +50,14 @@ class BinderPositionQueries(
      * resolution, import shadowing).
      *
      * Tail-of-body gap: a for/while statement's LOOP scope is created with exactly
-     * `body.range` (header expressions must evaluate in the ENCLOSING scope — see
-     * DeclarationBinder), and block ranges end at the last committed token, so a query
-     * position between the last body statement and the statement's `end` token sits OUTSIDE
-     * the loop scope's range. getScopeAt therefore resolves it to the enclosing scope and the
-     * loop's control variables / body locals vanish from the surface even though the block is
-     * still open. When the position falls inside a numeric/generic for or while statement's
-     * full range but at or after its body's end, surface that loop scope instead: it holds
-     * the control variables and body locals, and its parent chain still reaches every
-     * enclosing scope. Header positions (before the body) keep enclosing-scope semantics —
+     * `body.range` (header expressions must evaluate in the ENCLOSING scope), and block
+     * ranges end at the last committed token, so a query position between the last body
+     * statement and the statement's `end` token sits OUTSIDE the loop scope's range and
+     * getScopeAt resolves it to the enclosing scope — the loop's control variables / body
+     * locals would vanish from the surface even though the block is still open. When the
+     * position falls inside a numeric/generic for or while statement's full range but at
+     * or after its body's end, surface that loop scope instead (its parent chain still
+     * reaches every enclosing scope). Header positions keep enclosing-scope semantics —
      * Lua header expressions must not see the freshly declared control variables.
      *
      * Every free-position surface (ReferenceQueries, the workspace facade's local
@@ -99,11 +98,12 @@ class BinderPositionQueries(
         // `forLoopBodyScopes` only yields LOOP scopes whose ownerNode is a BlockNode, and
         // `parent` is a not-null delegate that can still throw on synthetic/detached trees —
         // treat both as non-candidates like CompletionProvider does.
-        val statement = runCatching { (scope.ownerNode as BlockNode).parent }.getOrNull()
+        val block = scope.ownerNode as? BlockNode ?: return null
+        val statement = runCatching { block.parent }.getOrNull()
             ?.takeIf { it is ForNumericStatement || it is ForGenericStatement || it is WhileStatement }
             ?: return null
         if (!isPositionWithin(statement.range.start, statement.range.end, position)) return null
-        if (comparePositions((scope.ownerNode as BlockNode).range.end, position) > 0) return null
+        if (comparePositions(block.range.end, position) > 0) return null
         return scope
     }
 

@@ -97,15 +97,12 @@ internal class DeclarationBinder(
                     declaredTypeSyntax = declaredTypeSyntaxes.getOrNull(index) ?: classValueType
                 ).copy(
                     // Anchor at the end of the initializer expression: the new local is
-                    // offered from there onward, while the initializer itself (`local x = 1`
-                    // caret on `1`, or the RHS `outer` in `local inner = outer`) still
-                    // resolves to the outer binding per Lua scoping.
-                    //
-                    // `end.column` is EXCLUSIVE (one past the last initializer character —
-                    // the parser commits `firstCharColumn + tokenLength`), so the legacy
-                    // end-of-statement caret sits at `end.column - 1` and must still see
-                    // the new local (LegacySemanticAnalyzerCompatibilityTest probes exactly
-                    // that position for `local inner = outer`).
+                    // offered from there onward, while the initializer itself still resolves
+                    // to the outer binding per Lua scoping. `end.column` is EXCLUSIVE (one
+                    // past the last initializer character), so the legacy end-of-statement
+                    // caret sits at `end.column - 1` and must still see the new local
+                    // (LegacySemanticAnalyzerCompatibilityTest probes exactly that position
+                    // for `local inner = outer`).
                     //
                     // Sole exception — a single-character identifier initializer that reads
                     // a name this same statement declares (`local i = i`, `local a, b = a, b`):
@@ -118,10 +115,7 @@ internal class DeclarationBinder(
                             // A same-name read ending at the initializer's last character
                             // self-binds at the legacy anchor — cover both the bare
                             // identifier and prefix-unary forms (`local i = i`,
-                            // `local i = -i`): the whole initializer IS the same-name read,
-                            // its exclusive end equals the initializer's, so the caret on
-                            // the last character would sit on the not-yet-initialized local
-                            // (the outer is never marked used → false "Unused local").
+                            // `local i = -i`): the whole initializer IS the same-name read.
                             var read: io.github.dingyi222666.luaparser.parser.ast.node.ExpressionNode? =
                                 node.variables.lastOrNull()
                             while (read is io.github.dingyi222666.luaparser.parser.ast.node.UnaryExpression) {
@@ -551,22 +545,19 @@ internal class DeclarationBinder(
         val methodBindings = sliceMethodBindings(ownedTags)
         val typeParameterBindings = linkedMapOf<String, TypeParameterBinding>()
 
-        classTag.declaredTypeParameters.forEach { parameterName ->
-            typeParameterBindings[parameterName] = TypeParameterBinding(
-                name = parameterName,
-                documentationTags = listOf(classTag)
+        // Shared merge for both binding sources: the @class tag's own declared parameters
+        // (no constraint) and @generic parameters (constraint text merged over any prior).
+        fun bindTypeParameter(name: String, constraintText: String?, tag: DocTagSyntax) {
+            val existing = typeParameterBindings[name]
+            typeParameterBindings[name] = TypeParameterBinding(
+                name = name,
+                constraintText = constraintText ?: existing?.constraintText,
+                documentationTags = (existing?.documentationTags.orEmpty() + tag).distinct()
             )
         }
-
+        classTag.declaredTypeParameters.forEach { bindTypeParameter(it, null, classTag) }
         genericTags.forEach { genericTag ->
-            genericTag.parameters.forEach { parameter ->
-                val existing = typeParameterBindings[parameter.name]
-                typeParameterBindings[parameter.name] = TypeParameterBinding(
-                    name = parameter.name,
-                    constraintText = parameter.constraintText ?: existing?.constraintText,
-                    documentationTags = (existing?.documentationTags.orEmpty() + genericTag).distinct()
-                )
-            }
+            genericTag.parameters.forEach { bindTypeParameter(it.name, it.constraintText, genericTag) }
         }
 
         typeParameterBindings.values.forEach { binding ->

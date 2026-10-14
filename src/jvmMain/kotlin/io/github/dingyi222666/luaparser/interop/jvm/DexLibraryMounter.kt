@@ -12,15 +12,13 @@ import java.util.zip.ZipFile
  * Process-wide mounter for dex library files (`.dex`, and `.apk` via its bundled
  * `classes*.dex` zip entries) behind the workspace JVM provider.
  *
- * Division of labor with the rest of the interop stack:
- * - this object owns file classification, parse-once-per-(path, mtime, size)
- *   caching, name resolution (dotted binary / nested `$` / simple alias) and the
- *   per-class [ModuleType] cache;
- * - [DexClassModelAdapter] turns a [DexClass] into the reflected-shape
- *   [ModuleType] (`__class` / `__call` / static / instance members);
- * - [JvmClassModuleProvider] owns provider snapshots, workspace symbols and the
- *   actual resolution wiring (classpath entries, `path:Class` import prefixes,
- *   bare `import "libs/classes.dex"` targets).
+ * Division of labor: this object owns file classification, parse-once-per-(path, mtime,
+ * size) caching, name resolution (dotted binary / nested `$` / simple alias) and the
+ * per-class [ModuleType] cache; [DexClassModelAdapter] turns a [DexClass] into the
+ * reflected-shape [ModuleType] (`__class` / `__call` / static / instance members);
+ * [JvmClassModuleProvider] owns provider snapshots, workspace symbols and the actual
+ * resolution wiring (classpath entries, `path:Class` import prefixes, bare
+ * `import "libs/classes.dex"` targets).
  *
  * Optimized device artifacts (`.odex` / `.vdex`) are NOT mountable — they stay on
  * the unsupported-diagnostic path in [JvmWorkspaceConfiguration].

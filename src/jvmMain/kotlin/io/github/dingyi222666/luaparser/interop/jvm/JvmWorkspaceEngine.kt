@@ -69,22 +69,20 @@ open class JvmWorkspaceEngine(
 
     /**
      * Per-update [io.github.dingyi222666.luaparser.semantic.workspace.WorkspaceModuleResolver]
-     * reuse (wave K perf). A fresh resolver used to be built per analyzed file per update, so
-     * its caches (`importedSymbolsFor` keyed by path, `activeProvider` keyed by module name,
-     * provider globals keyed by provider path) never survived and `packageMembers` re-ran its
-     * O(wildcardMembers x extraProviders) linear scans for every file on every keystroke.
+     * reuse (wave K perf): a fresh resolver per analyzed file made its caches
+     * (`importedSymbolsFor`, `activeProvider`, provider globals) die every keystroke and
+     * re-ran `packageMembers` O(wildcard x extraProviders) scans per file.
      *
-     * Reuse is sound because the resolver derives solely from the snapshot it is handed: its
-     * mutable state is keyed by path/module name (no cross-path bleed), and nothing it reads
-     * changes while that snapshot instance drives one analysis pass. The cache is keyed by
-     * snapshot IDENTITY — each analysis pass (build / update / attachSemanticState) composes a
-     * fresh analysis snapshot instance, so a new update naturally starts a new generation.
+     * Reuse is sound because the resolver derives solely from the snapshot it is handed:
+     * its mutable state is keyed by path/module name, and nothing it reads changes while
+     * that snapshot instance drives one analysis pass. The cache is keyed by snapshot
+     * IDENTITY — each analysis pass composes a fresh snapshot instance, so a new update
+     * starts a new generation.
      *
-     * A served path that repeats marks a cycle re-analysis sweep (attachSemanticState re-runs
-     * SCC members against rewritten peer semantic files). Sweeps therefore start a fresh
-     * resolver generation, preserving exactly the per-sweep freshness the old per-file
-     * resolvers provided — a cached import map or provider-global list must never outlive the
-     * peer binding state it was derived from.
+     * A served path that repeats marks a cycle re-analysis sweep (attachSemanticState
+     * re-runs SCC members against rewritten peer semantic files): sweeps start a fresh
+     * resolver generation so a cached import map or provider-global list never outlives
+     * the peer binding state it was derived from.
      */
     private var cachedResolverSnapshot: WorkspaceSnapshot? = null
     private var cachedResolver: io.github.dingyi222666.luaparser.semantic.workspace.WorkspaceModuleResolver? = null
@@ -127,14 +125,14 @@ open class JvmWorkspaceEngine(
             // that complete catalog later.
             return emptyMap()
         }
-        // Explicit / bindClass / simple import targets only. Wildcard package modules list under
-        // packageProvidersFor (packages/ paths only). Shallow class providers for package
-        // members come from packageMemberClassProvidersFor (classes/ paths) so package-list
-        // keys never mix __jvm__/classes prefixes.
-        // Free UpperCamel identifiers still activate path-scoped import aliases in
-        // workspaceContext (Android-Lua bare Locale/TextView). They must NOT auto-mount
-        // reflective class providers into extraProviders: short require("Arrays") without
-        // CLASSES_METADATA / explicit import/bindClass must stay unresolved (TASK-628).
+        // Explicit / bindClass / simple import targets only. Wildcard package modules list
+        // under packageProvidersFor (packages/ paths only); shallow class providers for
+        // package members come from packageMemberClassProvidersFor (classes/ paths) so
+        // package-list keys never mix __jvm__/classes prefixes. Free UpperCamel identifiers
+        // still activate path-scoped import aliases in workspaceContext (Android-Lua bare
+        // Locale/TextView). They must NOT auto-mount reflective class providers into
+        // extraProviders: short require("Arrays") without CLASSES_METADATA / explicit
+        // import/bindClass must stay unresolved (TASK-628).
         val sourceDiscoveredClasses = collectSourceDiscoveredClasses(
             documentFacts,
             resolvedConfiguration
@@ -280,16 +278,11 @@ open class JvmWorkspaceEngine(
                 }
                 .map { fact -> UnresolvedLuaJavaTarget(fact.target, luaJavaHelperName(fact.kind), fact.range) } +
                 // Dead wildcard/package imports: `pkg.*` whose package enumeration came back
-                // empty (typo, case mismatch, absent jar) used to emit nothing because the
-                // wildcard targets are stripped from jvmClassLoads and IMPORT_CALL stays off
-                // diagnosticLuaJavaClassLoadKinds. sourceImports still carries every wildcard
-                // target; the resolver resolves a wildcard only through its mounted package
-                // provider (packageProvidersFor never mounts an empty enumeration), so a null
+                // empty emit nothing through jvmClassLoads (wildcards are stripped there and
+                // IMPORT_CALL stays off diagnosticLuaJavaClassLoadKinds); a null resolver
                 // symbol proves the package enumerated zero classes.
                 facts.sourceImports
                     .asSequence()
-                    // Wildcard targets only; non-wildcard targets keep their existing
-                    // diagnostic policy.
                     .filter { importFact ->
                         val target = importFact.target.removePrefix("import ").trim()
                         target.endsWith(".*") && workspaceResolver.importTargetSymbol(target) == null
@@ -298,11 +291,8 @@ open class JvmWorkspaceEngine(
                         UnresolvedLuaJavaTarget(importFact.target, "import", importFact.range, fromWildcardImport = true)
                     }
             )
-            // Data-class identity dedupe: the two streams above can never collide on
-            // (target, helperName, range) — class-load helpers are bindClass/newInstance/
-            // createProxy/loadLib, wildcard stream helperName is always "import" — and
-            // fromWildcardImport is constant per stream, so distinct() ≡ the former
-            // field-by-field distinctBy.
+            // Data-class identity dedupe: the streams above can never collide on
+            // (target, helperName, range), so distinct() ≡ the former field-by-field distinctBy.
             .distinct()
             .toList()
     }
@@ -426,17 +416,15 @@ open class JvmWorkspaceEngine(
         configuration: JvmWorkspaceConfiguration
     ): Map<String, WorkspaceImportedSymbol> {
         val normalized = configuration.normalized()
+        // Exploded class directories can change without updating the root timestamp.
+        // Their providers remain uncached here rather than silently reusing stale activations.
+        // The `substringBefore(':')` covers both prefixed targets (`/a.jar:pkg.Foo` → `/a.jar`)
+        // and bare dex/apk paths (no separator → whole text).
         val files = (normalized.reflectionClasspathEntries() + listOfNotNull(normalized.androidDex) +
             targets.mapNotNull { target ->
                 val text = target.removePrefix("import ").trim()
-                when {
-                    ':' in text -> text.substringBefore(':')
-                    text.endsWith(".dex") || text.endsWith(".apk") -> text
-                    else -> null
-                }
+                text.takeIf { ':' in it || it.endsWith(".dex") || it.endsWith(".apk") }?.substringBefore(':')
             }).distinct().map { java.io.File(it) }
-        // Exploded class directories can change without updating the root timestamp.
-        // Their providers remain uncached here rather than silently reusing stale activations.
         val key = if (files.any { it.isDirectory }) null else ImportActivationKey(normalized,
             targets.toList(), classNames.toSet(), files.map { file ->
                 ImportFileIdentity(file.absolutePath, file.exists(), file.length(), file.lastModified())
@@ -610,11 +598,8 @@ open class JvmWorkspaceEngine(
      * [JvmClassModuleProvider.packageProvidersFor] is wildcard-only so package-name aliases
      * such as `android.widget` are rewritten to `android.widget.*` before mount.
      */
-    private fun normalizePackageProviderTarget(importText: String): String? {
-        wildcardImportPrefix(importText)?.let { return "$it.*" }
-        packageNameAliasPrefix(importText)?.let { return "$it.*" }
-        return null
-    }
+    private fun normalizePackageProviderTarget(importText: String): String? =
+        (wildcardImportPrefix(importText) ?: packageNameAliasPrefix(importText))?.let { "$it.*" }
 
     private fun luaJavaHelperName(kind: DocumentFacts.JvmClassLoadKind): String = when (kind) {
         DocumentFacts.JvmClassLoadKind.BIND_CLASS_CALL -> "bindClass"

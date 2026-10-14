@@ -2,75 +2,17 @@ package io.github.dingyi222666.luaparser.semantic.model
 
 import io.github.dingyi222666.luaparser.parser.compactCallArguments
 
-import io.github.dingyi222666.luaparser.parser.ast.node.BaseASTNode
-import io.github.dingyi222666.luaparser.parser.ast.node.CallExpression
-import io.github.dingyi222666.luaparser.parser.ast.node.ConstantNode
-import io.github.dingyi222666.luaparser.parser.ast.node.ExpressionNode
-import io.github.dingyi222666.luaparser.parser.ast.node.Identifier
-import io.github.dingyi222666.luaparser.parser.ast.node.IndexExpression
-import io.github.dingyi222666.luaparser.parser.ast.node.LocalStatement
-import io.github.dingyi222666.luaparser.parser.ast.node.MemberExpression
-import io.github.dingyi222666.luaparser.parser.ast.node.Position
-import io.github.dingyi222666.luaparser.parser.ast.node.Range
-import io.github.dingyi222666.luaparser.semantic.SemanticWorkspaceContext
-import io.github.dingyi222666.luaparser.semantic.WorkspaceImportedSymbol
-import io.github.dingyi222666.luaparser.semantic.api.Symbol
-import io.github.dingyi222666.luaparser.semantic.api.SymbolKind
-import io.github.dingyi222666.luaparser.semantic.api.TypeInfo
-import io.github.dingyi222666.luaparser.semantic.api.TypeInfoKind
-import io.github.dingyi222666.luaparser.semantic.importedSymbolHandle
-import io.github.dingyi222666.luaparser.semantic.binder.BinderDeclaration
-import io.github.dingyi222666.luaparser.semantic.binder.BinderPassResult
-import io.github.dingyi222666.luaparser.semantic.binder.DeclarationId
-import io.github.dingyi222666.luaparser.semantic.binder.DeclarationKind
-import io.github.dingyi222666.luaparser.semantic.binder.DeclarationNamespace
-import io.github.dingyi222666.luaparser.semantic.binder.DeclarationOwner
-import io.github.dingyi222666.luaparser.semantic.binder.DeclarationOrigin
-import io.github.dingyi222666.luaparser.semantic.binder.Scope
-import io.github.dingyi222666.luaparser.semantic.binder.ScopeId
-import io.github.dingyi222666.luaparser.semantic.binder.compareRangeSpecificity
-import io.github.dingyi222666.luaparser.semantic.binder.functionDeclaration
-import io.github.dingyi222666.luaparser.semantic.binder.globalDeclaration
-import io.github.dingyi222666.luaparser.semantic.binder.isChunkGlobalFunctionDeclaration
-import io.github.dingyi222666.luaparser.semantic.binder.isPositionWithin
-import io.github.dingyi222666.luaparser.semantic.binder.isVisibleAtPosition
-import io.github.dingyi222666.luaparser.semantic.binder.moduleDeclaration
+import io.github.dingyi222666.luaparser.parser.ast.node.*
+import io.github.dingyi222666.luaparser.semantic.*
+import io.github.dingyi222666.luaparser.semantic.api.*
+import io.github.dingyi222666.luaparser.semantic.binder.*
 import io.github.dingyi222666.luaparser.semantic.checker.ExpressionTypeEvaluator
-import io.github.dingyi222666.luaparser.semantic.checker.enclosingAstNodeOf
-import io.github.dingyi222666.luaparser.semantic.checker.JavaBeanPropertySurface
-import io.github.dingyi222666.luaparser.semantic.checker.MemberAccessKind
-import io.github.dingyi222666.luaparser.semantic.checker.MemberResolver
-import io.github.dingyi222666.luaparser.semantic.checker.allReadableInstanceJavaBeanProperties
-import io.github.dingyi222666.luaparser.semantic.checker.allReadableStaticJavaBeanProperties
-import io.github.dingyi222666.luaparser.semantic.checker.hydrateJavaProviderType
-import io.github.dingyi222666.luaparser.semantic.checker.isJavaBackedModule
-import io.github.dingyi222666.luaparser.semantic.checker.isJavaProviderClassReference
-import io.github.dingyi222666.luaparser.semantic.checker.withJavaCallableSurface
-import io.github.dingyi222666.luaparser.semantic.types.model.CallableType
-import io.github.dingyi222666.luaparser.semantic.types.model.ClassType
-import io.github.dingyi222666.luaparser.semantic.types.model.FunctionType
-import io.github.dingyi222666.luaparser.semantic.types.model.IntersectionType
-import io.github.dingyi222666.luaparser.semantic.types.model.JavaArrayType
-import io.github.dingyi222666.luaparser.semantic.types.model.JavaClassType
-import io.github.dingyi222666.luaparser.semantic.types.model.JavaInstanceType
-import io.github.dingyi222666.luaparser.semantic.types.model.JavaMemberKind
-import io.github.dingyi222666.luaparser.semantic.types.model.JavaMemberType
-import io.github.dingyi222666.luaparser.semantic.types.model.JavaSignatureMetadata
-import io.github.dingyi222666.luaparser.semantic.types.model.ModuleType
-import io.github.dingyi222666.luaparser.semantic.types.model.OverloadedFunctionType
-import io.github.dingyi222666.luaparser.semantic.types.model.PrimitiveType
-import io.github.dingyi222666.luaparser.semantic.types.model.TableType
-import io.github.dingyi222666.luaparser.semantic.types.model.Type
-import io.github.dingyi222666.luaparser.semantic.types.model.TypeParameterType
-import io.github.dingyi222666.luaparser.semantic.types.model.UnionType
-import io.github.dingyi222666.luaparser.semantic.types.model.UnknownType
+import io.github.dingyi222666.luaparser.semantic.checker.*
+import io.github.dingyi222666.luaparser.semantic.types.model.*
 import io.github.dingyi222666.luaparser.semantic.types.resolve.TypeExpansion
 import io.github.dingyi222666.luaparser.semantic.types.resolve.intersectionTypeOf
 import io.github.dingyi222666.luaparser.semantic.types.resolve.unionTypeOf
-import io.github.dingyi222666.luaparser.semantic.workspace.ModuleExportIdentity
-import io.github.dingyi222666.luaparser.semantic.workspace.VirtualPath
-import io.github.dingyi222666.luaparser.semantic.workspace.WorkspaceModuleGraph
-import io.github.dingyi222666.luaparser.semantic.workspace.WorkspaceModuleResolver
+import io.github.dingyi222666.luaparser.semantic.workspace.*
 
 import io.github.dingyi222666.luaparser.util.putIfAbsentCompat
 
@@ -191,9 +133,7 @@ internal class ReferenceQueries(
     private fun resolveDeclarationForSymbol(symbol: Symbol, node: BaseASTNode?): BinderDeclaration? {
         return binder.declarationForSymbolHandle(symbol.symbolId?.toSymbolHandle())
             ?: resolveExactNodeDeclaration(node)
-            ?: (node as? Identifier)?.let { identifier ->
-                findNearestVisibleValueDeclaration(identifier.name, identifier.range.start)
-            }
+            ?: (node as? Identifier)?.let { findNearestVisibleValueDeclaration(it.name, it.range.start) }
     }
 
     private fun preferredDeclarationType(declaration: BinderDeclaration): Type? {
@@ -428,9 +368,7 @@ internal class ReferenceQueries(
         }
         val declaration = resolveDeclarationTokenStartAt(position)
             ?: resolveExactNodeDeclaration(node)
-            ?: (node as? Identifier)?.let { identifier ->
-                findNearestVisibleValueDeclaration(identifier.name, position)
-            }
+            ?: (node as? Identifier)?.let { findNearestVisibleValueDeclaration(it.name, position) }
             ?: return null
         if (declaration.kind != DeclarationKind.LOCAL) {
             return null
@@ -472,7 +410,7 @@ internal class ReferenceQueries(
     private fun stringConstantCallAt(node: BaseASTNode?): Pair<ConstantNode, CallExpression>? {
         val constant = node as? ConstantNode ?: return null
         if (constant.constantType != ConstantNode.TYPE.STRING) return null
-        val call = enclosingCallExpression(constant) ?: return null
+        val call = enclosingAstNodeOf<CallExpression>(constant) ?: return null
         return constant to call
     }
 
@@ -480,7 +418,7 @@ internal class ReferenceQueries(
         val (constant, call) = stringConstantCallAt(node) ?: return null
         if (callArguments(call).firstOrNull() !== constant) return null
         if (!isLuaJavaBindClassCall(call)) return null
-        val localStatement = enclosingLocalStatement(call) ?: return null
+        val localStatement = enclosingAstNodeOf<LocalStatement>(call) ?: return null
         val initializerIndex = localStatement.variables.indexOf(call)
         if (initializerIndex < 0) return null
         val declaration = localStatement.init.getOrNull(initializerIndex)
@@ -520,13 +458,6 @@ internal class ReferenceQueries(
      */
     private fun memberIdentifierBase(node: BaseASTNode): MemberExpression? =
         (runCatching { node.parent }.getOrNull() as? MemberExpression)?.takeIf { it.identifier === node }
-
-    /** Walk-parent ladder is shared with the evaluator: see [enclosingAstNodeOf]. */
-    private fun enclosingCallExpression(node: BaseASTNode): CallExpression? =
-        enclosingAstNodeOf(node)
-
-    private fun enclosingLocalStatement(node: BaseASTNode): LocalStatement? =
-        enclosingAstNodeOf(node)
 
     private fun callArguments(node: CallExpression): List<ExpressionNode> =
         node.compactCallArguments()
@@ -694,11 +625,8 @@ internal class ReferenceQueries(
 
             is UnionType -> {
                 val branchMaps = normalized.types.map { collectMemberSurface(it, lexicalScopeId) }
-                if (branchMaps.isEmpty()) {
-                    emptyMap()
-                } else {
-                    val sharedNames = branchMaps.map { it.keys }.reduce { acc, names -> acc.intersect(names) }
-                    sharedNames.associateWith { name ->
+                branchMaps.map { it.keys }.reduceOrNull { acc, names -> acc.intersect(names) }
+                    ?.associateWith { name ->
                         val entries = branchMaps.mapNotNull { it[name] }
                         val declaration = entries.mapNotNull(MemberSurface::declaration).distinct().singleOrNull()
                         MemberSurface(
@@ -709,7 +637,7 @@ internal class ReferenceQueries(
                             declaredType = declaration?.declaredType
                         )
                     }
-                }
+                    ?: emptyMap()
             }
 
             is IntersectionType -> {
@@ -873,12 +801,8 @@ internal class ReferenceQueries(
             }
     }
 
-    private fun categoryRank(kind: MemberAccessKind): Int {
-        return when (kind) {
-            MemberAccessKind.FIELD, MemberAccessKind.INDEX -> 0
-            MemberAccessKind.METHOD -> 1
-        }
-    }
+    private fun categoryRank(kind: MemberAccessKind): Int =
+        if (kind == MemberAccessKind.METHOD) 1 else 0
 
     /**
      * Trust reflected memberKind for Java static/instance members. Do NOT promote
@@ -978,13 +902,11 @@ internal class ReferenceQueries(
         }
     }
 
-    private fun declarationRank(declaration: BinderDeclaration): Int {
-        return when (declaration.origin) {
-            DeclarationOrigin.AST -> 0
-            DeclarationOrigin.DOC_COMMENT -> 1
-            DeclarationOrigin.SYNTHETIC -> 2
-            DeclarationOrigin.BUILTIN -> 3
-        }
+    private fun declarationRank(declaration: BinderDeclaration): Int = when (declaration.origin) {
+        DeclarationOrigin.AST -> 0
+        DeclarationOrigin.DOC_COMMENT -> 1
+        DeclarationOrigin.SYNTHETIC -> 2
+        DeclarationOrigin.BUILTIN -> 3
     }
 
     private var sharedGlobalsCache: List<WorkspaceImportedSymbol>? = null
@@ -1051,19 +973,14 @@ internal class ReferenceQueries(
     }
 
     private fun importedSymbolsAt(position: Position, nameFilter: ((String) -> Boolean)? = null): Map<String, WorkspaceImportedSymbol> {
-        val imported = linkedMapOf<String, WorkspaceImportedSymbol>()
         val localNames = visibleValueDeclarationsWithoutImports(position).mapTo(HashSet()) { it.name }
         val activeImports = workspaceContext.importedSymbols.toMutableMap()
         workspaceContext.currentPath?.let { path ->
             workspaceContext.workspaceResolver?.importedSymbolsFor(path, includeDependencyGlobals = true, nameFilter = nameFilter)
                 ?.let(activeImports::putAll)
         }
-        activeImports.forEach { (alias, symbol) ->
-            if (alias !in localNames && nameFilter?.invoke(alias) != false) {
-                imported[alias] = symbol
-            }
-        }
-        return imported
+        // filterKeys keeps LinkedHashMap insertion order; callers sort or probe by key.
+        return activeImports.filterKeys { alias -> alias !in localNames && nameFilter?.invoke(alias) != false }
     }
 
     private fun visibleValueDeclarationsWithoutImports(position: Position): List<BinderDeclaration> =
