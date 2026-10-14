@@ -694,3 +694,7 @@ Verified remotely (JVM 2,929/0/0 + JS compile + **E2E rel59 = OK (7 tests)**):
 
 **Lines: 41,882** (baseline 53,562 → **−11,680**; target ≤41,562 — **320 lines away**). E2E rel59 = OK (7 tests); all gates green. One more modest round crosses the finish line.
 
+## E2E rel60 confirmation — 2026-10-14 08:55
+
+Remote instrumentation: **OK (7 tests)** on the recovered coherent tree (all fifth/sixth-pass edits restored from verify-in6). The 7/7 E2E now stands verified on the FINAL reduced tree. (The local rel60 log capture hit the script's 360s adb-logcat timeout — exit 124 — but the remote instrumentation.log records the full green run.)
+
