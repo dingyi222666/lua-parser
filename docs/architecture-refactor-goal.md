@@ -698,3 +698,7 @@ Verified remotely (JVM 2,929/0/0 + JS compile + **E2E rel59 = OK (7 tests)**):
 
 Remote instrumentation: **OK (7 tests)** on the recovered coherent tree (all fifth/sixth-pass edits restored from verify-in6). The 7/7 E2E now stands verified on the FINAL reduced tree. (The local rel60 log capture hit the script's 360s adb-logcat timeout — exit 124 — but the remote instrumentation.log records the full green run.)
 
+## Monaco smoke re-verified on the FINAL tree — 2026-10-14 09:07
+
+Monaco/HTML LSP smoke = green (exit 0): capability probes (references, documentHighlight, selectionRange, rangeFormatting, prepareRename+rename, inlayHint, semanticTokens/full/delta, workspace/symbol) + 12 workspace files initialized + table.addObserver completion in mods/dingyi.lua — using the remote-built distribution of the FINAL reduced tree (41,498 lines).
+
