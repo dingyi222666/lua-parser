@@ -4,69 +4,32 @@
 
 A Lua 5.3 lexer, parser, AST, and semantic-analysis toolkit written in pure Kotlin.
 
-The current project scope is Lua 5.3 support plus ongoing Android-Lua/LuaJava analysis, JVM reflection interop, and a JVM language-server path. These areas are active work; README examples describe the intended integration surface without claiming final serialized verification has completed.
-
-Semantic analysis uses the `SemanticPipeline` API; the former legacy analyzer entry points have been retired.
+The project scope covers Lua 5.3 plus Android-Lua/LuaJava analysis, JVM reflection interop, and a JVM language-server path. Semantic analysis uses the `SemanticPipeline` API.
 
 ## Features
 
-- [X] Kotlin Multiplatform support (JVM / JS / Native)
+- [x] Kotlin Multiplatform support (JVM / JS / Native)
 - [x] Parse source to AST
 - [x] Transform AST to source code
-- [ ] Semantic analysis. Provide type information (Work in progress)
+- [ ] Semantic analysis: provide type information (work in progress)
 
 ## Setup
 
-Use JDK 17 for local JVM work. On macOS, a typical session sets `JAVA_HOME` (Corretto 17) before invoking Gradle or IDE import:
+Use JDK 17 for local JVM work.
 
-```bash
-export JAVA_HOME=/Users/dingyi/Library/Java/JavaVirtualMachines/corretto-17.0.19/Contents/Home
-export PATH="$JAVA_HOME/bin:$PATH"
-```
-
-For Android-Lua and LuaJava analysis, keep the Android-Lua source checkout outside this repository and record its path in your worker notes or IDE run configuration. The historical analysis docs use that checkout as read-only reference material for import, LuaJava, JNI, asset, and helper-library behavior.
-
-For Android framework reflection, point the JVM workspace configuration at the platform jar for the API level you want to model. On this macOS host (2026-07-11 re-check) the Android SDK platform jar is **present** at:
-
-```text
-/Users/dingyi/Library/Android/sdk/platforms/android-35/android.jar
-```
-
-Optional alternate host path when the SDK tree is not used: `/Users/dingyi/Downloads/android.jar` (currently absent on this machine). Prefer the SDK path above; never hard-code Windows `G:/` paths. See `docs/android-platform-setup.md` for discovery, skip policy, and metadata keys.
-
-Use the `jvm.androidJar` metadata key or `JvmWorkspaceConfiguration.androidJar` for that path. Keep application/library jars in `jvm.classpath`, and reserve `jvm.androidJar` for the Android platform jar.
-
-
-### Documentation map
-
-- [Production readiness guide](docs/production-readiness.md): setup, usage, Android-Lua inputs, verification boundaries, known limitations, and extension points.
-- [Android-Lua architecture notes](docs/android-lua-architecture.md): read-only source layout and fixture candidates from `/Users/dingyi/projects/java_projects/Android-Lua/app/src/main`.
-- [Android-Lua import and LuaJava behavior](docs/android-lua-import-luajava.md): runtime patterns modeled by parser, semantic, interop, and LSP work.
-- [Android-Lua compatibility matrix](docs/android-lua-compatibility-matrix.md): supported, partial, deferred, and out-of-scope behavior.
-- [Android-Lua library model notes](docs/android-lua-library-models.md): helper modules, overlays, stubs, and type-model priorities.
-- [Android-Lua corpus verification](docs/android-lua-verification.md): external corpus manifest usage and TASK-043 verification command.
-- [Android platform setup](docs/android-platform-setup.md): `android.jar` acquisition, metadata keys, and classloader expectations.
-- [Java interop model guide](docs/java-interop-model.md): Java type shapes, LuaJava helper mapping, and extension points.
-- [JVM reflection and classloader design](docs/jvm-reflection-classloader-design.md): provider loading, package scanning, Android jar behavior, and limitations.
-- [JVM language-server usage](docs/language-server-usage.md): launch shape, LSP capabilities, settings, and request examples.
-- [Semantic compatibility policy](docs/semantic-compat.md): retired legacy API surface and migration notes.
-- [Serialized verification workflow](docs/serialized-verification.md): one-at-a-time Gradle/test execution and lock rules.
-- [Test strategy and inventory](docs/test-strategy.md): parser, semantic, workspace, interop, LSP, and TDD inventory accounting.
+For Android framework reflection, point the JVM workspace configuration at the platform jar for the API level you want to model, via the `jvm.androidJar` metadata key or `JvmWorkspaceConfiguration.androidJar`. Keep application/library jars in `jvm.classpath`, and reserve `jvm.androidJar` for the Android platform jar. See `docs/android-platform-setup.md` for details.
 
 ## Usage
 
-- Add the dependency to your gradle file
+Add the dependency to your Gradle file:
 
 ```kotlin
 implementation("io.github.dingyi222666:luaparser:1.0.4")
 ```
 
-### Dependencies
+**Requires Kotlin 2.1 or newer** — the library is compiled with Kotlin 2.2.0, and older Kotlin toolchains reject its metadata.
 
-- **Kotlin consumer floor: Kotlin >= 2.1.** This library is compiled with the Kotlin 2.2.0 compiler, so consumers must build with a Kotlin Gradle plugin of 2.1 or newer to read its metadata; Kotlin 1.9 (and older) consumers fail with "compiled with an incompatible version of Kotlin".
-- Runtime dependencies: the Kotlin stdlib. On JVM, `org.eclipse.lsp4j` is an `api` dependency because its types appear in the public `LuaLanguageService` surface.
-
-Minimal parser round-trip example:
+### Parser round-trip
 
 ```kotlin
 import io.github.dingyi222666.luaparser.lexer.LuaLexer
@@ -85,9 +48,7 @@ fun main() {
 
 ### Parser version policy
 
-The public no-argument `LuaParser()` constructor intentionally defaults to `LuaVersion.ANDROLUA_5_3`. That keeps Android-Lua/AndroLua 5.3 syntax available by default for current parser, semantic, interop, and language-server work.
-
-For strict Lua 5.3 grammar, construct the parser explicitly:
+The no-argument `LuaParser()` constructor defaults to `LuaVersion.ANDROLUA_5_3`, keeping Android-Lua/AndroLua 5.3 syntax available by default. For strict Lua 5.3 grammar:
 
 ```kotlin
 val parser = LuaParser(luaVersion = LuaVersion.LUA_5_3)
@@ -121,23 +82,21 @@ fun main() {
 }
 ```
 
-The returned `SemanticAnalysisResult` exposes the `SemanticModel` plus a lightweight summary.
-
-The former `SemanticAnalyzer` / `AnalysisResult` / legacy symbol-table API has been retired; `SemanticPipeline` and its `SemanticAnalysisResult` / `SemanticModel` are the single public semantic entry point. See `docs/semantic-compat.md` for the retirement note.
+The returned `SemanticAnalysisResult` exposes the `SemanticModel` plus a lightweight summary. The former `SemanticAnalyzer` / `AnalysisResult` / legacy symbol-table API has been retired; see `docs/semantic-compat.md`.
 
 ### JVM workspace interop
 
 `JvmWorkspaceEngine` can reflect JVM classes into synthetic Lua modules so `require("String")`, `require("Arrays")`, and similar patterns resolve through the workspace graph.
 
-For metadata-driven integration, use these keys:
+Metadata-driven integration keys:
 
 - `jvm.classes`: fully-qualified class names to mount directly
-- `androlua.imports`: AndroLua-style simple import names that should be resolved through JVM import prefixes
+- `androlua.imports`: AndroLua-style simple import names resolved through JVM import prefixes
 - `jvm.classpath`: newline-separated jar or directory entries used to build a reflective class loader
-- `jvm.androidJar`: optional path to an Android platform `android.jar`; appended to the effective reflective classpath
+- `jvm.androidJar`: optional path to an Android platform `android.jar`, appended to the effective reflective classpath
 - `jvm.importPrefixes`: newline-separated prefix list used for simple-name import resolution
 
-You can also configure the JVM engine directly with `JvmWorkspaceConfiguration`:
+Or configure the JVM engine directly:
 
 ```kotlin
 val engine = JvmWorkspaceEngine(
@@ -166,7 +125,7 @@ import io.github.dingyi222666.luaparser.semantic.workspace.VirtualPath
 fun main() {
     val path = VirtualPath.of("main.lua")
     val configuration = JvmWorkspaceConfiguration(
-        androidJar = "/Users/dingyi/Library/Android/sdk/platforms/android-35/android.jar",
+        androidJar = "/opt/android/platforms/android-35/android.jar",
         androluaImports = listOf("TextView"),
         importPrefixes = listOf("java.lang", "android.widget")
     )
@@ -190,39 +149,22 @@ fun main() {
 }
 ```
 
-Source-level Android-Lua patterns are also recognized by the JVM workspace layer:
+Source-level Android-Lua patterns recognized by the JVM workspace layer:
 
 - `import "java.lang.String"` exposes `String` as a visible reflected module symbol.
-- `import "java.util.*"` resolves all top-level classes discoverable from that package on the active JVM classpath/runtime image, making them available as reflected module symbols.
+- `import "java.util.*"` resolves top-level classes discoverable from that package on the active JVM classpath/runtime image.
 - `local import = require("import")` followed by `import("java.util.Locale")` resolves the reflected class type for the assigned local.
 - `luajava.bindClass("java.util.Locale")` resolves the reflected class type for the assigned local.
 
-### Android and AndroLua setup notes
-
-To reproduce Android class resolution on the JVM side, point `jvm.androidJar` at the platform jar for the SDK level you want to model. If you already have a combined classpath, place your dependency jars in `jvm.classpath` and the platform jar in `jvm.androidJar` so the reflective provider can resolve Android framework classes alongside your own libraries.
-
-Example metadata payload:
-
-```kotlin
-val metadata = mapOf(
-    "androlua.imports" to "String\nLinearLayout",
-    "jvm.classpath" to "build/test-libs/app.jar",
-    "jvm.androidJar" to "/opt/android/platforms/android-34/android.jar",
-    "jvm.importPrefixes" to "java.lang\nandroid.widget"
-)
-```
-
 ### Language server
 
-A JVM `lsp4j` server is now available under `io.github.dingyi222666.luaparser.lsp` and can be launched over stdio with:
+A JVM `lsp4j` server is available under `io.github.dingyi222666.luaparser.lsp` and can be launched over stdio:
 
 ```bash
 ./gradlew runLuaLanguageServer
 ```
 
-The current server implementation maps workspace-backed diagnostics, hover, completion, and goto-definition queries through `LuaWorkspaceQueryFacade`.
-
-Workspace symbol search (`workspace/symbol`) matches case-insensitively on symbol names and ranks name-prefix matches ahead of mid-name substring matches before capping results at 500 entries; each bucket keeps the deterministic (name, path, line, column) order of the workspace index, so short queries return stable, prefix-first results instead of an arbitrary alphabetical slice.
+The server maps workspace-backed diagnostics, hover, completion, and goto-definition queries through `LuaWorkspaceQueryFacade`. Workspace symbol search (`workspace/symbol`) matches case-insensitively and ranks name-prefix matches ahead of mid-name substring matches.
 
 Example client settings payload:
 
@@ -235,40 +177,39 @@ Example client settings payload:
 }
 ```
 
-This configuration is consumed by the workspace service and serialized into the same metadata keys used by the reflective JVM workspace engine.
+See `docs/language-server-usage.md` for capabilities and request examples.
 
-### Representative verification path
+## Documentation
 
-A minimal end-to-end local verification flow, to be run only in the serialized verification phase during coordinated waves, is:
-
-1. Start the language server with `./gradlew runLuaLanguageServer`.
-2. Open a Lua document containing `local String = require("String")` and set client configuration with `androlua.imports = ["String"]`.
-3. Request hover on `String.__class.length` and verify the server reports `java.lang.String`.
-4. Request goto definition on `String.__class` and verify the target URI resolves to `file:///__jvm__/classes/java/lang/String.lua`.
-5. Request completion on `Arrays.` after configuring `jvm.classes = ["java.util.Arrays"]` and verify `asList` is offered.
-
-For a fuller setup and acceptance checklist, see `docs/production-readiness.md`.
+- [Production readiness guide](docs/production-readiness.md): setup, usage, verification boundaries, known limitations, and extension points.
+- [Android-Lua architecture notes](docs/android-lua-architecture.md)
+- [Android-Lua import and LuaJava behavior](docs/android-lua-import-luajava.md)
+- [Android-Lua compatibility matrix](docs/android-lua-compatibility-matrix.md)
+- [Android-Lua library model notes](docs/android-lua-library-models.md)
+- [Android-Lua corpus verification](docs/android-lua-verification.md)
+- [Android platform setup](docs/android-platform-setup.md)
+- [Java interop model guide](docs/java-interop-model.md)
+- [JVM reflection and classloader design](docs/jvm-reflection-classloader-design.md)
+- [JVM language-server usage](docs/language-server-usage.md)
+- [Semantic compatibility policy](docs/semantic-compat.md)
+- [Test strategy and inventory](docs/test-strategy.md)
 
 ## Validation
 
-- During parallel code and documentation waves, do not run Gradle, tests, or compile tasks. Required checks are deferred to the dedicated serialized verification phase, currently tracked by `TASK-043`.
-- Outside coordinated worker waves, `./gradlew check` remains the supported default local validation path.
-- Semantic validation now lives in shared `commonTest` coverage, including workspace query flows.
+- `./gradlew check` is the default local validation path.
 - Native host test execution is opt-in with `-PrunNativeHostTests=true`.
-- Run Windows Kotlin/Native host tests explicitly with `./gradlew -PrunNativeHostTests=true mingwX64Test`.
-- JVM interop coverage currently lives in `src/jvmTest/kotlin/interop/jvm/JvmWorkspaceEngineTest.kt`.
-- LSP coverage currently lives in `src/jvmTest/kotlin/lsp/LuaLanguageServiceTest.kt`.
-- Runnable JVM language server entry point: `./gradlew runLuaLanguageServer`.
-- Final production acceptance is not claimed until `TASK-043` serialized verification and the `TASK-037` acceptance audit complete.
+- JVM interop coverage lives in `src/jvmTest/kotlin/interop/jvm/JvmWorkspaceEngineTest.kt`; LSP coverage lives in `src/jvmTest/kotlin/lsp/LuaLanguageServiceTest.kt`.
 
 ## Publishing
 
-Releases go to Maven Central through the manual `publish` workflow (`.github/workflows/publish.yml`, "Run workflow" only — it never triggers on push or tag). Before every run, bump `publishVersion` in `build.gradle.kts` (the single source of truth for the published coordinates): Maven Central forbids re-uploading an existing version, so retrying an already-burned version always fails. Consumers need Kotlin 2.1 or newer: the library is compiled with the Kotlin 2.2.0 compiler, and older Kotlin compilers reject its metadata ("compiled with an incompatible version of Kotlin").
+Releases go to Maven Central through the manual `publish` workflow (`.github/workflows/publish.yml`, "Run workflow" only). Bump `publishVersion` in `build.gradle.kts` before every run — Maven Central forbids re-uploading an existing version.
+
+## License
+
+[Apache License 2.0](LICENSE)
 
 ## Special thanks
 
-[GavinHigham/lpil53](https://github.com/GavinHigham/lpil53)
-
-[fstirlitz/luaparse](https://github.com/fstirlitz/luaparse)
-
-[Rosemose/sora-editor](https://github.com/Rosemoe/sora-editor/blob/main/language-java/src/main/java/io/github/rosemoe/sora/langs/java/JavaTextTokenizer.java)
+- [GavinHigham/lpil53](https://github.com/GavinHigham/lpil53)
+- [fstirlitz/luaparse](https://github.com/fstirlitz/luaparse)
+- [Rosemoe/sora-editor](https://github.com/Rosemoe/sora-editor/blob/main/language-java/src/main/java/io/github/rosemoe/sora/langs/java/JavaTextTokenizer.java)
