@@ -1,0 +1,27 @@
+{
+  "runId": "29193414885",
+  "sliceId": "s004",
+  "status": "failure",
+  "tests": 277,
+  "failures": 7,
+  "failedTests": [
+    "lsp.LspJavaAndroidFeatureTddTest#text_document_and_workspace_services_wrap_android_java_feature_queries_after_configuration[jvm]",
+    "lsp.LspJavaAndroidFeatureTddTest#android_wildcard_layout_lsp_features_cover_ids_listener_and_cross_file_symbols[jvm]",
+    "lsp.LspJavaAndroidFeatureTddTest#android_import_table_lsp_features_resolve_class_static_field_and_member_methods[jvm]",
+    "lsp.LspJavaAndroidFeatureTddTest#java_static_member_lsp_features_resolve_from_configured_jvm_provider[jvm]",
+    "lsp.LspJvmProviderDefinitionTddTest#definition_and_hover_on_luajava_bind_class_alias_land_on_provider_virtual_path[jvm]",
+    "lsp.LspJvmProviderDefinitionTddTest#without_mounts_require_class_definition_and_hover_degrade_gracefully[jvm]",
+    "lsp.LspJvmProviderDefinitionTddTest#without_mounts_empty_metadata_keeps_unknown_short_name_unresolved_while_mounted_peer_still_works[jvm]"
+  ],
+  "progressSummary": {
+    "success": 3,
+    "failure": 1,
+    "pending": 21,
+    "running": 0,
+    "total": 25,
+    "filesDone": 45,
+    "activeSlice": "s004",
+    "updatedAt": "2026-07-12T12:55:02Z"
+  },
+  "notes": "Merged CI slice-progress.json (updatedAt 2026-07-12T12:55:02Z) over local; copied results/s004-29193414885.json; rewrote PROGRESS.md; parsed 7 failures from junit TEST-*.xml into failures.txt. s004 remains active under must-green-to-advance (cannot advance until green)."
+}

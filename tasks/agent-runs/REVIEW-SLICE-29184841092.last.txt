@@ -1,0 +1,20 @@
+{
+  "runId": "29184841092",
+  "sliceId": "s002",
+  "status": "success",
+  "tests": 307,
+  "failures": 0,
+  "failedTests": [],
+  "progressSummary": {
+    "total": 25,
+    "totalFiles": 367,
+    "pending": 23,
+    "success": 2,
+    "failure": 0,
+    "running": 0,
+    "filesDone": 30,
+    "activeSlice": "s003",
+    "updatedAt": "2026-07-12T07:51:56Z"
+  },
+  "notes": "Merged run 29184841092 into win-slices. CI progress newer (updatedAt 2026-07-12T07:51:56Z, history includes this runId). s002 GREEN: 307 tests, 0 failures, duration 35s, sha 17863cc15d8cd662441d9f36d4c9cead4524e80e. Copied results/s002-29184841092.json. failures.txt from junit: 0 entries. Active head advanced to s003 (must-green-to-advance). filesDone=30."
+}

@@ -1,0 +1,21 @@
+{
+  "runId": "29206545189",
+  "sliceId": "s015",
+  "status": "failure",
+  "tests": 0,
+  "failures": 0,
+  "failedTests": [],
+  "progressSummary": {
+    "total": 18,
+    "totalFiles": 367,
+    "pending": 3,
+    "success": 14,
+    "failure": 1,
+    "running": 0,
+    "filesDone": 210,
+    "activeSlice": "s015",
+    "updatedAt": "2026-07-12T19:50:55Z",
+    "chunkSize": 45
+  },
+  "notes": "Merged run 29206545189: CI artifact had no slice-result.json / empty junit; progress.json identical to local (no history for this runId). Recorded s015 failure from CI logs \u2014 windows-run-slice.ps1 crashed setting lastRunId on pending slice object before gradle. Wrote results/s015-29206545189.json; rewrote PROGRESS.md; failures.txt empty (no TEST-*.xml)."
+}

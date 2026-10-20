@@ -1,0 +1,9 @@
+task: TASK-653
+wave: WINSLICE-29205133158
+owner: worker-WINSLICE-29205133158-TASK-653
+finalStatus: review
+utc: 2026-07-12T19:14:17Z
+summary: Fixed DeclarationBinder.visitAssignmentStatement so only single bare free-name LHS invents AST GLOBAL; multi-LHS bare assignment names (a,b=1,2 / u,v,w=1) no longer create non-builtin DeclarationIndex entries or position-query hits. Single bare invent policy retained. No BinderPass/DeclarationFactories/test edits needed. Workers no Gradle.
+filesChanged:
+  - src/commonMain/kotlin/io/github/dingyi222666/luaparser/semantic/binder/DeclarationBinder.kt
+  - tasks/TASK-653.md

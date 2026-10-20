@@ -1,0 +1,32 @@
+{
+  "sliceId": "s012",
+  "runId": "29204945941",
+  "sha": "69d926204dc4e065169a43c6b7ce8395269e4a2a",
+  "status": "success",
+  "exitCode": 0,
+  "durationSec": 30,
+  "tests": 250,
+  "failures": 0,
+  "errors": 0,
+  "skipped": 43,
+  "failedTests": [],
+  "testsPatterns": [
+    "semantic.SemanticPublicApiTest",
+    "semantic.androidlua.AlyLayoutRequireResolutionTddTest",
+    "semantic.androidlua.AndroidLuaDefaultJarDiscoverySurfaceTddTest",
+    "semantic.androidlua.AndroidLuaLibraryStubsTddTest",
+    "semantic.androidlua.EnvImportSurfaceTddTest",
+    "semantic.androidlua.HelperModulesFixtureSurfaceTddTest",
+    "semantic.androidlua.ImportAliasShadowSurfaceTddTest",
+    "semantic.androidlua.ImportNestedPackageMultiLevelTddTest",
+    "semantic.androidlua.ImportPackageAliasCompletionTddTest",
+    "semantic.androidlua.ImportPackageWildcardProxyTddTest",
+    "semantic.androidlua.LoadbitmapReturnSurfaceTddTest",
+    "semantic.androidlua.LoadlayoutIdFieldSurfaceTddTest",
+    "semantic.androidlua.LoadmenuTableSpecSurfaceTddTest",
+    "semantic.androidlua.RepresentativeLayoutWidgetImportTddTest",
+    "semantic.androidlua.Task184OverlayProbeTddTest"
+  ],
+  "gate": "must-green-to-advance",
+  "finishedAt": "2026-07-12T19:02:34Z"
+}

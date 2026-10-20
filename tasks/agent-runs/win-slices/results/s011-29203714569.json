@@ -1,0 +1,32 @@
+{
+  "sliceId": "s011",
+  "runId": "29203714569",
+  "sha": "e9c0192c3ed85711aab691f642f7477d12ba3d57",
+  "status": "success",
+  "exitCode": 0,
+  "durationSec": 10,
+  "tests": 131,
+  "failures": 0,
+  "errors": 0,
+  "skipped": 0,
+  "failedTests": [],
+  "testsPatterns": [
+    "parser.recovery.LuaParserRecoveryMissingEndFunctionTddTest",
+    "parser.recovery.LuaParserRecoveryMultiRhsLineBreakTddTest",
+    "parser.recovery.LuaParserRecoveryNumericForEndTddTest",
+    "parser.recovery.LuaParserRecoveryNumericForStepTddTest",
+    "parser.recovery.LuaParserRecoveryNumericForTddTest",
+    "parser.recovery.LuaParserRecoveryRepeatUntilTddTest",
+    "parser.recovery.LuaParserRecoveryStringConcatIncompleteTddTest",
+    "parser.recovery.LuaParserRecoveryTableConstructorTddTest",
+    "parser.recovery.LuaParserRecoveryTableFieldMissingEqTddTest",
+    "parser.recovery.LuaParserRecoveryTddTest",
+    "parser.recovery.LuaParserRecoveryWhileDoTddTest",
+    "semantic.LegacySemanticAnalyzerCompatibilityTest",
+    "semantic.SemanticPipelineIntegrationTest",
+    "semantic.SemanticPipelinePublicFacadeTddTest",
+    "semantic.SemanticPipelineTest"
+  ],
+  "gate": "must-green-to-advance",
+  "finishedAt": "2026-07-12T18:23:15Z"
+}

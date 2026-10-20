@@ -1,0 +1,51 @@
+# MANUAL release publishing to Maven Central.
+#
+# This workflow never runs automatically: it is workflow_dispatch only
+# ("Run workflow" button). Nothing publishes on push or tag.
+#
+# VERSION BUMP GUARD — read before every run:
+#   Maven Central forbids re-uploading an existing (group, artifact, version):
+#   a failed or partial upload permanently burns that version. Before EVERY
+#   publish, bump `publishVersion` in build.gradle.kts (the single source of
+#   truth for the published coordinates) and commit the bump. If the version
+#   about to be published was already uploaded — even partially — STOP and
+#   bump again instead of retrying.
+#
+# SECRETS (placeholders only — no real values live in this file). Create them
+# in Repo Settings > Secrets and variables > Actions:
+#   MAVEN_CENTRAL_USERNAME / MAVEN_CENTRAL_PASSWORD : Central (S01) portal token
+#   SIGNING_KEY       : ASCII-armored private signing key (keep headers/newlines)
+#   SIGNING_PASSWORD  : passphrase of the signing key
+# They are exposed to Gradle as project properties via the ORG_GRADLE_PROJECT_
+# prefix, which is how the com.vanniktech.maven.publish plugin (configured in
+# build.gradle.kts: SonatypeHost.S01 + in-memory signing) picks them up.
+name: publish
+
+on:
+  workflow_dispatch:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      # Caches ~/.gradle (dependencies, wrapper, build cache) between runs.
+      - name: Set up Gradle caching
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Publish to Maven Central
+        env:
+          ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+          ORG_GRADLE_PROJECT_signingKey: ${{ secrets.SIGNING_KEY }}
+          ORG_GRADLE_PROJECT_signingPassword: ${{ secrets.SIGNING_PASSWORD }}
+        run: ./gradlew publishToMavenCentral --no-daemon --stacktrace

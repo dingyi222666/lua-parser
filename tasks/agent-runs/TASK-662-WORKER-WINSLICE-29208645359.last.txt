@@ -1,0 +1,15 @@
+task: TASK-662
+wave: WINSLICE-29208645359
+owner: worker-WINSLICE-29208645359-TASK-662
+finalStatus: review
+utc: 2026-07-12T21:22:40Z
+filesChanged:
+  - src/jvmTest/kotlin/semantic/interop/LuaJavaNewArrayElementTypeTddTest.kt
+  - tasks/TASK-662.md
+summary: >
+  Cleared multi_index_reads_share_same_element_type Windows red (expected java.util.Locale; got Locale).
+  Root cause was harness needle collision: single-letter names a/b/c with occurrence=2 hit substrings inside
+  local/Locale/bindClass, so hover resolved bindClass ModuleType.moduleName (Locale) rather than the index
+  element JavaInstanceType FQCN. Renamed multi-index locals to unique elemOne/elemTwo/elemZero needles.
+  Product newArray ClassType/JavaArrayType peel path already emits java.util.Locale; no product change required.
+blockedReason: null

@@ -1,0 +1,2186 @@
+package io.github.dingyi222666.luaparser.interop.jvm
+
+import io.github.dingyi222666.luaparser.interop.dex.DexClass
+import io.github.dingyi222666.luaparser.semantic.WorkspaceImportedSymbol
+import io.github.dingyi222666.luaparser.semantic.api.SymbolKind
+import io.github.dingyi222666.luaparser.semantic.types.model.CallableType
+import io.github.dingyi222666.luaparser.semantic.types.model.ArrayType
+import io.github.dingyi222666.luaparser.semantic.types.model.ClassType
+import io.github.dingyi222666.luaparser.semantic.types.model.FunctionParameter
+import io.github.dingyi222666.luaparser.semantic.types.model.FunctionType
+import io.github.dingyi222666.luaparser.semantic.types.model.JavaClassType
+import io.github.dingyi222666.luaparser.semantic.types.model.JavaConstructorType
+import io.github.dingyi222666.luaparser.semantic.types.model.JavaInstanceMemberType
+import io.github.dingyi222666.luaparser.semantic.types.model.JavaInstanceType
+import io.github.dingyi222666.luaparser.semantic.types.model.JavaMemberKind
+import io.github.dingyi222666.luaparser.semantic.types.model.JavaOverloadSet
+import io.github.dingyi222666.luaparser.semantic.types.model.JavaOverloadType
+import io.github.dingyi222666.luaparser.semantic.types.model.JavaSignatureMetadata
+import io.github.dingyi222666.luaparser.semantic.types.model.JavaStaticMemberType
+import io.github.dingyi222666.luaparser.semantic.types.model.JavaTypeName
+import io.github.dingyi222666.luaparser.semantic.types.model.ModuleType
+import io.github.dingyi222666.luaparser.semantic.types.model.PrimitiveType
+import io.github.dingyi222666.luaparser.semantic.types.model.Type
+import io.github.dingyi222666.luaparser.semantic.types.model.TypeParameterType
+import io.github.dingyi222666.luaparser.semantic.types.model.UnknownType
+import io.github.dingyi222666.luaparser.semantic.workspace.ModuleExportSurface
+import io.github.dingyi222666.luaparser.semantic.workspace.VirtualPath
+import io.github.dingyi222666.luaparser.semantic.workspace.WorkspaceSnapshot
+import io.github.dingyi222666.luaparser.semantic.workspace.workspaceFingerprintHash
+import java.io.File
+import java.lang.reflect.Constructor
+import java.lang.reflect.Executable
+import java.lang.reflect.Field
+import java.lang.reflect.GenericArrayType
+import java.lang.reflect.Method
+import java.lang.reflect.Modifier
+import java.lang.reflect.ParameterizedType
+import java.lang.reflect.TypeVariable
+import java.lang.reflect.WildcardType
+import java.net.JarURLConnection
+import java.net.URI
+import java.net.URLClassLoader
+import java.nio.file.Files
+import java.nio.file.Paths
+import java.util.jar.JarFile
+import java.lang.reflect.Type as ReflectType
+
+class JvmClassModuleProvider(
+    private val baseClassLoader: ClassLoader = JvmClassModuleProvider::class.java.classLoader,
+    private val defaultImportPrefixes: List<String> = DEFAULT_IMPORT_PREFIXES,
+    private val deferPackageMemberReflection: Boolean = false,
+    private val analysisCheckpoint: () -> Unit = {}
+) {
+    data class ImportDiagnostic(
+        val importText: String,
+        val pathPrefix: String,
+        val className: String,
+        val message: String,
+        val code: String
+    )
+
+    // Product heap bounds (TASK-611): memoize expensive reflection so multi-file workspace
+    // builds and per-document workspaceContext never re-expand android.jar providers.
+    private val fullClassProviderCache =
+        linkedMapOf<String, Pair<VirtualPath, WorkspaceSnapshot.FileSnapshot>>()
+    private val shallowClassProviderCache =
+        linkedMapOf<String, Pair<VirtualPath, WorkspaceSnapshot.FileSnapshot>>()
+    private val packageProviderCache =
+        linkedMapOf<String, Pair<VirtualPath, WorkspaceSnapshot.FileSnapshot>>()
+    private val wildcardClassNameCache = linkedMapOf<String, List<String>>()
+    private val jarPackageClassNamesCache = java.util.concurrent.ConcurrentHashMap<String, Map<String, List<String>>>()
+    private val classLoaderCache = linkedMapOf<String, ClassLoader>()
+    private val moduleTypeCache = linkedMapOf<String, ModuleType>()
+    private val shallowModuleTypeCache = linkedMapOf<String, ModuleType>()
+    // Wave K perf: reflectiveClasspathFiles() is needed to BUILD the wildcard/package cache
+    // keys below (and to construct class loaders), so an uncached call re-ran env reads plus
+    // SDK-root directory listings on every short-name/package resolution even when every
+    // downstream cache was going to hit. The resolution is deterministic in (configured
+    // classpath fields + env values + well-known SDK roots); env and the filesystem SDK roots
+    // cannot change mid-process, so entries are intentionally never invalidated.
+    private val reflectiveClasspathFilesCache = linkedMapOf<String, List<File>>()
+    // Negative Class.forName cache: CNFE carries a full stack trace, and probing
+    // thousands of absent names (import guesses, wildcard expansions) dominated analysis
+    // time. Keyed per resolved classloader string so a classpath change re-probes.
+    private val classLoadMisses = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
+    // Dex mounting (libs/classes.dex): parse caching is process-wide in DexLibraryMounter;
+    // this instance map additionally registers libraries discovered through bare
+    // `import "libs/classes.dex"` source imports so later bindClass/newInstance dotted
+    // targets resolve against them within the same provider (workspace update) lifetime —
+    // mirroring the AndroLua runtime where importing a dex loads it.
+    private val mountedDexLibraries = linkedMapOf<String, DexLibraryMounter.DexLibrary>()
+    private val dexLibrariesCache = linkedMapOf<String, List<DexLibraryMounter.DexLibrary>>()
+
+    private fun loadClassOrNull(className: String, classLoader: ClassLoader): Class<*>? {
+        analysisCheckpoint()
+        val key = className + '#' + System.identityHashCode(classLoader)
+        if (classLoadMisses.containsKey(key)) {
+            return null
+        }
+        val loaded = runCatching { Class.forName(className, false, classLoader) }.getOrNull()
+        if (loaded == null) {
+            classLoadMisses[key] = true
+        }
+        return loaded
+    }
+
+    fun providersFor(metadata: Map<String, String>): Map<VirtualPath, WorkspaceSnapshot.FileSnapshot> =
+        providersFor(JvmWorkspaceConfiguration.fromMetadata(metadata))
+
+    fun providersFor(configuration: JvmWorkspaceConfiguration): Map<VirtualPath, WorkspaceSnapshot.FileSnapshot> =
+        providersFor(configuration, deferMembers = false)
+
+    internal fun providersFor(
+        configuration: JvmWorkspaceConfiguration,
+        deferMembers: Boolean
+    ): Map<VirtualPath, WorkspaceSnapshot.FileSnapshot> {
+        val normalized = configuration.normalized(defaultImportPrefixes)
+        val classLoader = normalized.classLoader ?: classLoaderFor(normalized)
+        val requested = requestedClassLoads(normalized, classLoader)
+        val bareDexTargets = bareDexLibraryTargets(normalized)
+        if (requested.isEmpty() && bareDexTargets.isEmpty()) return emptyMap()
+
+        val providers = linkedMapOf<VirtualPath, WorkspaceSnapshot.FileSnapshot>()
+        requested.forEach { request ->
+            analysisCheckpoint()
+            // Never invent framework members: only mount classes that Class.forName can
+            // load — or that a configured/imported dex library actually declares (dex
+            // classes cannot load reflectively; they mount through DexClassModelAdapter).
+            val provider = request.dexLibrary
+                ?.let { dex -> dex.classForBinaryName(request.className.replace('.', '/'))
+                    ?.let { cls -> providerForDexClass(dex, cls, deferMembers) } }
+                ?: loadClassOrNull(request.className, request.classLoader)?.let { providerForClass(it, deferMembers) }
+            provider?.let { (path, snapshot) -> providers[path] = snapshot }
+        }
+        // Bare `import "libs/classes.dex"` targets mount the library module plus a
+        // provider per declared class (the packageMemberClassProvidersFor pattern) so
+        // simple-name aliases resolve through the workspace provider graph.
+        bareDexTargets.forEach { target -> mountDexLibraryProviders(target, providers, deferMembers) }
+        return providers
+    }
+
+    /**
+     * Mount providers for bare dex library import targets (`import "libs/classes.dex"`).
+     *
+     * Fed by [JvmWorkspaceEngine.extraProviders] with configured imports, document
+     * source imports and AST import targets; this provider re-filters to bare,
+     * existing, mountable dex/apk paths. Workspace `libs/` directories are never
+     * auto-scanned — a dex library mounts only when explicitly named (classpath
+     * entry or import target), matching the existing reflective classpath contract.
+     */
+    internal fun dexLibraryProvidersFor(
+        importTargets: Collection<String>,
+        configuration: JvmWorkspaceConfiguration,
+        deferMembers: Boolean = false
+    ): Map<VirtualPath, WorkspaceSnapshot.FileSnapshot> {
+        val providers = linkedMapOf<VirtualPath, WorkspaceSnapshot.FileSnapshot>()
+        importTargets.forEach { importText ->
+            val parsed = parseImportTarget(importText) ?: return@forEach
+            if (parsed.pathPrefix != null) {
+                return@forEach
+            }
+            mountDexLibraryProviders(parsed.className, providers, deferMembers)
+        }
+        return providers
+    }
+
+    private fun mountDexLibraryProviders(
+        target: String,
+        providers: MutableMap<VirtualPath, WorkspaceSnapshot.FileSnapshot>,
+        deferMembers: Boolean
+    ) {
+        val library = bareDexLibrary(target)?.let { DexLibraryMounter.libraryFor(it) } ?: return
+        registerDexLibrary(library)
+        val (libraryPath, librarySnapshot) = providerForDexLibrary(library, target.trim(), deferMembers)
+        providers.putIfAbsent(libraryPath, librarySnapshot)
+        library.classes.forEach { cls ->
+            val (classPath, classSnapshot) = providerForDexClass(library, cls, deferMembers)
+            providers.putIfAbsent(classPath, classSnapshot)
+        }
+    }
+
+    /**
+     * Package-list surface for wildcard targets only (`pkg.*`).
+     *
+     * Keys are stable package virtual paths under `__jvm__/packages/<segments>.lua`.
+     * Class modules (`__jvm__/classes/...`) are never package-list keys — they are mounted
+     * by [packageMemberClassProvidersFor] / [providersFor] on class-resolution surfaces.
+     *
+     * Non-wildcard package-name aliases, FQCN class targets, and blank/malformed inputs
+     * yield no package-list entries (and never throw).
+     */
+    internal fun packageProvidersFor(
+        importTargets: Collection<String>,
+        configuration: JvmWorkspaceConfiguration
+    ): Map<VirtualPath, WorkspaceSnapshot.FileSnapshot> =
+        packageSurfaceProviders(importTargets, configuration, membersOnly = false)
+
+    /**
+     * Shallow class providers for members of wildcard package targets.
+     *
+     * Used by [JvmWorkspaceEngine] so wildcard imports can resolve identifiers
+     * (TextView/File) without deep hierarchy expand of every framework type.
+     * Paths are always `__jvm__/classes/...` — never mixed into package-list keys.
+     */
+    internal fun packageMemberClassProvidersFor(
+        importTargets: Collection<String>,
+        configuration: JvmWorkspaceConfiguration
+    ): Map<VirtualPath, WorkspaceSnapshot.FileSnapshot> =
+        packageSurfaceProviders(importTargets, configuration, membersOnly = true)
+
+    /**
+     * Shared package-enumeration walk behind both package surfaces ([membersOnly] picks
+     * shallow class modules over the package-list module). Both always prefer a reflective
+     * classpath loader for package wildcards so host android.jar enumeration is not blocked
+     * by a caller-supplied ClassLoader that cannot see the configured jar; the caller
+     * loader is used only as the parent. Wildcard-only listing for [membersOnly = false]:
+     * package-name aliases and class FQCNs stay off the package-list key set.
+     */
+    private fun packageSurfaceProviders(
+        importTargets: Collection<String>,
+        configuration: JvmWorkspaceConfiguration,
+        membersOnly: Boolean
+    ): Map<VirtualPath, WorkspaceSnapshot.FileSnapshot> {
+        val normalized = configuration.normalized(defaultImportPrefixes)
+        val classLoader = classLoaderForPackageEnumeration(normalized)
+        val providers = linkedMapOf<VirtualPath, WorkspaceSnapshot.FileSnapshot>()
+        val visitedPackages = linkedSetOf<String>()
+        importTargets.forEach { importText ->
+            val packageName = wildcardPackageName(importText)
+                ?: (if (membersOnly) packageNameFromImport(importText, normalized, classLoader) else null)
+                ?: return@forEach
+            if (!visitedPackages.add(packageName)) {
+                return@forEach
+            }
+            if (!membersOnly) {
+                val packageProvider = packageProviderFor(packageName, normalized, classLoader) ?: return@forEach
+                providers[packageProvider.first] = packageProvider.second
+            } else {
+                // Accept both `pkg.*` wildcards and package-name aliases so engine-normalized
+                // targets and raw alias forms both mount shallow class modules.
+                resolvedPackageClasses(packageName, classLoader, normalized).forEach { clazz ->
+                    analysisCheckpoint()
+                    providerForClass(clazz, deferMembers = true)?.let { (path, snapshot) ->
+                        providers.putIfAbsent(path, snapshot)
+                    }
+                }
+            }
+        }
+        return providers
+    }
+
+    internal fun requestedClasses(configuration: JvmWorkspaceConfiguration): Set<String> {
+        val normalized = configuration.normalized(defaultImportPrefixes)
+        return requestedClassLoads(normalized, normalized.classLoader ?: classLoaderFor(normalized))
+            .mapTo(linkedSetOf()) { it.className }
+    }
+
+    private fun importedClassLoadNames(importText: String, configuration: JvmWorkspaceConfiguration): List<String> {
+        val normalized = configuration.normalized(defaultImportPrefixes)
+        val classLoader = normalized.classLoader ?: classLoaderFor(normalized)
+        return resolveClassLoads(importText, normalized.importPrefixes, classLoader, normalized)
+            .map(ResolvedClassLoad::className)
+    }
+
+    internal fun importedClassName(importText: String, configuration: JvmWorkspaceConfiguration): String? =
+        importedClassLoadNames(importText, configuration).firstOrNull()
+
+    internal fun importedClassNames(importText: String, configuration: JvmWorkspaceConfiguration): List<String> {
+        // Heap bound: never expand wildcard/package targets into full class lists for
+        // configuration.classes / source discovery. Package members are mounted via
+        // packageProvidersFor (package paths) + packageMemberClassProvidersFor (class paths);
+        // unparsable and wildcard targets therefore yield an empty list.
+        if (parseImportTarget(importText)?.className?.endsWith(".*") != false) return emptyList()
+        return importedClassLoadNames(importText, configuration)
+    }
+
+    internal fun importDiagnostics(configuration: JvmWorkspaceConfiguration): List<ImportDiagnostic> {
+        val normalized = configuration.normalized(defaultImportPrefixes)
+        return distinctImportDiagnostics(normalized.classes + normalized.androluaImports, normalized)
+    }
+
+    internal fun importDiagnostics(
+        importTargets: Collection<String>,
+        configuration: JvmWorkspaceConfiguration
+    ): List<ImportDiagnostic> {
+        return distinctImportDiagnostics(importTargets, configuration.normalized(defaultImportPrefixes))
+    }
+
+    /** Shared body behind both [importDiagnostics] overloads (already-normalized config). */
+    private fun distinctImportDiagnostics(
+        importTargets: Collection<String>,
+        normalized: JvmWorkspaceConfiguration
+    ): List<ImportDiagnostic> {
+        return importTargets
+            .mapNotNull { importDiagnostic(it, normalized) }
+            .distinctBy { diagnostic ->
+                listOf(diagnostic.importText, diagnostic.pathPrefix, diagnostic.className, diagnostic.code)
+            }
+    }
+
+    internal fun importedSymbolForTarget(
+        importText: String,
+        configuration: JvmWorkspaceConfiguration,
+        deferMembers: Boolean = false
+    ): WorkspaceImportedSymbol? {
+        val normalized = configuration.normalized(defaultImportPrefixes)
+        val classLoader = classLoaderForPackageEnumeration(normalized)
+        // 0) bare dex library target (`import "libs/classes.dex"`) → library module symbol
+        //    with every declared class keyed by simple name.
+        importedDexLibrarySymbol(importText, normalized, deferMembers)?.let { return it }
+        // 1) wildcard package  2) loadable class  3) package-name alias when package enumerates.
+        return when {
+            wildcardPackageName(importText) != null -> importedPackageSymbol(importText, normalized, classLoader)
+            else -> importedClassSymbol(importText, normalized, classLoader, deferMembers)
+                ?: importedPackageSymbol(importText, normalized, classLoader)
+        }
+    }
+
+    internal fun importedSymbol(
+        importText: String,
+        configuration: JvmWorkspaceConfiguration,
+        deferMembers: Boolean = false
+    ): WorkspaceImportedSymbol? {
+        val normalized = configuration.normalized(defaultImportPrefixes)
+        val classLoader = normalized.classLoader ?: classLoaderFor(normalized)
+        return importedClassSymbol(importText, normalized, classLoader, deferMembers)
+    }
+
+    internal fun implicitClassSymbol(importText: String, configuration: JvmWorkspaceConfiguration): WorkspaceImportedSymbol? =
+        // Identical body to [importedSymbol] with the package-catalog defer policy applied.
+        importedSymbol(importText, configuration, deferMembers = deferPackageMemberReflection)
+
+    /** Shared imported-symbol shape: caller-chosen alias, module identity from the surface. */
+    private fun importedSymbolOf(
+        alias: String,
+        providerPath: VirtualPath,
+        moduleType: ModuleType
+    ): WorkspaceImportedSymbol = WorkspaceImportedSymbol(
+        alias = alias,
+        moduleName = moduleType.moduleName,
+        providerPath = providerPath,
+        moduleType = moduleType
+    )
+
+    private fun importedClassSymbol(
+        importText: String,
+        configuration: JvmWorkspaceConfiguration,
+        classLoader: ClassLoader,
+        deferMembers: Boolean = false
+    ): WorkspaceImportedSymbol? {
+        // Mounted dex libraries resolve simple-name class targets from their O(1)
+        // alias index BEFORE any classloader work: a framework-dex classloader miss
+        // costs seconds per candidate on the device (measured 4.2s for one implicit
+        // 'Greeter' lookup that a registered runtime dex answers instantly), and the
+        // scan runs on the import-activation path of interactive edits.
+        val simpleTarget = importText.trim()
+        if (simpleTarget.isNotEmpty() && !simpleTarget.contains('.') && !simpleTarget.endsWith(".*")) {
+            val dexStart = System.currentTimeMillis()
+            val dexSymbol = dexLibrariesFor(configuration).firstNotNullOfOrNull { dex ->
+                dex.classForSimpleAlias(simpleTarget)?.let { cls ->
+                    registerDexLibrary(dex)
+                    val (providerPath, snapshot) = providerForDexClass(dex, cls, deferMembers)
+                    val moduleType = snapshot.moduleExportSurface?.moduleType ?: return@firstNotNullOfOrNull null
+                    importedSymbolOf(moduleType.moduleName, providerPath, moduleType)
+                }
+            }
+            val dexMs = System.currentTimeMillis() - dexStart
+            if (dexMs > 300) {
+                System.err.println("DEX-PERF: simple-alias '$simpleTarget' hit=${dexSymbol != null} took ${dexMs}ms")
+            }
+            dexSymbol?.let { return it }
+        }
+        // Prefer a single class resolution; package-name targets with many classes fall through.
+        val loads = resolveClassLoads(
+            importText = importText,
+            importPrefixes = configuration.importPrefixes,
+            classLoader = classLoader,
+            configuration = configuration,
+            allowPackageEnumeration = false
+        )
+        val request = loads.firstOrNull() ?: return null
+        // Dex classes cannot Class.forName: mount through the parsed dex library instead.
+        request.dexLibrary?.let { dex ->
+            val cls = dex.classForBinaryName(request.className.replace('.', '/')) ?: return null
+            registerDexLibrary(dex)
+            val (providerPath, snapshot) = providerForDexClass(dex, cls, deferMembers)
+            val moduleType = snapshot.moduleExportSurface!!.moduleType
+            // Alias by the std-collision-guarded module name so a dex `R$string`
+            // class never activates the bare "string" Lua std alias.
+            return importedSymbolOf(moduleType.moduleName, providerPath, moduleType)
+        }
+        val clazz = loadClassOrNull(request.className, request.classLoader) ?: return null
+        val (providerPath, snapshot) = providerForClass(clazz, deferMembers)
+            ?: return null
+        return importedSymbolOf(clazz.simpleName, providerPath, snapshot.moduleExportSurface!!.moduleType)
+    }
+
+    /**
+     * Bare dex library import target (`import "libs/classes.dex"`): mounts the library
+     * module (fields keyed by class simple name) and registers the library so later
+     * dotted/simple-name targets resolve against it. Prefix forms
+     * (`libs/classes.dex:com.foo.Bar`) resolve per-class via [resolveDexClassLoad] instead.
+     */
+    private fun importedDexLibrarySymbol(
+        importText: String,
+        configuration: JvmWorkspaceConfiguration,
+        deferMembers: Boolean
+    ): WorkspaceImportedSymbol? {
+        val parsed = parseImportTarget(importText) ?: return null
+        if (parsed.pathPrefix != null) return null
+        val importStart = System.currentTimeMillis()
+        val library = bareDexLibrary(parsed.className)?.let { DexLibraryMounter.libraryFor(it) }
+        val mountMs = System.currentTimeMillis() - importStart
+        if (library == null) {
+            // Diagnostic for dynamically imported libraries: without the mount the
+            // imported module's members can never complete, and the failure is silent.
+            if (parsed.className.endsWith(".dex") || parsed.className.endsWith(".apk")) {
+                System.err.println("LSP-DEVICE: dex library import did not mount: " + parsed.className +
+                    " (exists=" + java.io.File(parsed.className).exists() + ")")
+            }
+            return null
+        }
+        val registerStart = System.currentTimeMillis()
+        registerDexLibrary(library)
+        val (providerPath, snapshot) = providerForDexLibrary(library, parsed.className.trim(), deferMembers)
+        val surfaceMs = System.currentTimeMillis() - registerStart
+        if (mountMs > 500 || surfaceMs > 500) {
+            System.err.println("DEX-PERF: ${parsed.className} mount=${mountMs}ms register+surface=${surfaceMs}ms")
+        }
+        val moduleType = snapshot.moduleExportSurface?.moduleType
+        if (moduleType == null) {
+            System.err.println("LSP-DEVICE: dex library mounted without export surface: " + library.cacheIdentity)
+            return null
+        }
+        return importedSymbolOf(moduleType.moduleName, providerPath, moduleType)
+    }
+
+    private fun importedPackageSymbol(
+        importText: String,
+        configuration: JvmWorkspaceConfiguration,
+        classLoader: ClassLoader
+    ): WorkspaceImportedSymbol? {
+        val packageName = packageNameFromImport(importText, configuration, classLoader) ?: return null
+        val (providerPath, provider) = packageProviderFor(packageName, configuration, classLoader) ?: return null
+        val moduleType = provider.moduleExportSurface?.moduleType ?: return null
+        // Key the activation alias by the FULL package name. A short
+        // substringBeforeLast('.') alias ("widget") collides silently when two wildcard
+        // packages share the last segment (android.widget.* vs android.support.v7.widget.*,
+        // demo main.lua) — last-wins would drop the other package symbol. The resolver's
+        // importedPackageSymbol already aliases by the full package name; match it here.
+        return importedSymbolOf(packageName, providerPath, moduleType)
+    }
+
+    /**
+     * Cache-key identity suffix for reflective-classpath-scoped caches: `path;path;…` of the
+     * resolved reflective classpath files, shared verbatim by the package-provider, wildcard
+     * class-name and classloader cache keys so distinct classpath configurations never
+     * share a name-only cache entry.
+     */
+    private fun StringBuilder.appendClasspathIdentity(configuration: JvmWorkspaceConfiguration) {
+        reflectiveClasspathFiles(configuration).forEach { entry ->
+            append(entry.absolutePath)
+            append(';')
+        }
+    }
+
+    private fun packageProviderFor(
+        packageName: String,
+        configuration: JvmWorkspaceConfiguration,
+        classLoader: ClassLoader
+    ): Pair<VirtualPath, WorkspaceSnapshot.FileSnapshot>? {
+        // Include reflective classpath + loader identity so package modules from distinct
+        // classpath configurations never share a name-only cache entry.
+        val cacheKey = buildString {
+            append(packageName)
+            append('#')
+            append(System.identityHashCode(classLoader))
+            append('#')
+            appendClasspathIdentity(configuration)
+        }
+        packageProviderCache[cacheKey]?.let { return it }
+        val classes = resolvedPackageClasses(packageName, classLoader, configuration)
+        if (classes.isEmpty()) {
+            return null
+        }
+        val moduleType = packageModuleTypeFor(packageName, classes)
+        val provider = moduleProviderSnapshot(
+            VirtualPath.of("__jvm__/packages/${packageName.replace('.', '/')}.lua"), "package",
+            packageName, linkedSetOf(moduleType.moduleName), moduleType
+        )
+        packageProviderCache[cacheKey] = provider
+        return provider
+    }
+
+    private fun requestedClassLoads(
+        configuration: JvmWorkspaceConfiguration,
+        classLoader: ClassLoader
+    ): List<ResolvedClassLoad> {
+        return (configuration.classes.asSequence() + configuration.androluaImports.asSequence())
+            .flatMap { resolveClassLoads(it, configuration.importPrefixes, classLoader, configuration) }
+            .distinctBy { it.className }
+            .toList()
+    }
+
+    private fun resolveClassLoads(
+        importText: String,
+        importPrefixes: List<String>,
+        classLoader: ClassLoader,
+        configuration: JvmWorkspaceConfiguration,
+        allowPackageEnumeration: Boolean = false
+    ): List<ResolvedClassLoad> {
+        val parsed = parseImportTarget(importText) ?: return emptyList()
+        val targetClassLoader = classLoaderForImportTarget(parsed, configuration, classLoader) ?: return emptyList()
+        val target = parsed.className
+        if (target.isEmpty()) {
+            return emptyList()
+        }
+        if (target.endsWith(".*")) {
+            return resolveWildcardImports(target.removeSuffix(".*"), targetClassLoader, configuration)
+                .map { ResolvedClassLoad(it, targetClassLoader) }
+        }
+        if ('.' in target) {
+            // Explicit metadata defines the API surface, including APIs newer than the
+            // device runtime. It must not be replaced by parent-first reflection.
+            val metadataDexFirst = parsed.pathPrefix != null || !configuration.androidDex.isNullOrBlank()
+            if (metadataDexFirst) resolveDexClassLoad(parsed, target, configuration)?.let { return listOf(it) }
+            // Dex classes cannot Class.forName: resolve dotted targets against the
+            // prefix-named dex library first (`libs/classes.dex:com.foo.Bar`), then every
+            // visible dex library (classpath entries + bare-imported libraries).
+            // Reflection keeps precedence — the second dex probe only runs after every
+            // Class.forName miss, and only when the metadata-first probe above did not
+            // already cover the identical resolution.
+            loadedCandidateOrNull(candidateClassNames(target), targetClassLoader)?.let { return it }
+            if (!metadataDexFirst) resolveDexClassLoad(parsed, target, configuration)?.let { return listOf(it) }
+            // Package-name alias support (import "android.widget") only when explicitly allowed.
+            // Default class-load paths keep this off so providersFor does not reflect whole packages.
+            if (allowPackageEnumeration) {
+                return resolveWildcardImports(target, targetClassLoader, configuration)
+                    .map { ResolvedClassLoad(it, targetClassLoader) }
+            }
+            return emptyList()
+        }
+        // Short AndroLua names under import prefixes:
+        // - OnClickListener / Entry / BindServiceFlags with enclosing-type prefix
+        //   (android.view.View + OnClickListener → View$OnClickListener)
+        // - View_OnClickListener / Map_Entry style underscore aliases with package prefix
+        //   (android.view + View_OnClickListener → android.view.View$OnClickListener via
+        //   candidateClassNames underscore→$ rewrite)
+        // Prefer binary `$` join first so host android.jar nested types resolve before
+        // non-loadable pure-dotted Class.forName attempts.
+        return importPrefixes.firstNotNullOfOrNull { prefix ->
+            val trimmedPrefix = prefix.trim().takeIf(String::isNotEmpty) ?: return@firstNotNullOfOrNull null
+            val shortNameCandidates = shortNameClassCandidates(trimmedPrefix, target)
+            if (!configuration.androidDex.isNullOrBlank()) {
+                shortNameCandidates.firstNotNullOfOrNull { candidate ->
+                    analysisCheckpoint()
+                    resolveDexClassLoad(parsed, candidate, configuration)
+                }?.let { return@firstNotNullOfOrNull listOf(it) }
+            }
+            // The trailing Class.forName ladder is [loadedCandidateOrNull] (shared with the
+            // dotted-target branch above); a classloader miss over the framework dex costs
+            // ~100-150ms per candidate on the emulator, so the shared helper keeps the
+            // per-candidate analysisCheckpoint() (measured 4.2s for one implicit
+            // simple-name lookup and a >10s checker stall in the same resolution family).
+            loadedCandidateOrNull(shortNameCandidates, targetClassLoader)
+        }.orEmpty().ifEmpty {
+            // Dex simple-name fallback for short AndroLua names (`bindClass("Greeter")`
+            // after `import "libs/classes.dex"`): unambiguous bare aliases only, never
+            // Lua std module names.
+            listOfNotNull(resolveDexSimpleNameLoad(target, configuration))
+        }
+    }
+
+    /** First [Class.forName]-loadable candidate, as a single-element load list (null = all miss). */
+    private fun loadedCandidateOrNull(
+        candidates: Sequence<String>,
+        classLoader: ClassLoader
+    ): List<ResolvedClassLoad>? = candidates.firstNotNullOfOrNull { candidate ->
+        analysisCheckpoint()
+        loadClassOrNull(candidate, classLoader)?.name?.let { listOf(ResolvedClassLoad(it, classLoader)) }
+    }
+
+    /**
+     * Dotted-target dex resolution: a dex library path prefix scopes the lookup to that
+     * library (`libs/classes.dex:com.foo.Bar`); otherwise every visible dex library
+     * ([dexLibrariesFor]) is consulted. Returns null when the target declares nothing.
+     */
+    private fun resolveDexClassLoad(
+        parsed: ImportTarget,
+        target: String,
+        configuration: JvmWorkspaceConfiguration
+    ): ResolvedClassLoad? {
+        parsed.pathPrefix?.trim()?.takeIf(String::isNotEmpty)?.let { prefix ->
+            DexLibraryMounter.libraryFor(File(prefix))?.let { scoped ->
+                scoped.classForTarget(target)?.let { cls ->
+                    return dexResolvedClassLoad(cls, scoped)
+                }
+            }
+        }
+        return dexLibrariesFor(configuration).firstNotNullOfOrNull { library ->
+            library.classForTarget(target)?.let { cls -> dexResolvedClassLoad(cls, library) }
+        }
+    }
+
+    /**
+     * Short-name dex resolution (no dots/slashes): unambiguous simple aliases only;
+     * Lua std module names never resolve bare (string/io/... stay library names).
+     */
+    private fun resolveDexSimpleNameLoad(
+        target: String,
+        configuration: JvmWorkspaceConfiguration
+    ): ResolvedClassLoad? {
+        if (target.isBlank() || '.' in target || '/' in target) {
+            return null
+        }
+        return dexLibrariesFor(configuration).firstNotNullOfOrNull { library ->
+            library.classForSimpleAlias(target)?.let { cls -> dexResolvedClassLoad(cls, library) }
+        }
+    }
+
+    /** Dex loads key [ResolvedClassLoad.className] by the dotted binary name. */
+    private fun dexResolvedClassLoad(
+        cls: DexClass,
+        library: DexLibraryMounter.DexLibrary
+    ): ResolvedClassLoad {
+        return ResolvedClassLoad(
+            className = cls.binaryName.replace('/', '.'),
+            classLoader = baseClassLoader,
+            dexLibrary = library
+        )
+    }
+
+    /**
+     * Bare dex library path target (`libs/classes.dex`, absolute `.apk` path), or null.
+     * Bare = no `path:Class` separator; the extension must be dex/apk and the file must
+     * exist. Workspace `libs/` directories are never auto-scanned by path — dex libraries
+     * mount only when explicitly named (mirrors the reflective classpath contract).
+     */
+    private fun bareDexLibrary(target: String): File? {
+        val trimmed = target.trim()
+        if (trimmed.isEmpty() || ':' in trimmed) {
+            return null
+        }
+        val file = File(trimmed)
+        return file.takeIf(DexLibraryMounter::isMountableDexLibrary)
+    }
+
+    private fun bareDexLibraryTargets(normalized: JvmWorkspaceConfiguration): List<String> {
+        return (normalized.classes.asSequence() + normalized.androluaImports.asSequence())
+            .filter { bareDexLibrary(it) != null }
+            .map(String::trim)
+            .distinct()
+            .toList()
+    }
+
+    private fun registerDexLibrary(library: DexLibraryMounter.DexLibrary) {
+        mountedDexLibraries.putIfAbsent(library.cacheIdentity, library)
+    }
+
+    /**
+     * Dex libraries visible to resolution: configured framework/classpath dex/apk entries, bare
+     * dex paths named in classes/androluaImports, plus libraries registered by bare
+     * `import "libs/classes.dex"` source imports during this provider instance.
+     */
+    private fun dexLibrariesFor(configuration: JvmWorkspaceConfiguration): List<DexLibraryMounter.DexLibrary> {
+        val cacheKey = buildString {
+            configuration.androidDex?.let { append(it).append(';') }
+            configuration.classpathEntries.forEach { append(it).append(';') }
+            append('#')
+            configuration.classes.forEach { append(it).append(';') }
+            append('#')
+            configuration.androluaImports.forEach { append(it).append(';') }
+        }
+        val configured = dexLibrariesCache.getOrPut(cacheKey) { configuredDexLibraries(configuration) }
+        return (configured + mountedDexLibraries.values).distinctBy(DexLibraryMounter.DexLibrary::cacheIdentity)
+    }
+
+    private fun configuredDexLibraries(configuration: JvmWorkspaceConfiguration): List<DexLibraryMounter.DexLibrary> =
+        buildList {
+            configuration.androidDex?.let { path ->
+                DexLibraryMounter.libraryFor(File(path.trim()))?.let(::add)
+            }
+            configuration.classpathEntries.forEach { entry ->
+                DexLibraryMounter.libraryFor(File(entry.trim()))?.let(::add)
+            }
+            (configuration.classes + configuration.androluaImports).forEach { target ->
+                bareDexLibrary(target)?.let { path -> DexLibraryMounter.libraryFor(path)?.let(::add) }
+            }
+        }.distinctBy(DexLibraryMounter.DexLibrary::cacheIdentity)
+
+    /**
+     * Expand AndroLua short-name import targets under a single import prefix.
+     *
+     * Handles:
+     * - enclosing-type prefixes: `android.view.View` + `OnClickListener` →
+     *   `android.view.View$OnClickListener` (binary `$` preferred)
+     * - package prefixes + Outer_Inner short names: `android.view` + `View_OnClickListener` →
+     *   `android.view.View$OnClickListener`
+     * - package prefixes that already end in Outer: same as enclosing-type path
+     *
+     * Never invents loadable names; [Class.forName] remains the authority.
+     */
+    private fun shortNameClassCandidates(prefix: String, target: String): Sequence<String> = sequence {
+        if (target.isEmpty()) {
+            return@sequence
+        }
+        // Package prefixes usually resolve directly; enclosing-class prefixes keep
+        // their nested binary name first (View + OnClickListener).
+        val exactName = "$prefix.$target"
+        if (prefix.substringAfterLast('.').firstOrNull()?.isUpperCase() != true) {
+            yield(exactName)
+        }
+        if (target.first().isUpperCase()) {
+            yield("$prefix\$$target")
+            yield("${prefix}_$target")
+            if ('_' in target) {
+                val nestedBinary = target.replace('_', '$')
+                yield("$prefix.$nestedBinary")
+                yield("$prefix\$$nestedBinary")
+                yield("$prefix.${target.replace('_', '.')}")
+            }
+        }
+        yieldAll(candidateClassNames(exactName))
+    }.distinct()
+
+    /**
+     * Resolve a package name from either:
+     * - wildcard form: `android.widget.*` / `import android.widget.*`
+     * - package-name alias form: `android.widget` / `java.util` when the package enumerates
+     *   real reflected classes and is not itself a loadable Class.
+     *
+     * Never invents package names: enumeration must yield at least one loadable class.
+     */
+    private fun packageNameFromImport(
+        importText: String,
+        configuration: JvmWorkspaceConfiguration,
+        classLoader: ClassLoader
+    ): String? {
+        wildcardPackageName(importText)?.let { return it }
+
+        val parsed = parseImportTarget(importText) ?: return null
+        val target = parsed.className
+        if (target.isBlank() || target.endsWith(".*")) {
+            return null
+        }
+        // Package-name aliases are dotted (android.widget / java.util). Bare simple names are
+        // class lookups under import prefixes, not package modules.
+        if ('.' !in target) {
+            return null
+        }
+
+        val targetClassLoader = classLoaderForImportTarget(parsed, configuration, classLoader) ?: classLoader
+        val isLoadableClass = candidateClassNames(target).any { candidate ->
+            loadClassOrNull(candidate, targetClassLoader) != null
+        }
+        // Fully-qualified class targets stay on the class path; package-name aliases must not
+        // steal `import("android.widget.TextView")`.
+        if (isLoadableClass) {
+            return null
+        }
+
+        val classNames = resolveWildcardImports(target, targetClassLoader, configuration)
+        return target.takeIf { classNames.isNotEmpty() }
+    }
+
+    /**
+     * Load top-level classes for a package wildcard.
+     *
+     * Only public, non-inner, non-array, non-anonymous classes become package members.
+     * Names discovered from jars/directories that fail [Class.forName] are dropped so
+     * package modules never invent framework members that reflection cannot load.
+     *
+     * Product lock: android.app / android.content / android.view / android.widget wildcards
+     * must surface Activity / Context / View / TextView when host android.jar is present.
+     */
+    private fun resolvedPackageClasses(
+        packageName: String,
+        classLoader: ClassLoader,
+        configuration: JvmWorkspaceConfiguration
+    ): List<Class<*>> {
+        if (packageName.isBlank()) {
+            return emptyList()
+        }
+        // Prefer a loader that can actually load classes from reflective classpath jars
+        // (android.jar). When Class.forName fails on the caller's loader, retry with the
+        // reflective classpath loader so jar enumeration is not a false empty surface.
+        val reflectiveLoader = classLoaderFor(configuration)
+        return resolveWildcardImports(packageName, classLoader, configuration)
+            .mapNotNull { className ->
+                loadClassOrNull(className, classLoader)
+                    ?: loadClassOrNull(className, reflectiveLoader)
+            }
+            .filter(::isTopLevelPackageMemberClass)
+            .filter { clazz ->
+                // Exact package membership only — never promote nested-package types.
+                val ownerPackage = clazz.name.substringBeforeLast('.', missingDelimiterValue = "")
+                ownerPackage == packageName
+            }
+            .distinctBy { it.name }
+            .sortedBy { it.simpleName }
+    }
+
+    /**
+     * Package wildcards expose only public top-level types from the exact package.
+     * Inner/anonymous/local/array classes are never package fields (BufferType, VERSION, Theme, …).
+     */
+    private fun isTopLevelPackageMemberClass(clazz: Class<*>): Boolean =
+        Modifier.isPublic(clazz.modifiers) && !clazz.isArray && !clazz.isAnonymousClass &&
+            !clazz.isLocalClass && !clazz.isSynthetic && clazz.enclosingClass == null &&
+            clazz.declaringClass == null && '$' !in clazz.name && clazz.simpleName.isNotEmpty()
+
+    private fun importDiagnostic(
+        importText: String,
+        configuration: JvmWorkspaceConfiguration
+    ): ImportDiagnostic? {
+        val parsed = parseImportTarget(importText) ?: return null
+        val reason = parsed.pathPrefix?.let(configuration::prefixedImportUnsupportedReason)
+        if (reason == null) {
+            val loader = configuration.classLoader ?: classLoaderFor(configuration)
+            val failure = resolveClassLoads(importText, configuration.importPrefixes, loader, configuration,
+                allowPackageEnumeration = false).firstNotNullOfOrNull { request ->
+                loadClassOrNull(request.className, request.classLoader)?.let { clazz ->
+                    reflectionFailures[reflectedClassCacheKey(clazz)]
+                }
+            } ?: return null
+            return ImportDiagnostic(parsed.original, parsed.pathPrefix.orEmpty(), parsed.className,
+                failure, "jvm.metadata-unavailable")
+        }
+        val pathPrefix = parsed.pathPrefix!!
+        return ImportDiagnostic(
+            importText = parsed.original,
+            pathPrefix = pathPrefix,
+            className = parsed.className,
+            message = "Unsupported prefixed JVM import '${parsed.original}': ${reason.diagnosticDetail} " +
+                "Preserved prefix '$pathPrefix' and class target '${parsed.className}' for diagnostics.",
+            code = UNSUPPORTED_PREFIXED_IMPORT_CODE
+        )
+    }
+
+    private fun classLoaderForImportTarget(
+        importTarget: ImportTarget,
+        configuration: JvmWorkspaceConfiguration,
+        fallback: ClassLoader
+    ): ClassLoader? {
+        val pathPrefix = importTarget.pathPrefix ?: return fallback
+        val entry = configuration.prefixedImportClasspathEntry(pathPrefix) ?: return fallback
+        // Dex/apk prefix entries carry Dalvik bytecode a URLClassLoader cannot define:
+        // the scoped lookup in resolveDexClassLoad resolves them against the fallback.
+        if (DexLibraryMounter.isMountableDexLibrary(entry)) {
+            return fallback
+        }
+        return cachedImportTargetClassLoader(entry, fallback) ?: fallback
+    }
+
+    /**
+     * Cached loader for prefixed import targets (`/path/to.jar:com.example.Foo`).
+     *
+     * Leak bound (adversarial audit): this path used to construct a fresh, uncached,
+     * never-closed [URLClassLoader] per resolve, leaking one loader (plus every class
+     * it defined) per resolve and thrashing the loader-identity-keyed reflected-class
+     * caches. Loaders are cached per (entry path, parent identity) in [classLoaderCache]
+     * — the same policy as [classLoaderFor] / [classLoaderForPackageEnumeration]. Entries
+     * are intentionally never closed, including when a provider instance is discarded:
+     * classes defined by these loaders may still be live in cached module types.
+     */
+    internal fun cachedImportTargetClassLoader(entry: File, parent: ClassLoader): ClassLoader? {
+        val cacheKey = classLoaderCacheKey("importTarget", parent, listOf(entry))
+        classLoaderCache[cacheKey]?.let { return it }
+        val loader = runCatching { URLClassLoader(arrayOf(entry.toURI().toURL()), parent) }.getOrNull()
+            ?: return null
+        classLoaderCache[cacheKey] = loader
+        return loader
+    }
+
+    private fun wildcardPackageName(importText: String): String? {
+        val target = parseImportTarget(importText)?.className ?: return null
+        if (!target.endsWith(".*")) {
+            return null
+        }
+        return target.removeSuffix(".*").takeIf(String::isNotBlank)
+    }
+
+    private fun parseImportTarget(importText: String): ImportTarget? {
+        val normalized = importText.removePrefix("import ").trim()
+        if (normalized.isEmpty()) {
+            return null
+        }
+        val separator = normalized.lastIndexOf(':')
+        if (separator <= 0 || separator == normalized.lastIndex) {
+            return ImportTarget(original = normalized, pathPrefix = null, className = normalized)
+        }
+        return ImportTarget(
+            original = normalized,
+            pathPrefix = normalized.substring(0, separator).trim(),
+            className = normalized.substring(separator + 1).trim()
+        )
+    }
+
+    private data class ImportTarget(
+        val original: String,
+        val pathPrefix: String?,
+        val className: String
+    )
+
+    private data class ResolvedClassLoad(
+        val className: String,
+        val classLoader: ClassLoader,
+        // Non-null when className resolved from a dex library (Class.forName can never
+        // load it); providersFor/importedClassSymbol mount through DexClassModelAdapter.
+        val dexLibrary: DexLibraryMounter.DexLibrary? = null
+    )
+
+    private fun packageModuleTypeFor(
+        packageName: String,
+        classes: List<Class<*>>
+    ): ModuleType {
+        // Stable simple-name fields for AndroLua package modules (Activity/Context/View/TextView).
+        // When two public top-level types share a simpleName (should not happen in one package),
+        // first-by-sorted-name wins; never invent names that reflection did not load.
+        //
+        // Heap bound (TASK-611): package members use shallow class modules (no recursive
+        // super/interface graph expand). Instance surface still flattens public inherited
+        // methods/fields so Button()/button. after wildcards exposes View APIs.
+        // Full deep moduleTypeFor remains for explicitly requested/bindClass class providers.
+        // [classes] always comes from [resolvedPackageClasses], which already enforced the
+        // exact-package membership and non-blank simple-name gates.
+        val members = linkedMapOf<String, Type>()
+        classes.forEach { clazz ->
+            analysisCheckpoint()
+            val simpleName = clazz.simpleName
+            if (simpleName in members) {
+                return@forEach
+            }
+            val memberType = runCatching { shallowModuleTypeFor(clazz) }.getOrNull()
+                ?: runCatching { JavaInstanceType(typeReferenceForJavaClass(clazz)) }.getOrNull()
+                ?: return@forEach
+            members[simpleName] = memberType
+        }
+        return ModuleType(
+            moduleName = packageName,
+            fields = members.toSortedMap(),
+            indexSignature = ModuleType.IndexSignature(PrimitiveType.STRING, UnknownType)
+        )
+    }
+
+    /**
+     * Candidate binary names for AndroLua / LuaJava nested class aliases:
+     * binary `$` names (`java.util.Map$Entry`), dotted nested names
+     * (`java.util.Map.Entry`), underscore aliases (`Map_Entry`), and prefix +
+     * short-name combinations (`android.view.View` + `OnClickListener`). Exact
+     * binary name first; then package-preceding dot-boundary `$` rewrites, once
+     * per boundary — valid nested binary names replace a suffix of dots, never an
+     * arbitrary subset. Never invents non-loadable names; callers must still
+     * Class.forName each candidate.
+     */
+    private fun candidateClassNames(className: String): Sequence<String> = sequence {
+        val trimmed = className.trim()
+        if (trimmed.isEmpty()) {
+            return@sequence
+        }
+        yield(trimmed)
+        val seen = mutableSetOf(trimmed)
+        val aliases = buildList {
+            add(trimmed)
+            if ('_' in trimmed) {
+                add(trimmed.replace('_', '$'))
+                val lastDot = trimmed.lastIndexOf('.')
+                if (lastDot >= 0) add(trimmed.substring(0, lastDot + 1) +
+                    trimmed.substring(lastDot + 1).replace('_', '$'))
+            }
+        }
+        // Packages precede all enclosing classes. Valid nested binary names therefore
+        // replace a suffix of dots, never an arbitrary subset. Try each boundary once;
+        // exact names and explicit '$' aliases retain priority.
+        for (alias in aliases) {
+            if (seen.add(alias)) yield(alias)
+            var nested = alias
+            var separator = nested.lastIndexOf('.')
+            while (separator >= 0) {
+                nested = nested.substring(0, separator) + '$' + nested.substring(separator + 1)
+                if (seen.add(nested)) yield(nested)
+                separator = nested.lastIndexOf('.', separator - 1)
+            }
+        }
+    }
+
+    /**
+     * Enumerate top-level class binary names under [packageName].
+     *
+     * Sources (union, never invents):
+     * 1. [ClassLoader.getResources] for the package path (file/jar/jrt URLs)
+     * 2. JRT modules (JDK packages)
+     * 3. Explicit [JvmWorkspaceConfiguration.reflectionClasspathEntries] jars/dirs
+     *    (critical for host android.jar when URLClassLoader resource scanning is flaky)
+     *
+     * Only immediate package children are returned (no subpackages). Inner classes
+     * (`$` in the simple name) are excluded so wildcards never surface BufferType /
+     * VERSION / Theme as top-level package fields.
+     *
+     * Host product lock packages: android.app, android.content, android.view, android.widget
+     * must enumerate Activity, Context, View, TextView when android.jar is present.
+     */
+    private fun resolveWildcardImports(
+        packageName: String,
+        classLoader: ClassLoader,
+        configuration: JvmWorkspaceConfiguration
+    ): List<String> {
+        if (packageName.isBlank()) {
+            return emptyList()
+        }
+        val cacheKey = buildString {
+            append(packageName)
+            append('#')
+            appendClasspathIdentity(configuration)
+        }
+        wildcardClassNameCache[cacheKey]?.let { return it }
+        val path = packageName.replace('.', '/')
+        val classNames = linkedSetOf<String>()
+        val resources = runCatching { classLoader.getResources(path) }.getOrNull()
+        if (resources != null) {
+            while (resources.hasMoreElements()) {
+                analysisCheckpoint()
+                val url = resources.nextElement()
+                when (url.protocol) {
+                    "file" -> collectClassesFromDirectory(url.path, packageName, classNames)
+                    "jar" -> collectClassesFromJar(url, path, classNames)
+                    "jrt" -> collectClassesFromJrt(path, classNames)
+                }
+            }
+        }
+        collectClassesFromJrt(path, classNames)
+        // Always scan reflective classpath jars/dirs directly. android.jar package
+        // enumeration must not depend solely on ClassLoader resource URLs (some hosts
+        // fail to list package directory entries for platform jars).
+        reflectiveClasspathFiles(configuration).forEach { entry ->
+            collectClassesFromClasspathEntry(entry, path, packageName, classNames)
+        }
+        val resolved = classNames
+            .asSequence()
+            .filter { binaryName -> isTopLevelPackageBinaryName(binaryName, packageName) }
+            .sorted()
+            .toList()
+        wildcardClassNameCache[cacheKey] = resolved
+        return resolved
+    }
+
+    /**
+     * Binary-name gate for package wildcards: exact package, no '$' nested segment,
+     * non-blank simple name (skips package-info / malformed entries).
+     */
+    private fun isTopLevelPackageBinaryName(binaryName: String, packageName: String): Boolean {
+        if (binaryName.isBlank() || '$' in binaryName) {
+            return false
+        }
+        val lastDot = binaryName.lastIndexOf('.')
+        if (lastDot <= 0 || lastDot == binaryName.lastIndex) {
+            return false
+        }
+        val simpleName = binaryName.substring(lastDot + 1)
+        return binaryName.substring(0, lastDot) == packageName &&
+            simpleName != "package-info" && simpleName != "module-info"
+    }
+
+    private fun collectClassesFromDirectory(directoryPath: String, packageName: String, output: MutableSet<String>) {
+        val root = runCatching { Paths.get(URI.create("file:$directoryPath")) }
+            .recoverCatching { Paths.get(directoryPath) }
+            .getOrNull()
+            ?.takeIf { Files.isDirectory(it) }
+            ?: return
+        collectTopLevelClassFiles(root, packageName, output)
+    }
+
+    /**
+     * Immediate `.class` children of [directory], emitted as `dottedPackage.SimpleName`
+     * entries. Shared verbatim by the file/directory and jrt package walks; nested
+     * (`$`) and malformed names are skipped identically. Failures are swallowed
+     * (empty output) exactly as each caller's local runCatching did.
+     */
+    private fun collectTopLevelClassFiles(
+        directory: java.nio.file.Path,
+        dottedPackage: String,
+        output: MutableSet<String>
+    ) {
+        runCatching {
+            Files.list(directory).use { entries ->
+                entries
+                    .filter { entry -> Files.isRegularFile(entry) && entry.fileName.toString().endsWith(".class") }
+                    .forEach { entry ->
+                        val fileName = entry.fileName.toString().removeSuffix(".class")
+                        if ('$' !in fileName && fileName.isNotEmpty()) {
+                            output += "$dottedPackage.$fileName"
+                        }
+                    }
+            }
+        }
+    }
+
+    private fun collectClassesFromClasspathEntry(
+        entry: File,
+        packagePath: String,
+        packageName: String,
+        output: MutableSet<String>
+    ) {
+        when {
+            entry.isDirectory -> collectClassesFromDirectory(
+                entry.toPath().resolve(packagePath).toString(),
+                packageName,
+                output
+            )
+            entry.isFile && entry.extension.equals("jar", ignoreCase = true) ->
+                collectClassesFromJarFile(entry, packagePath, output)
+        }
+    }
+
+    private fun collectClassesFromJar(url: java.net.URL, packagePath: String, output: MutableSet<String>) {
+        // Prefer decoding the jar file path and opening a dedicated JarFile so we never
+        // close a ClassLoader-shared JarURLConnection cache (closing it can break later
+        // Class.forName loads of Activity/Context/View/TextView from the same loader).
+        val jarPath = jarFilePathFromUrl(url)
+        if (jarPath != null) {
+            collectClassesFromJarFile(File(jarPath), packagePath, output)
+            return
+        }
+        val connection = runCatching { url.openConnection() as JarURLConnection }.getOrNull() ?: return
+        // Do NOT close connection.jarFile — it may be cached/shared by the URLClassLoader.
+        val jarFile = runCatching { connection.jarFile }.getOrNull() ?: return
+        // Reuse indexJarPackageClasses so the fallback path and the cached-index path share
+        // the identical filters (no directories, .class only, no '$' nested simple names).
+        output += indexJarPackageClasses(jarFile)[packagePath].orEmpty()
+    }
+
+    /**
+     * Extract a filesystem path from a `jar:file:/...!/package` URL (the only protocol
+     * reaching [collectClassesFromJar]). Returns null for non-file jar payloads so the
+     * caller falls back to JarURLConnection.
+     */
+    private fun jarFilePathFromUrl(url: java.net.URL): String? {
+        return runCatching {
+            val fileUrl = (url.openConnection() as? JarURLConnection)?.jarFileURL
+            if (fileUrl != null && fileUrl.protocol == "file") {
+                Paths.get(fileUrl.toURI()).toFile().path
+            } else {
+                val jarPart = url.file.substringBefore('!') // e.g. file:/path/to.jar!/android/app
+                val fileUri = if (jarPart.startsWith("file:")) jarPart else "file:$jarPart"
+                Paths.get(URI.create(fileUri)).toFile().path
+            }
+        }.getOrNull()?.takeIf { path -> path.isNotBlank() && File(path).isFile }
+    }
+
+    private fun collectClassesFromJarFile(file: File, packagePath: String, output: MutableSet<String>) {
+        if (!file.isFile) {
+            return
+        }
+        runCatching {
+            val key = "${file.absolutePath}#${file.lastModified()}#${file.length()}"
+            val cached = jarPackageClassNamesCache[key]
+            val packages = cached ?: JarFile(file).use { jar ->
+                indexJarPackageClasses(jar).also { jarPackageClassNamesCache[key] = it }
+            }
+            output += packages[packagePath].orEmpty()
+        }.onFailure {
+            if (it is java.util.concurrent.CancellationException) throw it
+        }
+    }
+
+    private fun indexJarPackageClasses(jar: JarFile): Map<String, List<String>> {
+        val packages = linkedMapOf<String, MutableList<String>>()
+        val entries = jar.entries()
+        var visited = 0
+        while (entries.hasMoreElements()) {
+            if (visited++ % 64 == 0) analysisCheckpoint()
+            val entry = entries.nextElement()
+            if (entry.isDirectory || !entry.name.endsWith(".class")) continue
+            val name = entry.name.removeSuffix(".class")
+            if ('$' in name.substringAfterLast('/')) continue
+            val packagePath = name.substringBeforeLast('/', "")
+            packages.getOrPut(packagePath) { mutableListOf() }.add(name.replace('/', '.'))
+        }
+        return packages.mapValues { (_, names) -> names.toList() }
+    }
+
+    private fun collectClassesFromJrt(packagePath: String, output: MutableSet<String>) {
+        // Gate: only a real JDK exposes the jrt module filesystem. On Android hosts
+        // (dex-derived classloaders) the provider lookup fails every call; skipping the
+        // probe keeps wildcard resolution off the 18s main.lua check-stack path.
+        if (!jrtModulesFileSystemAvailable) {
+            return
+        }
+        // Process-wide result cache (positive AND negative): the module walk depends
+        // only on (packagePath, JDK modules), both process-constant, and the instance
+        // wildcardClassNameCache dies with each per-workspace-update provider.
+        jrtPackageClassesCache[packagePath]?.let { cached ->
+            output += cached
+            return
+        }
+        val root = runCatching { Paths.get(URI.create("jrt:/modules")) }.getOrNull() ?: return
+        if (!Files.isDirectory(root)) {
+            return
+        }
+        val found = linkedSetOf<String>()
+        val walk = runCatching {
+            Files.list(root).use { modules ->
+                modules.forEach { module ->
+                    val packageDir = module.resolve(packagePath)
+                    if (!Files.isDirectory(packageDir)) {
+                        return@forEach
+                    }
+                    collectTopLevelClassFiles(packageDir, packagePath.replace('/', '.'), found)
+                }
+            }
+        }
+        // Cache only a fully-successful walk: a failed scan may hold partial results
+        // (previously committed straight to the caller's output set) and must not be
+        // pinned process-wide as the durable answer.
+        val resolved = found.toList()
+        if (walk.isSuccess) {
+            jrtPackageClassesCache[packagePath] = resolved
+        }
+        output += resolved
+    }
+
+    /**
+     * Existing reflective classpath files for ClassLoader + package enumeration, memoized per
+     * provider instance (wave K perf; see [reflectiveClasspathFilesCache]).
+     */
+    private fun reflectiveClasspathFiles(configuration: JvmWorkspaceConfiguration): List<File> {
+        val cacheKey = reflectiveClasspathCacheKey(configuration)
+        reflectiveClasspathFilesCache[cacheKey]?.let { return it }
+        return resolveReflectiveClasspathFiles(configuration)
+            .also { resolved -> reflectiveClasspathFilesCache[cacheKey] = resolved }
+    }
+
+    /**
+     * Cache identity for [reflectiveClasspathFiles]: the configuration fields that feed the
+     * resolution (classpath entries, androidJar, androidDex) plus the environment values
+     * discovery consults. System properties used by
+     * discovery (user.home, os.name) are process-constant and need no key component.
+     */
+    private fun reflectiveClasspathCacheKey(configuration: JvmWorkspaceConfiguration): String {
+        val environment = System.getenv()
+        return listOf(
+            configuration.classpathEntries.joinToString(";"),
+            configuration.androidJar.orEmpty(),
+            configuration.androidDex.orEmpty(),
+            configuration.classes.joinToString(";"),
+            configuration.androluaImports.joinToString(";"),
+            environment[JvmWorkspaceConfiguration.ANDROID_HOME_ENV].orEmpty(),
+            environment[JvmWorkspaceConfiguration.ANDROID_SDK_ROOT_ENV].orEmpty(),
+            environment[JvmWorkspaceConfiguration.LOCAL_APPDATA_ENV].orEmpty()
+        ).joinToString("#")
+    }
+
+    /**
+     * Instance view of the process-wide bundled runtime jar ([Companion.companionRuntimeJarRef]).
+     * The bundled jar holds Android-Lua runtime classes (com.androlua.*, com.luajava.*,
+     * MIT license — see LICENSE attribution in the source repo).
+     * Provider instances are created per workspace update — the shared companion lazy
+     * guarantees exactly one temp extraction per JVM, and reading it directly keeps that
+     * single-extraction contract (the old instance-level `by lazy` wrapper was a pure
+     * pass-through with no additional memoization).
+     *
+     * Test surface: two provider instances must observe the SAME extracted jar file.
+     */
+    internal fun bundledRuntimeJarForDiagnostics(): File? = companionRuntimeJarRef
+
+    /** Explicit classpaths are authoritative; SDK discovery belongs to configuration. */
+    private fun resolveReflectiveClasspathFiles(configuration: JvmWorkspaceConfiguration): List<File> =
+        buildList {
+            companionRuntimeJarRef?.let(::add)
+            configuration.reflectionClasspathEntries().map(::File).filterTo(this) { entry ->
+                entry.isDirectory || entry.isFile && entry.extension.equals("jar", ignoreCase = true)
+            }
+        }.distinctBy(File::getAbsolutePath)
+
+    /**
+     * ClassLoader used for package wildcard enumeration.
+     *
+     * Always mounts existing reflective classpath jars (host android.jar) so
+     * `android.app.*` / `android.content.*` / `android.view.*` / `android.widget.*`
+     * can Class.forName Activity/Context/View/TextView. Caller-supplied configuration
+     * classLoaders become the parent chain only — they must not hide the jar.
+     */
+    private fun classLoaderForPackageEnumeration(configuration: JvmWorkspaceConfiguration): ClassLoader {
+        return classLoaderFor(configuration, cacheKeyKind = "package")
+    }
+
+    /** Shared loader construction behind [classLoaderFor] / [classLoaderForPackageEnumeration]. */
+    private fun classLoaderFor(
+        configuration: JvmWorkspaceConfiguration,
+        cacheKeyKind: String = "class"
+    ): ClassLoader {
+        val parent = configuration.classLoader ?: baseClassLoader
+        val entries = reflectiveClasspathFiles(configuration)
+        if (entries.isEmpty()) return parent
+        val cacheKey = classLoaderCacheKey(cacheKeyKind, parent, entries)
+        classLoaderCache[cacheKey]?.let { return it }
+        val urls = entries
+            .map(File::toURI)
+            .map { it.toURL() }
+            .toTypedArray()
+        return URLClassLoader(urls, parent).also { classLoaderCache[cacheKey] = it }
+    }
+
+    private fun classLoaderCacheKey(kind: String, parent: ClassLoader, entries: List<File>): String {
+        return buildString {
+            append(kind)
+            append('#')
+            append(System.identityHashCode(parent))
+            append('#')
+            entries.forEach { entry ->
+                append(entry.absolutePath)
+                append(';')
+            }
+        }
+    }
+
+    /**
+     * Provider for a reflected class. [deferMembers] = false builds the full deep surface
+     * (also superseding the shallow cache entry); true builds the shallow/wildcard surface,
+     * reusing any cached full provider first.
+     */
+    private fun providerForClass(
+        clazz: Class<*>,
+        deferMembers: Boolean
+    ): Pair<VirtualPath, WorkspaceSnapshot.FileSnapshot>? {
+        if (!deferMembers) analysisCheckpoint()
+        // Cache by defining ClassLoader + binary name so separate classpath configs that
+        // load the same binary name (PluginMarker from alpha.jar vs beta.jar) stay isolated.
+        val cacheKey = reflectedClassCacheKey(clazz)
+        fullClassProviderCache[cacheKey]?.let { return it }
+        if (deferMembers) shallowClassProviderCache[cacheKey]?.let { return it }
+        val moduleType = if (deferMembers) reflectMetadataOrNull(clazz) { shallowModuleTypeFor(clazz) }
+        else moduleTypeFor(clazz)
+        val provider = moduleProviderSnapshot(
+            VirtualPath.of("__jvm__/classes/${clazz.name.replace('.', '/')}.lua"), "class",
+            clazz.name, reflectedClassProviderModuleNames(clazz), moduleType ?: return null
+        )
+        if (!deferMembers) fullClassProviderCache[cacheKey] = provider
+        // Full providers supersede shallow ones for the same reflected class identity.
+        shallowClassProviderCache[cacheKey] = provider
+        return provider
+    }
+
+    /**
+     * Provider snapshot for one dex class, mounted at the same `__jvm__/classes/...`
+     * path convention as reflected classes so workspace path recovery, export lookup
+     * and the fingerprint machinery work unchanged. Module tables come from
+     * [DexClassModelAdapter] (same `__class`/`__call`/static/instance shape).
+     */
+    private fun providerForDexClass(
+        library: DexLibraryMounter.DexLibrary,
+        cls: DexClass,
+        deferMembers: Boolean = false
+    ): Pair<VirtualPath, WorkspaceSnapshot.FileSnapshot> {
+        // Process-wide snapshot cache (see dexProviderSnapshotCache): the per-instance
+        // caches miss on every workspace update, so re-assembly dominated activation.
+        val processKey = "dex#${library.cacheIdentity}#${cls.binaryName}#$deferMembers"
+        dexProviderSnapshotCache[processKey]?.let { return it }
+        val cacheKey = "dex#${library.cacheIdentity}#${cls.binaryName}"
+        fullClassProviderCache[cacheKey]?.let { return it }
+        if (deferMembers) shallowClassProviderCache[cacheKey]?.let { return it }
+        val moduleType = if (deferMembers) DexClassModelAdapter.shellModuleType(cls) else library.moduleTypeFor(cls)
+        val provider = moduleProviderSnapshot(
+            VirtualPath.of("__jvm__/classes/${cls.binaryName}.lua"), "dex class",
+            cls.binaryName.replace('/', '.'), linkedSetOf(moduleType.moduleName), moduleType
+        )
+        dexProviderSnapshotCache[processKey] = provider
+        if (!deferMembers) fullClassProviderCache[cacheKey] = provider
+        shallowClassProviderCache[cacheKey] = provider
+        return provider
+    }
+
+    /**
+     * Library module provider for a bare dex import target (`import "libs/classes.dex"`):
+     * module fields keyed by class simple name → the class module table, mirroring the
+     * package-module shape (first-by-sorted-binary-name wins simple-name collisions).
+     * No `__class` field, so the resolver never mistakes it for a class provider.
+     */
+    private fun providerForDexLibrary(
+        library: DexLibraryMounter.DexLibrary,
+        target: String,
+        deferMembers: Boolean
+    ): Pair<VirtualPath, WorkspaceSnapshot.FileSnapshot> {
+        val cacheKey = "dexlib#${library.cacheIdentity}#$target#$deferMembers"
+        // Process-wide snapshot (see dexProviderSnapshotCache); providerPath is a pure
+        // function of target and the key embeds library.cacheIdentity.
+        dexProviderSnapshotCache[cacheKey]?.let { return it }
+        packageProviderCache[cacheKey]?.let { return it }
+        val moduleAlias = File(target).nameWithoutExtension.ifBlank { target }
+        val members = linkedMapOf<String, Type>()
+        library.classes.sortedBy(DexClass::binaryName).forEach { cls ->
+            val simpleName = cls.binaryName.substringAfterLast('/')
+            if (simpleName.isEmpty() || simpleName in members) {
+                return@forEach
+            }
+            members[simpleName] = if (deferMembers) DexClassModelAdapter.shellModuleType(cls) else library.moduleTypeFor(cls)
+        }
+        val moduleType = ModuleType(
+            moduleName = moduleAlias,
+            fields = members.toSortedMap(),
+            indexSignature = ModuleType.IndexSignature(PrimitiveType.STRING, UnknownType)
+        )
+        val provider = moduleProviderSnapshot(
+            VirtualPath.of("__jvm__/dex/$target.lua"), "dex library",
+            target, linkedSetOf(moduleAlias), moduleType
+        )
+        packageProviderCache[cacheKey] = provider
+        dexProviderSnapshotCache[cacheKey] = provider
+        return provider
+    }
+
+    /**
+     * Module name for a reflected class provider. Nested Android resource classes reflect
+     * with lowercase simple names (android.R$string → "string"); a bare claim of those
+     * names outranks the Lua standard library overlay for the same module name and strips
+     * every string.* member from completion/hover. Qualify only std-colliding nested
+     * names ("R.string"); ordinary classes keep the bare simple name.
+     */
+    private fun classModuleSimpleName(clazz: Class<*>): String {
+        val simple = clazz.simpleName
+        val enclosing = clazz.enclosingClass ?: return simple
+        return if (simple in DexLibraryMounter.LUA_STD_MODULE_NAMES) "${enclosing.simpleName}.$simple" else simple
+    }
+
+    /**
+     * Module names advertised on a reflected class provider public fingerprint.
+     *
+     * Always the reflection simple name only (String / Locale / TextView / State / Entry /
+     * String[]). Nested types such as Thread$State and Map$Entry must not expand binary,
+     * dotted, or underscore aliases into providedModuleNames — that over-broad set broke
+     * Thread.State fingerprint equality (expected {State}).
+     *
+     * Binary/dotted/underscore AndroLua aliases remain loadable via candidateClassNames and
+     * path recovery; they are not fingerprint claims. Never invents names outside reflection.
+     */
+    private fun reflectedClassProviderModuleNames(clazz: Class<*>): Set<String> {
+        val simple = clazz.simpleName.ifBlank { clazz.name.substringAfterLast('$').substringAfterLast('.') }
+        return setOfNotNull(simple.takeIf(String::isNotBlank))
+    }
+
+    /**
+     * Shared reflected-provider snapshot builder behind the class, package, dex class and
+     * dex library providers: identical ModuleExportSurface shape, fingerprint payload
+     * (`claimName + displayName + sorted member triplets`) and cacheKey derivation;
+     * only the virtual-path prefix, source comment, claim name and advertised module
+     * names differ.
+     */
+    private fun moduleProviderSnapshot(
+        providerPath: VirtualPath,
+        providerKind: String,
+        claimName: String,
+        providedModuleNames: Set<String>,
+        moduleType: ModuleType
+    ): Pair<VirtualPath, WorkspaceSnapshot.FileSnapshot> {
+        val source = "-- reflected JVM $providerKind provider for $claimName\n"
+        val surface = ModuleExportSurface(
+            moduleType = moduleType,
+            sourceForm = ModuleExportSurface.SourceForm.RETURN_TABLE_LITERAL,
+            members = moduleMembers(moduleType)
+        )
+        analysisCheckpoint()
+        val fingerprintPayload = buildString {
+            append(claimName)
+            append('\n')
+            append(moduleType.displayName)
+            append('\n')
+            // Member-by-member so a large surface (framework classes expose
+            // hundreds; device stack samples measured 2-4s hashing one payload)
+            // yields cancellation points between members.
+            surface.members.forEachIndexed { index, member ->
+                if (index % 64 == 0) analysisCheckpoint()
+                append(member.kind)
+                append(':')
+                append(member.name)
+                append(':')
+                append(member.type.displayName)
+                append('|')
+            }
+        }
+        return providerPath to WorkspaceSnapshot.FileSnapshot(
+            cacheKey = workspaceFingerprintHash(source),
+            moduleExportSurface = surface,
+            publicFingerprint = io.github.dingyi222666.luaparser.semantic.workspace.WorkspacePublicFingerprint(
+                // Fingerprint module-name surface is the simple name only (Locale / State /
+                // Entry / String[]). Nested binary/dotted/underscore aliases resolve via
+                // Class.forName candidates and path recovery, not providedModuleNames.
+                providedModuleNames = providedModuleNames,
+                value = workspaceFingerprintHash(fingerprintPayload)
+            )
+        )
+    }
+
+    private val reflectionFailures = java.util.concurrent.ConcurrentHashMap<String, String>()
+
+    private fun <T> reflectMetadataOrNull(clazz: Class<*>, load: () -> T): T? {
+        val key = reflectedClassCacheKey(clazz)
+        if (reflectionFailures.containsKey(key)) return null
+        return try {
+            load()
+        } catch (failure: Throwable) {
+            // Same failure classes the previous per-type catches handled; anything else
+            // (including cancellation) propagates unchanged.
+            if (failure !is LinkageError && failure !is TypeNotPresentException && failure !is SecurityException) {
+                throw failure
+            }
+            recordReflectionFailure(key, clazz, failure)
+            null
+        }
+    }
+
+    private fun recordReflectionFailure(key: String, clazz: Class<*>, failure: Throwable) {
+        val detail = "Cannot read Java metadata for '${clazz.name}': ${failure.javaClass.simpleName}: ${failure.message}"
+        reflectionFailures[key] = detail
+        System.err.println(detail)
+    }
+
+    private fun moduleTypeFor(clazz: Class<*>): ModuleType? {
+        val cacheKey = reflectedClassCacheKey(clazz)
+        moduleTypeCache[cacheKey]?.let { return it }
+        return reflectMetadataOrNull(clazz) { moduleTypeFor(clazz, emptySet(), 0) }
+            ?.also { moduleTypeCache[cacheKey] = it }
+    }
+
+    // Catalog references are intentionally deferred and hydrated on selection. They must
+    // never stand in for failed reflection: a failed load returns null and a diagnostic.
+    internal fun deferredModuleTypeFor(clazz: Class<*>): ModuleType = ModuleType(
+        moduleName = classModuleSimpleName(clazz),
+        fields = linkedMapOf("__class" to JavaInstanceType(typeReferenceForJavaClass(clazz)))
+    )
+
+    /**
+     * Package-member class module used for wildcard mounts (`import "android.widget.*"`).
+     *
+     * Avoids deep super/interface *graph* expansion that OOMs multi-file android.jar wildcards
+     * (TASK-611). Instance member surface still flattens [Class.getMethods]/[Class.getFields]
+     * so constructed locals (`Button()` then `button.`) expose View/TextView inherited APIs
+     * without walking empty super shells. The static surface uses the same reflected
+     * [Class.getFields]/[Class.getMethods] helpers as the explicit-import deep surface so
+     * inherited statics (`TextView.VISIBLE` from View) resolve identically through
+     * `import "android.widget.*"` and `import "android.widget.TextView"`.
+     */
+    private fun shallowModuleTypeFor(clazz: Class<*>): ModuleType {
+        val cacheKey = reflectedClassCacheKey(clazz)
+        shallowModuleTypeCache[cacheKey]?.let { return it }
+        // The live editor needs the package catalog immediately. Member reflection is
+        // deferred until the selected class is hydrated by the semantic resolver.
+        if (deferPackageMemberReflection) {
+            return deferredModuleTypeFor(clazz).also { shallowModuleTypeCache[cacheKey] = it }
+        }
+        // Nested public types as type references only (no recursive deep module expand).
+        return classModuleTypeFor(clazz, shallowJavaClassTypeFor(clazz)) { innerClass ->
+            typeReferenceForJavaClass(innerClass)
+        }.also { shallowModuleTypeCache[cacheKey] = it }
+    }
+
+    /**
+     * Cache identity for reflected class modules/providers.
+     *
+     * Binary name alone is insufficient: two URLClassLoaders can both define
+     * fixture.dupe.PluginMarker with different static fields. Keying only by name
+     * would leak ALPHA_ONLY into a BETA_ONLY classpath configuration.
+     */
+    private fun reflectedClassCacheKey(clazz: Class<*>): String {
+        return "${System.identityHashCode(clazz.classLoader)}#${clazz.name}#${System.identityHashCode(clazz)}"
+    }
+
+    /**
+     * Reflected member surfaces shared verbatim by the shallow (wildcard) and deep
+     * (explicit import) [JavaClassType] builders: public static/instance fields and
+     * methods with identical owner/kind/signature-metadata mapping.
+     */
+    private class ReflectedMemberMaps(
+        val staticFields: Map<String, JavaStaticMemberType>,
+        val staticMethods: Map<String, JavaStaticMemberType>,
+        val instanceFields: Map<String, JavaInstanceMemberType>,
+        val instanceMethods: Map<String, JavaInstanceMemberType>
+    )
+
+    private val reflectedMemberMapsCache = java.util.concurrent.ConcurrentHashMap<Class<*>, ReflectedMemberMaps>()
+    private val classReferenceCache = java.util.concurrent.ConcurrentHashMap<Class<*>, JavaClassType>()
+    private val javaTypeNameCache = java.util.concurrent.ConcurrentHashMap<Class<*>, JavaTypeName>()
+    // Inherited methods recur in many flattened class surfaces. Reflection equality
+    // includes the defining class, preserving isolation between class loaders.
+    private val executableSignatureCache = java.util.concurrent.ConcurrentHashMap<Executable, FunctionType>()
+    private val signatureMetadataCache = java.util.concurrent.ConcurrentHashMap<Executable, JavaSignatureMetadata>()
+    private data class HierarchyKey(val clazz: Class<*>, val depth: Int)
+    private val hierarchyCache = java.util.concurrent.ConcurrentHashMap<HierarchyKey, JavaClassType>()
+
+    private fun reflectedMemberMapsFor(clazz: Class<*>): ReflectedMemberMaps {
+        analysisCheckpoint()
+        reflectedMemberMapsCache[clazz]?.let { return it }
+        // Flatten inherited public instance surface onto this type. Super shells are empty
+        // type refs, so allInstanceMembers() would otherwise only see Button-declared methods.
+        return ReflectedMemberMaps(
+            staticFields = reflectedFieldMembers(publicFields(clazz, static = true)) { owner, name, valueType ->
+                JavaStaticMemberType(owner, name, valueType)
+            },
+            staticMethods = reflectedMethodMembers(publicStaticMethods(clazz)) { owner, name, valueType, metadata ->
+                JavaStaticMemberType(owner, name, valueType, JavaMemberKind.METHOD, signatureMetadata = metadata)
+            },
+            instanceFields = reflectedFieldMembers(publicFields(clazz, static = false)) { owner, name, valueType ->
+                JavaInstanceMemberType(owner, name, valueType)
+            },
+            instanceMethods = reflectedMethodMembers(publicInstanceMethods(clazz)) { owner, name, valueType, metadata ->
+                JavaInstanceMemberType(owner, name, valueType, JavaMemberKind.METHOD, signatureMetadata = metadata)
+            }
+        ).also { reflectedMemberMapsCache[clazz] = it }
+    }
+
+    /** Name→member map over a reflected public field surface (static or instance). */
+    private fun <T> reflectedFieldMembers(
+        fields: List<Field>,
+        memberType: (owner: JavaTypeName, name: String, valueType: Type) -> T
+    ): Map<String, T> = fields.associate { field ->
+        field.name to memberType(javaTypeNameFor(field.declaringClass), field.name, javaTypeToType(field.genericType))
+    }
+
+    /** Name→overload map over a reflected public method surface (static or instance). */
+    private fun <T> reflectedMethodMembers(
+        methods: List<Method>,
+        memberType: (owner: JavaTypeName, name: String, valueType: Type, metadata: List<JavaSignatureMetadata>) -> T
+    ): Map<String, T> = methods.groupBy(Method::getName).mapValues { (name, overloads) ->
+        analysisCheckpoint()
+        memberType(javaTypeNameFor(overloads.first().declaringClass), name, javaMethodType(overloads),
+            overloads.map(::javaSignatureMetadata))
+    }
+
+    /**
+     * Shared [JavaClassType] core behind the shallow (wildcard) and deep (explicit import)
+     * builders: identical constructor/member/inner-class/type-parameter construction from
+     * the reflected member maps; only the super/interface edges differ (name-only type
+     * references for shallow, recursive member expansion for deep), supplied as lambdas.
+     */
+    private fun reflectedJavaClassType(
+        clazz: Class<*>,
+        superClass: () -> JavaClassType?,
+        interfaces: () -> List<JavaClassType>
+    ): JavaClassType {
+        val javaName = javaTypeNameFor(clazz)
+        val members = reflectedMemberMapsFor(clazz)
+        return JavaClassType(
+            javaName = javaName,
+            constructors = constructorTypesFor(clazz, javaName),
+            staticMembers = (members.staticFields + members.staticMethods).toSortedMap(),
+            instanceMembers = (members.instanceFields + members.instanceMethods).toSortedMap(),
+            innerClasses = clazz.classes
+                .filter { Modifier.isPublic(it.modifiers) }
+                .associate { it.simpleName to typeReferenceForJavaClass(it) }
+                .toSortedMap(),
+            superClass = superClass(),
+            interfaces = interfaces(),
+            typeParameters = clazz.typeParameters.map(::javaTypeParameterFor)
+        )
+    }
+
+    /**
+     * Package-wildcard class type: no recursive super/interface *member* expand (TASK-611),
+     * but instance members use the full public reflection surface ([Class.getMethods] /
+     * [Class.getFields]) so inherited View APIs appear on `button.` after
+     * `import "android.widget.*"`. The static member surface uses the same reflected
+     * helpers as the explicit-import deep surface so inherited statics
+     * (`TextView.VISIBLE` from View) match the explicit import exactly.
+     * Super/interfaces stay name-only type references.
+     */
+    private fun shallowJavaClassTypeFor(clazz: Class<*>): JavaClassType {
+        // Name-only super/interface edges — no recursive member expand for wildcards.
+        return reflectedJavaClassType(
+            clazz,
+            superClass = { clazz.superclass?.let(::typeReferenceForJavaClass) },
+            interfaces = { clazz.interfaces.map(::typeReferenceForJavaClass) }
+        )
+    }
+
+    private fun moduleTypeFor(
+        clazz: Class<*>,
+        reflectedClassStack: Set<String>,
+        innerClassDepth: Int
+    ): ModuleType {
+        // Deferred mode: public reflection already includes inherited members. Retain
+        // hierarchy identity for assignability without expanding every ancestor's member
+        // graph. Otherwise recurse bounded (stack + depth) via reflectedInnerClassTypeFor.
+        val nextReflectedClassStack = reflectedClassStack + clazz.name
+        return classModuleTypeFor(clazz, javaClassTypeFor(clazz, 0)) { innerClass ->
+            if (deferPackageMemberReflection) {
+                deferredModuleTypeFor(innerClass)
+            } else {
+                reflectedInnerClassTypeFor(
+                    innerClass = innerClass,
+                    reflectedClassStack = nextReflectedClassStack,
+                    innerClassDepth = innerClassDepth
+                )
+            }
+        }
+    }
+
+    /**
+     * Shared module-table core behind [shallowModuleTypeFor] and the deep
+     * [moduleTypeFor]: `__class`/`__call` fields, reflected public static fields and
+     * static method overloads, nested public types (depth policy supplied by
+     * [nestedClassType]) and the `classModuleSimpleName` module name.
+     */
+    private fun classModuleTypeFor(
+        clazz: Class<*>,
+        classType: JavaClassType,
+        nestedClassType: (Class<*>) -> Type
+    ): ModuleType {
+        val instanceType = JavaInstanceType(classType)
+        val fields = linkedMapOf<String, Type>("__class" to instanceType)
+        val methods = linkedMapOf<String, Type>()
+
+        if (classType.constructors.isNotEmpty) {
+            fields["__call"] = classType
+        }
+
+        // Reflected public static fields incl. inherited ones (TextView.VISIBLE from View,
+        // File.separator, TextView.AUTO_SIZE_*, …) — same helper as the deep explicit surface.
+        val reflectedMembers = reflectedMemberMapsFor(clazz)
+        reflectedMembers.staticFields.forEach { (name, field) ->
+            fields[name] = field.valueType
+        }
+
+        clazz.classes
+            .filter { Modifier.isPublic(it.modifiers) }
+            .forEach { innerClass ->
+                fields[innerClass.simpleName] = nestedClassType(innerClass)
+            }
+
+        reflectedMembers.staticMethods.forEach { (name, method) ->
+            methods[name] = method.valueType
+        }
+
+        return ModuleType(
+            moduleName = classModuleSimpleName(clazz),
+            fields = fields,
+            methods = methods
+        )
+    }
+
+    private fun reflectedInnerClassTypeFor(
+        innerClass: Class<*>,
+        reflectedClassStack: Set<String>,
+        innerClassDepth: Int
+    ): Type {
+        if (innerClass.name in reflectedClassStack || innerClassDepth >= MAX_REFLECTED_INNER_CLASS_DEPTH) {
+            return javaClassTypeFor(innerClass, 0)
+        }
+        return moduleTypeFor(innerClass, reflectedClassStack, innerClassDepth + 1)
+    }
+
+    private fun javaClassTypeFor(
+        clazz: Class<*>,
+        hierarchyDepth: Int
+    ): JavaClassType {
+        analysisCheckpoint()
+        if (hierarchyDepth >= MAX_HIERARCHY_SKELETON_DEPTH) {
+            return typeReferenceForJavaClass(clazz)
+        }
+        // Loaded JVM inheritance is acyclic. Depth distinguishes the full member
+        // surface from the hierarchy-only view used for transitive assignability.
+        val key = HierarchyKey(clazz, hierarchyDepth)
+        hierarchyCache[key]?.let { return it }
+        val superClass = { clazz.superclass?.let { javaClassTypeFor(it, hierarchyDepth + 1) } }
+        val interfaces = { clazz.interfaces.map { javaClassTypeFor(it, hierarchyDepth + 1) } }
+        val memberDepth = if (deferPackageMemberReflection) 1 else MAX_DEEP_HIERARCHY_EXPAND_DEPTH
+        val type = if (hierarchyDepth < memberDepth) {
+            reflectedJavaClassType(clazz, superClass, interfaces)
+        } else {
+            JavaClassType(
+                javaName = javaTypeNameFor(clazz),
+                typeParameters = clazz.typeParameters.map(::javaTypeParameterFor),
+                superClass = superClass(),
+                interfaces = interfaces()
+            )
+        }
+        hierarchyCache[key] = type
+        return type
+    }
+
+    /**
+     * Public, non-synthetic field filter; [static] picks the static vs instance surface.
+     * Static fields are the Android-Lua constant surface (RESULT_*, MODE_*, ACTION_* flags,
+     * service names such as ACTIVITY_SERVICE on [android.content.Context], TextView.VISIBLE,
+     * File.separator). Never invents names reflection cannot see from the host android.jar.
+     */
+    private fun publicFields(clazz: Class<*>, static: Boolean): List<Field> {
+        return clazz.fields
+            .filter { field ->
+                Modifier.isPublic(field.modifiers) &&
+                    Modifier.isStatic(field.modifiers) == static &&
+                    !field.isSynthetic
+            }
+    }
+
+    /**
+     * Public, non-synthetic/non-bridge methods. [Class.getMethods] already returns the
+     * public inherited surface used by Activity/Context/Intent corpora (lifecycle, extras,
+     * system services). Bridge/synthetic overloads are dropped so call-signature counts
+     * reflect real Android API shapes rather than compiler artifacts.
+     *
+     * Nested interfaces such as [java.util.Map.Entry] declare static helpers
+     * (`comparingByKey` / `comparingByValue`). Those are public and must appear on the
+     * binary-name provider module so bindClass mounts have real members to resolve.
+     * Declared public static methods are merged in for interfaces/enums so host JDKs that
+     * omit interface statics from [Class.getMethods] still surface reflection-backed
+     * members (never invented).
+     */
+    private fun publicStaticMethods(clazz: Class<*>): List<Method> {
+        val fromPublicApi = clazz.methods.asSequence()
+        val fromDeclared =
+            if (clazz.isInterface || clazz.isEnum) clazz.declaredMethods.asSequence() else emptySequence()
+        return (fromPublicApi + fromDeclared)
+            .filter { isPublicMemberMethod(it, static = true) }
+            .distinctBy { method -> method.name + '#' + method.parameterTypes.joinToString("") { it.name + ';' } }
+            .toList()
+    }
+
+    private fun publicInstanceMethods(clazz: Class<*>): List<Method> {
+        val publicMethods = clazz.methods
+        val methods = publicMethods.filter { isPublicMemberMethod(it, static = false) }
+        if (!deferPackageMemberReflection) return methods
+        // A public subclass of a package-private class can expose inherited methods
+        // through synthetic access bridges (e.g. StringBuilder.setLength on JDK 11).
+        // Recover only names hidden by those bridges, using their original signatures.
+        val hiddenNames = publicMethods.asSequence()
+            .filter { !Modifier.isStatic(it.modifiers) && !isReflectableMethod(it) }
+            .map(Method::getName).toMutableSet()
+        hiddenNames.removeAll(methods.map(Method::getName).toSet())
+        if (hiddenNames.isEmpty()) return methods
+        val recovered = mutableListOf<Method>()
+        var ancestor = clazz.superclass
+        while (ancestor != null && hiddenNames.isNotEmpty()) {
+            val inherited = ancestor.methods.filter { method ->
+                method.name in hiddenNames && isPublicMemberMethod(method, static = false)
+            }
+            recovered += inherited
+            hiddenNames.removeAll(inherited.map(Method::getName).toSet())
+            ancestor = ancestor.superclass
+        }
+        return methods + recovered
+    }
+
+    /** Public, static/instance per [static], non-synthetic/non-bridge method gate. */
+    private fun isPublicMemberMethod(method: Method, static: Boolean): Boolean =
+        Modifier.isPublic(method.modifiers) && Modifier.isStatic(method.modifiers) == static &&
+            isReflectableMethod(method)
+
+    private fun isReflectableMethod(method: Method): Boolean {
+        return !method.isSynthetic && !method.isBridge
+    }
+
+    private fun constructorTypesFor(clazz: Class<*>, owner: JavaTypeName): JavaOverloadSet<JavaConstructorType> {
+        return JavaOverloadSet(
+            clazz.constructors
+                .filter { constructor -> Modifier.isPublic(constructor.modifiers) && !constructor.isSynthetic }
+                .map { constructor ->
+                    JavaConstructorType(
+                        owner = owner,
+                        signature = constructorSignature(constructor),
+                        signatureMetadata = javaSignatureMetadata(constructor)
+                    )
+                }
+        )
+    }
+
+    private fun constructorSignature(constructor: Constructor<*>): FunctionType {
+        executableSignatureCache[constructor]?.let { return it }
+        return FunctionType(
+            parameters = executableParameters(constructor),
+            returnType = JavaInstanceType(typeReferenceForJavaClass(constructor.declaringClass)),
+            typeParameters = constructor.typeParameters.map(::javaTypeParameterFor)
+        ).also { executableSignatureCache[constructor] = it }
+    }
+
+    private fun javaMethodType(methods: List<Method>): Type {
+        val signatures = methods.map(::methodSignature)
+        return when (signatures.size) {
+            0 -> FunctionType(returnType = UnknownType)
+            1 -> signatures.single()
+            else -> JavaOverloadType(
+                javaName = javaTypeNameFor(methods.first().declaringClass),
+                overloadName = methods.first().name,
+                callSignatures = signatures,
+                signatureMetadata = methods.map(::javaSignatureMetadata)
+            )
+        }
+    }
+
+    private fun methodSignature(method: Method): FunctionType {
+        executableSignatureCache[method]?.let { return it }
+        return FunctionType(
+            parameters = executableParameters(method),
+            returnType = javaTypeToType(method.genericReturnType),
+            typeParameters = method.typeParameters.map(::javaTypeParameterFor)
+        ).also { executableSignatureCache[method] = it }
+    }
+
+    private fun executableParameters(executable: Executable): List<FunctionParameter> {
+        val genericParameterTypes = executable.genericParameterTypes
+        val parameterTypes = executable.parameterTypes
+        val isVarArgs = executable.isVarArgs
+        return parameterTypes.mapIndexed { index, parameterType ->
+            FunctionParameter(
+                name = "arg${index + 1}",
+                type = javaTypeToType(genericParameterTypes.getOrNull(index) ?: parameterType),
+                vararg = isVarArgs && index == parameterTypes.lastIndex
+            )
+        }
+    }
+
+    private fun javaSignatureMetadata(executable: Executable): JavaSignatureMetadata {
+        signatureMetadataCache[executable]?.let { return it }
+        return JavaSignatureMetadata(
+            isVarArgs = executable.isVarArgs,
+            typeParameters = executable.typeParameters.map(::javaTypeParameterFor),
+            genericParameterTypeNames = executable.genericParameterTypes.map { it.typeName },
+            genericReturnTypeName = (executable as? Method)?.genericReturnType?.typeName
+        ).also { signatureMetadataCache[executable] = it }
+    }
+
+    /** Shared module member export ([moduleMembers] field/method shape; [classMembers] supplies its own export path). */
+    private fun memberExport(
+        name: String,
+        type: Type,
+        kind: SymbolKind,
+        exportPath: List<String> = listOf(name)
+    ) = ModuleExportSurface.MemberExport(
+        name = name,
+        exportPath = exportPath,
+        kind = kind,
+        type = type,
+        range = null
+    )
+
+    private fun moduleMembers(moduleType: ModuleType): List<ModuleExportSurface.MemberExport> = buildList {
+        moduleType.fields.forEach { (name, type) ->
+            add(memberExport(name, type, SymbolKind.FIELD))
+            if (name == "__class") {
+                addAll(classMembers(type))
+            }
+        }
+        moduleType.methods.forEach { (name, type) ->
+            add(memberExport(name, type, SymbolKind.METHOD))
+        }
+    }.sortedWith(compareBy<ModuleExportSurface.MemberExport>({ it.exportPath.size }, { it.name }))
+
+    internal fun classMembers(type: Type, exportPathPrefix: List<String> = listOf("__class")): List<ModuleExportSurface.MemberExport> {
+        val output = mutableListOf<ModuleExportSurface.MemberExport>()
+        // O(n) dedupe (adversarial audit): a HashSet of already-exported export paths
+        // replaces the previous O(n^2) `output.none { ... }` linear rescan. Keyed by the
+        // full export path (not just the member name) so differently prefixed surfaces that
+        // reuse a name never collide. First occurrence wins, preserving the previous
+        // precedence: static members, then inner classes, then instance members.
+        val exportedPaths = HashSet<List<String>>()
+        fun addExport(name: String, kind: SymbolKind, memberType: Type) {
+            val exportPath = exportPathPrefix + name
+            if (!exportedPaths.add(exportPath)) {
+                return
+            }
+            output += memberExport(name, memberType, kind, exportPath)
+        }
+        when (type) {
+            is JavaInstanceType -> appendClassExports(type.classType, type.allInstanceMembers(), ::addExport)
+            is JavaClassType -> appendClassExports(type, type.allInstanceMembers(), ::addExport)
+            else -> {
+                val classType = type as? ClassType ?: return emptyList()
+                classType.getAllFields().forEach { (name, memberType) ->
+                    addExport(name, SymbolKind.FIELD, memberType)
+                }
+                classType.getAllMethods().forEach { (name, memberType) ->
+                    addExport(name, SymbolKind.METHOD, memberType)
+                }
+            }
+        }
+        return output.sortedWith(
+            compareBy({ it.exportPath.size }, { it.name }, { it.exportPath.joinToString("/") })
+        )
+    }
+
+    /**
+     * Export loop shared verbatim by the instance-shell and bare-class [classMembers]
+     * branches: static members + inner classes of [classType], then [instanceMembers] —
+     * in that order, so the [addExport] dedupe keeps the documented precedence
+     * (statics win name collisions over instance members).
+     */
+    private fun appendClassExports(
+        classType: JavaClassType,
+        instanceMembers: Map<String, JavaInstanceMemberType>,
+        addExport: (String, SymbolKind, Type) -> Unit
+    ) {
+        // Nested / interface static helpers (Map$Entry.comparingByKey) live on the class
+        // surface. Export them under __class so workspace export lookup, goto, and
+        // fingerprint can resolve binary-name bindClass mounts without inventing members.
+        classType.allStaticMembers().forEach { (name, member) ->
+            addExport(name, symbolKindForJavaMember(member.memberKind, member.valueType), member.valueType)
+        }
+        classType.allInnerClasses().forEach { (name, innerClass) ->
+            addExport(name, SymbolKind.CLASS, innerClass)
+        }
+        instanceMembers.forEach { (name, member) ->
+            // Prefer static METHOD exports when names collide with instance members.
+            addExport(name, symbolKindForJavaMember(member.memberKind, member.valueType), member.valueType)
+        }
+    }
+
+    /** METHOD exports for method-kind/callable members; everything else is a FIELD. */
+    private fun symbolKindForJavaMember(memberKind: JavaMemberKind, valueType: Type): SymbolKind =
+        if (memberKind == JavaMemberKind.METHOD || valueType is CallableType) SymbolKind.METHOD else SymbolKind.FIELD
+
+    private fun javaTypeToType(
+        type: ReflectType,
+        resolvingTypeParameters: Set<String> = emptySet()
+    ): Type {
+        return when (type) {
+            is Class<*> -> javaClassToType(type, resolvingTypeParameters)
+            is ParameterizedType -> javaParameterizedTypeToType(type, resolvingTypeParameters)
+            is TypeVariable<*> -> TypeParameterType(
+                name = type.name,
+                constraint = if (type.name in resolvingTypeParameters) {
+                    null
+                } else {
+                    type.bounds.firstKnownBoundType(resolvingTypeParameters + type.name)
+                }
+            )
+            is GenericArrayType -> ArrayType(javaTypeToType(type.genericComponentType, resolvingTypeParameters))
+            is WildcardType -> type.upperBounds.firstKnownBoundType(resolvingTypeParameters) ?: UnknownType
+            else -> UnknownType
+        }
+    }
+
+    private fun javaClassToType(type: Class<*>, resolvingTypeParameters: Set<String>): Type {
+        return when {
+            type == Void.TYPE -> PrimitiveType.VOID
+            type == java.lang.Boolean.TYPE || type == java.lang.Boolean::class.java -> PrimitiveType.BOOLEAN
+            type == java.lang.Byte.TYPE || type == java.lang.Short.TYPE || type == java.lang.Integer.TYPE ||
+                type == java.lang.Long.TYPE || type == java.lang.Float.TYPE || type == java.lang.Double.TYPE ||
+                Number::class.java.isAssignableFrom(type) -> PrimitiveType.NUMBER
+            type == java.lang.Character.TYPE || type == Char::class.java || type == String::class.java ||
+                CharSequence::class.java.isAssignableFrom(type) -> PrimitiveType.STRING
+            type.isArray -> ArrayType(javaTypeToType(type.componentType, resolvingTypeParameters))
+            type.isPrimitive -> PrimitiveType.ANY
+            else -> JavaInstanceType(typeReferenceForJavaClass(type))
+        }
+    }
+
+    private fun javaParameterizedTypeToType(type: ParameterizedType, resolvingTypeParameters: Set<String>): Type {
+        val rawClass = type.rawType as? Class<*> ?: return UnknownType
+        val rawType = javaClassToType(rawClass, resolvingTypeParameters)
+        val typeArguments = type.actualTypeArguments.map { javaTypeToType(it, resolvingTypeParameters) }
+        return when (rawType) {
+            is JavaInstanceType -> rawType.copy(typeArguments = typeArguments)
+            else -> rawType
+        }
+    }
+
+    private fun Array<ReflectType>.firstKnownBoundType(resolvingTypeParameters: Set<String>): Type? {
+        return firstOrNull { it != Any::class.java }?.let { javaTypeToType(it, resolvingTypeParameters) }
+    }
+
+    /**
+     * Type-parameter reference with cycle guard: the parameter's own name joins the
+     * resolving set before its bounds resolve, so a self-referential bound degrades to null.
+     */
+    private fun javaTypeParameterFor(parameter: TypeVariable<*>): TypeParameterType {
+        return TypeParameterType(
+            name = parameter.name,
+            constraint = parameter.bounds.firstKnownBoundType(setOf(parameter.name))
+        )
+    }
+
+    private fun typeReferenceForJavaClass(type: Class<*>): JavaClassType =
+        classReferenceCache.computeIfAbsent(type) { clazz ->
+            // Name-only references deliberately omit bounds to break recursive
+            // generic edges. Full class surfaces carry the resolved bounds.
+            JavaClassType(
+                javaName = javaTypeNameFor(clazz),
+                typeParameters = clazz.typeParameters.map { TypeParameterType(name = it.name) }
+            )
+        }
+
+    private fun javaTypeNameFor(type: Class<*>): JavaTypeName =
+        javaTypeNameCache.computeIfAbsent(type, ::buildJavaTypeName)
+
+    private fun buildJavaTypeName(type: Class<*>): JavaTypeName {
+        val packageName = type.`package`?.name.orEmpty()
+        val binaryClassName = type.name.removePrefix(packageName.takeIf(String::isNotEmpty)?.let { "$it." } ?: "")
+        val simpleNames = binaryClassName
+            .split('$')
+            .filter(String::isNotBlank)
+            .ifEmpty { listOf(type.simpleName.takeIf(String::isNotBlank) ?: type.name) }
+        return JavaTypeName(
+            packageName = packageName,
+            simpleNames = simpleNames,
+            binaryName = type.name,
+            canonicalName = type.canonicalName ?: type.name.replace('$', '.')
+        )
+    }
+
+    companion object {
+        private const val MAX_REFLECTED_INNER_CLASS_DEPTH = 1
+
+        /**
+         * Process-wide dex provider snapshot cache (DEX-PERF: provider instances are
+         * recreated per workspace update, so without it every content version re-assembled
+         * the dex snapshot — adapter surface, moduleMembers(__class) expand and the
+         * member-by-member fingerprint hash; measured 3.4s per simple-alias hit on-device).
+         * Keyed by (library cacheIdentity, class binaryName, deferMembers) for class
+         * providers and (cacheIdentity, target, deferMembers) for library module providers;
+         * LRU-bounded because entries hold full member surfaces.
+         *
+         * Staleness: `DexLibraryMounter.DexLibrary.cacheIdentity` embeds
+         * `path#lastModified#length`, so rewriting a dex library produces a new
+         * identity → new keys → the stale entry is never consulted (old keys age out
+         * through the LRU bound). The providerPath (`__jvm__/classes/<binaryName>.lua`,
+         * `__jvm__/dex/<target>.lua`) is a pure function of the key, so cached
+         * snapshots stay path-deterministic.
+         */
+        private const val MAX_DEX_PROVIDER_SNAPSHOTS = 64
+        private val dexProviderSnapshotCache: MutableMap<String, Pair<VirtualPath, WorkspaceSnapshot.FileSnapshot>> =
+            DexClassModelAdapter.boundedCache(MAX_DEX_PROVIDER_SNAPSHOTS)
+
+        /**
+         * True only on a real JDK with the `jrt` module filesystem mounted.
+         *
+         * `collectClassesFromJrt` is meaningful only there; on Android hosts (dex-derived
+         * classloaders) no jrt filesystem provider exists, so probing it per wildcard
+         * resolution was pure overhead in the measured 18s main.lua check stacks.
+         * Computed once per process — the JDK module graph cannot change mid-process.
+         */
+        private val jrtModulesFileSystemAvailable: Boolean by lazy {
+            runCatching {
+                java.nio.file.FileSystems.getFileSystem(java.net.URI.create("jrt:/modules")).isOpen
+            }.getOrDefault(false)
+        }
+
+        /**
+         * Process-wide jrt package class-listing cache (positive AND negative). The
+         * per-module `Files.list` walk over `jrt:/modules` is expensive on a JDK and its
+         * result depends only on (packagePath, JDK modules) — both process-constant.
+         * Caching the empty result here makes the wildcard-resolution negative durable
+         * across provider instances (per workspace update), not just within one.
+         */
+        private const val MAX_JRT_PACKAGE_ENTRIES = 256
+        private val jrtPackageClassesCache: MutableMap<String, List<String>> =
+            DexClassModelAdapter.boundedCache(MAX_JRT_PACKAGE_ENTRIES)
+
+        /**
+         * Process-wide single extraction of the bundled runtime jar.
+         *
+         * Provider instances are created per workspace update (per keystroke in an LSP
+         * session); an instance-level temp extraction used to leak one 1.3MB copy per
+         * update into java.io.tmpdir — ~36k copies / ~45GiB over a long demo session.
+         * One shared lazy + deleteOnExit caps the cost at one file per JVM, removed on
+         * clean exit.
+         */
+        private val companionRuntimeJarRef: File? by lazy {
+            runCatching {
+                val resource = JvmClassModuleProvider::class.java
+                    .getResourceAsStream("/io/github/dingyi222666/luaparser/interop/jvm/androlua-runtime.jar")
+                    ?: return@lazy null
+                val target = Files.createTempFile("androlua-runtime", ".jar")
+                resource.use { input ->
+                    Files.copy(input, target, java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+                }
+                val file = target.toFile().takeIf { it.isFile && it.length() > 0 }
+                file?.deleteOnExit()
+                file
+            }.getOrNull()
+        }
+        // Practical member expand depth for deep class providers.
+        private const val MAX_DEEP_HIERARCHY_EXPAND_DEPTH = 2
+        // Lightweight hierarchy skeleton depth for assignability (transitive supers/interfaces).
+        // Bounded well below the test maxHierarchyDepth guard (33) while covering JDK chains
+        // such as ArrayList -> List -> Collection -> Iterable and AbstractList -> Object.
+        private const val MAX_HIERARCHY_SKELETON_DEPTH = 16
+        const val UNSUPPORTED_PREFIXED_IMPORT_CODE = "jvm.import.prefixed.unsupported"
+
+        const val CLASSES_METADATA_KEY = "jvm.classes"
+        const val IMPORTS_METADATA_KEY = "androlua.imports"
+
+        val DEFAULT_IMPORT_PREFIXES: List<String> = listOf(
+            "java.lang", "java.util", "java.io",
+            "android.app", "android.content", "android.view", "android.widget",
+            "com.androlua"
+        )
+    }
+}

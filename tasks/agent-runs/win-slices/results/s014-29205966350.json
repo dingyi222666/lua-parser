@@ -1,0 +1,34 @@
+{
+  "sliceId": "s014",
+  "runId": "29205966350",
+  "sha": "658993efeba095a3d8dd0c8071c3d6282d9e0d82",
+  "status": "failure",
+  "exitCode": 1,
+  "durationSec": 15,
+  "tests": 166,
+  "failures": 1,
+  "errors": 0,
+  "skipped": 0,
+  "failedTests": [
+    "semantic.checker.CallArityMismatchSurfaceTddTest#reservedCallArityCodeStringsRemainLockedAndDistinctFromProductCatalog[jvm]"
+  ],
+  "testsPatterns": [
+    "semantic.binder.BinderPositionQueriesTest",
+    "semantic.binder.BinderUpvalueCaptureRangeTddTest",
+    "semantic.binder.BinderUpvalueUsageSiteResolveTddTest",
+    "semantic.binder.BuiltinSymbolSeederClassTypeGlobalTddTest",
+    "semantic.binder.DeclarationCommentInteropTest",
+    "semantic.binder.DeclarationIndexRangeLookupTddTest",
+    "semantic.binder.DeclarationIndexTest",
+    "semantic.binder.DeclarationModelTest",
+    "semantic.binder.PositionRangeIndexTest",
+    "semantic.binder.ScopeGraphParentChainTddTest",
+    "semantic.binder.ScopeGraphTest",
+    "semantic.checker.CallArityFreeformSilenceTddTest",
+    "semantic.checker.CallArityMismatchSurfaceTddTest",
+    "semantic.checker.CallCheckerColonDotSelfTddTest",
+    "semantic.checker.CallCheckerNamedArgsDualPathTddTest"
+  ],
+  "gate": "must-green-to-advance",
+  "finishedAt": "2026-07-12T19:32:40Z"
+}

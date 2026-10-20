@@ -1,0 +1,8 @@
+task: TASK-645
+wave: WINSLICE-29202408385
+owner: worker-WINSLICE-29202408385-TASK-645
+finalStatus: blocked
+utc: 2026-07-12T17:46:59Z
+summary: STOP leave ready — exclusive LuaParser.kt file lock held by TASK-649 (worker-WINSLICE-29202408385-TASK-649). No product/test edits for out-of-scope recovery boundary strict-reject.
+blockedReason: locks/files/src__commonMain__kotlin__io__github__dingyi222666__luaparser__parser__LuaParser.kt.lock owned by TASK-649; contract forbids editing while locked by live other task.
+filesChanged: []

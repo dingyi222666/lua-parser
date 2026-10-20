@@ -1,0 +1,40 @@
+{
+  "sliceId": "s004",
+  "runId": "29193414885",
+  "sha": "7e09d9928bf7e4bcb2e30e555d46e1cc7bd577d7",
+  "status": "failure",
+  "exitCode": 1,
+  "durationSec": 45,
+  "tests": 277,
+  "failures": 7,
+  "errors": 0,
+  "skipped": 0,
+  "failedTests": [
+    "lsp.LspJavaAndroidFeatureTddTest#text_document_and_workspace_services_wrap_android_java_feature_queries_after_configuration[jvm]",
+    "lsp.LspJavaAndroidFeatureTddTest#android_wildcard_layout_lsp_features_cover_ids_listener_and_cross_file_symbols[jvm]",
+    "lsp.LspJavaAndroidFeatureTddTest#android_import_table_lsp_features_resolve_class_static_field_and_member_methods[jvm]",
+    "lsp.LspJavaAndroidFeatureTddTest#java_static_member_lsp_features_resolve_from_configured_jvm_provider[jvm]",
+    "lsp.LspJvmProviderDefinitionTddTest#definition_and_hover_on_luajava_bind_class_alias_land_on_provider_virtual_path[jvm]",
+    "lsp.LspJvmProviderDefinitionTddTest#without_mounts_require_class_definition_and_hover_degrade_gracefully[jvm]",
+    "lsp.LspJvmProviderDefinitionTddTest#without_mounts_empty_metadata_keeps_unknown_short_name_unresolved_while_mounted_peer_still_works[jvm]"
+  ],
+  "testsPatterns": [
+    "lsp.LspDocumentLinkSafetyTddTest",
+    "lsp.LspFoldingRangeSafetyTddTest",
+    "lsp.LspFoldingRangesTddTest",
+    "lsp.LspFormattingFullDocumentSafetyTddTest",
+    "lsp.LspFormattingSafetyTddTest",
+    "lsp.LspHierarchicalDocumentSymbolTddTest",
+    "lsp.LspHoverDocCommentSurfaceTddTest",
+    "lsp.LspHoverLocalAnnotationTddTest",
+    "lsp.LspHoverMarkupContentTddTest",
+    "lsp.LspIncrementalWorkspaceUpdateTddTest",
+    "lsp.LspInlayHintsParamNameTddTest",
+    "lsp.LspInlayHintsSafetyTddTest",
+    "lsp.LspJavaAndroidFeatureTddTest",
+    "lsp.LspJvmProviderDefinitionTddTest",
+    "lsp.LspLifecycleDiagnosticsTddTest"
+  ],
+  "gate": "must-green-to-advance",
+  "finishedAt": "2026-07-12T12:55:02Z"
+}

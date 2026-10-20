@@ -1,0 +1,959 @@
+package io.github.dingyi222666.luaparser.semantic.workspace
+
+import io.github.dingyi222666.luaparser.parser.ast.node.AssignmentStatement
+import io.github.dingyi222666.luaparser.parser.ast.node.ChunkNode
+import io.github.dingyi222666.luaparser.parser.ast.node.ExpressionNode
+import io.github.dingyi222666.luaparser.parser.ast.node.Identifier
+import io.github.dingyi222666.luaparser.parser.ast.node.MemberExpression
+import io.github.dingyi222666.luaparser.semantic.WorkspaceImportedSymbol
+import io.github.dingyi222666.luaparser.semantic.mergeWorkspaceGlobalExtension
+import io.github.dingyi222666.luaparser.semantic.api.SymbolKind
+import io.github.dingyi222666.luaparser.semantic.binder.DeclarationKind
+import io.github.dingyi222666.luaparser.semantic.binder.DeclarationOrigin
+import io.github.dingyi222666.luaparser.semantic.binder.BinderDeclaration
+import io.github.dingyi222666.luaparser.semantic.binder.BinderPassResult
+import io.github.dingyi222666.luaparser.semantic.binder.rangeContains
+import io.github.dingyi222666.luaparser.semantic.checker.ExpressionTypeEvaluator
+import io.github.dingyi222666.luaparser.semantic.types.model.CallableType
+import io.github.dingyi222666.luaparser.semantic.types.model.ClassType
+import io.github.dingyi222666.luaparser.semantic.types.model.FunctionParameter
+import io.github.dingyi222666.luaparser.semantic.types.model.FunctionType
+import io.github.dingyi222666.luaparser.semantic.types.model.ModuleType
+import io.github.dingyi222666.luaparser.semantic.types.model.OverloadedFunctionType
+import io.github.dingyi222666.luaparser.semantic.types.model.PrimitiveType
+import io.github.dingyi222666.luaparser.semantic.types.model.TableType
+import io.github.dingyi222666.luaparser.semantic.types.model.Type
+import io.github.dingyi222666.luaparser.semantic.types.model.UnknownType
+import io.github.dingyi222666.luaparser.semantic.types.model.VarargType
+import io.github.dingyi222666.luaparser.util.putIfAbsentCompat
+
+internal class WorkspaceModuleResolver(
+    private val snapshot: WorkspaceSnapshot,
+    private val deferDependencyGlobals: Boolean = false,
+    /**
+     * Parse-cache fallback for files whose full semantic state was never attached
+     * (non-queried documents keep `semanticFile = null`, but their chunk is parsed and
+     * cached by the engine). Lets layout-path resolution read `.aly` chunks without
+     * forcing analysis of every layout file.
+     */
+    private val chunkFor: ((VirtualPath) -> ChunkNode?)? = null
+) {
+    private companion object { private const val COMPLETION_MODULE_NAME_LIMIT = 300 }
+
+    private val activeProviderCache = mutableMapOf<String, WorkspaceModuleGraph.ModuleProvider?>()
+    // Lazy alias index over snapshot.extraProviders (the mounted android.jar catalog is
+    // thousands of entries): alias/simple-name -> provider, classes-entries preferred.
+    private var extraProviderAliasIndex: Pair<Map<String, WorkspaceModuleGraph.ModuleProvider>, Map<String, WorkspaceModuleGraph.ModuleProvider>>? = null
+    private val importedSymbolsCache = mutableMapOf<Pair<VirtualPath, Boolean>, Map<String, WorkspaceImportedSymbol>>()
+    private val sharedGlobalSymbolsCache = mutableMapOf<Pair<VirtualPath, String>, List<WorkspaceImportedSymbol>>()
+    private val sharedGlobalInFlight = mutableSetOf<String>()
+
+    // Index candidates, rather than evaluated types: the resolver may also serve
+    // a workspace while its dependency-order analysis is still attaching files.
+    // A replacement binding must never inherit candidates from the old source.
+    private class ProviderGlobalDeclarations(
+        val binder: BinderPassResult,
+        val context: io.github.dingyi222666.luaparser.semantic.SemanticWorkspaceContext
+    ) {
+        val symbols = mutableMapOf<String?, List<WorkspaceImportedSymbol>>()
+        // One provider revision owns derived expression types for every requested global.
+        // Prevent shared-global recursion without discarding the other import configuration.
+        val evaluator by lazy { ExpressionTypeEvaluator(binder, context.copy(resolveImportedSymbol = null)) }
+        val globals = binder.declarationIndex.declarations.filter { it.kind == DeclarationKind.GLOBAL && it.origin == DeclarationOrigin.AST }
+        val globalsByName = globals.groupBy { it.name }
+        val extensionsByRoot = binder.declarationIndex.declarations.mapNotNull { declaration ->
+            if (declaration.origin != DeclarationOrigin.AST ||
+                (declaration.kind != DeclarationKind.FIELD && declaration.kind != DeclarationKind.METHOD)) {
+                return@mapNotNull null
+            }
+            val member = declaration.anchorNode?.parent as? MemberExpression ?: return@mapNotNull null
+            val root = member.base as? Identifier ?: return@mapNotNull null
+            Triple(root, member, declaration)
+        }.groupBy { (root) -> root.name }
+    }
+
+    private val providerGlobalDeclarations = mutableMapOf<VirtualPath, ProviderGlobalDeclarations>()
+
+    private fun globalDeclarations(path: VirtualPath, binder: BinderPassResult): ProviderGlobalDeclarations {
+        val context = checkNotNull(snapshot.files[path]?.semanticFile?.snapshot?.workspaceContext)
+        providerGlobalDeclarations[path]?.takeIf { it.binder === binder && it.context === context }?.let { return it }
+        return ProviderGlobalDeclarations(binder, context).also { providerGlobalDeclarations[path] = it }
+    }
+
+    /**
+     * Real workspace module names for require / import string-literal completions: user
+     * `.lua` / `.aly` files only (synthetic `__` providers excluded), offered both dotted
+     * (`mods.util`) and basename (`util`) forms, capped for payload size.
+     */
+    fun completionModuleNames(): List<String> = snapshot.files.keys.asSequence()
+        .map { it.value }
+        .filter { path -> isSourceModulePath(path) && !path.startsWith("__") }
+        .flatMap { path ->
+            val base = path.removeSuffix(".lua").removeSuffix(".aly")
+            listOf(base.substringAfterLast('/'), base.replace('/', '.'))
+        }
+        .filter(String::isNotBlank)
+        .distinct()
+        .take(COMPLETION_MODULE_NAME_LIMIT)
+        .toList()
+
+    fun activeProvider(moduleName: String): WorkspaceModuleGraph.ModuleProvider? {
+        if (moduleName.isBlank()) { return null }
+        if (moduleName in activeProviderCache) return activeProviderCache[moduleName]
+        // Dotted stdlib overlay recovery (e.g. AndroLua socket.url): keep dotted module names
+        // even when graph activeProviders missed or only recorded a slash alias.
+        // Extra JVM providers are claimed by moduleName during graph build; if a claim was lost
+        // (duplicate simple names), still recover the exact class/package provider path.
+        val provider = snapshot.graph.activeProviders[moduleName]
+            ?: findOverlayProvider(moduleName)
+            ?: findExtraClassProviderByAlias(moduleName)
+            ?: snapshot.extraProviders.entries.firstOrNull { (_, file) ->
+                file.moduleExportSurface?.moduleType?.moduleName == moduleName
+            }?.let { (path, _) ->
+                WorkspaceModuleGraph.ModuleProvider(moduleName, path, WorkspaceModuleGraph.ProviderSource.EXTRA_WORKSPACE_PROVIDER)
+            } // Free-form Android-Lua layout modules (.aly) may exist in the workspace without a
+            // pre-built dependency edge (e.g. partial graph rebuilds). Recover by path/module alias.
+            ?: findAlyLayoutProvider(moduleName)
+        activeProviderCache[moduleName] = provider
+        return provider
+    }
+
+    fun exportSurface(provider: WorkspaceModuleGraph.ModuleProvider): ModuleExportSurface? {
+        return fileSnapshot(provider.path)?.moduleExportSurface
+            ?: syntheticAlyLayoutSurface(provider)
+    }
+
+    /**
+     * The analyzed semantic file for [path] when the snapshot holds it (Lua or `.aly`).
+     * Callers that need the already-parsed chunk — e.g. loadlayout string paths reading a
+     * layout file's `return <table>` — must reuse this instead of re-parsing the source.
+     */
+    fun workspaceSourceFile(path: VirtualPath): WorkspaceSemanticFile? =
+        fileSnapshot(path)?.semanticFile
+
+    /**
+     * Resolves an AndroLua layout path (`loadlayout("layout/main")`) to the parsed `.aly`
+     * chunk. Candidate snapshot paths are tried directly first, then prefix-tolerant
+     * suffix matches — synthetic-root prefixes (`workspace/layout/main.aly`) and multi-root
+     * folders must not sever the lookup — and finally the dotted-module provider form the
+     * module graph may index. Non-queried documents keep `semanticFile = null` in the
+     * snapshot, so [chunkFor] (the engine parse cache) completes the chain without forcing
+     * analysis of every layout file.
+     */
+    fun workspaceLayoutChunk(layoutPath: String): ChunkNode? {
+        val moduleName = layoutPath.trim().removeSuffix(".aly")
+        if (moduleName.isEmpty()) { return null }
+        layoutChunkCache[moduleName]?.let { return it }
+        val resolved = layoutFileCandidates("$moduleName.aly")
+            .firstNotNullOfOrNull { path -> workspaceSourceFile(path)?.chunk ?: chunkFor?.invoke(path) }
+        layoutChunkCache[moduleName] = resolved
+        return resolved
+    }
+
+    private fun layoutFileCandidates(relative: String): List<VirtualPath> {
+        val suffix = "/$relative"
+        val matches = (snapshot.files.keys.asSequence() + snapshot.extraProviders.keys.asSequence())
+            .filter { it.value == relative || it.value.endsWith(suffix) }.toMutableList()
+        runCatching { VirtualPath.of(relative) }.getOrNull()?.let(matches::add)
+        activeProvider(relative.removeSuffix(".aly").replace('/', '.'))
+            ?.takeIf { it.path.value.endsWith(".aly") }?.let { matches.add(it.path) }
+        return matches
+    }
+
+    private val layoutChunkCache = mutableMapOf<String, ChunkNode?>()
+
+    fun resolveRequire(consumerPath: VirtualPath, moduleName: String, resolutionPath: Set<VirtualPath> = emptySet()): ResolvedRequire? {
+        val dependency = snapshot.graph.resolvedDependencies[consumerPath]
+            .orEmpty()
+            .firstOrNull { it.moduleName == moduleName }
+        if (dependency != null) {
+            // Always keep the resolved provider. Free-form .aly modules historically dropped here
+            // when export collection was partial (`exportSurface(...) ?: return null`).
+            // exportSurface already falls back to syntheticAlyLayoutSurface internally.
+            val surface = exportSurface(dependency.provider) ?: return null
+            return resolvedRequire(moduleName, dependency.provider, surface, resolutionPath)
+        }
+
+        if (moduleName == "import") {
+            // Prefer a real Android-Lua STANDARD_LIBRARY_OVERLAY provider when present so
+            // require("import") does not fall back to synthetic globals-only surfaces.
+            val overlayProvider = snapshot.graph.providersByModuleName[moduleName]
+                .orEmpty()
+                .firstOrNull { it.source == WorkspaceModuleGraph.ProviderSource.STANDARD_LIBRARY_OVERLAY }
+            val overlaySurface = overlayProvider?.let(::exportSurface)
+            if (overlayProvider != null && overlaySurface != null) {
+                return resolvedRequire(moduleName, overlayProvider, overlaySurface, resolutionPath)
+            }
+
+            val provider = activeProvider(moduleName)
+            val surface = provider?.let(::exportSurface)
+            if (provider != null && surface != null) {
+                return resolvedRequire(moduleName, provider, surface, resolutionPath)
+            }
+        }
+
+        if (moduleName == "import" && "import" in snapshot.builtinOverlay.globals.globalNames) {
+            return resolvedRequire(
+                moduleName = moduleName,
+                provider = WorkspaceModuleGraph.ModuleProvider(moduleName, snapshot.builtinOverlay.globals.path, WorkspaceModuleGraph.ProviderSource.STANDARD_LIBRARY_OVERLAY),
+                surface = syntheticImportSurface(),
+                resolutionPath = resolutionPath
+            )
+        }
+
+        // Generic fallback: active provider (workspace VIRTUAL_PATH / .aly / extra / overlay).
+        // Previously only "import" recovered here, so require("…representative_layout") without a
+        // dependency edge returned null even when the .aly file was present in the workspace.
+        val provider = activeProvider(moduleName) ?: return null
+        val surface = exportSurface(provider) ?: return null
+        return resolvedRequire(moduleName, provider, surface, resolutionPath)
+    }
+
+    fun exportedMember(providerPath: VirtualPath, memberName: String): ResolvedExportMember? {
+        return exportedMember(providerPath, listOf(memberName))
+    }
+
+    fun exportedMember(providerPath: VirtualPath, exportPath: List<String>): ResolvedExportMember? {
+        val file = fileSnapshot(providerPath) ?: return null
+        val surface = file.moduleExportSurface ?: return null
+        val member = surface.members.firstOrNull { it.exportPath == exportPath } ?: return null
+        val resolvedType = resolvedMemberType(file, member) ?: member.type
+        val definitionProviderPath = when (resolvedType) {
+            is ModuleType -> activeProvider(resolvedType.moduleName)?.path ?: providerPath
+            else -> providerPath
+        }
+        return ResolvedExportMember(
+            providerPath = providerPath,
+            definitionProviderPath = definitionProviderPath,
+            moduleName = surface.moduleType.moduleName,
+            member = member,
+            type = resolvedType
+        )
+    }
+
+    private fun resolvedRequire(
+        moduleName: String,
+        provider: WorkspaceModuleGraph.ModuleProvider,
+        surface: ModuleExportSurface,
+        resolutionPath: Set<VirtualPath>
+    ): ResolvedRequire {
+        return ResolvedRequire(
+            moduleName = moduleName,
+            provider = provider,
+            surface = surface,
+            moduleType = resolvedModuleType(provider.path, surface, resolutionPath)
+        )
+    }
+
+    private fun resolvedModuleType(
+        providerPath: VirtualPath,
+        surface: ModuleExportSurface,
+        resolutionPath: Set<VirtualPath> = emptySet()
+    ): ModuleType {
+        val file = fileSnapshot(providerPath) ?: return surface.moduleType
+        val resolvedTypes = surface.members.mapNotNull { member ->
+            resolvedMemberType(file, member)?.let { member.exportPath to it }
+        }.toMap()
+        fun ModuleType.withResolvedExports(): ModuleType = copy(
+            fields = fields.mapValues { (name, type) -> resolvedExportType(type, listOf(name), resolvedTypes) },
+            methods = methods.mapValues { (name, type) -> resolvedExportType(type, listOf(name), resolvedTypes) }
+        )
+        val declaredModule = if (resolvedTypes.isEmpty()) surface.moduleType else surface.moduleType.withResolvedExports()
+        if (surface.members.none { it.type === UnknownType }) return declaredModule
+        val semantic = file.semanticFile ?: return declaredModule
+        val returned = semantic.chunk.body.returnStatement?.arguments?.singleOrNull() ?: return declaredModule
+        if (providerPath in resolutionPath) return declaredModule
+        val providerContext = semantic.snapshot.workspaceContext.copy(moduleResolutionPath = resolutionPath + providerPath)
+        val inferred = ExpressionTypeEvaluator(semantic.snapshot.binder, providerContext)
+            .evaluate(returned) as? TableType ?: return declaredModule
+        // Structural exports retain identity, ranges and explicitly declared types.
+        // Resolve only their unknown values against the provider's own import context.
+        return declaredModule.copy(
+            fields = declaredModule.fields.mapValues { (name, type) -> enrichUnknownExportType(type, inferred.fields[name] ?: inferred.methods[name]) },
+            methods = declaredModule.methods.mapValues { (name, type) -> enrichUnknownExportType(type, inferred.methods[name] ?: inferred.fields[name]) }
+        )
+    }
+
+    private fun enrichUnknownExportType(structural: Type, inferred: Type?): Type {
+        if (inferred == null) return structural
+        if (structural === UnknownType) return inferred
+        if (structural is TableType && inferred is TableType) {
+            return TableType(
+                fields = structural.fields.mapValues { (name, type) -> enrichUnknownExportType(type, inferred.fields[name] ?: inferred.methods[name]) },
+                methods = structural.methods.mapValues { (name, type) -> enrichUnknownExportType(type, inferred.methods[name] ?: inferred.fields[name]) },
+                indexSignature = structural.indexSignature
+            )
+        }
+        return structural
+    }    private fun resolvedExportType(
+        structuralType: Type,
+        exportPath: List<String>,
+        resolvedTypes: Map<List<String>, Type>
+    ): Type {
+        resolvedTypes[exportPath]?.let { return it }
+        return when (structuralType) {
+            is TableType -> TableType(
+                fields = structuralType.fields.mapValues { (name, type) -> resolvedExportType(type, exportPath + name, resolvedTypes) },
+                methods = structuralType.methods.mapValues { (name, type) -> resolvedExportType(type, exportPath + name, resolvedTypes) },
+                indexSignature = structuralType.indexSignature
+            )
+            is ModuleType -> structuralType.copy(
+                fields = structuralType.fields.mapValues { (name, type) -> resolvedExportType(type, exportPath + name, resolvedTypes) },
+                methods = structuralType.methods.mapValues { (name, type) -> resolvedExportType(type, exportPath + name, resolvedTypes) }
+            )
+            else -> structuralType
+        }
+    }
+
+    private fun resolvedMemberType(
+        file: WorkspaceSnapshot.FileSnapshot,
+        member: ModuleExportSurface.MemberExport
+    ): Type? {
+        val range = member.range ?: return null
+        val binder = file.semanticFile?.snapshot?.binder ?: return null
+        val declaration = binder.declarationIndex.declarations.asSequence()
+            .filter { it.name == member.name && it.declaredType != null }
+            .sortedBy { if (it.anchorNode?.range == range) 0 else 1 }
+            .firstOrNull { it.anchorNode?.range == range || it.range == range } ?: return null
+        return mergeResolvedType(member.type, declaration.declaredType ?: return null)
+    }
+
+    private fun mergeResolvedType(structuralType: Type, resolvedType: Type): Type {
+        if (resolvedType is OverloadedFunctionType) { return resolvedType }
+        if (structuralType !is FunctionType || resolvedType !is FunctionType) { return resolvedType }
+        val structuralParameters = structuralType.parameters.associateBy { it.name }
+        val parameters = resolvedType.parameters.map { parameter ->
+            val structural = structuralParameters[parameter.name]
+            if (parameter.type == UnknownType && structural?.type != null) parameter.copy(type = structural.type) else parameter
+        }
+        return FunctionType(
+            parameters = parameters,
+            returnType = if (resolvedType.returnType == UnknownType) structuralType.returnType else resolvedType.returnType,
+            typeParameters = resolvedType.typeParameters
+        )
+    }
+
+    fun exportedMemberByHandle(handle: String): ResolvedExportMember? =
+        ModuleExportIdentity.parse(handle)?.let { exportedMember(it.providerPath, it.exportPath) }
+
+    fun exportAt(path: VirtualPath, position: io.github.dingyi222666.luaparser.parser.ast.node.Position): ResolvedExportMember? {
+        val surface = fileSnapshot(path)?.moduleExportSurface ?: return null
+        // Binder PositionOrdering.rangeContains is end-exclusive here too; its empty/invalid
+        // range rejection matches the removed private copy, which rejected them by contradiction.
+        val member = surface.members.firstOrNull { member ->
+            member.range?.let { rangeContains(it, position) } == true
+        } ?: return null
+        return exportedMember(path, member.exportPath)
+    }
+
+    fun importedSymbolsFor(path: VirtualPath, includeDependencyGlobals: Boolean = !deferDependencyGlobals,
+        nameFilter: ((String) -> Boolean)? = null): Map<String, WorkspaceImportedSymbol> {
+        val key = path to includeDependencyGlobals
+        importedSymbolsCache[key]?.let { values -> return if (nameFilter == null) values else values.filterKeys(nameFilter) }
+        val facts = snapshot.files[path]?.documentFacts ?: return emptyMap()
+        val imported = linkedMapOf<String, WorkspaceImportedSymbol>()
+        activeImportTargets(facts).forEach { target ->
+            importedSymbolsForTarget(target).forEach { symbol -> imported[symbol.alias] = symbol }
+        }
+        // Also index by the last path segment so bare Locale/File lookups succeed even when a
+        // provider surface temporarily reports a non-simple moduleName alias.
+        // Explicit (non-wildcard) targets ALWAYS win the simple-name slot, even when loop 1
+        // already installed a wildcard package member under it: explicit imports are more
+        // specific, and AndroLua installs imports sequentially into _G so an explicit import
+        // overrides a wildcard member of the same simple name. Skipping when the name is
+        // already present let an earlier/later wildcard member shadow the explicit import.
+        activeImportTargets(facts).forEach { target ->
+            val normalized = normalizeImportTarget(target)
+            if (normalized.endsWith(".*")) { return@forEach }
+            val simpleName = explicitImportSimpleName(normalized)
+            if (simpleName.isNotBlank()) {
+                importTargetSymbol(normalized)?.let { symbol -> imported[simpleName] = symbol.copy(alias = simpleName) }
+            }
+        }
+        (if (includeDependencyGlobals) dependencyGlobalSymbolsFor(path, nameFilter = nameFilter) else emptyList()).forEach { symbol ->
+            val existing = imported[symbol.alias]
+            imported[symbol.alias] = if (symbol.extendsExistingGlobal && existing?.extendsExistingGlobal == true) {
+                symbol.copy(valueType = mergeWorkspaceGlobalExtension(existing.valueType, symbol.valueType))
+            } else { symbol }
+        }
+        return if (nameFilter == null) imported.toMap().also { importedSymbolsCache[key] = it }
+            else imported.filterKeys(nameFilter)
+    }
+
+    private fun dependencyGlobalProvidersFor(path: VirtualPath): List<WorkspaceModuleGraph.ModuleProvider> {
+        val facts = snapshot.files[path]?.documentFacts ?: return emptyList()
+        val activeModules = buildSet {
+            facts.sourceImports.forEach { sourceImport ->
+                val target = normalizeImportTarget(sourceImport.target)
+                if (!target.endsWith(".*")) {
+                    add(target)
+                }
+            }
+            facts.requires.forEach { require -> add(require.moduleName) }
+        }
+        if (activeModules.isEmpty()) {
+            return emptyList()
+        }
+        return snapshot.graph.resolvedDependencies[path]
+            .orEmpty()
+            .filter { dependency -> normalizeImportTarget(dependency.moduleName) in activeModules }
+            .map { dependency -> dependency.provider }
+    }
+
+    private fun dependencyGlobalSymbolsFor(path: VirtualPath, alias: String? = null,
+        nameFilter: ((String) -> Boolean)? = null): List<WorkspaceImportedSymbol> =
+        dependencyGlobalProvidersFor(path).flatMap { providerGlobalSymbols(it, alias, nameFilter) }
+
+    fun deferredDependencyGlobalNamesFor(path: VirtualPath): Set<String> {
+        if (!deferDependencyGlobals) return emptySet()
+        return dependencyGlobalProvidersFor(path).flatMapTo(linkedSetOf()) { provider ->
+            val semantic = snapshot.files[provider.path]?.semanticFile?.snapshot ?: return@flatMapTo emptyList()
+            val candidates = globalDeclarations(provider.path, semantic.binder)
+            val ownNames = candidates.globalsByName.keys
+            ownNames + candidates.extensionsByRoot.keys.filter { it in ownNames || it in semantic.workspaceContext.overlayGlobals.globalNames }
+        }
+    }
+
+    private fun providerGlobalSymbols(
+        provider: WorkspaceModuleGraph.ModuleProvider,
+        alias: String? = null,
+        nameFilter: ((String) -> Boolean)? = null
+    ): List<WorkspaceImportedSymbol> {
+        val file = snapshot.files[provider.path] ?: return emptyList()
+        val semanticSnapshot = file.semanticFile?.snapshot ?: return emptyList()
+        val candidates = globalDeclarations(provider.path, semanticSnapshot.binder)
+        candidates.symbols[alias]?.let { values ->
+            return if (nameFilter == null) values else values.filter { nameFilter(it.alias) }
+        }
+        if (alias == null && nameFilter != null) {
+            // Names come from the binding index; only matching candidates need value typing.
+            // Reuse the same per-alias resolver/cache as an ordinary named query.
+            return (candidates.globalsByName.keys + candidates.extensionsByRoot.keys)
+                .filter(nameFilter).flatMap { providerGlobalSymbols(provider, it) }
+        }
+        if (alias != null) { candidates.symbols[null]?.let { symbols -> return symbols.filter { it.alias == alias } } }
+        val globalsToEvaluate = if (alias == null) candidates.globals else candidates.globalsByName[alias].orEmpty()
+        val extensionsToEvaluate = if (alias == null) candidates.extensionsByRoot else
+            candidates.extensionsByRoot[alias]?.let { mapOf(alias to it) }.orEmpty()
+        val allowedExtensions = extensionsToEvaluate.filterKeys {
+            it in candidates.globalsByName || it in semanticSnapshot.workspaceContext.overlayGlobals.globalNames
+        }
+        if (globalsToEvaluate.isEmpty() && allowedExtensions.isEmpty()) {
+            candidates.symbols[alias] = emptyList()
+            return emptyList()
+        }
+        val evaluator = candidates.evaluator
+        val providerModuleType = file.moduleExportSurface?.moduleType ?: ModuleType(provider.moduleName)
+        val globals = globalsToEvaluate.asReversed().asSequence()
+            .distinctBy { it.name }
+            .mapNotNull { declaration ->
+                val anchor = declaration.anchorNode as? ExpressionNode ?: return@mapNotNull null
+                val valueType = evaluator.evaluate(anchor)
+                val kind = when (valueType) {
+                    is CallableType -> SymbolKind.FUNCTION
+                    is ModuleType, is TableType -> SymbolKind.MODULE
+                    is ClassType -> SymbolKind.CLASS
+                    else -> SymbolKind.VARIABLE
+                }
+                WorkspaceImportedSymbol(
+                    declaration.name, provider.moduleName, provider.path, providerModuleType,
+                    valueType, kind, declaration.anchorNode?.range ?: declaration.range
+                )
+            }
+            .toList()
+        val extendedGlobals = providerGlobalObjectExtensions(
+            provider, providerModuleType, evaluator, allowedExtensions
+        )
+        return (globals + extendedGlobals).also { candidates.symbols[alias] = it }
+    }
+
+    private fun providerGlobalObjectExtensions(
+        provider: WorkspaceModuleGraph.ModuleProvider,
+        providerModuleType: ModuleType,
+        evaluator: ExpressionTypeEvaluator,
+        extensionsByRoot: Map<String, List<Triple<Identifier, MemberExpression, BinderDeclaration>>>
+    ): List<WorkspaceImportedSymbol> {
+        return extensionsByRoot.mapNotNull { (rootName, entries) ->
+            val baseType = evaluator.evaluate(entries.first().first)
+            val fields = linkedMapOf<String, Type>()
+            val methods = linkedMapOf<String, Type>()
+            entries.forEach { (_, member, declaration) ->
+                val memberType = assignedMemberValueType(member, evaluator)
+                    ?: evaluator.evaluate(member).takeUnless { it === UnknownType }
+                    ?: declaration.declaredType?.takeUnless { it === UnknownType }
+                    ?: return@forEach
+                if (declaration.kind == DeclarationKind.METHOD) methods[declaration.name] = memberType else fields[declaration.name] = memberType
+            }
+            if (fields.isEmpty() && methods.isEmpty()) { return@mapNotNull null }
+            val extensionType = TableType(fields = fields, methods = methods)
+            val definition = entries.first().third
+            WorkspaceImportedSymbol(
+                rootName, provider.moduleName, provider.path, providerModuleType,
+                mergeWorkspaceGlobalExtension(baseType, extensionType), SymbolKind.MODULE,
+                definition.anchorNode?.range ?: definition.range, extendsExistingGlobal = true
+            )
+        }
+    }
+
+    private fun assignedMemberValueType(
+        member: MemberExpression,
+        evaluator: ExpressionTypeEvaluator
+    ): Type? {
+        val assignment = member.parent as? AssignmentStatement ?: return null
+        val targetIndex = assignment.init.indexOf(member)
+        if (targetIndex < 0 || assignment.variables.isEmpty()) { return null }
+        val initializer = assignment.variables.getOrNull(targetIndex)
+            ?: assignment.variables.last()
+        return evaluator.evaluate(initializer).takeUnless { it === UnknownType }
+    }
+
+    fun importedSymbolFor(path: VirtualPath, alias: String): WorkspaceImportedSymbol? {
+        resolveImportedSymbolFor(path, alias)?.let { return it }
+        // AndroLua project scripts share one Lua global environment: main.lua imports
+        // mods.dingyi and then mods.util, so dingyi's chunk-level `FileUtil = {}`
+        // assignment lands in _G before util.lua reads it — even though no require /
+        // import edge exists between the mods themselves. Fall back to the workspace's
+        // other chunk-level globals so runtime-visible globals stay resolvable.
+        return sharedGlobalSymbol(path, alias)
+    }
+
+    private fun resolveImportedSymbolFor(path: VirtualPath, alias: String): WorkspaceImportedSymbol? {
+        if (deferDependencyGlobals) {
+            val globals = dependencyGlobalSymbolsFor(path, alias)
+            if (globals.isNotEmpty()) {
+                return globals.reduce { previous, next ->
+                    if (previous.extendsExistingGlobal && next.extendsExistingGlobal) {
+                        next.copy(valueType = mergeWorkspaceGlobalExtension(previous.valueType, next.valueType))
+                    } else next
+                }
+            }
+        }
+        importedSymbolsFor(path)[alias]?.let { return it }
+        // Path-scoped bare-name recovery: only when this file actively imported a matching target.
+        val facts = snapshot.files[path]?.documentFacts ?: return null
+        val match = activeImportTargets(facts).firstOrNull { target ->
+            val normalized = normalizeImportTarget(target)
+            !normalized.endsWith(".*") && (explicitImportSimpleName(normalized) == alias || normalized == alias)
+        } ?: return null
+        return importTargetSymbol(match)?.copy(alias = alias)
+    }
+
+    /**
+     * ALL chunk-level globals defined in OTHER project files (AndroLua shared global
+     * environment), deduped by alias, sorted by defining path. Used by completion
+     * enumeration so cross-file globals are offered without an import edge.
+     */
+    fun allSharedGlobalSymbols(consumerPath: VirtualPath, nameFilter: ((String) -> Boolean)? = null): List<WorkspaceImportedSymbol> {
+        val result = linkedMapOf<String, WorkspaceImportedSymbol>()
+        sharedGlobalProviders(consumerPath, alias = null).forEach { provider ->
+            providerGlobalSymbols(provider, nameFilter = nameFilter).forEach { symbol ->
+                if (!symbol.extendsExistingGlobal) result.putIfAbsentCompat(symbol.alias, symbol)
+            }
+        }
+        return result.values.toList()
+    }
+
+    /**
+     * Workspace shared-global fallback: the defining chunk-level global in ANOTHER project
+     * file. Multiple defining files merge (first definition carries identity, later ones
+     * contribute their member surfaces); the consumer's own file is excluded so a same-name
+     * read inside the defining file still resolves through its own scope first.
+     */
+    private fun sharedGlobalSymbol(consumerPath: VirtualPath, alias: String): WorkspaceImportedSymbol? {
+        if (alias.isBlank()) { return null }
+        // Re-entrancy guard wraps the WHOLE scan: evaluating a candidate file's global anchor
+        // can itself fall back to this lookup for the SAME alias from another defining file,
+        // ping-ponging between files until the stack overflows; a throw mid-scan must not
+        // leave the alias blocked for later queries. One in-flight resolution per alias.
+        if (alias in sharedGlobalInFlight) { return null }
+        sharedGlobalInFlight += alias
+        try {
+            return computeSharedGlobalSymbol(consumerPath, alias)
+        } finally { sharedGlobalInFlight -= alias }
+    }
+
+    /**
+     * Shared other-file provider scan under both shared-global surfaces: same file set,
+     * same distinct/sort order; [alias] selects the declares-shared-global predicate.
+     */
+    private fun sharedGlobalProviders(consumerPath: VirtualPath, alias: String?): Sequence<WorkspaceModuleGraph.ModuleProvider> =
+        snapshot.graph.providersByModuleName.values.asSequence()
+            .flatten()
+            .filter { provider ->
+                provider.path != consumerPath && isSourceModulePath(provider.path.value)
+            }
+            .distinctBy { it.path }
+            .filter { declaresSharedGlobal(it, alias) }
+            .sortedBy { it.path.value }
+
+    private fun declaresSharedGlobal(provider: WorkspaceModuleGraph.ModuleProvider, alias: String? = null): Boolean {
+        val binder = snapshot.files[provider.path]?.semanticFile?.snapshot?.binder ?: return false
+        val candidates = globalDeclarations(provider.path, binder)
+        return if (alias == null) candidates.globals.isNotEmpty() else alias in candidates.globalsByName
+    }
+
+    private fun computeSharedGlobalSymbol(consumerPath: VirtualPath, alias: String): WorkspaceImportedSymbol? {
+        // Blank / in-flight guarding is owned by [sharedGlobalSymbol]; this scan only has to
+        // keep pathological anchor evaluation from poisoning the completion pipeline.
+        return try {
+            val candidates = sharedGlobalSymbolsCache.getOrPut(consumerPath to alias) {
+                sharedGlobalProviders(consumerPath, alias).mapNotNull { provider ->
+                    providerGlobalSymbols(provider, alias).firstOrNull { symbol ->
+                        symbol.alias == alias && !symbol.extendsExistingGlobal
+                    }
+                }.toList()
+            }
+            candidates.reduceOrNull { merged, next ->
+                merged.copy(valueType = mergeWorkspaceGlobalExtension(merged.valueType, next.valueType))
+            }
+        } catch (error: Throwable) {
+            if (error is kotlin.coroutines.cancellation.CancellationException) throw error
+            // Deep or pathological anchor evaluation degrades this alias to "unresolved"
+            // for this query instead of crashing the query surface.
+            null
+        }
+    }
+
+    fun importTargetSymbol(target: String): WorkspaceImportedSymbol? {
+        val normalized = normalizeImportTarget(target)
+        return if (normalized.endsWith(".*")) {
+            importedPackageSymbol(normalized.removeSuffix(".*"))
+        } else {
+            importedClassSymbol(normalized) ?: importedLuaModuleSymbol(normalized)
+        }
+    }
+
+    fun importTargetSymbolFor(path: VirtualPath, target: String): WorkspaceImportedSymbol? {
+        val normalized = normalizeImportTarget(target)
+        val activeTargets = snapshot.files[path]?.documentFacts?.let(::activeImportTargets) ?: return null
+        if (normalized in activeTargets) {
+            return importTargetSymbol(normalized)
+        }
+        // Allow simple-name activation only for targets that this file imported.
+        val matched = activeTargets.firstOrNull { active ->
+            val activeNormalized = normalizeImportTarget(active)
+            activeNormalized == normalized ||
+                (!activeNormalized.endsWith(".*") &&
+                    activeNormalized.substringAfterLast('.').substringAfterLast('$') == normalized)
+        } ?: return null
+        return importTargetSymbol(matched)
+    }
+
+    fun importedSymbolsForTarget(target: String): List<WorkspaceImportedSymbol> {
+        val normalized = normalizeImportTarget(target)
+        return if (normalized.endsWith(".*")) {
+            packageMembers(normalized.removeSuffix(".*"))
+        } else {
+            importTargetSymbol(normalized)?.let(::listOf).orEmpty()
+        }
+    }
+
+    fun classProviderForAlias(alias: String): WorkspaceModuleGraph.ModuleProvider? {
+        // Never let a non-class activeProvider claim (package/overlay/module without __class)
+        // short-circuit path recovery for JVM class modules (File / Locale / BigDecimal).
+        return (activeProvider(alias) ?: findExtraClassProviderByAlias(alias))?.takeIf(::isJvmClassProvider)
+    }
+
+    private fun isJvmClassProvider(provider: WorkspaceModuleGraph.ModuleProvider): Boolean {
+        val moduleType = exportSurface(provider)?.moduleType ?: return false
+        return moduleType.fields.containsKey("__class")
+    }
+
+    fun classProviderForMember(
+        packageProviderPath: VirtualPath,
+        memberName: String
+    ): WorkspaceModuleGraph.ModuleProvider? {
+        val packageSurface = fileSnapshot(packageProviderPath)?.moduleExportSurface ?: return null
+        val memberType = packageSurface.moduleType.fields[memberName] as? ModuleType ?: return null
+        return classProviderForAlias(memberType.moduleName)
+    }
+
+    private fun fileSnapshot(path: VirtualPath): WorkspaceSnapshot.FileSnapshot? {
+        return snapshot.files[path]
+            ?: snapshot.extraProviders[path]
+            ?: snapshot.builtinOverlay.providerModules[path]?.file
+    }
+
+    private fun activeImportTargets(facts: DocumentFacts): Set<String> =
+        buildSet {
+            facts.sourceImports.forEach { add(normalizeImportTarget(it.target)) }
+            // LuaJava class-load helpers (bindClass / loadLib / createProxy / newInstance /
+            // createArray) and import() all mount class modules that must resolve as path-scoped
+            // imported MODULE aliases (System after loadLib("java.lang.System", ...)).
+            facts.jvmClassLoads.forEach { add(normalizeImportTarget(it.target)) }
+        }
+
+    /** Import symbol whose moduleName comes from the surface type (no extra metadata). */
+    private fun importedSymbol(
+        alias: String,
+        moduleType: ModuleType,
+        providerPath: VirtualPath
+    ): WorkspaceImportedSymbol = WorkspaceImportedSymbol(
+        alias = alias,
+        moduleName = moduleType.moduleName,
+        providerPath = providerPath,
+        moduleType = moduleType
+    )
+
+    private fun importedClassSymbol(importText: String): WorkspaceImportedSymbol? {
+        val aliases = classAliasCandidates(importText)
+        val provider = aliases.firstNotNullOfOrNull(::classProviderForAlias)
+            // Simple-name source imports (import "File" / import "BigDecimal") may only be
+            // discoverable via mounted __jvm__/classes/... path suffixes when graph claims
+            // temporarily omit the simple moduleName alias.
+            ?: simpleNameClassProvider(importText)
+            ?: return null
+        val surface = exportSurface(provider) ?: return null
+        val simpleName = aliases.firstOrNull { it == surface.moduleType.moduleName }
+            ?: aliases.firstOrNull { !it.contains('.') && !it.contains('$') && !it.contains('_') }
+            ?: surface.moduleType.moduleName
+        return importedSymbol(simpleName, surface.moduleType, provider.path)
+    }
+
+    private fun importedLuaModuleSymbol(importText: String): WorkspaceImportedSymbol? {
+        val normalized = normalizeImportTarget(importText)
+        if (normalized.isBlank() || normalized.endsWith(".*")) return null
+        val provider = activeProvider(normalized) ?: return null
+        if (provider.path !in snapshot.files || !isSourceModulePath(provider.path.value)) return null
+        val surface = exportSurface(provider) ?: return null
+        val alias = normalized.replace('\\', '/').substringAfterLast('/').substringAfterLast('.').ifBlank { return null }
+        return importedSymbol(alias, resolvedModuleType(provider.path, surface), provider.path)
+    }
+
+    /**
+     * Recover a mounted JVM class provider for a simple import target (File / BigDecimal)
+     * from extraProviders path shape when active-provider indexing missed the alias.
+     * Never invents providers: only existing __jvm__/classes entries with __class surfaces.
+     */
+    private fun simpleNameClassProvider(importText: String): WorkspaceModuleGraph.ModuleProvider? {
+        val normalized = normalizeImportTarget(importText)
+        if (normalized.isBlank() || normalized.endsWith(".*") || '.' in normalized || '$' in normalized) return null
+        return classProviderForAlias(normalized) ?: findExtraClassProviderByAlias(normalized)
+    }
+
+    /** [packageProvider] plus its export-surface module type, or null when either is missing. */
+    private fun packageModuleType(packageName: String): Pair<WorkspaceModuleGraph.ModuleProvider, ModuleType>? {
+        val provider = packageProvider(packageName) ?: return null
+        val moduleType = exportSurface(provider)?.moduleType ?: return null
+        return provider to moduleType
+    }
+
+    private fun importedPackageSymbol(packageName: String): WorkspaceImportedSymbol? {
+        val (provider, moduleType) = packageModuleType(packageName) ?: return null
+        return importedSymbol(packageName, moduleType, provider.path)
+    }
+
+    private fun packageMembers(packageName: String): List<WorkspaceImportedSymbol> {
+        val (_, packageType) = packageModuleType(packageName) ?: return emptyList()
+        return packageType.fields
+            .entries
+            .sortedBy { it.key }
+            .mapNotNull { (alias, memberType) ->
+                val moduleType = memberType as? ModuleType ?: return@mapNotNull null
+                val provider = classProviderForAlias(moduleType.moduleName) ?: classProviderForAlias(alias) ?: return@mapNotNull null
+                importedSymbol(alias, moduleType, provider.path)
+            }
+    }
+
+    private fun packageProvider(packageName: String): WorkspaceModuleGraph.ModuleProvider? {
+        val provider = activeProvider(packageName)
+            ?: snapshot.extraProviders.entries.firstOrNull { (path, file) ->
+                path.value == "__jvm__/packages/${packageName.replace('.', '/')}.lua" ||
+                    file.moduleExportSurface?.moduleType?.moduleName == packageName
+            }?.let { (path, _) ->
+                WorkspaceModuleGraph.ModuleProvider(packageName, path, WorkspaceModuleGraph.ProviderSource.EXTRA_WORKSPACE_PROVIDER)
+            } ?: return null
+        val surface = exportSurface(provider) ?: return null
+        return if (surface.moduleType.moduleName == packageName) provider else null
+    }
+
+    private fun findExtraClassProviderByAlias(alias: String): WorkspaceModuleGraph.ModuleProvider? {
+        // Never invent providers. Recover only from already-mounted extras.
+        // Slash paths are not aliases; blank is invalid. Dotted FQCNs still recover via
+        // simpleName tail (java.io.File → File) when path ends with /File.lua.
+        if (alias.isBlank() || alias.contains('/')) { return null }
+        val simpleAlias = alias.substringAfterLast('.').substringAfterLast('$').substringAfterLast('_')
+        if (simpleAlias.isBlank()) { return null }
+        // Prefer reflective class modules under __jvm__/classes so package providers and
+        // non-class extras never win simple-name recovery for Android-Lua source imports
+        // (import "File" / import "BigDecimal" under default or custom importPrefixes).
+        // The alias index is built once per resolver: the provider catalog spans thousands
+        // of entries and this lookup runs on every Java member resolution.
+        val (classIndex, otherIndex) = extraProviderAliasIndex ?: run {
+            val classEntries = linkedMapOf<String, WorkspaceModuleGraph.ModuleProvider>()
+            val otherEntries = linkedMapOf<String, WorkspaceModuleGraph.ModuleProvider>()
+            fun register(index: MutableMap<String, WorkspaceModuleGraph.ModuleProvider>, key: String, provider: WorkspaceModuleGraph.ModuleProvider) {
+                if (key.isNotBlank()) index.putIfAbsentCompat(key, provider)
+            }
+            snapshot.extraProviders.forEach { (path, file) ->
+                val value = path.value
+                val moduleName = file.moduleExportSurface?.moduleType?.moduleName
+                val provider = WorkspaceModuleGraph.ModuleProvider(moduleName ?: simpleAlias, path, WorkspaceModuleGraph.ProviderSource.EXTRA_WORKSPACE_PROVIDER)
+                val index = if (value.startsWith("__jvm__/classes/")) classEntries else otherEntries
+                moduleName?.let { name ->
+                    register(index, name, provider)
+                    register(index, name.substringAfterLast('.').substringAfterLast('$').substringAfterLast('_'), provider)
+                }
+                val segment = value.substringAfterLast('/')
+                if (segment.endsWith(".lua")) {
+                    val base = segment.removeSuffix(".lua")
+                    register(index, base, provider)
+                    register(index, base.substringAfterLast('$'), provider)
+                }
+            }
+            val pair = classEntries to otherEntries
+            extraProviderAliasIndex = pair
+            pair
+        }
+        return (classIndex[alias] ?: classIndex[simpleAlias])
+            ?: (otherIndex[alias] ?: otherIndex[simpleAlias])
+    }
+
+    /**
+     * Recover a STANDARD_LIBRARY_OVERLAY provider for dotted module names such as socket.url.
+     * Prefer graph claims, then the mounted builtin overlay snapshot (path + moduleName).
+     */
+    private fun findOverlayProvider(moduleName: String): WorkspaceModuleGraph.ModuleProvider? {
+        if (moduleName.isBlank()) return null
+        snapshot.graph.providersByModuleName[moduleName].orEmpty()
+            .firstOrNull { it.source == WorkspaceModuleGraph.ProviderSource.STANDARD_LIBRARY_OVERLAY }?.let { return it }
+        // Match by explicit overlay moduleName first (keeps dotted names like socket.url).
+        snapshot.builtinOverlay.providerModules.entries.firstOrNull { (_, provider) -> provider.moduleName == moduleName }
+            ?.let { (path, provider) -> return WorkspaceModuleGraph.ModuleProvider(provider.moduleName, path, WorkspaceModuleGraph.ProviderSource.STANDARD_LIBRARY_OVERLAY) }
+        // Path-suffix recovery: __lua_std__/<ver>/socket.url.lua for module "socket.url".
+        // Also accept nested historical paths (__lua_std__/<ver>/socket/url.lua) when present.
+        // endsWith(subsumes) both the equality case and the leading-slash candidate spellings.
+        val dotted = moduleName.replace('\\', '/').replace('/', '.')
+        val slash = dotted.replace('.', '/')
+        snapshot.builtinOverlay.providerModules.entries.firstOrNull { (path, provider) ->
+            val providerDotted = provider.moduleName.replace('\\', '/').replace('/', '.')
+            (path.value.endsWith("$dotted.lua") || path.value.endsWith("$slash.lua")) &&
+                (providerDotted == dotted || provider.moduleName == moduleName || provider.moduleName.isBlank())
+        }?.let { (path, provider) ->
+            return WorkspaceModuleGraph.ModuleProvider(moduleName, path, WorkspaceModuleGraph.ProviderSource.STANDARD_LIBRARY_OVERLAY)
+        }
+        return null
+    }
+
+    /**
+     * Real workspace source-module path rule: analyzable `.lua` / `.aly` project files.
+     * Shared by completion-name enumeration, shared-global scans and import recovery so
+     * every surface agrees on which provider paths are source modules.
+     */
+    private fun isSourceModulePath(value: String): Boolean =
+        value.endsWith(".lua") || value.endsWith(".aly")
+
+    /**
+     * Recover an Android-Lua `.aly` layout provider for [moduleName] when graph active-provider
+     * lookup missed it (path-derived claim not indexed, or only present as a workspace file).
+     *
+     * Never invents a fabricated `.lua` / JVM / stdlib path: only real workspace `.aly` files.
+     * Same `.aly` recovery the graph builder applies at build time; the shared helper
+     * [findAlyLayoutProviderIn] keeps the path-derived module-name rule in one place.
+     */
+    private fun findAlyLayoutProvider(moduleName: String): WorkspaceModuleGraph.ModuleProvider? =
+        findAlyLayoutProviderIn(moduleName, snapshot.files.keys)
+
+    private fun syntheticAlyLayoutSurface(provider: WorkspaceModuleGraph.ModuleProvider): ModuleExportSurface? {
+        if (!provider.path.value.endsWith(".aly")) return null
+        val moduleName = provider.moduleName.ifBlank { alyModuleNameFromPath(provider.path) ?: provider.path.value }
+        return ModuleExportCollector.alyLayoutExportSurface(
+            moduleName = moduleName,
+            fields = emptyMap(),
+            methods = emptyMap(),
+            members = emptyList(),
+            sourceForm = ModuleExportSurface.SourceForm.RETURN_IDENTIFIER
+        )
+    }
+
+    private fun normalizeImportTarget(target: String): String =
+        target.removePrefix("import ").trim().let { trimmed -> trimmed.substringAfter(':', trimmed).trim() }
+
+    /**
+     * Simple activation name for an explicit (non-wildcard) import target: File from
+     * java.io.File, the tail segment after '.' / '/' / '$' / luajava-style '_' binary names.
+     * Shared by the import-alias index and bare-name recovery so both agree on the tail rule.
+     */
+    private fun explicitImportSimpleName(normalized: String): String =
+        normalized.substringAfterLast('.').substringAfterLast('/').substringAfterLast('$').substringAfterLast('_')
+
+    private fun classAliasCandidates(importText: String): List<String> {
+        val normalized = normalizeImportTarget(importText)
+        if (normalized.isBlank() || normalized.endsWith(".*")) return emptyList()
+        // Candidate spellings in priority order (distinct keeps the first occurrence):
+        // dotted/binary simple name, underscore alias, dollar alias, full normalized target.
+        return listOf(
+            normalized.substringAfterLast('.').substringAfterLast('$'),
+            normalized.substringAfterLast('_'),
+            normalized.substringAfterLast('$'),
+            normalized
+        ).filter(String::isNotBlank).distinct()
+    }
+
+    private fun syntheticImportSurface(): ModuleExportSurface {
+        // Match Android-Lua import callable display: fun(...: any...): any
+        val importType = FunctionType(
+            parameters = listOf(
+                FunctionParameter(name = "...", type = VarargType(PrimitiveType.ANY), vararg = true)
+            ),
+            returnType = PrimitiveType.ANY,
+            name = "fun(...: any...): any"
+        )
+        val moduleType = ModuleType(moduleName = "import", fields = linkedMapOf("__call" to importType), methods = linkedMapOf("import" to importType))
+        return ModuleExportSurface(
+            moduleType = moduleType,
+            sourceForm = ModuleExportSurface.SourceForm.RETURN_IDENTIFIER,
+            members = listOf(
+                ModuleExportSurface.MemberExport("__call", listOf("__call"), SymbolKind.FIELD, importType, null),
+                ModuleExportSurface.MemberExport("import", listOf("import"), SymbolKind.METHOD, importType, null)
+            )
+        )
+    }
+
+    data class ResolvedRequire(
+        val moduleName: String,
+        val provider: WorkspaceModuleGraph.ModuleProvider,
+        val surface: ModuleExportSurface,
+        val moduleType: ModuleType = surface.moduleType
+    )
+
+    data class ResolvedExportMember(
+        val providerPath: VirtualPath,
+        val definitionProviderPath: VirtualPath,
+        val moduleName: String,
+        val member: ModuleExportSurface.MemberExport,
+        val type: Type
+    ) {
+        val handle: String = ModuleExportIdentity(providerPath, member.exportPath).asHandle()
+        val kind: SymbolKind = member.kind
+    }
+}
+
+/**
+ * Shared `prefix:path:suffix` handle parse: the provider path before the LAST ':', the
+ * suffix after it. Used by the module-export and imported-symbol handle identities.
+ */
+internal fun parseColonPathHandle(handle: String?, prefix: String): Pair<VirtualPath, String>? {
+    if (handle == null || !handle.startsWith(prefix)) { return null }
+    val body = handle.removePrefix(prefix)
+    val separator = body.lastIndexOf(':')
+    if (separator <= 0 || separator >= body.lastIndex) { return null }
+    return VirtualPath.of(body.substring(0, separator)) to body.substring(separator + 1)
+}
+
+internal data class ModuleExportIdentity(
+    val providerPath: VirtualPath,
+    val exportPath: List<String>
+) {
+    fun asHandle(): String {
+        return "module-export:${providerPath.value}:${exportPath.joinToString(".")}"
+    }
+
+    companion object {
+        fun parse(handle: String?): ModuleExportIdentity? {
+            return parseColonPathHandle(handle, "module-export:")
+                ?.takeIf { (_, export) -> export.isNotBlank() }
+                ?.let { (path, export) -> ModuleExportIdentity(path, export.split('.')) }
+        }
+    }
+}

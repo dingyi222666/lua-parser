@@ -1,0 +1,35 @@
+{
+  "runId": "29199561336",
+  "sliceId": "s010",
+  "status": "failure",
+  "tests": 166,
+  "failures": 13,
+  "failedTests": [
+    "parser.recovery.LuaParserRecoveryAndroluaSwitchWhenTddTest#recoversMissingDoAndEndAndIncompleteSwitchConditions[jvm]",
+    "parser.recovery.LuaParserRecoveryBinaryIncompleteRhsOpsTddTest#strictParseRejectsTrueGapsWhileRecordingHonestAcceptFlags[jvm]",
+    "parser.recovery.LuaParserRecoveryDiagnosticsExpandTddTest#expandsIfMissingThenDiagnosticGoldenWithExactRange[jvm]",
+    "parser.recovery.LuaParserRecoveryDiagnosticsExpandTddTest#expandsDiagnosticsAreDeterministicAndResetAcrossParses[jvm]",
+    "parser.recovery.LuaParserRecoveryDiagnosticsExpandTddTest#expandsSparseGoldenInventoryCoversRequiredRecoveryFamilies[jvm]",
+    "parser.recovery.LuaParserRecoveryDiagnosticsTddTest#parserRecoveryCollectsStructuredDiagnosticsWithoutStdoutNoise[jvm]",
+    "parser.recovery.LuaParserRecoveryGotoLabelTddTest#residualGotoAndLabelNodesExposeEmptyOrNamedIdentifiers[jvm]",
+    "parser.recovery.LuaParserRecoveryIfElseifChainTddTest#recoversDuplicateElseWithoutInfiniteClauseLoopAndKeepsFollowingStatement[jvm]",
+    "parser.recovery.LuaParserRecoveryIncompleteTableFieldTddTest#recoversNestedIncompleteFieldsAndStatementContexts[jvm]",
+    "parser.recovery.LuaParserRecoveryIncompleteTableFieldTddTest#strictParseRejectsTrueGapsWhileRecordingHonestAcceptFlags[jvm]",
+    "parser.recovery.LuaParserRecoveryIncompleteTableFieldTddTest#recoveryDiagnosticsArePresentDeterministicAndDoNotThrow[jvm]",
+    "parser.recovery.LuaParserRecoveryLayoutTableTddTest#documentsLayoutTableRecoveryInventorySizeAndCoverage[jvm]",
+    "parser.recovery.LuaParserRecoveryLocalAssignTddTest#recoversIncompleteRhsExpressionsAndKeepsLaterStatements[jvm]"
+  ],
+  "progressSummary": {
+    "total": 25,
+    "totalFiles": 367,
+    "pending": 15,
+    "success": 9,
+    "failure": 1,
+    "running": 0,
+    "filesDone": 135,
+    "activeSlice": "s010",
+    "activeStatus": "failure",
+    "updatedAt": "2026-07-12T16:09:18Z"
+  },
+  "notes": "Merged CI progress.json (updatedAt 2026-07-12T16:09:18Z) over local (16:04:20Z); s010 failure on run 29199561336 (166 tests, 13 failures). Copied results/s010-29199561336.json. Parsed 15 junit XML files → failures.txt (13 classname#method). PROGRESS.md rewritten: success=9 failure=1 pending=15 filesDone=135; must re-run s010 until green."
+}

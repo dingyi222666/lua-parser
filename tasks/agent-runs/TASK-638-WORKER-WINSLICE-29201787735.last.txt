@@ -1,0 +1,14 @@
+task: TASK-638
+wave: WINSLICE-29201787735
+owner: worker-WINSLICE-29201787735-TASK-638
+finished: 2026-07-12T17:26:31Z
+finalStatus: review
+summary: Emit missing-then structured diagnostics under AndroLua optional-then path in parseIfCause/parseElseIfCause while keeping strict accept and not marking clauses bad.
+filesChanged:
+  - src/commonMain/kotlin/io/github/dingyi222666/luaparser/parser/LuaParser.kt
+  - tasks/TASK-638.md
+notes:
+  - Root cause: isAndroLua() branch skipped warning() for missing then.
+  - Fix: when isAndroLua() && errorRecovery, call warning("The <then> expected near ...") without result.bad=true.
+  - Mirrors AndroLua compact switch optional-do recovery diagnostic pattern.
+  - Workers no Gradle verification.

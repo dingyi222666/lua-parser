@@ -1,0 +1,12 @@
+task: TASK-687
+wave: WINFULL-29265516413
+owner: worker-WINFULL-29265516413-TASK-687
+finalStatus: blocked
+utc: 2026-07-13T16:23:10Z
+summary: STOP leave ready — exclusive file locks held by live worker-WINSLICE-29264375796-TASK-685 on shared product paths needed for AC (LuaLanguageService.kt, LuaWorkspaceQueryFacade.kt, ReferenceQueries.kt, ExpressionTypeEvaluator.kt). MemberResolver.kt unlocked but shadow-local dual-path + type-attribution fixes require locked ReferenceQueries/ExpressionTypeEvaluator (and optionally facade/LSP). TASK-686 also shares those paths when ready. No product edits; status left ready/unassigned.
+blocked_by: TASK-685 (in_progress)
+locks_seen:
+  - locks/files/src__jvmMain__kotlin__io__github__dingyi222666__luaparser__lsp__LuaLanguageService.kt.lock = worker-WINSLICE-29264375796-TASK-685
+  - locks/files/src__commonMain__kotlin__io__github__dingyi222666__luaparser__semantic__workspace__LuaWorkspaceQueryFacade.kt.lock = worker-WINSLICE-29264375796-TASK-685
+  - locks/files/src__commonMain__kotlin__io__github__dingyi222666__luaparser__semantic__model__ReferenceQueries.kt.lock = worker-WINSLICE-29264375796-TASK-685
+  - locks/files/src__commonMain__kotlin__io__github__dingyi222666__luaparser__semantic__checker__ExpressionTypeEvaluator.kt.lock = worker-WINSLICE-29264375796-TASK-685

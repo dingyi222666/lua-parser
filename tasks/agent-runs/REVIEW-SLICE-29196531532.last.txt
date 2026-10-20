@@ -1,0 +1,22 @@
+{
+  "runId": "29196531532",
+  "sliceId": "s007",
+  "status": "failure",
+  "tests": 115,
+  "failures": 3,
+  "failedTests": [
+    "parser.androidlua.AndroidLuaAssetCorpusParseTddTest#parsesRepresentativeAndroidLuaAssetCorpus[jvm]",
+    "parser.ast.AstShapeTddTest#statementFixtureExposesStableStatementShapesParentsAndRanges[jvm]",
+    "parser.ast.AstShapeTddTest#tableFunctionAndCommentFixtureExposesStableAstShapesParentsAndRanges[jvm]"
+  ],
+  "progressSummary": {
+    "success": 6,
+    "failure": 1,
+    "pending": 18,
+    "running": 0,
+    "total": 25,
+    "filesDone": 90,
+    "activeSlice": "s007"
+  },
+  "notes": "CI slice-progress upload failed (ECONNRESET); reconstructed progress from 15 TEST-*.xml under win-xml-29196531532/junit + gh run logs. s007 failure: 115 tests, 3 failures, 0 errors, durationSec=10. Wrote results/s007-29196531532.json, failures.txt, progress.json, PROGRESS.md. Gate: must-green-to-advance \u2014 re-run s007 until green; do not advance."
+}

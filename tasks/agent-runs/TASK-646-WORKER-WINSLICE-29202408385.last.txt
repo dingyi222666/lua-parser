@@ -1,0 +1,22 @@
+wave: WINSLICE-29202408385
+task: TASK-646
+owner: worker-WINSLICE-29202408385-TASK-646
+finalStatus: review
+utc: 2026-07-12T17:49:22Z
+summary: |
+  Fixed documentsRequiredRecoveryInventoryAndStrictParseGaps inventory hard-lock
+  expected 66 vs actual 68 by honest update to 68. Drift source is intentional
+  AndroLua CURRENTLY_ACCEPTS cases (optional if-then TASK-613; C-style !=/&& TASK-614)
+  already in missingDelimiterCases (TASK-648 hard-locked that list at 20). Required sum:
+  20+15+7+21+5+0=68. Also fixed stale assertContentEquals: filter is CURRENTLY_ACCEPTS_MISSING_RHS
+  only, so only "assignment missing rhs expression should keep later print" belongs;
+  trailing-comma case is CURRENTLY_ACCEPTS (valid multi-RHS / TASK-546), not MISSING_RHS.
+  No LuaParser.kt product edit (exclusive claim held by live TASK-644; product already
+  matches inventory). Prefer product only when recovery wrong; here inventory lagged.
+  Workers no Gradle.
+filesChanged:
+  - src/jvmTest/kotlin/parser/recovery/LuaParserRecoveryTddTest.kt
+  - tasks/TASK-646.md
+locks:
+  - released TASK-646 task/test locks after inventory honesty fix
+  - did not take LuaParser.kt exclusive (TASK-644 live holder)

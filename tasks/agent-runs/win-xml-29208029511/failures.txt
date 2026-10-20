@@ -1,0 +1,1 @@
+semantic.interop.JavaChainedCallTddTest#non_listener_interface_setter_callback_remains_unknown[jvm]

@@ -1,0 +1,19 @@
+task: TASK-642
+wave: WINSLICE-29201312516
+owner: worker-WINSLICE-29201312516-TASK-642
+finished: 2026-07-12T17:18:40Z
+finalStatus: review
+summary: |
+  Fixed documentsLayoutTableRecoveryInventorySizeAndCoverage red by aligning inventory
+  probe with product parseExpressionOrMissing policy:
+  - bare Name after { + NL is a valid table array field (LinearLayout kept as
+    TableKey(Const(1)=Id(LinearLayout))), not ExpressionNodeSupport.
+  - honest keyword footgun (local after { + NL) still inserts ExpressionNodeSupport.
+  - Updated LayoutTableTddTest KDoc + inventory probe assertions.
+  - Added TASK-642 product lock comment on parseField / shouldRecoverStatementStart
+    KDoc in LuaParser.kt (no behavioral change needed; product already correct).
+  Workers no Gradle. Ready for windows s010 re-verify.
+filesChanged:
+  - src/commonMain/kotlin/io/github/dingyi222666/luaparser/parser/LuaParser.kt
+  - src/jvmTest/kotlin/parser/recovery/LuaParserRecoveryLayoutTableTddTest.kt
+  - tasks/TASK-642.md

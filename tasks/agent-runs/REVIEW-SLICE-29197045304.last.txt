@@ -1,0 +1,18 @@
+{
+  "runId": "29197045304",
+  "sliceId": "s007",
+  "status": "success",
+  "tests": 115,
+  "failures": 0,
+  "failedTests": [],
+  "progressSummary": {
+    "total": 25,
+    "totalFiles": 367,
+    "pending": 18,
+    "success": 7,
+    "failure": 0,
+    "running": 0,
+    "filesDone": 105
+  },
+  "notes": "Merged CI progress 2026-07-12T14:52:53Z; s007 success on run 29197045304; tests=115 failures=0; filesDone=105; copied results=['s007-29196531532.json', 's007-29197045304.json']"
+}

@@ -1,0 +1,17 @@
+{
+  "mode": "full-jvmtest",
+  "runId": "29228040252",
+  "sha": "cd188239b7a52744c9519e8d15169808a9f7e2c2",
+  "status": "success",
+  "compileExit": 0,
+  "exitCode": 0,
+  "durationSec": 161,
+  "tests": 5386,
+  "failures": 0,
+  "errors": 0,
+  "skipped": 177,
+  "failedTests": [],
+  "gate": "task-043-full-jvmtest",
+  "startedAt": "2026-07-13T06:07:37Z",
+  "finishedAt": "2026-07-13T06:11:43Z"
+}

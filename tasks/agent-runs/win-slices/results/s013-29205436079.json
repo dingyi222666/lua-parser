@@ -1,0 +1,39 @@
+{
+  "sliceId": "s013",
+  "runId": "29205436079",
+  "sha": "52eee0db5bec21ef716f800f0c8685448d679185",
+  "status": "failure",
+  "exitCode": 1,
+  "durationSec": 10,
+  "tests": 198,
+  "failures": 6,
+  "errors": 0,
+  "skipped": 0,
+  "failedTests": [
+    "semantic.binder.BinderGlobalAssignmentDeclarationTddTest#multiLhsBareAssignment_createsGlobalPerBareIdentifier[jvm]",
+    "semantic.binder.BinderGlobalAssignmentDeclarationTddTest#unbalancedMultiLhsBareAssignment_stillCreatesGlobalsPerName[jvm]",
+    "semantic.binder.BinderGlobalAssignmentRangeTddTest#multiLineMultiLhsBareAssignment_eachNameDisjointCommaNotARange[jvm]",
+    "semantic.binder.BinderGlobalAssignmentRangeTddTest#unbalancedMultiLhsBareAssignment_eachNameHasDeclarationRange[jvm]",
+    "semantic.binder.BinderGlobalAssignmentRangeTddTest#multiLhsBareAssignment_eachNameHasDisjointIdentifierRange[jvm]",
+    "semantic.binder.BinderGlobalAssignmentRangeTddTest#multiLhsBareAssignment_usesDisjointIdentifierRanges[jvm]"
+  ],
+  "testsPatterns": [
+    "semantic.api.TypeInfoShapeTest",
+    "semantic.binder.BinderBuiltinOriginRangeTddTest",
+    "semantic.binder.BinderFunctionSelfParamTddTest",
+    "semantic.binder.BinderGlobalAssignmentDeclarationTddTest",
+    "semantic.binder.BinderGlobalAssignmentRangeTddTest",
+    "semantic.binder.BinderLabelGotoScopeTddTest",
+    "semantic.binder.BinderLabelScopeVisibilityTddTest",
+    "semantic.binder.BinderMultiAssignRangeTddTest",
+    "semantic.binder.BinderMultiLocalExtraShapeTddTest",
+    "semantic.binder.BinderMultiLocalLineBreakTddTest",
+    "semantic.binder.BinderMultiLocalSameLineRangeTddTest",
+    "semantic.binder.BinderMultiLocalShadowingTddTest",
+    "semantic.binder.BinderPassDeclarationTest",
+    "semantic.binder.BinderPassDocDeclarationTest",
+    "semantic.binder.BinderPassScopeTest"
+  ],
+  "gate": "must-green-to-advance",
+  "finishedAt": "2026-07-12T19:16:57Z"
+}

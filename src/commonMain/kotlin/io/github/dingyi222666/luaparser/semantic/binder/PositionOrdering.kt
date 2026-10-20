@@ -1,0 +1,35 @@
+package io.github.dingyi222666.luaparser.semantic.binder
+
+import io.github.dingyi222666.luaparser.parser.ast.node.Position
+import io.github.dingyi222666.luaparser.parser.ast.node.Range
+
+internal fun comparePositions(a: Position, b: Position): Int {
+    val lineComparison = a.line.compareTo(b.line)
+    if (lineComparison != 0) {
+        return lineComparison
+    }
+    return a.column.compareTo(b.column)
+}
+
+internal fun positionLte(a: Position, b: Position): Boolean = comparePositions(a, b) <= 0
+
+internal fun positionLt(a: Position, b: Position): Boolean = comparePositions(a, b) < 0
+
+internal fun isValidNonEmptyRange(range: Range): Boolean = positionLt(range.start, range.end)
+
+internal fun isPositionWithin(start: Position, end: Position, position: Position): Boolean {
+    return comparePositions(start, position) <= 0 && comparePositions(position, end) < 0
+}
+
+internal fun rangeContains(range: Range, position: Position): Boolean {
+    return isValidNonEmptyRange(range) && isPositionWithin(range.start, range.end, position)
+}
+
+internal fun compareRangeSpecificity(a: Range, b: Range): Int {
+    val startComparison = comparePositions(b.start, a.start)
+    if (startComparison != 0) {
+        return startComparison
+    }
+
+    return comparePositions(a.end, b.end)
+}

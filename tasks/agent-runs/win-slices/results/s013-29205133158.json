@@ -1,0 +1,35 @@
+{
+  "sliceId": "s013",
+  "runId": "29205133158",
+  "sha": "6c808721f0d83f002d06807e446880508f95635c",
+  "status": "failure",
+  "exitCode": 1,
+  "durationSec": 10,
+  "tests": 198,
+  "failures": 2,
+  "errors": 0,
+  "skipped": 0,
+  "failedTests": [
+    "semantic.binder.BinderMultiAssignRangeTddTest#unbalancedAssignmentMultiLhs_stillDoesNotDeclare[jvm]",
+    "semantic.binder.BinderMultiAssignRangeTddTest#multiAssignWithoutLocal_doesNotCreateDeclarationsForLhsNames[jvm]"
+  ],
+  "testsPatterns": [
+    "semantic.api.TypeInfoShapeTest",
+    "semantic.binder.BinderBuiltinOriginRangeTddTest",
+    "semantic.binder.BinderFunctionSelfParamTddTest",
+    "semantic.binder.BinderGlobalAssignmentDeclarationTddTest",
+    "semantic.binder.BinderGlobalAssignmentRangeTddTest",
+    "semantic.binder.BinderLabelGotoScopeTddTest",
+    "semantic.binder.BinderLabelScopeVisibilityTddTest",
+    "semantic.binder.BinderMultiAssignRangeTddTest",
+    "semantic.binder.BinderMultiLocalExtraShapeTddTest",
+    "semantic.binder.BinderMultiLocalLineBreakTddTest",
+    "semantic.binder.BinderMultiLocalSameLineRangeTddTest",
+    "semantic.binder.BinderMultiLocalShadowingTddTest",
+    "semantic.binder.BinderPassDeclarationTest",
+    "semantic.binder.BinderPassDocDeclarationTest",
+    "semantic.binder.BinderPassScopeTest"
+  ],
+  "gate": "must-green-to-advance",
+  "finishedAt": "2026-07-12T19:06:26Z"
+}

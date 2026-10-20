@@ -1,0 +1,7 @@
+TASK-661 worker WINSLICE-29208645359
+finalStatus: review
+summary: create_array_coding_surface_dual_path now accepts honest product string[] (JavaArrayType+PrimitiveType.STRING via primitiveArrayElementTypeFor) alongside FQCN/JavaArray/gap. local_luajava_table_shadow fixture no longer uses class-name substrings that collide with result identifiers at occurrence=2 (was hovering string literal "java.util.Locale" → display "java.util.Locale"). ExpressionTypeEvaluator createArray comment clarified. Workers no Gradle.
+filesChanged:
+- src/jvmTest/kotlin/semantic/interop/LuaJavaCodingMethodSurfaceTddTest.kt
+- src/commonMain/kotlin/io/github/dingyi222666/luaparser/semantic/checker/ExpressionTypeEvaluator.kt
+- tasks/TASK-661.md

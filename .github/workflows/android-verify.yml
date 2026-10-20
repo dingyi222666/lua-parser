@@ -1,0 +1,136 @@
+# Android embedding verify: assembles the android/ AAR subproject on the same
+# self-hosted linux runner as dex-verify.yml (dsh-jvm-1). Zero local-gradle
+# policy for the feature lanes — CI is the verifier, so this workflow is the
+# gate that keeps android/ compiling against AGP + the pinned deps.
+# Modeled on dex-verify.yml: workflow-level toolchain env, scoped daemon
+# cleanup, non-fatal artifact uploads, and the chmod +x ./gradlew lesson.
+name: android-verify
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [windows-verify, linux-verify]
+
+# Machine-specific toolchain locations for the self-hosted Linux runner.
+# Kept at workflow level so the machine owner edits ONE place here.
+# AGP 8.5.x requires the Gradle daemon to run on JDK 17 — hence temurin-17,
+# while the Kotlin toolchain (jvmTarget 11) is satisfied by the compile.
+env:
+  JAVA_HOME: /home/dingyi/.jdks/temurin-17
+  ANDROID_HOME: /home/dingyi/Android/Sdk
+
+jobs:
+  android-assemble:
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Convert the platform android.jar (Java bytecode stubs) to dex so the
+      # sample app can load it through DexClassLoader on-device — the reflection
+      # pipeline then works unchanged, with no desktop JDK required.
+      - name: Convert android.jar to android.dex
+        run: |
+          set -euxo pipefail
+          export PATH="$JAVA_HOME/bin:$PATH"
+          D8=$(ls "$ANDROID_HOME"/build-tools/*/d8 | sort | tail -1)
+          echo "d8: $D8"
+          mkdir -p android/sample/src/main/assets
+          "$D8" --release --min-api 26 --lib "$ANDROID_HOME/platforms/android-35/android.jar" \
+            --output android/sample/src/main/assets \
+            "$ANDROID_HOME/platforms/android-35/android.jar"
+          # d8 names its output classes.dex regardless of input name
+          mv android/sample/src/main/assets/classes.dex android/sample/src/main/assets/android.dex
+          ls -la android/sample/src/main/assets/android.dex
+
+      - name: Show environment
+        run: |
+          export PATH="$JAVA_HOME/bin:$PATH"
+          echo "JAVA_HOME=$JAVA_HOME"
+          java -version
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          git rev-parse --short HEAD
+
+      # ANDROID_HOME is pre-set on the runner; sdkmanager may or may not be on
+      # PATH depending on the cmdline-tools layout — warn, never fail here.
+      # Missing platform/build-tools are auto-installed by AGP iff
+      # SDK licenses are already accepted on this machine.
+      - name: Verify Android SDK
+        run: |
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          # The runner has no cmdline-tools (no sdkmanager), so AGP's own
+          # auto-installer is the only installer. It refuses to run unless the
+          # license files exist — write the standard license hashes directly
+          # (these are the well-known SHA1s of the SDK license texts, same on
+          # every machine; sdkmanager itself just writes these files).
+          mkdir -p "$ANDROID_HOME/licenses"
+          printf "24333f8a63b6825ea9c5514f83c2829b004d1fee\n" > "$ANDROID_HOME/licenses/android-sdk-license"
+          printf "84831b9409646a918e30573bab4c9c91346d8abd\n" > "$ANDROID_HOME/licenses/android-sdk-preview-license"
+          echo "license files written:"
+          ls "$ANDROID_HOME/licenses"
+          if [ -d "$ANDROID_HOME/platforms" ]; then
+            ls "$ANDROID_HOME/platforms" | sed 's/^/platform: /'
+          else
+            echo "WARN: no platforms directory under ANDROID_HOME"
+          fi
+          if [ -d "$ANDROID_HOME/build-tools" ]; then
+            ls "$ANDROID_HOME/build-tools" | sed 's/^/build-tools: /'
+          else
+            echo "WARN: no build-tools directory under ANDROID_HOME"
+          fi
+
+      # assembleRelease needs NO signing config for a library (AARs are never
+      # signed). Builds only :android to keep the run scoped and fast.
+      - name: Assemble android AAR and fat jar
+        run: |
+          export PATH="$JAVA_HOME/bin:$PATH"
+          chmod +x ./gradlew
+          ./gradlew :android:assembleRelease :android:androidReleaseJar --parallel
+
+      # Also builds the sample app (includes sample app APK, android/sample).
+      # Activates when the sample-app lane lands: :android:sample is not yet in
+      # settings.gradle.kts, so this step fails (intentionally, no always-pass
+      # guard) until that lane adds android/sample/build.gradle.kts + the
+      # settings include. Kept plain so it is a real gate, not a no-op.
+      - name: Assemble sample app (includes sample app)
+        run: |
+          export PATH="$JAVA_HOME/bin:$PATH"
+          chmod +x ./gradlew
+          ./gradlew :android:sample:assembleDebug --parallel
+
+      - name: Stop Gradle daemons
+        if: always()
+        # Scoped cleanup: `gradlew --stop` stops only the daemons registered
+        # under this Gradle user home/version. Never a blanket java kill on a
+        # shared self-hosted runner.
+        run: |
+          export PATH="$JAVA_HOME/bin:$PATH"
+          ./gradlew --stop || true
+
+      - name: Upload release AAR
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-release-aar
+          path: android/build/outputs/aar/*.aar
+          if-no-files-found: warn
+
+      # Fat classes jar for consumers running their own dex step (the
+      # monaco-lsp-demo classes.dex pipeline). Non-fatal: the AAR above is the
+      # recommended artifact.
+      - name: Upload fat classes jar
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-release-fat-jar
+          path: android/build/libs/*.jar
+          if-no-files-found: warn
+
+      - name: Upload sample APK
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: androlua-sample-apk
+          path: android/sample/build/outputs/apk/debug/*.apk
+          if-no-files-found: warn

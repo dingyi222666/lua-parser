@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>lua-parser · Monaco LSP Demo</title>
+  <link rel="stylesheet" href="./style.css" />
+  <link
+    rel="stylesheet"
+    data-name="vs/editor/editor.main"
+    href="https://cdn.jsdelivr.net/npm/monaco-editor@0.52.2/min/vs/editor/editor.main.css"
+  />
+</head>
+<body>
+  <div id="app">
+    <aside id="sidebar">
+      <div class="sidebar-header">
+        <div class="brand">
+          <div class="brand-mark">LP</div>
+          <div class="brand-text">
+            <h1>lua-parser LSP</h1>
+            <p>Monaco demo client</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="connection-block">
+        <div class="status-row">
+          <span id="statusDot" class="status-dot" aria-hidden="true"></span>
+          <span id="statusText">Disconnected</span>
+        </div>
+        <div class="conn-actions">
+          <button id="btnStart" class="primary" type="button">Start LSP</button>
+          <button id="btnStop" class="danger" type="button" disabled>Stop</button>
+        </div>
+      </div>
+
+      <div class="section-label">
+        <span>Workspace</span>
+        <button id="btnRefreshFiles" class="ghost" type="button" title="Reload file list">↻</button>
+      </div>
+      <ul id="fileList" aria-label="Workspace files"></ul>
+
+      <div class="sidebar-footer">
+        WebSocket: <code id="wsEndpointLabel">ws://localhost:3099/lsp</code><br />
+        Framing: one JSON-RPC object per WS message (no Content-Length).<br />
+        <span id="sideMeta" class="side-meta-extra"></span>
+      </div>
+    </aside>
+
+    <header id="toolbar">
+      <span class="toolbar-title">Editor</span>
+      <span id="currentPath" class="toolbar-path">—</span>
+      <div class="toolbar-hints" title="Monaco / LSP shortcuts">
+        <span class="hint"><kbd>Ctrl</kbd><span>Hover</span></span>
+        <span class="hint"><kbd>F12</kbd><span>Go to Def</span></span>
+        <span class="hint"><kbd>Ctrl</kbd>+<kbd>Space</kbd><span>Complete</span></span>
+        <span class="hint"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Space</kbd><span>Signature</span></span>
+        <span class="hint"><kbd>.</kbd> <kbd>:</kbd><span>trigger</span></span>
+      </div>
+    </header>
+
+    <main id="main">
+      <div id="tabs" role="tablist" aria-label="Open documents"></div>
+      <div id="editor" role="main" aria-label="Monaco editor"></div>
+      <div id="editorEmpty">
+        <h2>No file open</h2>
+        <p>Start the LSP, then pick a sample from the workspace list.</p>
+      </div>
+    </main>
+
+    <section id="bottom">
+      <div class="bottom-header">
+        <button type="button" class="panel-tab active" data-panel="diagnostics">
+          Diagnostics <span id="diagCount" class="count">0</span>
+        </button>
+        <button type="button" class="panel-tab" data-panel="log">
+          Log <span id="logCount" class="count">0</span>
+        </button>
+        <div class="bottom-actions">
+          <button id="btnClearLog" class="ghost" type="button" title="Clear log">Clear</button>
+          <button id="btnToggleBottom" class="icon ghost" type="button" title="Collapse panel">▾</button>
+        </div>
+      </div>
+      <div class="bottom-body">
+        <div id="panelDiagnostics" class="panel active" aria-label="Diagnostics"></div>
+        <div id="panelLog" class="panel" aria-label="LSP log"></div>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    // Injected defaults; /api/info may override at runtime.
+    window.__WORKSPACE_URI__ = null;
+    window.__DEFAULT_WS_PORT__ = 3099;
+  </script>
+
+  <script>
+    var require = {
+      paths: {
+        vs: "https://cdn.jsdelivr.net/npm/monaco-editor@0.52.2/min/vs"
+      }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.52.2/min/vs/loader.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.52.2/min/vs/editor/editor.main.nls.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.52.2/min/vs/editor/editor.main.js"></script>
+  <script src="./app.js"></script>
+</body>
+</html>

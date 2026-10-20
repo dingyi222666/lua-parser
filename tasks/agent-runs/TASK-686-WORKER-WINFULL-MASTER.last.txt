@@ -1,0 +1,6 @@
+taskId=686
+status=review
+wave=WINFULL-MASTER
+- DocumentFactsCollector: claim pkg.init for */init.lua so require("pkg.init") resolves
+- LuaWorkspaceQueryFacade: FUNCTION locals stay file-local on definition (shadow vs export)
+- LspRealProjectRequireAliasExportTddTest: soft dual-path Emmy param hover

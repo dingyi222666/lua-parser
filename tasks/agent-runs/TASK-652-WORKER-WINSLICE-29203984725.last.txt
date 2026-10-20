@@ -1,0 +1,31 @@
+task: TASK-652
+wave: WINSLICE-29203984725
+owner: worker-WINSLICE-29203984725-TASK-652
+finalStatus: review
+utc: 2026-07-12T18:54:30Z
+
+summary:
+Aligned loadbitmap/loadlayout/loadmenu host_android_jar_resolves_to_allowed_macos_paths_only with TASK-626 dual-path soft-skip.
+
+changes:
+- src/jvmTest/kotlin/semantic/androidlua/LoadbitmapReturnSurfaceTddTest.kt
+  - import org.junit.Assume
+  - host contract: when androidJar missing, Assume.assumeTrue(missingAndroidJarSkipReason) soft-skip
+  - missingAndroidJarSkipReason uses JvmWorkspaceConfiguration.missingAndroidJarSoftSkipReason(taskId=TASK-652)
+  - resolveAndroidJar dual-path: Downloads + discoverReflectiveAndroidJarPath + DEFAULT_ANDROID_JAR_PATH + ANDROID_HOME/SDK_ROOT android-35|34 + LOCALAPPDATA/AppData/Library/Android well-known roots; prefer present non-G; never invent G:/
+  - allowed-path asserts normalize backslashes for Windows SDK layouts
+- src/jvmTest/kotlin/semantic/androidlua/LoadlayoutIdFieldSurfaceTddTest.kt (same pattern)
+- src/jvmTest/kotlin/semantic/androidlua/LoadmenuTableSpecSurfaceTddTest.kt (same pattern)
+- product JvmWorkspaceConfiguration.kt: already exposes missingAndroidJarSoftSkipReason + multi-OS DEFAULT_ANDROID_JAR_PATH; no product edit required this pass
+
+ac-mapping:
+- Windows s012 reds hard-required missing AppData android-35 via assertTrue(isFile) — fixed by soft-skip when absent
+- present-jar feature goldens unchanged hard-locks
+- never sole G:/ inventing defaults
+
+verification:
+- workers forbidden gradle/jvmTest; review-owned TASK-043 windows-jvmtest slice s012
+
+notes:
+- locks held by this worker throughout
+- one task one agent

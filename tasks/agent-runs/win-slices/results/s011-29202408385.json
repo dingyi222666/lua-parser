@@ -1,0 +1,41 @@
+{
+  "sliceId": "s011",
+  "runId": "29202408385",
+  "sha": "29bd14ebd26508495db09b4180623c5b3395650a",
+  "status": "failure",
+  "exitCode": 1,
+  "durationSec": 10,
+  "tests": 131,
+  "failures": 8,
+  "errors": 0,
+  "skipped": 0,
+  "failedTests": [
+    "parser.recovery.LuaParserRecoveryMissingEndFunctionTddTest#recoversMissingEndWithResidualControlFlowBodies[jvm]",
+    "parser.recovery.LuaParserRecoveryTddTest#rejectsOutOfScopeRecoveryBoundariesEvenWithRecoveryEnabled[jvm]",
+    "parser.recovery.LuaParserRecoveryTddTest#documentsRequiredRecoveryInventoryAndStrictParseGaps[jvm]",
+    "parser.recovery.LuaParserRecoveryTddTest#recoversFunctionTableLiteralAndCurrentlySupportedIncompleteCallForms[jvm]",
+    "parser.recovery.LuaParserRecoveryTddTest#recoversMissingEndThenDoAndUntilWhileKeepingStatementsReachable[jvm]",
+    "parser.recovery.LuaParserRecoveryTddTest#recoversLocalDeclarationsAndAssignmentsWithMissingPieces[jvm]",
+    "semantic.SemanticPipelinePublicFacadeTddTest#analyzeFacadeIsCallableRepeatedlyOnSamePipelineInstance[jvm]",
+    "semantic.SemanticPipelineTest#analyze_returnsSemanticAnalysisResultBackedByRealPipeline[jvm]"
+  ],
+  "testsPatterns": [
+    "parser.recovery.LuaParserRecoveryMissingEndFunctionTddTest",
+    "parser.recovery.LuaParserRecoveryMultiRhsLineBreakTddTest",
+    "parser.recovery.LuaParserRecoveryNumericForEndTddTest",
+    "parser.recovery.LuaParserRecoveryNumericForStepTddTest",
+    "parser.recovery.LuaParserRecoveryNumericForTddTest",
+    "parser.recovery.LuaParserRecoveryRepeatUntilTddTest",
+    "parser.recovery.LuaParserRecoveryStringConcatIncompleteTddTest",
+    "parser.recovery.LuaParserRecoveryTableConstructorTddTest",
+    "parser.recovery.LuaParserRecoveryTableFieldMissingEqTddTest",
+    "parser.recovery.LuaParserRecoveryTddTest",
+    "parser.recovery.LuaParserRecoveryWhileDoTddTest",
+    "semantic.LegacySemanticAnalyzerCompatibilityTest",
+    "semantic.SemanticPipelineIntegrationTest",
+    "semantic.SemanticPipelinePublicFacadeTddTest",
+    "semantic.SemanticPipelineTest"
+  ],
+  "gate": "must-green-to-advance",
+  "finishedAt": "2026-07-12T17:40:30Z"
+}

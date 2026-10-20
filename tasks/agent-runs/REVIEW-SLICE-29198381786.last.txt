@@ -1,0 +1,25 @@
+{
+  "runId": "29198381786",
+  "sliceId": "s009",
+  "status": "failure",
+  "tests": 115,
+  "failures": 5,
+  "failedTests": [
+    "parser.lua53.Lua53ExpressionPrecedenceTddTest#exposesRangesForRightAssociativeExpressionsAcrossLines[jvm]",
+    "parser.lua53.Lua53ExpressionPrecedenceTddTest#parsesResourceBackedComprehensiveExpressionPrecedenceFixture[jvm]",
+    "parser.lua53.Lua53ExpressionPrecedenceTddTest#exposesSourceRangesForRepresentativeExpressionNodes[jvm]",
+    "parser.lua53.Lua53ExpressionPrecedenceTddTest#coversLua53PrecedenceWithNamedShapeAssertions[jvm]",
+    "parser.lua53.Lua53TableFunctionModuleTddTest#exposesAstStructureAndRangesForRepresentativeModuleForms[jvm]"
+  ],
+  "progressSummary": {
+    "total": 25,
+    "totalFiles": 367,
+    "pending": 16,
+    "success": 8,
+    "failure": 1,
+    "running": 0,
+    "filesDone": 120,
+    "activeSlice": "s009"
+  },
+  "notes": "Merged CI progress.json (updatedAt 2026-07-12T15:33:16Z) over local 15:28:46Z; s009 failed 115 tests / 5 failures (expression precedence ranges/shape + table function module AST ranges); copied results/s009-29198381786.json; junit/ empty so failures.txt from slice-result.json + HTML class reports; PROGRESS.md rewritten; gate holds on s009."
+}

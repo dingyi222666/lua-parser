@@ -1,0 +1,18 @@
+{
+  "runId": "29198171827",
+  "sliceId": "s008",
+  "status": "success",
+  "tests": 152,
+  "failures": 0,
+  "failedTests": [],
+  "progressSummary": {
+    "total": 25,
+    "totalFiles": 367,
+    "pending": 17,
+    "success": 8,
+    "failure": 0,
+    "running": 0,
+    "filesDone": 120
+  },
+  "notes": "Merged CI progress.json (updatedAt 2026-07-12T15:28:46Z) over local 15:05:38Z; s008 green 152/0; copied results/s008-29198171827.json; failures.txt empty; PROGRESS.md rewritten."
+}

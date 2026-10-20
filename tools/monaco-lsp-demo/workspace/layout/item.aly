@@ -1,0 +1,54 @@
+{
+  LinearLayout,
+  layout_width="46%w",
+  layout_marginTop="8dp",
+  layout_marginBottom="8dp",
+  layout_marginLeft="16dp",
+  layout_height="wrap",
+  orientation="vertical",
+  
+  
+  {
+    LinearLayout,
+    id="parent",
+    layout_width="fill",
+    orientation="vertical",
+  {
+    TextView,
+    layout_marginLeft="14dp",
+    layout_marginRight="14dp",
+    layout_marginTop="12dp",
+    textSize="16sp",
+    textColor=0xff000000,
+    text="Androlua",
+    id="name",
+  },
+  {
+    LinearLayout,
+    layout_marginLeft="14dp",
+    layout_marginTop="14dp",
+    layout_marginRight="4dp",
+    layout_marginBottom="12dp",
+    layout_width="wrap",
+    layout_height="wrap",
+    layout_gravity="left|center",
+    {
+      ImageView,
+      layout_height="56dp",
+      layout_width="56dp",
+      id="icon",
+      imageResource=R.drawable.icon,
+    },
+    {
+      TextView,
+      layout_marginLeft="12dp",
+      layout_marginRight="8dp",
+      textSize="15sp",
+      id="info",
+      textColor=0xaf000000,
+      text="1.28MB\n\nV 1.4",
+    },
+
+}
+  }
+}

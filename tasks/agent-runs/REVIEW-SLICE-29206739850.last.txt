@@ -1,0 +1,30 @@
+{
+  "runId": "29206739850",
+  "sliceId": "s015",
+  "status": "failure",
+  "tests": 853,
+  "failures": 8,
+  "failedTests": [
+    "semantic.checker.ExpressionTypeEvaluatorBinaryOpsTddTest#concatChainStaysStringAndIntermediatesEvaluate[jvm]",
+    "semantic.checker.ReturnMultiValueCorpusTddTest#unannotatedFunctionDeclaredReturnIsUnknown[jvm]",
+    "semantic.interop.JavaAndroidInteropCampaignGapTddTest#bind_class_inner_map_entry_static_method_is_callable[jvm]",
+    "semantic.interop.JavaArrayIndexTypeTddTest#multi_dimension_new_array_still_exposes_length_with_index_component[jvm]",
+    "semantic.interop.JavaArrayIndexTypeTddTest#multi_dimension_new_array_index_still_reports_component_type[jvm]",
+    "semantic.interop.JavaChainedCallTddTest#string_array_parameter_rejects_mixed_or_incompatible_lua_table_literal[jvm]",
+    "semantic.interop.JavaChainedCallTddTest#raw_object_list_parameter_does_not_claim_precise_table_conversion[jvm]",
+    "semantic.interop.JavaChainedCallTddTest#non_listener_interface_setter_callback_remains_unknown[jvm]"
+  ],
+  "progressSummary": {
+    "success": 14,
+    "failure": 1,
+    "pending": 3,
+    "running": 0,
+    "total": 18,
+    "filesDone": 210,
+    "totalFiles": 367,
+    "activeSlice": "s015",
+    "chunkSize": 45,
+    "updatedAt": "2026-07-12T20:10:53Z"
+  },
+  "notes": "Merged CI progress for run 29206739850 (updatedAt 2026-07-12T20:10:53Z) over local; copied results/s015-29206739850.json; s015 remains failure with 8 failed tests of 853; gate retains s015."
+}

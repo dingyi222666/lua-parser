@@ -1,0 +1,37 @@
+{
+  "sliceId": "s012",
+  "runId": "29203984725",
+  "sha": "6495e05f3c0a4466b75199c866b8b2ef8170fb5b",
+  "status": "failure",
+  "exitCode": 1,
+  "durationSec": 30,
+  "tests": 250,
+  "failures": 4,
+  "errors": 0,
+  "skipped": 40,
+  "failedTests": [
+    "semantic.androidlua.AndroidLuaLibraryStubsTddTest#this_and_context_globals_share_android_lua_context_surface[jvm]",
+    "semantic.androidlua.LoadbitmapReturnSurfaceTddTest#host_android_jar_resolves_to_allowed_macos_paths_only[jvm]",
+    "semantic.androidlua.LoadlayoutIdFieldSurfaceTddTest#host_android_jar_resolves_to_allowed_macos_paths_only[jvm]",
+    "semantic.androidlua.LoadmenuTableSpecSurfaceTddTest#host_android_jar_resolves_to_allowed_macos_paths_only[jvm]"
+  ],
+  "testsPatterns": [
+    "semantic.SemanticPublicApiTest",
+    "semantic.androidlua.AlyLayoutRequireResolutionTddTest",
+    "semantic.androidlua.AndroidLuaDefaultJarDiscoverySurfaceTddTest",
+    "semantic.androidlua.AndroidLuaLibraryStubsTddTest",
+    "semantic.androidlua.EnvImportSurfaceTddTest",
+    "semantic.androidlua.HelperModulesFixtureSurfaceTddTest",
+    "semantic.androidlua.ImportAliasShadowSurfaceTddTest",
+    "semantic.androidlua.ImportNestedPackageMultiLevelTddTest",
+    "semantic.androidlua.ImportPackageAliasCompletionTddTest",
+    "semantic.androidlua.ImportPackageWildcardProxyTddTest",
+    "semantic.androidlua.LoadbitmapReturnSurfaceTddTest",
+    "semantic.androidlua.LoadlayoutIdFieldSurfaceTddTest",
+    "semantic.androidlua.LoadmenuTableSpecSurfaceTddTest",
+    "semantic.androidlua.RepresentativeLayoutWidgetImportTddTest",
+    "semantic.androidlua.Task184OverlayProbeTddTest"
+  ],
+  "gate": "must-green-to-advance",
+  "finishedAt": "2026-07-12T18:31:10Z"
+}

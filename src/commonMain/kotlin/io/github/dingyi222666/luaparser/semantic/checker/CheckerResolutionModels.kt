@@ -1,0 +1,283 @@
+package io.github.dingyi222666.luaparser.semantic.checker
+
+import io.github.dingyi222666.luaparser.parser.ast.node.BaseASTNode
+import io.github.dingyi222666.luaparser.parser.ast.node.BlockNode
+import io.github.dingyi222666.luaparser.parser.ast.node.CaseCause
+import io.github.dingyi222666.luaparser.parser.ast.node.ChunkNode
+import io.github.dingyi222666.luaparser.parser.ast.node.DefaultCause
+import io.github.dingyi222666.luaparser.parser.ast.node.DoStatement
+import io.github.dingyi222666.luaparser.parser.ast.node.ForGenericStatement
+import io.github.dingyi222666.luaparser.parser.ast.node.ForNumericStatement
+import io.github.dingyi222666.luaparser.parser.ast.node.FunctionDeclaration
+import io.github.dingyi222666.luaparser.parser.ast.node.IfStatement
+import io.github.dingyi222666.luaparser.parser.ast.node.MemberExpression
+import io.github.dingyi222666.luaparser.parser.ast.node.RepeatStatement
+import io.github.dingyi222666.luaparser.parser.ast.node.SwitchStatement
+import io.github.dingyi222666.luaparser.parser.ast.node.WhileStatement
+import io.github.dingyi222666.luaparser.semantic.binder.BinderDeclaration
+import io.github.dingyi222666.luaparser.semantic.binder.BinderPassResult
+import io.github.dingyi222666.luaparser.semantic.binder.DeclarationKind
+import io.github.dingyi222666.luaparser.semantic.binder.DeclarationOwner
+import io.github.dingyi222666.luaparser.semantic.types.model.CallableType
+import io.github.dingyi222666.luaparser.semantic.types.model.FunctionType
+import io.github.dingyi222666.luaparser.semantic.types.model.FunctionParameter
+import io.github.dingyi222666.luaparser.semantic.types.model.OverloadedFunctionType
+import io.github.dingyi222666.luaparser.semantic.types.model.UnknownType
+import io.github.dingyi222666.luaparser.semantic.types.model.Type
+
+enum class MemberAccessKind {
+    FIELD,
+    METHOD,
+    INDEX
+}
+
+enum class MemberFailureReason {
+    MISSING_MEMBER,
+    INVALID_INDEX_TYPE,
+    UNSUPPORTED_BASE_TYPE,
+    UNRESOLVED_APPLIED_TYPE
+}
+
+data class MemberResolution(
+    val type: Type? = null,
+    val accessKind: MemberAccessKind? = null,
+    val baseType: Type? = null,
+    val failureReason: MemberFailureReason? = null
+) {
+    val isSuccess: Boolean
+        get() = type != null
+}
+
+enum class CallFailureReason {
+    NON_CALLABLE,
+    NO_MATCHING_SIGNATURE,
+    AMBIGUOUS_MATCH
+}
+
+data class CallableResolution(
+    val callableType: CallableType? = null,
+    val normalizedType: Type? = null,
+    val signatures: List<FunctionType> = emptyList(),
+    val failureReason: CallFailureReason? = null
+) {
+    val isSuccess: Boolean
+        get() = callableType != null
+}
+
+data class CallResolution(
+    val returnType: Type? = null,
+    val callableResolution: CallableResolution? = null,
+    val selectedSignature: FunctionType? = null,
+    val failureReason: CallFailureReason? = null,
+    val ambiguous: Boolean = false,
+    val selectedSignatureIndex: Int? = null
+) {
+    val isSuccess: Boolean
+        get() = returnType != null
+}
+
+internal fun resolveOwningFunctionDeclaration(
+    binder: BinderPassResult,
+    declaration: BinderDeclaration
+): FunctionDeclaration? {
+    findFunctionByAnchorInContainer(declaration.anchorNode)?.let { return it }
+    findAncestorFunction(declaration.anchorNode)?.let { return it }
+    findFunctionByMatchingIdentifierAnchor(binder, declaration)?.let { return it }
+    findFunctionByOwner(binder, declaration)?.let { return it }
+
+    binder.declarationIndex
+        .getOwnedDeclarations(DeclarationOwner.Declaration(declaration.id))
+        .firstNotNullOfOrNull { owned ->
+            findFunctionByAnchorInContainer(owned.anchorNode)
+                ?: findAncestorFunction(owned.anchorNode)
+                ?: findFunctionByMatchingIdentifierAnchor(binder, owned)
+                ?: findFunctionByOwner(binder, owned)
+        }
+        ?.let { return it }
+
+    val functionOwnerNode = binder.scopeGraph.scopes
+        .firstOrNull { it.ownerDeclarationId == declaration.id }
+        ?.ownerNode
+
+    return findFunctionOwnedByNode(functionOwnerNode) ?: findAncestorFunction(functionOwnerNode)
+}
+
+internal fun isColonMethodDeclaration(
+    binder: BinderPassResult,
+    declaration: BinderDeclaration
+): Boolean {
+    if (declaration.kind != DeclarationKind.METHOD) {
+        return false
+    }
+
+    val anchorMember = runCatching { declaration.anchorNode?.parent }.getOrNull() as? MemberExpression
+    if (anchorMember?.indexer == ":") {
+        return true
+    }
+
+    val functionNode = resolveOwningFunctionDeclaration(binder, declaration) ?: return false
+    val methodIdentifier = functionNode.identifier as? MemberExpression ?: return false
+    return methodIdentifier.indexer == ":"
+}
+
+private fun findFunctionByMatchingIdentifierAnchor(
+    binder: BinderPassResult,
+    declaration: BinderDeclaration
+): FunctionDeclaration? {
+    val anchor = declaration.anchorNode ?: return null
+    val rootNode = findRootNode(anchor) ?: return null
+    return functionDeclarationsIn(rootNode)
+        .firstOrNull { function ->
+            when (val identifier = function.identifier) {
+                anchor -> true
+                is MemberExpression -> identifier.identifier === anchor
+                else -> false
+            }
+        }
+}
+
+private fun findRootNode(node: BaseASTNode): BaseASTNode? {
+    val visited = HashSet<BaseASTNode>()
+    var current: BaseASTNode? = node
+    var root: BaseASTNode? = node
+    while (current != null && visited.add(current)) {
+        root = current
+        current = runCatching { current.parent }.getOrNull()
+    }
+    return root
+}
+
+private fun findFunctionByOwner(
+    binder: BinderPassResult,
+    declaration: BinderDeclaration
+): FunctionDeclaration? {
+    val owner = declaration.owner as? DeclarationOwner.Declaration ?: return null
+    val ownerScopeNode = binder.scopeGraph.scopes
+        .firstOrNull { it.ownerDeclarationId == owner.declarationId }
+        ?.ownerNode
+    return findFunctionOwnedByNode(ownerScopeNode) ?: findAncestorFunction(ownerScopeNode)
+}
+
+internal fun findAncestorFunction(node: BaseASTNode?): FunctionDeclaration? {
+    // Desugared statements (switch/case expansion) can leave cyclic parent links in the
+    // AST, so the chain walk must guard with a visited set or it spins forever.
+    val visited = HashSet<BaseASTNode>()
+    var current = node
+    while (current != null && visited.add(current)) {
+        if (current is FunctionDeclaration) {
+            return current
+        }
+        current = runCatching { current.parent }.getOrNull()
+    }
+    return null
+}
+
+private fun findFunctionByAnchorInContainer(anchorNode: BaseASTNode?): FunctionDeclaration? {
+    val container = runCatching { anchorNode?.parent }.getOrNull() ?: return null
+    return functionDeclarationsIn(container).firstOrNull { declaration ->
+        when (val identifier = declaration.identifier) {
+            anchorNode -> true
+            is MemberExpression -> identifier.identifier === anchorNode
+            else -> false
+        }
+    }
+}
+
+private fun findFunctionOwnedByNode(node: BaseASTNode?): FunctionDeclaration? {
+    return when (node) {
+        is FunctionDeclaration -> node
+        is BlockNode -> node.parent as? FunctionDeclaration
+        else -> null
+    }
+}
+
+private fun functionDeclarationsIn(node: BaseASTNode): List<FunctionDeclaration> {
+    return when (node) {
+        is ChunkNode -> buildList { collectFunctionDeclarations(node.body, this) }
+        is BlockNode -> buildList { collectFunctionDeclarations(node, this) }
+        else -> emptyList()
+    }
+}
+
+private fun collectFunctionDeclarations(node: BlockNode, output: MutableList<FunctionDeclaration>) {
+    node.statements.forEach { statement ->
+        when (statement) {
+            is FunctionDeclaration -> {
+                output += statement
+                statement.body?.let { collectFunctionDeclarations(it, output) }
+            }
+            is DoStatement -> collectFunctionDeclarations(statement.body, output)
+            is IfStatement -> statement.causes.forEach { collectFunctionDeclarations(it.body, output) }
+            is WhileStatement -> collectFunctionDeclarations(statement.body, output)
+            is RepeatStatement -> collectFunctionDeclarations(statement.body, output)
+            is ForGenericStatement -> collectFunctionDeclarations(statement.body, output)
+            is ForNumericStatement -> collectFunctionDeclarations(statement.body, output)
+            is SwitchStatement -> statement.causes.forEach { cause ->
+                when (cause) {
+                    is CaseCause -> collectFunctionDeclarations(cause.body, output)
+                    is DefaultCause -> collectFunctionDeclarations(cause.body, output)
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Fills in the implicit `self` parameter of colon-method signatures, shared by
+ * expression inference and editor signature queries.
+ */
+internal fun enrichMethodCallableType(
+    binder: BinderPassResult,
+    declaration: BinderDeclaration,
+    declared: CallableType
+): CallableType {
+    if (declaration.kind != DeclarationKind.METHOD) {
+        return declared
+    }
+
+    if (!isColonMethodDeclaration(binder, declaration)) {
+        return declared
+    }
+
+    val selfType = declaration.documentation?.resolvedParameterTypes?.get("self") ?: UnknownType
+    val enrichedSignatures = declared.callSignatures.map { signature ->
+        val parameters = if (signature.parameters.firstOrNull()?.name == "self") {
+            signature.parameters.mapIndexed { index, parameter ->
+                if (index == 0 && parameter.type == UnknownType && selfType != UnknownType) {
+                    parameter.copy(type = selfType)
+                } else {
+                    parameter
+                }
+            }
+        } else {
+            listOf(FunctionParameter(name = "self", type = selfType)) + signature.parameters
+        }
+        signature.copy(
+            parameters = parameters,
+            name = FunctionType(
+                parameters = parameters,
+                returnType = signature.returnType,
+                typeParameters = signature.typeParameters
+            ).name
+        )
+    }
+    return when (enrichedSignatures.size) {
+        0 -> declared
+        1 -> enrichedSignatures.single()
+        else -> OverloadedFunctionType(enrichedSignatures)
+    }
+}
+
+/**
+ * Shared lexical owner lookup for type inference and editor signature queries.
+ */
+internal fun isDeclaredInLexicalOwnerChain(declaration: BinderDeclaration, lexicalOwner: BaseASTNode): Boolean {
+    var current: BaseASTNode? = lexicalOwner
+    while (current != null) {
+        if (declaration.owner == DeclarationOwner.Lexical(current)) {
+            return true
+        }
+        current = runCatching { current.parent }.getOrNull()
+    }
+    return false
+}

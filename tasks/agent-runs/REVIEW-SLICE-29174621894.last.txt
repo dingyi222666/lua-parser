@@ -1,0 +1,22 @@
+{
+  "runId": "29174621894",
+  "sliceId": "s001",
+  "status": "failure",
+  "tests": 246,
+  "failures": 1,
+  "failedTests": [
+    "integration.AndroidLuaCorpusSemanticVerificationTest#host_dual_path_root_and_android_jar_joint_green_lock[jvm]"
+  ],
+  "progressSummary": {
+    "total": 25,
+    "totalFiles": 367,
+    "pending": 24,
+    "success": 0,
+    "failure": 1,
+    "running": 0,
+    "filesDone": 0,
+    "activeSlice": "s001",
+    "updatedAt": "2026-07-12T01:03:13Z"
+  },
+  "notes": "Merged CI slice-progress.json (updatedAt 2026-07-12T01:03:13Z, runId 29174621894) over local progress (older 2026-07-12T00:42:14Z). Copied results/s001-29174621894.json. Parsed 15 TEST-*.xml under junit; 1 failed classname#method written to failures.txt. s001 remains failure with failures reduced 3→1; gate must-green-to-advance keeps activeSlice=s001."
+}

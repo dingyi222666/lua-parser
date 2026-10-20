@@ -1,0 +1,24 @@
+TASK-647 WORKER WINSLICE-29202899347 → review
+
+Owner: worker-WINSLICE-29202899347-TASK-647
+Time: 2026-07-12T18:08:00Z
+
+Product fix (no Gradle; workers forbidden):
+- Root cause: shouldRecoverStatementStartAsMissingExpression only treated NAME + immediate
+  LPAREN/LCURLY/STRING as call-shaped. Android-Lua `activity.setContentView(` is NAME DOT
+  NAME LPAREN, so parseCallArgumentList after trailing comma absorbed the next statement as
+  a second call arg (view:setText(view, activity.setContentView(view))).
+- Fix: isCallShapedNameStatementStart() walks NAME { DOT|COLON NAME } then call-starter
+  (LPAREN/LCURLY/STRING/LONG_STRING), restoring lexer via WrapperLuaLexer.back.
+  shouldRecoverStatementStartAsMissingExpression delegates NAME case to it.
+- Effect: incomplete parenthesized trailing-comma call marks bad via missing ')' recovery,
+  emits `')' expected`, leaves setContentView/print as sibling CallStmt.
+- Preserves bare multi-line NAME args (foo(\n a,\n b\n)) and keyword statement recovery.
+- Existing recovery TDD cases already encode AC (mixed Android trailing comma + top-level
+  print trailing comma); no golden-only flip.
+
+FilesChanged:
+- src/commonMain/kotlin/io/github/dingyi222666/luaparser/parser/LuaParser.kt
+- tasks/TASK-647.md
+
+Status → review, owner=unassigned

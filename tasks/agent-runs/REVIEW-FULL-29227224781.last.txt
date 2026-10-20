@@ -1,0 +1,14 @@
+{
+  "runId": "29227224781",
+  "mode": "full-jvmtest",
+  "status": "failure",
+  "tests": 5386,
+  "failures": 2,
+  "errors": 0,
+  "skipped": 177,
+  "failedTests": [
+    "semantic.workspace.LuaWorkspaceQueryFacadeTest#signature_help_preserves_generic_type_parameter_labels_after_type_resolution[jvm]",
+    "source.AST2LuaIfElseifRoundTripTddTest#nestedIfWithOuterSiblingRequiresDoTerminatorForShapeStableReparse[jvm]"
+  ],
+  "notes": "Merged from full-xml-29227224781/result/full-jvmtest-result.json. compileExit=0; jvmTest exitCode=1; durationSec=161; sha=2f5f610e1fa4e6d5da83f65c4e462e5a49ee7d7e; gate=task-043-full-jvmtest. failures.txt written under ART; result JSON copied to tasks/agent-runs/full-jvmtest/. TASK-043 remains in_progress (red full suite; improved 9→2 failures vs 29225343255)."
+}

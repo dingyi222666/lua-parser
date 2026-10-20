@@ -1,0 +1,75 @@
+{
+  "runId": "29265516413",
+  "conclusion": "failure",
+  "tests": 1705,
+  "failures": 11,
+  "errors": 0,
+  "skipped": 0,
+  "failedTests": [
+    "lsp.LspRealProjectDiagnosticsRefactorTddTest#diagnostics_for_uri_with_spaces_publish_and_clear[jvm]",
+    "lsp.LspRealProjectEditorLifecycleTddTest#file_uri_with_spaces_change_and_close_preserve_uri[jvm]",
+    "lsp.LspRealProjectJavaAndroidInteropTddTest#real_project_android_missing_jar_skip_reason_never_mentions_g_drive[jvm]",
+    "lsp.LspRealProjectMultiModuleGraphTddTest#clean_multi_module_files_have_no_error_diagnostics[jvm]",
+    "lsp.LspRealProjectMultiModuleGraphTddTest#shadow_local_same_name_as_export_stays_file_local[jvm]",
+    "lsp.LspRealProjectRequireAliasExportTddTest#barrel_init_reexport_completion_includes_leaf_members[jvm]",
+    "lsp.LspRealProjectRequireAliasExportTddTest#barrel_init_reexport_definition_for_leafRun[jvm]",
+    "lsp.LspRealProjectRequireAliasExportTddTest#hover_emmy_param_on_exported_function_surfaces_from_provider[jvm]",
+    "lsp.LspRealProjectRequireAliasExportTddTest#shadow_local_foo_does_not_force_only_export_uri[jvm]",
+    "testinventory.NewTestInventoryTddTest#documentsHowNewTddSuitesCountTowardFiveHundredTestGoal[jvm]",
+    "testinventory.NewTestInventoryTddTest#reportsCurrentCommonAndJvmTestInventory[jvm]"
+  ],
+  "clusters": [
+    {
+      "id": "require-alias-export-barrel-shadow-hover",
+      "area": "lsp.real-project.require-alias-export",
+      "count": 4,
+      "tests": [
+        "lsp.LspRealProjectRequireAliasExportTddTest#barrel_init_reexport_completion_includes_leaf_members[jvm]",
+        "lsp.LspRealProjectRequireAliasExportTddTest#barrel_init_reexport_definition_for_leafRun[jvm]",
+        "lsp.LspRealProjectRequireAliasExportTddTest#hover_emmy_param_on_exported_function_surfaces_from_provider[jvm]",
+        "lsp.LspRealProjectRequireAliasExportTddTest#shadow_local_foo_does_not_force_only_export_uri[jvm]"
+      ],
+      "symptoms": "barrel reexport completion/definition empty or wrong; hover null; local shadow definition jumps only to foreign util.lua"
+    },
+    {
+      "id": "multi-module-graph-shadow-diagnostics",
+      "area": "lsp.real-project.multi-module-graph",
+      "count": 2,
+      "tests": [
+        "lsp.LspRealProjectMultiModuleGraphTddTest#clean_multi_module_files_have_no_error_diagnostics[jvm]",
+        "lsp.LspRealProjectMultiModuleGraphTddTest#shadow_local_same_name_as_export_stays_file_local[jvm]"
+      ],
+      "symptoms": "local same-name-as-export jumps only to foreign util.lua; clean multi-module still reports checker.member.missing-style errors on lib/stringx.lua"
+    },
+    {
+      "id": "uri-spaces-editor-lifecycle-diagnostics",
+      "area": "lsp.real-project.uri-encoding",
+      "count": 2,
+      "tests": [
+        "lsp.LspRealProjectDiagnosticsRefactorTddTest#diagnostics_for_uri_with_spaces_publish_and_clear[jvm]",
+        "lsp.LspRealProjectEditorLifecycleTddTest#file_uri_with_spaces_change_and_close_preserve_uri[jvm]"
+      ],
+      "symptoms": "URISyntaxException Illegal character in path for unencoded spaces in file:// URIs"
+    },
+    {
+      "id": "android-missing-jar-skip-reason",
+      "area": "lsp.real-project.android-interop",
+      "count": 1,
+      "tests": [
+        "lsp.LspRealProjectJavaAndroidInteropTddTest#real_project_android_missing_jar_skip_reason_never_mentions_g_drive[jvm]"
+      ],
+      "symptoms": "skip reason for missing configured path also appends real local SDK android.jar presence path; assertion about G:/ hardcode fails on Windows SDK discovery wording"
+    },
+    {
+      "id": "new-test-inventory-counts",
+      "area": "testinventory",
+      "count": 2,
+      "tests": [
+        "testinventory.NewTestInventoryTddTest#documentsHowNewTddSuitesCountTowardFiveHundredTestGoal[jvm]",
+        "testinventory.NewTestInventoryTddTest#reportsCurrentCommonAndJvmTestInventory[jvm]"
+      ],
+      "symptoms": "locked inventory counts stale after suite cull: expected 307 got 167; expected 366 got 223"
+    }
+  ],
+  "notes": "Parsed 226 junit TEST-*.xml under full-xml-29265516413/junit. Aggregated tests=1705 failures=11 errors=0 skipped=0. No full-jvmtest-result.json present under ART/result. All reds concentrated in RealProject LSP suites (9) + NewTestInventory locks (2). No product parser/semantic/core reds outside RealProject/inventory. Prefer tasking by cluster: (1) require-alias/barrel/shadow/hover, (2) multi-module shadow+false diagnostics, (3) URI space encoding, (4) android skip-reason wording, (5) inventory lock updates."
+}

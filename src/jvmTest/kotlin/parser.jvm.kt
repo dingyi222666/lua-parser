@@ -1,125 +1,64 @@
-import io.github.dingyi222666.luaparser.lexer.LuaLexer
 import io.github.dingyi222666.luaparser.parser.LuaParser
 import io.github.dingyi222666.luaparser.parser.ast.node.Position
-import io.github.dingyi222666.luaparser.semantic.SemanticAnalyzer
-import io.github.dingyi222666.luaparser.semantic.types.FunctionType
+import io.github.dingyi222666.luaparser.semantic.SemanticPipeline
 import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
 
-class JvmPlatformParserTest {
+/**
+ * JVM platform end-to-end smoke: parse + analyze the public [SemanticPipeline]
+ * facade over annotated source. The former legacy analyzer/symbol-table assertions
+ * retired with the legacy compatibility surface; the fixtures stay so the JVM
+ * platform path (parser -> pipeline -> model) keeps a standalone smoke.
+ */
+class JvmPlatformParserSmokeTest {
 
     @Test
-    fun parse() {
-        val code = """
-            ---@type string
-            local name = "test"
-            
-            ---@type number
-            local age = 25
-    
+    fun smokeAnalyzesAnnotatedFunctionsAndGlobals() {
+        val analysis = analyze(SOURCE)
+
+        // Local `sum` resolves at its declaration; the annotated global write resolves too.
+        assertEquals("sum", analysis.model.getSymbolAt(Position(8, 7))?.name)
+        assertEquals("GLOBAL_NAME", analysis.model.getSymbolAt(Position(11, 1))?.name)
+        assertEquals(analysis.model.getDiagnostics().size, analysis.summary.diagnosticCount)
+    }
+
+    @Test
+    fun smokePreservesScopeVisibilityThroughShadowing() {
+        val analysis = analyze(
+            """
+            local outer = 1
+            do
+                local outer = "x"
+                local inner = outer
+            end
+            """.trimIndent()
+        )
+
+        val position = Position(4, 23)
+        val scope = assertNotNull(analysis.model.getScopeAt(position))
+
+        // Innermost scope sees the shadowing `outer` exactly once plus `inner`.
+        assertEquals(1, scope.symbols.count { it.name == "outer" })
+        assertTrue(scope.symbols.any { it.name == "inner" })
+    }
+
+    private fun analyze(code: String) = SemanticPipeline().analyze(LuaParser().parse(code))
+
+    private companion object {
+        val SOURCE = """
+            ---@param x number
+            ---@param y number
             ---@return number
             local function add(x, y)
                 return x + y
             end
-            
-            local function concat(x, y)
-                return x .. y
-            end
-            
-            ---@param y number
-            ---@param x number
-            ---@return number
-            local function multiply(x, y)
-                return x * y
-            end
-            
-            local function pow(x, y)
-                return multiply(x, y)
-            end
-            
-            local function s()
-               local function q()
-               end
-               
-               local sss = 12
-            end
-            
-            local tab = {
-                name = name,
-                age = age
-            }
-    
-            local result = add(tab.age, tab.age)
-            
+
+            local sum = add(1, 2)
+
             ---@type string
-            STRING = 123  -- 这里应该报错，因为类型不匹配
-            
-            GLOBAL_VAR = "hello"  -- 这是一个全局变量
+            GLOBAL_NAME = 123
         """.trimIndent()
-
-        val parser = LuaParser()
-        val analyzer = SemanticAnalyzer()
-
-        val ast = parser.parse(code)
-        val result = analyzer.analyze(ast)
-
-        // 检查全局变量
-        val stringType = result.globalSymbolTable.getGlobalSymbols()["STRING"]?.type  // string
-        val globalVarType = result.globalSymbolTable.getGlobalSymbols()["GLOBAL_VAR"]?.type  // string
-        val addType = result.globalSymbolTable.resolveAtPosition("add", Position(20, 1))?.type
-        val concatType = result.globalSymbolTable.resolveAtPosition("concat", Position(20, 1))?.type
-        val multiplyType = result.globalSymbolTable.resolveAtPosition("multiply", Position(20, 1))?.type
-
-        val pairs = result.globalSymbolTable.getGlobalSymbols()["ipairs"]?.type
-
-        println("Global STRING type: $stringType")
-        println("add type: $addType")
-        println("concat type: $concatType")
-        println("Global GLOBAL_VAR type: $globalVarType")
-        println("multiply type: $multiplyType")
-        println("ipairs type: $pairs")
-        println("all: ${result.symbolTable}")
-
-        // 检查诊断信息
-        result.diagnostics.forEach { diagnostic ->
-            println("${diagnostic.severity}: ${diagnostic.message} at ${diagnostic.range}")
-        }
     }
 }
-
-
-
-val testSource = """
-    local a  = 12
-    local b = { s = a } 
-    
-    function b:a() 
-      return { a = b.s }
-    end
-    
-    local function ss() return 1,"" end
-    
-    sb,x = ss()
-    
-    d = b
-    
-    local s = b:a()
-    
-    local c = 12
-    
-    do
-        local c = ""
-        d.c = 1 + ""
-    end
-    
-    function pairs1(t)
-       return 1, ""
-    end
-    
-    for i = 1, 10 do
-        print(i)
-        print(""..2)
-        print(ss)
-        print(b)
-       
-    end
-""".trimIndent()

@@ -1,0 +1,30 @@
+{
+  "runId": "29197451642",
+  "sliceId": "s008",
+  "status": "failure",
+  "tests": 152,
+  "failures": 11,
+  "failedTests": [
+    "parser.lexer.LuaLexerLiteralCommentTddTest#parserKeepsLiteralTokenTextOnAstConstants[jvm]",
+    "parser.lexer.LuaLexerLongBracketCorpusTddTest#eofUnclosedFormsConsumeRestWithoutInventingFollowingTokens[jvm]",
+    "parser.lexer.LuaLexerLongCommentEdgeTddTest#unclosedLongCommentDoesNotHangOnLargeBody[jvm]",
+    "parser.lexer.LuaLexerLongCommentEdgeTddTest#unclosedLongCommentsRecoverWithoutHangAtLevels0Through4[jvm]",
+    "parser.lexer.LuaLexerLongCommentEdgeTddTest#levelMismatchAndPartialCloseRecoverWithoutHang[jvm]",
+    "parser.lexer.LuaLexerLongStringEdgeTddTest#unclosedLongStringsRecoverWithoutHangAtLevels0Through4[jvm]",
+    "parser.lexer.LuaLexerLongStringEdgeTddTest#unclosedLongStringDoesNotHangOnLargeBody[jvm]",
+    "parser.lexer.LuaLexerLongStringEdgeTddTest#levelMismatchAndPartialCloseRecoverWithoutHang[jvm]",
+    "parser.lexer.LuaLexerLongStringNestedEqualsTddTest#unclosedLongStringsRecoverWithoutHangAtLevels0Through4[jvm]",
+    "parser.lexer.LuaLexerLongStringNestedEqualsTddTest#unclosedLongStringDoesNotHangOnLargeBody[jvm]",
+    "parser.lexer.LuaLexerLongStringNestedEqualsTddTest#levelMismatchAndPartialCloseRecoverWithoutHang[jvm]"
+  ],
+  "progressSummary": {
+    "success": 7,
+    "failure": 1,
+    "pending": 17,
+    "running": 0,
+    "total": 25,
+    "filesDone": 105,
+    "activeSlice": "s008"
+  },
+  "notes": "Merged CI progress.json (updatedAt 2026-07-12T15:05:38Z) over local; s008 failed with 11 lexer long-bracket/comment recovery failures; copied results/s008-29197451642.json; wrote failures.txt from junit XML."
+}

@@ -1,0 +1,780 @@
+package io.github.dingyi222666.luaparser.semantic.types.resolve
+
+import io.github.dingyi222666.luaparser.semantic.types.model.AliasType
+import io.github.dingyi222666.luaparser.semantic.types.model.AppliedType
+import io.github.dingyi222666.luaparser.semantic.types.model.ArrayType
+import io.github.dingyi222666.luaparser.semantic.types.model.CallableType
+import io.github.dingyi222666.luaparser.semantic.types.model.ClassType
+import io.github.dingyi222666.luaparser.semantic.types.model.CustomType
+import io.github.dingyi222666.luaparser.semantic.types.model.canonicalByKind
+import io.github.dingyi222666.luaparser.semantic.types.model.ErrorType
+import io.github.dingyi222666.luaparser.semantic.types.model.FunctionParameter
+import io.github.dingyi222666.luaparser.semantic.types.model.FunctionType
+import io.github.dingyi222666.luaparser.semantic.types.model.IntersectionType
+import io.github.dingyi222666.luaparser.semantic.types.model.JavaArrayType
+import io.github.dingyi222666.luaparser.semantic.types.model.JavaClassType
+import io.github.dingyi222666.luaparser.semantic.types.model.JavaContainerKind
+import io.github.dingyi222666.luaparser.semantic.types.model.JavaConstructorType
+import io.github.dingyi222666.luaparser.semantic.types.model.JavaInstanceMemberType
+import io.github.dingyi222666.luaparser.semantic.types.model.JavaInstanceType
+import io.github.dingyi222666.luaparser.semantic.types.model.javaContainerKind
+import io.github.dingyi222666.luaparser.semantic.types.model.JavaOverloadType
+import io.github.dingyi222666.luaparser.semantic.types.model.JavaPrimitiveType
+import io.github.dingyi222666.luaparser.semantic.types.model.JavaStaticMemberType
+import io.github.dingyi222666.luaparser.semantic.types.model.LiteralType
+import io.github.dingyi222666.luaparser.semantic.types.model.MultiReturnType
+import io.github.dingyi222666.luaparser.semantic.types.model.ModuleType
+import io.github.dingyi222666.luaparser.semantic.types.model.NeverType
+import io.github.dingyi222666.luaparser.semantic.types.model.OverloadedFunctionType
+import io.github.dingyi222666.luaparser.semantic.types.model.PrimitiveType
+import io.github.dingyi222666.luaparser.semantic.types.model.TableType
+import io.github.dingyi222666.luaparser.semantic.types.model.TupleType
+import io.github.dingyi222666.luaparser.semantic.types.model.Type
+import io.github.dingyi222666.luaparser.semantic.types.model.TypeParameterType
+import io.github.dingyi222666.luaparser.semantic.types.model.UnionType
+import io.github.dingyi222666.luaparser.semantic.types.model.UnknownType
+import io.github.dingyi222666.luaparser.semantic.types.model.VarargType
+import io.github.dingyi222666.luaparser.semantic.types.model.unwrapAliases
+
+object TypeRelations {
+    fun isAssignable(target: Type, source: Type): Boolean {
+        val normalizedTarget = TypeNormalizer.normalize(target)
+        val normalizedSource = TypeNormalizer.normalize(source)
+
+        if (normalizedTarget == UnknownType || normalizedTarget == ErrorType) return true
+        if (normalizedSource == UnknownType || normalizedSource == ErrorType) return true
+        if (normalizedSource == NeverType) return true
+        if (normalizedTarget == NeverType) return normalizedSource == NeverType
+
+        if (normalizedTarget == normalizedSource) return true
+
+        if (normalizedTarget is UnionType) {
+            return normalizedTarget.types.any { isAssignable(it, normalizedSource) }
+        }
+        if (normalizedSource is UnionType) {
+            return normalizedSource.types.all { isAssignable(normalizedTarget, it) }
+        }
+        if (normalizedTarget is IntersectionType) {
+            return normalizedTarget.types.all { isAssignable(it, normalizedSource) }
+        }
+        if (normalizedSource is IntersectionType) {
+            return isIntersectionSourceAssignable(normalizedTarget, normalizedSource)
+        }
+
+        if (normalizedTarget is TypeParameterType) {
+            return when (normalizedSource) {
+                is TypeParameterType -> typeParameterShapeCompatible(normalizedTarget, normalizedSource)
+                else -> normalizedTarget.constraint?.let { isAssignable(it, normalizedSource) } ?: true
+            }
+        }
+        if (normalizedSource is TypeParameterType) {
+            return normalizedSource.constraint?.let { isAssignable(normalizedTarget, it) } ?: false
+        }
+
+        return when (normalizedTarget) {
+            is LiteralType -> isLiteralAssignable(normalizedTarget, normalizedSource)
+            is PrimitiveType -> isPrimitiveAssignable(normalizedTarget, normalizedSource)
+            is FunctionType -> isCallableAssignable(normalizedTarget, normalizedSource)
+            is OverloadedFunctionType -> isCallableAssignable(normalizedTarget, normalizedSource)
+            is TableType -> isTableAssignable(normalizedTarget, normalizedSource)
+            is ModuleType -> isModuleAssignable(normalizedTarget, normalizedSource)
+            is ClassType -> isClassAssignable(normalizedTarget, normalizedSource)
+            is ArrayType -> isArrayAssignable(normalizedTarget, normalizedSource)
+            is TupleType -> isTupleAssignable(normalizedTarget, normalizedSource)
+            is MultiReturnType -> isMultiReturnAssignable(normalizedTarget, normalizedSource)
+            is VarargType -> isVarargAssignable(normalizedTarget, normalizedSource)
+            is AppliedType -> isAppliedAssignable(normalizedTarget, normalizedSource)
+            is JavaPrimitiveType -> isJavaPrimitiveAssignable(normalizedTarget, normalizedSource)
+            is JavaClassType -> isJavaClassAssignable(normalizedTarget, normalizedSource)
+            is JavaInstanceType -> isJavaInstanceAssignable(normalizedTarget, normalizedSource)
+            is JavaConstructorType -> isCallableAssignable(normalizedTarget, normalizedSource)
+            is JavaStaticMemberType -> normalizedSource is JavaStaticMemberType &&
+                normalizedTarget.memberName == normalizedSource.memberName &&
+                normalizedTarget.owner.binaryName == normalizedSource.owner.binaryName &&
+                isAssignable(normalizedTarget.valueType, normalizedSource.valueType)
+            is JavaInstanceMemberType -> normalizedSource is JavaInstanceMemberType &&
+                normalizedTarget.memberName == normalizedSource.memberName &&
+                normalizedTarget.owner.binaryName == normalizedSource.owner.binaryName &&
+                isAssignable(normalizedTarget.valueType, normalizedSource.valueType)
+            is JavaOverloadType -> isCallableAssignable(normalizedTarget, normalizedSource)
+            is JavaArrayType -> isJavaArrayAssignable(normalizedTarget, normalizedSource)
+            is CustomType -> when (normalizedSource) {
+                is CustomType -> normalizedTarget.name == normalizedSource.name
+                is ClassType -> normalizedTarget.name == normalizedSource.name
+                else -> false
+            }
+            is AliasType, is UnionType, is IntersectionType -> false
+            is TypeParameterType -> false
+            UnknownType, ErrorType, NeverType -> false
+        }
+    }
+
+    private fun isIntersectionSourceAssignable(target: Type, source: IntersectionType): Boolean {
+        val combinedSource = combineIntersectionSource(source)
+        if (combinedSource != null) {
+            return isAssignable(target, combinedSource)
+        }
+
+        return source.types.all { isAssignable(target, it) }
+    }
+
+    private fun isLiteralAssignable(target: LiteralType, source: Type): Boolean = when (source) {
+        is LiteralType -> target.value == source.value &&
+            target.baseType.canonicalByKind() == source.baseType.canonicalByKind()
+        else -> false
+    }
+
+    private fun isPrimitiveAssignable(target: PrimitiveType, source: Type): Boolean = when (target) {
+        PrimitiveType.ANY -> true
+        PrimitiveType.FUNCTION -> source is CallableType
+        PrimitiveType.TABLE -> isTableLike(source)
+        else -> when (source) {
+            is LiteralType -> source.baseType.canonicalByKind() == target
+            is PrimitiveType -> source.canonicalByKind() == target
+            else -> false
+        }
+    }
+
+    private fun isCallableAssignable(target: CallableType, source: Type): Boolean {
+        val sourceCallable = source as? CallableType ?: return false
+        return sourceCallable.callSignatures.all { sourceSignature ->
+            target.callSignatures.any { targetSignature ->
+                parameterListsCompatible(targetSignature.parameters, sourceSignature.parameters) &&
+                    isAssignable(targetSignature.returnType, sourceSignature.returnType) &&
+                    typeParametersCompatible(targetSignature.typeParameters, sourceSignature.typeParameters)
+            }
+        }
+    }
+
+    private fun isTableAssignable(target: TableType, source: Type): Boolean {
+        return isMemberBearingTargetAssignable(target.fields, target.methods, target.indexSignature, source)
+    }
+
+    private fun isClassAssignable(target: ClassType, source: Type): Boolean {
+        // CustomType is a nominal placeholder (e.g. from doc comments) that denotes a class
+        // by name; accept it for a raw (non-generic) class target with the same name.
+        if (source is CustomType) {
+            return target.name == source.name && target.typeParameters.isEmpty()
+        }
+        val sourceClass = source as? ClassType ?: return false
+        val matched = isSameOrSubclass(target, sourceClass) ?: return false
+        if (target.typeParameters.size != matched.typeParameters.size) {
+            return target.typeParameters.isEmpty() && matched.typeParameters.isEmpty()
+        }
+        return target.typeParameters.zip(matched.typeParameters).all { (expected, actual) ->
+            typeParameterShapeCompatible(expected, actual)
+        }
+    }
+
+    private fun isJavaClassAssignable(target: JavaClassType, source: Type): Boolean {
+        val sourceClass = source as? JavaClassType ?: return false
+        return isSameOrJavaSubclass(target, sourceClass)
+    }
+
+    private fun isJavaInstanceAssignable(target: JavaInstanceType, source: Type): Boolean {
+        if (isJavaContainerAssignableFromLuaTable(target, source)) {
+            return true
+        }
+        // LuaJava boxes primitive values for reference parameters. Apply the same rule to
+        // assignments and overload ranking instead of guessing a return after a failed call.
+        val primitive = (source as? LiteralType)?.baseType ?: source as? PrimitiveType
+        val name = target.javaName.binaryName
+        if (primitive?.kind == PrimitiveType.Kind.NIL) return true
+        if (name == "java.lang.Object") return true
+        if (primitive != null) {
+            val accepted = when (name) {
+                "java.lang.CharSequence", "java.lang.String" -> primitive.kind == PrimitiveType.Kind.STRING
+                "java.lang.Number", "java.lang.Byte", "java.lang.Short", "java.lang.Integer",
+                "java.lang.Long", "java.lang.Float", "java.lang.Double" -> primitive.kind == PrimitiveType.Kind.NUMBER
+                "java.lang.Boolean" -> primitive.kind == PrimitiveType.Kind.BOOLEAN
+                "java.io.Serializable", "java.lang.Comparable" -> primitive.kind in setOf(
+                    PrimitiveType.Kind.STRING, PrimitiveType.Kind.NUMBER, PrimitiveType.Kind.BOOLEAN
+                )
+                else -> false
+            }
+            if (accepted) return true
+        }
+        val sourceInstance = source as? JavaInstanceType ?: return false
+        if (!isSameOrJavaSubclass(target.classType, sourceInstance.classType)) {
+            return false
+        }
+        if (target.typeArguments.isEmpty()) {
+            return true
+        }
+        if (target.typeArguments.size != sourceInstance.typeArguments.size) {
+            return false
+        }
+        return target.typeArguments.zip(sourceInstance.typeArguments).all { (expected, actual) ->
+            isAssignable(expected, actual)
+        }
+    }
+
+    /**
+     * Lua sequence sources (array / table literal / module surface) flowing into a Java
+     * element type — the shared core of isJavaContainerAssignable, isJavaArrayAssignable,
+     * isArrayAssignable and the SEQUENCE branch of isJavaContainerAssignableFromLuaTable.
+     */
+    private fun isLuaSequenceSourceAssignableToElement(elementType: Type, source: Type): Boolean = when (source) {
+        is ArrayType -> isAssignable(elementType, source.elementType)
+        is TableType -> isTableAssignableToJavaArrayElements(elementType, source)
+        is ModuleType -> isModuleAssignableToJavaArrayElements(elementType, source)
+        else -> false
+    }
+
+    /**
+     * Conservatively models Lua table / array literals as Java List or Map parameters when
+     * element / key / value types are statically known. Raw or mixed shapes stay non-assignable.
+     */
+    internal fun isJavaContainerAssignable(target: Type, source: Type): Boolean {
+        return when (target) {
+            is JavaArrayType -> isJavaArrayAssignable(target, source)
+            is ArrayType -> isLuaSequenceSourceAssignableToElement(target.elementType, source)
+            is JavaInstanceType -> isJavaContainerAssignableFromLuaTable(target, source)
+            else -> false
+        }
+    }
+
+    private fun isJavaContainerAssignableFromLuaTable(target: JavaInstanceType, source: Type): Boolean {
+        return when (target.javaContainerKind()) {
+            JavaContainerKind.SEQUENCE -> {
+                val elementType = target.typeArguments.singleOrNull() ?: return false
+                isLuaSequenceSourceAssignableToElement(elementType, source)
+            }
+            JavaContainerKind.MAP -> {
+                if (target.typeArguments.size < 2) {
+                    return false
+                }
+                val keyType = target.typeArguments[0]
+                val valueType = target.typeArguments[1]
+                when (source) {
+                    is TableType -> isTableAssignableToJavaMap(keyType, valueType, source)
+                    is ModuleType -> isModuleAssignableToJavaMap(keyType, valueType, source)
+                    else -> false
+                }
+            }
+            null -> false
+        }
+    }
+
+    private fun isTableAssignableToJavaArrayElements(elementType: Type, source: TableType): Boolean {
+        if (!isKnownType(elementType)) {
+            return false
+        }
+        val index = source.indexSignature
+        if (index != null) {
+            if (!isNumberKeyType(index.keyType) || !isAssignable(elementType, index.valueType)) {
+                return false
+            }
+        }
+        if (source.fields.isEmpty()) {
+            // Empty table or index-only array-like table.
+            return index != null || source.methods.isEmpty()
+        }
+        source.fields.forEach { (name, fieldType) ->
+            if (name.toIntOrNull() == null) {
+                return false
+            }
+            if (!isAssignable(elementType, fieldType)) {
+                return false
+            }
+        }
+        // Named methods without integer keys are map/object shaped, not array/list shaped.
+        source.methods.keys.forEach { name ->
+            if (name.toIntOrNull() == null && name !in source.fields) {
+                return false
+            }
+        }
+        return true
+    }
+
+    /**
+     * ModuleType and TableType.IndexSignature are structurally identical member surfaces;
+     * every Module-vs-table comparison goes through this view instead of re-inlining the
+     * field/method/index conversion. (Construction is confined to the rare Module-as-array
+     * / Module-as-map branches, matching the previous call sites — never the hot
+     * TableType/ModuleType target dispatch.)
+     */
+    private fun ModuleType.toTableShape(): TableType = TableType(
+        fields = fields,
+        methods = methods,
+        indexSignature = indexSignature?.let { TableType.IndexSignature(it.keyType, it.valueType) }
+    )
+
+    private fun isModuleAssignableToJavaArrayElements(elementType: Type, source: ModuleType): Boolean {
+        return isTableAssignableToJavaArrayElements(elementType, source.toTableShape())
+    }
+
+    private fun isTableAssignableToJavaMap(keyType: Type, valueType: Type, source: TableType): Boolean {
+        if (!isKnownType(keyType) || !isKnownType(valueType)) {
+            return false
+        }
+        val index = source.indexSignature
+        if (index != null) {
+            if (!isAssignable(keyType, index.keyType) || !isAssignable(valueType, index.valueType)) {
+                return false
+            }
+        }
+        if (source.fields.isEmpty() && source.methods.isEmpty()) {
+            return true
+        }
+        // Mixed array+map shapes (integer keys plus non-integer keys) are not converted.
+        val hasIntegerKeys = source.fields.keys.any { it.toIntOrNull() != null } ||
+            source.methods.keys.any { it.toIntOrNull() != null }
+        val hasNamedKeys = source.fields.keys.any { it.toIntOrNull() == null } ||
+            source.methods.keys.any { it.toIntOrNull() == null }
+        if (hasIntegerKeys && hasNamedKeys) {
+            return false
+        }
+        source.fields.forEach { (name, fieldType) ->
+            if (!isAssignable(keyType, tableFieldKeyType(name))) {
+                return false
+            }
+            if (!isAssignable(valueType, fieldType)) {
+                return false
+            }
+        }
+        source.methods.forEach { (name, methodType) ->
+            if (name in source.fields) {
+                return@forEach
+            }
+            if (!isAssignable(keyType, tableFieldKeyType(name))) {
+                return false
+            }
+            if (!isAssignable(valueType, methodType)) {
+                return false
+            }
+        }
+        return true
+    }
+
+    private fun isModuleAssignableToJavaMap(keyType: Type, valueType: Type, source: ModuleType): Boolean {
+        return isTableAssignableToJavaMap(keyType, valueType, source.toTableShape())
+    }
+
+    private fun tableFieldKeyType(fieldName: String): Type {
+        return if (fieldName.toIntOrNull() != null) {
+            PrimitiveType.NUMBER
+        } else {
+            PrimitiveType.STRING
+        }
+    }
+
+    private fun isNumberKeyType(type: Type): Boolean {
+        return isAssignable(PrimitiveType.NUMBER, type) || isAssignable(type, PrimitiveType.NUMBER)
+    }
+
+    private fun isKnownType(type: Type): Boolean {
+        val normalized = TypeNormalizer.normalize(type)
+        return when (normalized) {
+            UnknownType, ErrorType, NeverType -> false
+            PrimitiveType.UNKNOWN, PrimitiveType.ANY, PrimitiveType.NEVER, PrimitiveType.ERROR -> false
+            is TypeParameterType -> normalized.constraint?.let(::isKnownType) == true
+            is UnionType -> normalized.types.isNotEmpty() && normalized.types.all(::isKnownType)
+            // Raw Object / wildcard upper-bound is not a precise container element type.
+            is JavaInstanceType ->
+                normalized.classType.javaName.binaryName != "java.lang.Object"
+            is JavaClassType ->
+                normalized.javaName.binaryName != "java.lang.Object"
+            else -> true
+        }
+    }
+
+    private fun isJavaArrayAssignable(target: JavaArrayType, source: Type): Boolean = when (source) {
+        is JavaArrayType -> target.dimensions == source.dimensions && isAssignable(target.elementType, source.elementType)
+        is ArrayType, is TableType, is ModuleType ->
+            target.dimensions == 1 && isLuaSequenceSourceAssignableToElement(target.elementType, source)
+        else -> false
+    }
+
+    private fun isJavaPrimitiveAssignable(target: JavaPrimitiveType, source: Type): Boolean {
+        if (source is JavaPrimitiveType) {
+            return target.kind == source.kind || isNumericJavaWidening(target.kind, source.kind)
+        }
+        return when (target.kind) {
+            JavaPrimitiveType.Kind.BOOLEAN -> PrimitiveType.BOOLEAN.isAssignableFrom(source)
+            JavaPrimitiveType.Kind.CHAR -> PrimitiveType.STRING.isAssignableFrom(source)
+            JavaPrimitiveType.Kind.BYTE,
+            JavaPrimitiveType.Kind.SHORT,
+            JavaPrimitiveType.Kind.INT,
+            JavaPrimitiveType.Kind.LONG,
+            JavaPrimitiveType.Kind.FLOAT,
+            JavaPrimitiveType.Kind.DOUBLE -> PrimitiveType.NUMBER.isAssignableFrom(source)
+            JavaPrimitiveType.Kind.VOID -> source == PrimitiveType.VOID
+        }
+    }
+
+    /**
+     * The single member-bearing dispatch. TableType and ModuleType targets were two
+     * byte-parallel 4-branch ladders; the only difference was the ModuleType.IndexSignature
+     * -> TableType.IndexSignature conversion of the TARGET index, now done once at entry
+     * (the source-side conversions stay exactly where they were, so no new allocations on
+     * the assignability hot path).
+     */
+    private fun isMemberBearingTargetAssignable(
+        targetFields: Map<String, Type>,
+        targetMethods: Map<String, Type>,
+        targetIndex: TableType.IndexSignature?,
+        source: Type
+    ): Boolean = when (source) {
+        is TableType -> isMemberBearingShapeAssignable(
+            targetFields,
+            targetMethods,
+            targetIndex,
+            source.fields,
+            source.methods,
+            source.indexSignature
+        )
+
+        is ModuleType -> isMemberBearingShapeAssignable(
+            targetFields,
+            targetMethods,
+            targetIndex,
+            source.fields,
+            source.methods,
+            source.indexSignature?.let { TableType.IndexSignature(it.keyType, it.valueType) }
+        )
+
+        is ClassType -> isMemberBearingTargetAssignableToClass(targetFields, targetMethods, targetIndex, source)
+
+        is ArrayType -> isMemberBearingTargetAssignableToArray(targetFields, targetMethods, targetIndex, source)
+
+        else -> false
+    }
+
+    private fun isModuleAssignable(target: ModuleType, source: Type): Boolean {
+        return isMemberBearingTargetAssignable(
+            target.fields,
+            target.methods,
+            target.indexSignature?.let { TableType.IndexSignature(it.keyType, it.valueType) },
+            source
+        )
+    }
+
+    /** Shared ClassType-source branch of the member-bearing ladders (Table/Module targets identical). */
+    private fun isMemberBearingTargetAssignableToClass(
+        targetFields: Map<String, Type>,
+        targetMethods: Map<String, Type>,
+        targetIndexSignature: TableType.IndexSignature?,
+        source: ClassType
+    ): Boolean {
+        val availableFields = source.getAllFields()
+        val availableMethods = source.getAllMethods()
+        return targetFields.all { (name, type) -> availableFields[name]?.let { isAssignable(type, it) } == true } &&
+            targetMethods.all { (name, type) -> availableMethods[name]?.let { isAssignable(type, it) } == true } &&
+            targetIndexSignature == null
+    }
+
+    /** Shared ArrayType-source branch: index-only targets accept positional Lua arrays. */
+    private fun isMemberBearingTargetAssignableToArray(
+        targetFields: Map<String, Type>,
+        targetMethods: Map<String, Type>,
+        targetIndexSignature: TableType.IndexSignature?,
+        source: ArrayType
+    ): Boolean {
+        if (targetFields.isNotEmpty() || targetMethods.isNotEmpty()) {
+            return false
+        }
+        val signature = targetIndexSignature ?: return false
+        return isAssignable(signature.keyType, PrimitiveType.NUMBER) &&
+            isAssignable(signature.valueType, source.elementType)
+    }
+
+    private fun isArrayAssignable(target: ArrayType, source: Type): Boolean = when (source) {
+        is ArrayType -> isAssignable(target.elementType, source.elementType)
+        // Prefer index-signature array tables; also accept integer-keyed table literals so
+        // reflected Java array parameters can be checked against Lua table constructors.
+        else -> isLuaSequenceSourceAssignableToElement(target.elementType, source)
+    }
+
+    private fun isTupleAssignable(target: TupleType, source: Type): Boolean {
+        val sourceTuple = source as? TupleType ?: return false
+        if (target.elementTypes.size != sourceTuple.elementTypes.size) return false
+        return target.elementTypes.zip(sourceTuple.elementTypes).all { (expected, actual) ->
+            isAssignable(expected, actual)
+        }
+    }
+
+    private fun isMultiReturnAssignable(target: MultiReturnType, source: Type): Boolean {
+        val sourceMultiReturn = source as? MultiReturnType ?: return false
+        if (target.types.size != sourceMultiReturn.types.size) return false
+        return target.types.zip(sourceMultiReturn.types).all { (expected, actual) ->
+            isAssignable(expected, actual)
+        }
+    }
+
+    private fun isVarargAssignable(target: VarargType, source: Type): Boolean {
+        val sourceVararg = source as? VarargType ?: return false
+        return isAssignable(target.elementType, sourceVararg.elementType)
+    }
+
+    private fun isAppliedAssignable(target: AppliedType, source: Type): Boolean {
+        val sourceApplied = source as? AppliedType ?: return false
+        if (target.baseName != sourceApplied.baseName) return false
+        if (target.typeArguments.size != sourceApplied.typeArguments.size) return false
+        return target.typeArguments.zip(sourceApplied.typeArguments).all { (expected, actual) ->
+            isAssignable(expected, actual)
+        }
+    }
+
+    private fun typeParametersCompatible(target: List<TypeParameterType>, source: List<TypeParameterType>): Boolean {
+        if (target.size != source.size) return false
+        return target.zip(source).all { (expected, actual) -> typeParameterShapeCompatible(expected, actual) }
+    }
+
+    private fun typeParameterShapeCompatible(target: TypeParameterType, source: TypeParameterType): Boolean {
+        val targetConstraint = target.constraint
+        val sourceConstraint = source.constraint
+        if ((targetConstraint == null) != (sourceConstraint == null)) return false
+        if (targetConstraint != null && sourceConstraint != null && !isAssignable(targetConstraint, sourceConstraint)) return false
+
+        val targetDefault = target.defaultType
+        val sourceDefault = source.defaultType
+        if ((targetDefault == null) != (sourceDefault == null)) return false
+        if (targetDefault != null && sourceDefault != null && !isAssignable(targetDefault, sourceDefault)) return false
+
+        return true
+    }
+
+    /**
+     * Strict contravariance for OVERLOAD DELETION: earlier overload `earlier` can be
+     * deleted in favor of `later` only when every later parameter accepts every value
+     * the earlier one would receive (strict contravariance, no vararg-drop or bivariant
+     * relaxation — those are assignment-policy relaxations, not deletion safety).
+     */
+    internal fun isAssignableForOverloadSubsumption(earlierParameterType: Type, laterParameterType: Type): Boolean {
+        return isAssignable(earlierParameterType, laterParameterType)
+    }
+
+    internal fun parameterListsCompatible(target: List<FunctionParameter>, source: List<FunctionParameter>): Boolean {
+        // Signature-vs-signature: the source must SERVE AS the target — it has to accept
+        // every call the target can make (arity containment) and each target argument must
+        // flow INTO the source parameter (contravariance). Extra source params/optionals
+        // are safe in Lua (callers simply pass fewer arguments).
+        val requiredTarget = target.count { !it.optional && !it.vararg }
+        val requiredSource = source.count { !it.optional && !it.vararg }
+        if (requiredSource > requiredTarget) {
+            return false
+        }
+        val targetHasVararg = target.any { it.vararg }
+        val sourceHasVararg = source.any { it.vararg }
+        // A non-vararg source CAN serve a vararg target: Lua drops extra call arguments,
+        // so the index loop below merely requires every target slot past the source's
+        // length to be optional or vararg. Never pre-reject on the missing source vararg.
+        if (!targetHasVararg && !sourceHasVararg && source.size < target.size) {
+            return false
+        }
+
+        for (index in target.indices) {
+            val targetParameter = target[index]
+            val sourceParameter = source.getOrNull(index)
+                ?: source.lastOrNull { it.vararg }
+                // The source has no slot for this target parameter (e.g. a trailing target
+                // vararg); Lua callers simply pass fewer arguments, so only optional or
+                // vararg target slots remain servable.
+                ?: return targetParameter.optional || targetParameter.vararg
+            // Contravariant: a handler whose parameter is NARROWER than the target's
+            // cannot serve it (fun(value: "x") cannot serve fun(value: string)).
+            if (!isAssignable(sourceParameter.type, targetParameter.type)) {
+                // Java object parameters are BIVARIANT: Android listeners receive a
+                // superview at runtime while Lua handlers annotate the concrete widget
+                // (a handler param `Button` serves an interface param `View`). Primitives
+                // and literals above keep strict contravariance.
+                if (!isJavaObjectParameterType(sourceParameter.type) ||
+                    !isJavaObjectParameterType(targetParameter.type) ||
+                    !isAssignable(targetParameter.type, sourceParameter.type)
+                ) {
+                    return false
+                }
+            }
+        }
+
+        return true
+    }
+
+    private fun isJavaObjectParameterType(type: Type): Boolean {
+        return when (TypeNormalizer.normalize(type)) {
+            is ClassType, is JavaInstanceType -> true
+            else -> false
+        }
+    }
+
+    private fun isSameOrSubclass(target: ClassType, source: ClassType): ClassType? {
+        // Name matching is authoritative. Binder declaration ids are PER-DOCUMENT
+        // counters, not workspace identities: gating on them rejects the same logical
+        // class across require boundaries and can falsely unify distinct classes whose
+        // binders happened to allocate equal ids. The field stays for future
+        // workspace-unique allocation; the audit-verified win here is the superType
+        // fallback below (parent materialization failures no longer break inheritance).
+        fun visit(current: ClassType?, visited: MutableSet<String>): ClassType? {
+            current ?: return null
+            if (!visited.add(current.name)) return null
+            if (current.name == target.name) return current
+            visit(current.superClass, visited)?.let { return it }
+            // Parent materialization failed (TypeResolver): continue via raw superType.
+            return visit(current.superType?.unwrapAliases() as? ClassType, visited)
+        }
+
+        return visit(source, mutableSetOf())
+    }
+
+    private fun isSameOrJavaSubclass(target: JavaClassType, source: JavaClassType): Boolean {
+        fun visit(current: JavaClassType?, visited: MutableSet<String>): Boolean {
+            current ?: return false
+            if (!visited.add(current.javaName.binaryName)) {
+                return false
+            }
+            if (current.javaName.binaryName == target.javaName.binaryName) {
+                return true
+            }
+            if (visit(current.superClass, visited)) {
+                return true
+            }
+            return current.interfaces.any { visit(it, visited) }
+        }
+        return visit(source, linkedSetOf())
+    }
+
+    private fun isNumericJavaWidening(target: JavaPrimitiveType.Kind, source: JavaPrimitiveType.Kind): Boolean {
+        // JLS 5.1.2: byte/short -> char requires an explicit cast; char widens to
+        // int/long/float/double like the rest of the linear chain.
+        if (target == JavaPrimitiveType.Kind.CHAR && source != JavaPrimitiveType.Kind.CHAR) {
+            return false
+        }
+        val sourceRank = javaNumericRank(source) ?: return false
+        val targetRank = javaNumericRank(target) ?: return false
+        if (source == JavaPrimitiveType.Kind.CHAR && targetRank < 3) {
+            // char -> byte/short requires a cast; char widens only to int and above.
+            return false
+        }
+        return sourceRank <= targetRank
+    }
+
+    private fun javaNumericRank(kind: JavaPrimitiveType.Kind): Int? = when (kind) {
+        JavaPrimitiveType.Kind.BYTE -> 1
+        JavaPrimitiveType.Kind.SHORT -> 2
+        JavaPrimitiveType.Kind.CHAR -> 2
+        JavaPrimitiveType.Kind.INT -> 3
+        JavaPrimitiveType.Kind.LONG -> 4
+        JavaPrimitiveType.Kind.FLOAT -> 5
+        JavaPrimitiveType.Kind.DOUBLE -> 6
+        JavaPrimitiveType.Kind.BOOLEAN,
+        JavaPrimitiveType.Kind.VOID -> null
+    }
+
+    private fun isTableLike(type: Type): Boolean = when (type) {
+        is TableType, is ModuleType, is ClassType, is ArrayType, is JavaClassType, is JavaInstanceType, is JavaArrayType -> true
+        else -> false
+    }
+
+    private fun combineIntersectionSource(source: IntersectionType): Type? {
+        val tableShapes = source.types.mapNotNull(::asTableShape)
+        if (tableShapes.size != source.types.size) {
+            return null
+        }
+
+        var combined = tableShapes.first()
+        for (next in tableShapes.drop(1)) {
+            combined = mergeTableShapes(combined, next) ?: return null
+        }
+
+        return combined
+    }
+
+    private fun asTableShape(type: Type): TableType? = when (type) {
+        is TableType -> type
+        is ModuleType -> type.toTableShape()
+        is ClassType -> TableType(fields = type.getAllFields(), methods = type.getAllMethods())
+        is ArrayType -> TableType(indexSignature = TableType.IndexSignature(PrimitiveType.NUMBER, type.elementType))
+        is JavaClassType -> TableType(
+            fields = type.allStaticMembers().mapValues { (_, member) -> member.valueType } + type.allInnerClasses(),
+            methods = type.allStaticMembers().filterValues { it.valueType is CallableType }.mapValues { (_, member) -> member.valueType }
+        )
+        is JavaInstanceType -> TableType(
+            fields = type.allInstanceMembers().mapValues { (_, member) -> member.valueType },
+            methods = type.allInstanceMembers().filterValues { it.valueType is CallableType }.mapValues { (_, member) -> member.valueType }
+        )
+        is JavaArrayType -> TableType(indexSignature = TableType.IndexSignature(PrimitiveType.NUMBER, type.elementType))
+        else -> null
+    }
+
+    private fun isMemberBearingShapeAssignable(
+        targetFields: Map<String, Type>,
+        targetMethods: Map<String, Type>,
+        targetIndex: TableType.IndexSignature?,
+        sourceFields: Map<String, Type>,
+        sourceMethods: Map<String, Type>,
+        sourceIndex: TableType.IndexSignature?
+    ): Boolean {
+        if (!targetFields.all { (name, type) -> sourceFields[name]?.let { isAssignable(type, it) } == true }) {
+            return false
+        }
+        if (!targetMethods.all { (name, type) -> sourceMethods[name]?.let { isAssignable(type, it) } == true }) {
+            return false
+        }
+        if (targetIndex == null) {
+            return true
+        }
+        val resolvedSourceIndex = sourceIndex ?: return false
+        return isAssignable(targetIndex.keyType, resolvedSourceIndex.keyType) &&
+            isAssignable(targetIndex.valueType, resolvedSourceIndex.valueType)
+    }
+
+    private fun mergeTableShapes(left: TableType, right: TableType): TableType? {
+        val mergedFields = mergeStructuralMembers(left.fields, right.fields) ?: return null
+        val mergedMethods = mergeStructuralMembers(left.methods, right.methods) ?: return null
+        val mergedIndexSignature = mergeIndexSignatures(left.indexSignature, right.indexSignature)
+        if (mergedIndexSignature.conflict) return null
+
+        return TableType(
+            fields = mergedFields,
+            methods = mergedMethods,
+            indexSignature = mergedIndexSignature.indexSignature
+        )
+    }
+
+    private fun mergeStructuralMembers(left: Map<String, Type>, right: Map<String, Type>): Map<String, Type>? = buildMap {
+        putAll(left)
+        right.forEach { (name, type) ->
+            val existing = this[name]
+            if (existing == null) {
+                put(name, type)
+            } else {
+                val mergedType = mergeStructuralType(existing, type) ?: return null
+                put(name, mergedType)
+            }
+        }
+    }
+
+    private fun mergeIndexSignatures(
+        left: TableType.IndexSignature?,
+        right: TableType.IndexSignature?
+    ): MergedIndexSignature {
+        if (left == null && right == null) return MergedIndexSignature()
+        if (left == null) return MergedIndexSignature(indexSignature = right)
+        if (right == null) return MergedIndexSignature(indexSignature = left)
+
+        val mergedKeyType = mergeStructuralType(left.keyType, right.keyType)
+            ?: return MergedIndexSignature(conflict = true)
+        val mergedValueType = mergeStructuralType(left.valueType, right.valueType)
+            ?: return MergedIndexSignature(conflict = true)
+
+        return MergedIndexSignature(
+            indexSignature = TableType.IndexSignature(
+                keyType = mergedKeyType,
+                valueType = mergedValueType
+            )
+        )
+    }
+
+    private data class MergedIndexSignature(
+        val indexSignature: TableType.IndexSignature? = null,
+        val conflict: Boolean = false
+    )
+
+    private fun mergeStructuralType(left: Type, right: Type): Type? {
+        val merged = TypeNormalizer.normalize(IntersectionType(linkedSetOf(left, right)))
+        return if (merged == NeverType) null else merged
+    }
+}
+
+fun Type.isAssignableFrom(source: Type): Boolean = TypeRelations.isAssignable(this, source)

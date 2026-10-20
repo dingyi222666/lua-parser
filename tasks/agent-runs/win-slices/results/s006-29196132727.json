@@ -1,0 +1,32 @@
+{
+  "sliceId": "s006",
+  "runId": "29196132727",
+  "sha": "ecddda59ea07e558504da4a53160ac70d0721b9e",
+  "status": "success",
+  "exitCode": 0,
+  "durationSec": 45,
+  "tests": 205,
+  "failures": 0,
+  "errors": 0,
+  "skipped": 0,
+  "failedTests": [],
+  "testsPatterns": [
+    "lsp.LspSemanticTokensSafetyTddTest",
+    "lsp.LspServiceStateConcurrencyTddTest",
+    "lsp.LspShutdownBehaviorTddTest",
+    "lsp.LspShutdownExitIdempotencyTddTest",
+    "lsp.LspSignatureHelpActiveParamTddTest",
+    "lsp.LspSignatureHelpActiveParameterTddTest",
+    "lsp.LspSignatureHelpOverloadTddTest",
+    "lsp.LspTypeHierarchyDocClassTddTest",
+    "lsp.LspTypeHierarchySafetyTddTest",
+    "lsp.LspUriHandlingTddTest",
+    "lsp.LspWatchedFilesTddTest",
+    "lsp.LspWorkspaceFoldersTddTest",
+    "lsp.LspWorkspaceSymbolPrefixTddTest",
+    "lsp.LuaLanguageServiceTest",
+    "parser.AndroLuaSyntaxRegressionTest"
+  ],
+  "gate": "must-green-to-advance",
+  "finishedAt": "2026-07-12T14:25:22Z"
+}

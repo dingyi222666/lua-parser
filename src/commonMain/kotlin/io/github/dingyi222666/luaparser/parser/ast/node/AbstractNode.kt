@@ -29,8 +29,9 @@ interface ExpressionNode : BaseASTNode {
                 visitor.visitExpressionNode(this, value)
             }
 
-            override fun clone(): ExpressionNode {
-                return EMPTY
+            override fun clone(): ExpressionNode = ExpressionNodeSupport().also {
+                it.range = range.copy()
+                it.bad = bad
             }
 
             override var bad = false
@@ -54,6 +55,53 @@ abstract class ASTNode : BaseASTNode {
     override var bad = false
 }
 
+/**
+ * Shared clone plumbing (previously duplicated file-privately in blockNode.kt,
+ * statementNode.kt and expressionNode.kt): copy range/bad metadata from the source
+ * node, relink a cloned node under its new parent, and clone body blocks.
+ */
+internal fun <T : BaseASTNode> T.copyCloneMetadataFrom(source: BaseASTNode): T = also {
+    range = source.range.copy()
+    bad = source.bad
+}
+
+internal fun <T : BaseASTNode> T.withCloneParent(parentNode: BaseASTNode): T = also {
+    parent = parentNode
+}
+
+internal fun BlockNode.cloneBlockFor(parentNode: BaseASTNode): BlockNode =
+    clone().copyCloneMetadataFrom(this).withCloneParent(parentNode).also { block ->
+        block.statements.forEach { it.parent = block }
+        block.returnStatement?.parent = block
+    }
+
+/**
+ * Shared list-clone step: append deep clones of [source] to this list, copying
+ * range/bad metadata and reparenting each clone under [parentNode]. Replaces the
+ * per-node `copy.forEach { copy.add(it.clone().withCloneParent(copy)) }` pattern
+ * (the cast is safe: clone() always returns the source node's runtime type).
+ */
+@Suppress("UNCHECKED_CAST")
+internal fun <E : ExpressionNode> MutableList<E>.addClonedExpressionsFrom(
+    source: List<ExpressionNode>,
+    parentNode: BaseASTNode
+) {
+    for (element in source) {
+        add(element.clone().withCloneParent(parentNode) as E)
+    }
+}
+
+/** [StatementNode]-list variant of [addClonedExpressionsFrom]. */
+@Suppress("UNCHECKED_CAST")
+internal fun <E : StatementNode> MutableList<E>.addClonedStatementsFrom(
+    source: List<StatementNode>,
+    parentNode: BaseASTNode
+) {
+    for (element in source) {
+        add(element.clone().withCloneParent(parentNode) as E)
+    }
+}
+
 data class Range(
     var start: Position,
     var end: Position
@@ -62,23 +110,9 @@ data class Range(
         val EMPTY = Range(Position.EMPTY, Position.EMPTY)
     }
 
-    override fun toString(): String {
-        return "($start, $end)"
-    }
+    override fun toString(): String = "($start, $end)"
 
-    override fun equals(other: Any?): Boolean {
-        if (this === other) return true
-        if (other !is Range) return false
-        if (start != other.start) return false
-        if (end != other.end) return false
-        return true
-    }
-
-    override fun hashCode(): Int {
-        var result = start.hashCode()
-        result = 31 * result + end.hashCode()
-        return result
-    }
+    // equals/hashCode are the data class-generated ones (same field order / 31-multiplication).
 }
 
 data class Position(
@@ -86,42 +120,15 @@ data class Position(
     val column: Int
 ) : Comparable<Position> {
     override operator fun compareTo(other: Position): Int {
-        if (other.line > line) {
-            return other.line - line
-        }
-        if (other.line < line) {
-            return other.line - line
-        }
-        if (other.column > column) {
-            return 1
-        }
-        if (other.column < column) {
-            return -1
-        }
-        return 0
+        if (other.line != line) return other.line - line
+        return column.compareTo(other.column)
     }
 
     companion object {
         val EMPTY = Position(1, 1)
     }
 
-    override fun equals(other: Any?): Boolean {
-        if (this === other) return true
-        if (other !is Position) return false
+    override fun toString(): String = "[$line, $column]"
 
-        if (line != other.line) return false
-        if (column != other.column) return false
-
-        return true
-    }
-
-    override fun toString(): String {
-        return "[$line, $column]"
-    }
-
-    override fun hashCode(): Int {
-        var result = line
-        result = 31 * result + column
-        return result
-    }
+    // equals/hashCode are the data class-generated ones (same field order / 31-multiplication).
 }

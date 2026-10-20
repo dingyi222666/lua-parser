@@ -1,0 +1,30 @@
+# Bundled widget/helper class catalog.
+# Provenance: class names observed in G:/Android-Lua/app/src/main/java/android/widget
+# at commit 686a792dbdd2fe9727a34768ceadffcaa2abc20d.
+
+android.widget.ArrayExpandableListAdapter
+android.widget.ArrayListAdapter
+android.widget.ArrayPageAdapter
+android.widget.BasePageAdapter
+android.widget.CardView
+android.widget.CardViewDelegate
+android.widget.CardViewImpl
+android.widget.CircleImageView
+android.widget.DrawerLayout
+android.widget.DrawerLayoutImpl
+android.widget.ExListView
+android.widget.FloatButton
+android.widget.HorizontalListView
+android.widget.PageAdapter
+android.widget.PageLayout
+android.widget.PageLayout$OnPageChangeListener
+android.widget.PageView
+android.widget.PageView$OnPageChangeListener
+android.widget.PullingLayout
+android.widget.RippleHelper
+android.widget.RippleLayout
+android.widget.RoundRectDrawable
+android.widget.RoundRectDrawableWithShadow
+android.widget.SlidingLayout
+android.widget.ToolBar
+android.widget.ViewDragHelper

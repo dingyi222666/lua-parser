@@ -1,0 +1,21 @@
+{
+  "runId": "29209549075",
+  "sliceId": "s016",
+  "status": "success",
+  "tests": 852,
+  "failures": 0,
+  "failedTests": [],
+  "progressSummary": {
+    "success": 16,
+    "failure": 0,
+    "pending": 2,
+    "running": 0,
+    "total": 18,
+    "filesDone": 300,
+    "totalFiles": 367,
+    "activeSlice": "s016",
+    "chunkSize": 45,
+    "updatedAt": "2026-07-12T21:26:19Z"
+  },
+  "notes": "Merged CI progress (updatedAt=2026-07-12T21:26:19Z) over local; s016 run 29209549075 status=success tests=852 failures=0; copied results ['s011-29203364688.json', 's016-29209549075.json', 's012-29203984725.json', 's003-29192803870.json', 's007-29196531532.json', 's010-29201787735.json', 's001-29174854977.json', 's003-29192058315.json', 's016-29208645359.json', 's010-29201312516.json', 's009-29198982731.json', 's002-29175624965.json', 's013-29205436079.json', 's004-29193985587.json', 's001-29172806487.json', 's015-29206545189.json', 's013-29205780117.json', 's009-29199340139.json', 's014-29205966350.json', 's002-29176527021.json', 's011-29202899347.json', 's006-29196132727.json', 's002-29184300559.json', 's008-29197451642.json', 's010-29202132162.json', 's001-29171889166.json', 's010-29199561336.json', 's009-29198381786.json', 's001-29173639103.json', 's003-29191587333.json', 's004-29193414885.json', 's001-29173315891.json', 's011-29202408385.json', 's005-29194327730.json', 's007-29197045304.json', 's014-29206269986.json', 's011-29203714569.json', 's015-29208492285.json', 's012-29204945941.json', 's015-29206739850.json', 's006-29194477445.json', 's015-29208029511.json', 's001-29175268346.json', 's008-29198171827.json', 's002-29184841092.json', 's001-29174621894.json', 's013-29205133158.json']; junit-failed-count=0"
+}

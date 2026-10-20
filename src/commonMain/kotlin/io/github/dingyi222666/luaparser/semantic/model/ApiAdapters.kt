@@ -1,0 +1,270 @@
+package io.github.dingyi222666.luaparser.semantic.model
+
+import io.github.dingyi222666.luaparser.parser.ast.node.Range
+import io.github.dingyi222666.luaparser.semantic.api.CompletionItemKind
+import io.github.dingyi222666.luaparser.semantic.api.Scope
+import io.github.dingyi222666.luaparser.semantic.api.ScopeKind
+import io.github.dingyi222666.luaparser.semantic.api.Symbol
+import io.github.dingyi222666.luaparser.semantic.api.SymbolKind
+import io.github.dingyi222666.luaparser.semantic.api.TypeInfo
+import io.github.dingyi222666.luaparser.semantic.api.TypeInfoKind
+import io.github.dingyi222666.luaparser.semantic.binder.BinderDeclaration
+import io.github.dingyi222666.luaparser.semantic.binder.BinderPassResult
+import io.github.dingyi222666.luaparser.semantic.binder.BinderSymbol
+import io.github.dingyi222666.luaparser.semantic.binder.DeclarationKind
+import io.github.dingyi222666.luaparser.semantic.comments.AliasTagSyntax
+import io.github.dingyi222666.luaparser.semantic.comments.ClassTagSyntax
+import io.github.dingyi222666.luaparser.semantic.comments.FieldTagSyntax
+import io.github.dingyi222666.luaparser.semantic.comments.GenericTagSyntax
+import io.github.dingyi222666.luaparser.semantic.comments.MethodTagSyntax
+import io.github.dingyi222666.luaparser.semantic.checker.MemberAccessKind
+import io.github.dingyi222666.luaparser.semantic.types.model.ClassType
+import io.github.dingyi222666.luaparser.semantic.types.model.FunctionType
+import io.github.dingyi222666.luaparser.semantic.types.model.JavaClassType
+import io.github.dingyi222666.luaparser.semantic.types.model.JavaInstanceType
+import io.github.dingyi222666.luaparser.semantic.types.model.ModuleType
+import io.github.dingyi222666.luaparser.semantic.types.model.OverloadedFunctionType
+import io.github.dingyi222666.luaparser.semantic.types.model.TableType
+import io.github.dingyi222666.luaparser.semantic.types.model.Type
+
+internal class ApiAdapters(
+    private val binder: BinderPassResult
+) {
+    // A presentation handle identifies an object in this immutable model. Structural
+    // hashing walks every Java member/signature and can grow exponentially on shared
+    // type graphs; structural equality is neither needed nor meaningful for this key.
+    private class TypeIdentity(val type: Type) {
+        override fun hashCode(): Int = type.name.hashCode()
+        override fun equals(other: Any?): Boolean = other is TypeIdentity && type === other.type
+    }
+
+    private val typeKeysByType = linkedMapOf<TypeIdentity, String>()
+    private val typesByKey = linkedMapOf<String, Type>()
+    private var nextTypeKey = 1
+
+    fun toTypeInfo(type: Type?, declaration: BinderDeclaration? = null): TypeInfo? {
+        if (type == null) {
+            return null
+        }
+
+        val key = typeKeysByType.getOrPut(TypeIdentity(type)) {
+            "type:${nextTypeKey++}".also { createdKey -> typesByKey[createdKey] = type }
+        }
+        val moduleType = type as? ModuleType
+        val typeKind = when {
+            declaration?.kind == DeclarationKind.MODULE || moduleType != null -> TypeInfoKind.MODULE
+            type is ClassType || type is JavaClassType || type is JavaInstanceType -> TypeInfoKind.CLASS
+            type is FunctionType || type is OverloadedFunctionType -> TypeInfoKind.FUNCTION
+            type is TableType -> TypeInfoKind.TABLE
+            else -> TypeInfoKind.UNKNOWN
+        }
+        return TypeInfo(
+            displayName = type.displayName,
+            detail = type.displayName,
+            typeKey = key,
+            kind = typeKind,
+            moduleName = moduleType?.moduleName ?: declaration?.takeIf { it.kind == DeclarationKind.MODULE }?.name
+        )
+    }
+
+    fun typeByKey(typeKey: String?): Type? = typeKey?.let(typesByKey::get)
+
+    fun toSymbol(symbol: BinderSymbol): Symbol? {
+        val declaration = binder.declarationIndex.getPrimaryDeclaration(symbol.id) ?: return null
+        return toSymbol(symbol, declaration)
+    }
+
+    fun toSymbol(symbol: BinderSymbol, declaration: BinderDeclaration): Symbol {
+        val declaredTypeInfo = toTypeInfo(declaration.declaredType, declaration)
+        return Symbol(
+            name = symbol.name,
+            kind = declaration.kind.toSymbolKind(),
+            range = declarationDisplayRange(declaration),
+            type = declaredTypeInfo,
+            declaredType = declaredTypeInfo,
+            detail = declaration.declaredType?.displayName,
+            symbolId = "binder:${symbol.id.value}"
+        )
+    }
+
+    /** Never null: falls back to a declaration-backed symbol when no binder symbol exists. */
+    fun toDeclarationSymbol(declaration: BinderDeclaration): Symbol {
+        val symbolId = declaration.symbolId
+        val symbol = symbolId?.let(binder.declarationIndex::getSymbol)
+        return if (symbol != null) {
+            toSymbol(symbol, declaration)
+        } else {
+            val typeInfo = toTypeInfo(declaration.declaredType, declaration)
+            Symbol(
+                name = declaration.name,
+                kind = declaration.kind.toSymbolKind(),
+                range = declarationDisplayRange(declaration),
+                type = typeInfo,
+                declaredType = typeInfo,
+                detail = declaration.declaredType?.displayName,
+                symbolId = "declaration:${declaration.id.value}"
+            )
+        }
+    }
+
+    fun toDeclarationSymbol(
+        declaration: BinderDeclaration,
+        typeOverride: Type? = declaration.declaredType,
+        declaredTypeOverride: Type? = declaration.declaredType
+    ): Symbol {
+        val base = toDeclarationSymbol(declaration)
+        return base.copy(
+            type = toTypeInfo(typeOverride, declaration),
+            declaredType = toTypeInfo(declaredTypeOverride, declaration),
+            detail = declaredTypeOverride?.displayName ?: typeOverride?.displayName
+        )
+    }
+
+    fun syntheticMemberSymbol(
+        name: String,
+        kind: MemberAccessKind,
+        type: Type?,
+        declaredType: Type? = null,
+        handleSeed: String,
+        symbolId: String? = null,
+        range: Range? = null
+    ): Symbol {
+        return Symbol(
+            name = name,
+            kind = when (kind) {
+                MemberAccessKind.METHOD -> SymbolKind.METHOD
+                MemberAccessKind.FIELD, MemberAccessKind.INDEX -> SymbolKind.FIELD
+            },
+            range = range,
+            type = toTypeInfo(type),
+            declaredType = toTypeInfo(declaredType),
+            detail = declaredType?.displayName ?: type?.displayName,
+            symbolId = symbolId ?: "synthetic:$handleSeed"
+        )
+    }
+
+    fun toScope(
+        scope: io.github.dingyi222666.luaparser.semantic.binder.Scope,
+        symbols: List<Symbol>
+    ): Scope {
+        val ownerName = scope.ownerDeclarationId
+            ?.let(binder.declarationIndex::getDeclaration)
+            ?.name
+
+        return Scope(
+            kind = scope.kind.toApiScopeKind(),
+            range = scope.range,
+            symbols = symbols,
+            name = ownerName,
+            scopeId = "scope:${scope.id.value}"
+        )
+    }
+
+    fun completionKind(symbol: Symbol): CompletionItemKind {
+        return when (symbol.kind) {
+            SymbolKind.PARAMETER -> CompletionItemKind.PARAMETER
+            SymbolKind.LOCAL, SymbolKind.VARIABLE -> CompletionItemKind.VARIABLE
+            SymbolKind.FUNCTION -> CompletionItemKind.FUNCTION
+            SymbolKind.METHOD -> CompletionItemKind.METHOD
+            SymbolKind.FIELD -> CompletionItemKind.FIELD
+            SymbolKind.CLASS -> CompletionItemKind.CLASS
+            SymbolKind.TYPE_ALIAS -> CompletionItemKind.TYPE_ALIAS
+            SymbolKind.MODULE -> CompletionItemKind.MODULE
+            // Unknown-kind symbols with a callable type display complete as functions so
+            // callables never degrade to the plain text icon.
+            else -> {
+                val display = symbol.declaredType?.displayName ?: symbol.type?.displayName
+                if (display != null && (display.trim().startsWith("fun(") || display.contains(" -> "))) {
+                    CompletionItemKind.FUNCTION
+                } else {
+                    CompletionItemKind.TEXT
+                }
+            }
+        }
+    }
+
+    fun declarationDisplayRange(declaration: BinderDeclaration): Range? {
+        if (declaration.origin != io.github.dingyi222666.luaparser.semantic.binder.DeclarationOrigin.DOC_COMMENT) {
+            return declaration.range
+        }
+        return declaration.declarationSpecificRange() ?: declaration.range
+    }
+}
+
+internal data class SymbolHandle(
+    val binderSymbolId: Int? = null,
+    val declarationId: Int? = null
+)
+
+internal fun String.toSymbolHandle(): SymbolHandle? {
+    return when {
+        startsWith("binder:") -> SymbolHandle(binderSymbolId = substringAfter(':').toIntOrNull())
+        startsWith("declaration:") -> SymbolHandle(declarationId = substringAfter(':').toIntOrNull())
+        else -> null
+    }
+}
+
+/**
+ * Single owner for resolving a [SymbolHandle] back to its binder declaration: prefer the
+ * primary declaration of the binder symbol, then the declaration id directly.
+ */
+internal fun BinderPassResult.declarationForSymbolHandle(handle: SymbolHandle?): BinderDeclaration? {
+    handle?.binderSymbolId?.let { id ->
+        return declarationIndex.getPrimaryDeclaration(io.github.dingyi222666.luaparser.semantic.binder.SymbolId(id))
+    }
+    handle?.declarationId?.let { id ->
+        return declarationIndex.getDeclaration(io.github.dingyi222666.luaparser.semantic.binder.DeclarationId(id))
+    }
+    return null
+}
+
+private fun DeclarationKind.toSymbolKind(): SymbolKind {
+        return when (this) {
+            DeclarationKind.LOCAL -> SymbolKind.LOCAL
+            DeclarationKind.GLOBAL -> SymbolKind.VARIABLE
+            DeclarationKind.FUNCTION -> SymbolKind.FUNCTION
+            DeclarationKind.MODULE -> SymbolKind.MODULE
+            DeclarationKind.PARAMETER -> SymbolKind.PARAMETER
+            DeclarationKind.CLASS -> SymbolKind.CLASS
+            DeclarationKind.TYPE_ALIAS -> SymbolKind.TYPE_ALIAS
+        DeclarationKind.TYPE_PARAMETER -> SymbolKind.TYPE_ALIAS
+        DeclarationKind.FIELD -> SymbolKind.FIELD
+        DeclarationKind.METHOD -> SymbolKind.METHOD
+    }
+}
+
+private fun io.github.dingyi222666.luaparser.semantic.binder.ScopeKind.toApiScopeKind(): ScopeKind {
+    return when (this) {
+        io.github.dingyi222666.luaparser.semantic.binder.ScopeKind.CHUNK -> ScopeKind.CHUNK
+        io.github.dingyi222666.luaparser.semantic.binder.ScopeKind.BLOCK -> ScopeKind.BLOCK
+        io.github.dingyi222666.luaparser.semantic.binder.ScopeKind.FUNCTION -> ScopeKind.FUNCTION
+        io.github.dingyi222666.luaparser.semantic.binder.ScopeKind.MODULE -> ScopeKind.MODULE
+        io.github.dingyi222666.luaparser.semantic.binder.ScopeKind.LOOP -> ScopeKind.LOOP
+        io.github.dingyi222666.luaparser.semantic.binder.ScopeKind.CONDITIONAL -> ScopeKind.CONDITIONAL
+    }
+}
+
+/**
+ * Single owner for the doc-comment tag range ladder (alias/class/field/method/generic tags).
+ * Returns the tag-specific range for declarations whose kind carries a tag, `null` when a
+ * tag-carrying kind has no matching tag, and [BinderDeclaration.range] for every other kind.
+ *
+ * Consumers derive their exact fallback: the API surface (`declarationDisplayRange`) falls
+ * back to `declaration.range`, while exact doc-position matching in [ReferenceQueries]
+ * treats `null` as "this declaration does not cover the caret position".
+ */
+internal fun BinderDeclaration.declarationSpecificRange(): io.github.dingyi222666.luaparser.parser.ast.node.Range? {
+    val tags = documentation?.docComment?.tags.orEmpty()
+    return when (kind) {
+        DeclarationKind.TYPE_ALIAS -> tags.filterIsInstance<AliasTagSyntax>().firstOrNull { it.name == name }?.range
+        DeclarationKind.CLASS -> tags.filterIsInstance<ClassTagSyntax>().firstOrNull { it.name == name }?.range
+        DeclarationKind.FIELD -> tags.filterIsInstance<FieldTagSyntax>().firstOrNull { it.name == name }?.range
+        DeclarationKind.METHOD -> tags.filterIsInstance<MethodTagSyntax>().firstOrNull { it.name == name }?.range
+        DeclarationKind.TYPE_PARAMETER -> tags.filterIsInstance<GenericTagSyntax>()
+            .flatMap { it.parameters }
+            .firstOrNull { it.name == name }
+            ?.range
+
+        else -> range
+    }
+}

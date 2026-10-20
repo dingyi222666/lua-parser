@@ -1,0 +1,11 @@
+TASK-664 STATUS=review agent=worker-WINSLICE-29208645359-TASK-664 finished=2026-07-12T21:20:26Z
+summary: Hardened require()-local/export navigation so goto lands on provider modules and missing export members stay empty without poisoning known-export siblings.
+files:
+- src/commonMain/kotlin/io/github/dingyi222666/luaparser/semantic/workspace/LuaWorkspaceQueryFacade.kt
+notes:
+- Prefer requireBackedLocalDefinition before same-file local declaration for non-member carets
+- Empty defs/refs for missing require-backed export members (memberAccess + no export)
+- isDeclarationVisibleAt: BUILTIN always visible (overlay virtual ranges)
+- builtinRequireModuleName/requireCallSite: effectiveCallBase + callArguments; unshadowed free-id require is builtin
+- requireBackedLocalDefinition/requireBackedModuleNames ignore member-access identifiers
+verification: workers-no-gradle (deferred to TASK-043 / windows jvmTest slice s016)

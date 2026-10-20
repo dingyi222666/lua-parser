@@ -1,0 +1,5 @@
+taskId=687
+status=review
+wave=WINFULL-MASTER
+- ExpressionUsageChecker: exclude Lua stdlib module names from Java member-missing diagnostics
+- LuaWorkspaceQueryFacade: local FUNCTION definition dual-path (shared with 686)

@@ -1,0 +1,23 @@
+{
+  "runId": "29208029511",
+  "sliceId": "s015",
+  "status": "failure",
+  "tests": 853,
+  "failures": 1,
+  "failedTests": [
+    "semantic.interop.JavaChainedCallTddTest#non_listener_interface_setter_callback_remains_unknown[jvm]"
+  ],
+  "progressSummary": {
+    "success": 14,
+    "failure": 1,
+    "pending": 3,
+    "running": 0,
+    "total": 18,
+    "filesDone": 210,
+    "totalFiles": 367,
+    "activeSlice": "s015",
+    "chunkSize": 45,
+    "updatedAt": "2026-07-12T20:38:13Z"
+  },
+  "notes": "Merged CI progress for run 29208029511 (updatedAt 2026-07-12T20:38:13Z) over local; copied results/s015-29208029511.json; s015 remains failure with 1 failed test of 853 (down from 8 on 29206739850); gate retains s015; failures.txt written from junit XML."
+}

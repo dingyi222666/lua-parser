@@ -1,0 +1,159 @@
+package io.github.dingyi222666.luaparser.semantic.checker
+
+import io.github.dingyi222666.luaparser.parser.ast.node.FunctionDeclaration
+import io.github.dingyi222666.luaparser.parser.ast.node.IfStatement
+import io.github.dingyi222666.luaparser.parser.ast.node.DoStatement
+import io.github.dingyi222666.luaparser.parser.ast.node.Range
+import io.github.dingyi222666.luaparser.parser.ast.node.StatementNode
+import io.github.dingyi222666.luaparser.parser.ast.node.BlockNode
+import io.github.dingyi222666.luaparser.parser.ast.node.ElseClause
+import io.github.dingyi222666.luaparser.parser.ast.node.WhenStatement
+import io.github.dingyi222666.luaparser.semantic.SemanticWorkspaceContext
+import io.github.dingyi222666.luaparser.semantic.api.Diagnostic
+import io.github.dingyi222666.luaparser.semantic.binder.BinderDeclaration
+import io.github.dingyi222666.luaparser.semantic.binder.BinderPassResult
+import io.github.dingyi222666.luaparser.semantic.binder.DeclarationKind
+import io.github.dingyi222666.luaparser.semantic.types.model.FunctionType
+import io.github.dingyi222666.luaparser.semantic.types.model.PrimitiveType
+import io.github.dingyi222666.luaparser.semantic.types.model.UnknownType
+import io.github.dingyi222666.luaparser.semantic.types.resolve.isAssignableFrom
+
+class ReturnChecker internal constructor(
+    private val binder: BinderPassResult,
+    workspaceContext: SemanticWorkspaceContext = SemanticWorkspaceContext(),
+    private val evaluator: ExpressionTypeEvaluator = ExpressionTypeEvaluator(binder, workspaceContext)
+) {
+
+    internal fun checkDeclaration(declaration: BinderDeclaration): List<Diagnostic> {
+        if (declaration.kind != DeclarationKind.FUNCTION && declaration.kind != DeclarationKind.GLOBAL) {
+            return emptyList()
+        }
+
+        val function = resolveOwningFunctionDeclaration(binder, declaration) ?: return emptyList()
+        val functionType = declaration.declaredType as? FunctionType ?: return emptyList()
+        // Unconstrained returns cannot produce a mismatch or extra-value warning.
+        // ExpressionUsageChecker still checks the body independently.
+        if (functionType.returnType == UnknownType) return emptyList()
+        val body = function.body ?: return emptyList()
+        val fallbackScopeId = binder.scopeGraph.getScope(body)?.id ?: binder.scopeGraph.rootScope.id
+        val context = evaluator.buildFunctionBodyContext(function, functionType.parameters, fallbackScopeId)
+        val expected = ValueSequence.of(functionType.returnType)
+        val returnSites = evaluator.collectReturnSites(body, context)
+        val hasImplicitFallthrough = mayFallThrough(body)
+
+        val diagnostics = returnSites.flatMap { site ->
+            compareReturnSite(
+                expected = expected,
+                actual = site.values,
+                range = site.statement?.range ?: body.range,
+                functionType = functionType
+            )
+        }
+
+        if (returnSites.isEmpty() || hasImplicitFallthrough) {
+            return diagnostics + compareReturnSite(
+                expected = expected,
+                actual = ValueSequence(),
+                range = body.range,
+                functionType = functionType
+            )
+        }
+
+        return diagnostics
+    }
+
+    private fun compareReturnSite(
+        expected: ValueSequence,
+        actual: ValueSequence,
+        range: Range?,
+        functionType: FunctionType
+    ): List<Diagnostic> {
+        val diagnostics = mutableListOf<Diagnostic>()
+        val comparisonLimit = if (expected.isOpenEnded) {
+            maxOf(expected.fixed.size, actual.fixed.size)
+        } else {
+            expected.fixed.size
+        }
+
+        repeat(comparisonLimit) { index ->
+            emitReturnTypeMismatch(expected, actual, index, range, diagnostics)
+        }
+
+        if (expected.isOpenEnded && actual.isOpenEnded) {
+            emitReturnTypeMismatch(expected, actual, comparisonLimit, range, diagnostics)
+        }
+
+        // Bare UnknownType is a single closed ValueSequence slot, but freeform /
+        // unannotated functions intentionally use it as an unconstrained return.
+        // Do not emit extraValues solely because `return a, b` exceeds that one slot.
+        // Annotated multi-return (MultiReturnType / vararg tails) keep hard extras.
+        if (
+            !expected.isOpenEnded &&
+            !expected.isBareUnknownReturn &&
+            actual.hasValueAt(expected.fixed.size)
+        ) {
+            val extraType = actual.typeAt(expected.fixed.size)
+            if (extraType != UnknownType) {
+                diagnostics += Diagnostic(
+                    message = "Return statement provides extra values beyond declared return type ${functionType.returnType.displayName}.",
+                    range = range,
+                    code = "checker.function.return.extraValues"
+                )
+            }
+        }
+
+        return diagnostics
+    }
+
+    /**
+     * Shared per-slot return comparison used for both fixed slots (`0 until limit`) and the
+     * open-ended tail slot (`limit`). Unknown on either side stays silent; everything else
+     * emits the structured typeMismatch diagnostic.
+     */
+    private fun emitReturnTypeMismatch(
+        expected: ValueSequence,
+        actual: ValueSequence,
+        index: Int,
+        range: Range?,
+        diagnostics: MutableList<Diagnostic>
+    ) {
+        val expectedType = expected.typeAt(index)
+        val actualType = actual.typeAt(index)
+        if (expectedType == UnknownType || actualType == UnknownType) {
+            return
+        }
+        if (!expectedType.isAssignableFrom(actualType)) {
+            diagnostics += Diagnostic(
+                message = "Return value ${index + 1} has type ${actualType.displayName}, expected ${expectedType.displayName}.",
+                range = range,
+                code = "checker.function.return.typeMismatch"
+            )
+        }
+    }
+}
+
+internal fun mayFallThrough(block: BlockNode): Boolean {
+    if (block.returnStatement != null) {
+        return false
+    }
+    val lastStatement = block.statements.lastOrNull() ?: return true
+    return statementMayFallThrough(lastStatement)
+}
+
+private fun statementMayFallThrough(statement: StatementNode): Boolean {
+    return when (statement) {
+        is DoStatement -> mayFallThrough(statement.body)
+        // Falls through when no `else` exists (open condition — an empty cause list is
+        // covered by `none` too) or any branch body itself falls through.
+        is IfStatement -> {
+            val causes = statement.causes
+            if (causes.none { it is ElseClause }) true else causes.any { mayFallThrough(it.body) }
+        }
+        is WhenStatement -> {
+            val elseClause = statement.elseCause
+            elseClause == null || statementMayFallThrough(statement.ifCause) || statementMayFallThrough(elseClause)
+        }
+        is FunctionDeclaration -> true
+        else -> true
+    }
+}

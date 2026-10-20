@@ -1,0 +1,1 @@
+2026-07-13T16:22:44Z worker-WINFULL-29265516413-TASK-686: STOP leave ready. Exclusive product files locked by live worker-WINSLICE-29264375796-TASK-685 (LuaLanguageService.kt, LuaWorkspaceQueryFacade.kt, ReferenceQueries.kt). Contract requires serialize vs TASK-685/687; no claim, no product edits.

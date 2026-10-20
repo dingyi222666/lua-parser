@@ -1,0 +1,32 @@
+{
+  "sliceId": "s009",
+  "runId": "29199340139",
+  "sha": "04295eef23ba002970f8e43efc63b3fbc18345c0",
+  "status": "success",
+  "exitCode": 0,
+  "durationSec": 10,
+  "tests": 115,
+  "failures": 0,
+  "errors": 0,
+  "skipped": 0,
+  "failedTests": [],
+  "testsPatterns": [
+    "parser.lexer.LuaLexerOperatorBoundaryTddTest",
+    "parser.lexer.LuaLexerUtf8EscapeTddTest",
+    "parser.lexer.LuaLexerUtf8NumericCorpusTddTest",
+    "parser.lua53.Lua53BitOpChainShapeTddTest",
+    "parser.lua53.Lua53BitwiseOpsCorpusTddTest",
+    "parser.lua53.Lua53ExpressionPrecedenceTddTest",
+    "parser.lua53.Lua53FloorDivBitwisePrecedenceTddTest",
+    "parser.lua53.Lua53GotoForwardJumpShapeTddTest",
+    "parser.lua53.Lua53GotoLabelCorpusTddTest",
+    "parser.lua53.Lua53IntegerDivisionAndModShapeTddTest",
+    "parser.lua53.Lua53StatementGrammarTddTest",
+    "parser.lua53.Lua53TableCallShapeCorpusTddTest",
+    "parser.lua53.Lua53TableFunctionModuleTddTest",
+    "parser.lua54.Lua54LocalAttributeConstTddTest",
+    "parser.recovery.LuaParserRecoveryAndroluaLambdaTddTest"
+  ],
+  "gate": "must-green-to-advance",
+  "finishedAt": "2026-07-12T16:04:20Z"
+}

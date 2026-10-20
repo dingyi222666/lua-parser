@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Namespace io.github.dingyi222666.luaparser.android is declared in
+     android/build.gradle.kts (AGP 8: the manifest must NOT carry a package
+     attribute). The library has no components, permissions or resources —
+     it is a pure classes artifact. -->
+<manifest />

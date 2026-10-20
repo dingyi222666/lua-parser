@@ -1,0 +1,20 @@
+{
+  "mode": "full-jvmtest",
+  "runId": "29227224781",
+  "sha": "2f5f610e1fa4e6d5da83f65c4e462e5a49ee7d7e",
+  "status": "failure",
+  "compileExit": 0,
+  "exitCode": 1,
+  "durationSec": 161,
+  "tests": 5386,
+  "failures": 2,
+  "errors": 0,
+  "skipped": 177,
+  "failedTests": [
+    "semantic.workspace.LuaWorkspaceQueryFacadeTest#signature_help_preserves_generic_type_parameter_labels_after_type_resolution[jvm]",
+    "source.AST2LuaIfElseifRoundTripTddTest#nestedIfWithOuterSiblingRequiresDoTerminatorForShapeStableReparse[jvm]"
+  ],
+  "gate": "task-043-full-jvmtest",
+  "startedAt": "2026-07-13T05:48:56Z",
+  "finishedAt": "2026-07-13T05:53:03Z"
+}

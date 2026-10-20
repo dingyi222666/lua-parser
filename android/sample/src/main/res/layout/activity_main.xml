@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Material 3 (View-based) sample layout:
+       MaterialToolbar  — file browser / format / save(+dirty indicator) actions
+       CodeEditor       — sora editor, LSP bridge attached in MainActivity
+       diagnostics bar  — "X error(s), Y warning(s)" summary fed by the sora
+                          editor-lsp publishDiagnostics event; tap = jump to
+                          the first reported line.
+     All wiring (LspEditor attach, Lua highlighting) happens in
+     MainActivity. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/root_layout"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical">
+
+    <com.google.android.material.appbar.MaterialToolbar
+        android:id="@+id/toolbar"
+        android:layout_width="match_parent"
+        android:layout_height="?attr/actionBarSize"
+        android:background="@color/editor_background"
+        android:elevation="4dp"
+        />
+
+    <io.github.dingyi222666.luaparser.sample.WorkspaceCodeEditor
+        android:id="@+id/code_editor"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:background="@color/editor_background" />
+
+    <LinearLayout
+        android:id="@+id/diagnostics_bar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="?attr/colorSurfaceVariant"
+        android:clickable="true"
+        android:focusable="true"
+        android:foreground="?attr/selectableItemBackground"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingHorizontal="16dp"
+        android:paddingVertical="10dp">
+
+        <TextView
+            android:id="@+id/diag_summary"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:text="@string/diag_none"
+            android:textAppearance="?attr/textAppearanceBodyMedium"
+            android:textColor="?attr/colorOnSurfaceVariant" />
+    </LinearLayout>
+</LinearLayout>

@@ -1,0 +1,32 @@
+{
+  "sliceId": "s014",
+  "runId": "29206269986",
+  "sha": "69bdba0c8230c727193365cf9f8682524756c8be",
+  "status": "success",
+  "exitCode": 0,
+  "durationSec": 10,
+  "tests": 166,
+  "failures": 0,
+  "errors": 0,
+  "skipped": 0,
+  "failedTests": [],
+  "testsPatterns": [
+    "semantic.binder.BinderPositionQueriesTest",
+    "semantic.binder.BinderUpvalueCaptureRangeTddTest",
+    "semantic.binder.BinderUpvalueUsageSiteResolveTddTest",
+    "semantic.binder.BuiltinSymbolSeederClassTypeGlobalTddTest",
+    "semantic.binder.DeclarationCommentInteropTest",
+    "semantic.binder.DeclarationIndexRangeLookupTddTest",
+    "semantic.binder.DeclarationIndexTest",
+    "semantic.binder.DeclarationModelTest",
+    "semantic.binder.PositionRangeIndexTest",
+    "semantic.binder.ScopeGraphParentChainTddTest",
+    "semantic.binder.ScopeGraphTest",
+    "semantic.checker.CallArityFreeformSilenceTddTest",
+    "semantic.checker.CallArityMismatchSurfaceTddTest",
+    "semantic.checker.CallCheckerColonDotSelfTddTest",
+    "semantic.checker.CallCheckerNamedArgsDualPathTddTest"
+  ],
+  "gate": "must-green-to-advance",
+  "finishedAt": "2026-07-12T19:42:56Z"
+}

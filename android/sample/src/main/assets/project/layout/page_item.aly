@@ -1,0 +1,29 @@
+{
+  LinearLayout,
+  orientation=1,
+  layout_height="fill",
+  layout_width="fill",
+  gravity="center",
+  layoutTransition=LayoutTransition().enableTransitionType(LayoutTransition.CHANGING),
+  {
+    LinearLayout,
+    orientation=1,
+    layout_height="fill",
+    layout_width="fill",
+    gravity="center",
+    id="progress",
+    {
+      ProgressBar,
+      visibility=0,
+      layout_gravity="center",
+    },  
+  },
+  {
+    RecyclerView, 
+    id="recy",   
+    visibility=8,
+    layout_height="fill",
+    layout_width="fill",
+  },
+
+}

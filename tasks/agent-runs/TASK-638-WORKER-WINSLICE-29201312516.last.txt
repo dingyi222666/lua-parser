@@ -1,0 +1,8 @@
+taskId: 638
+wave: WINSLICE-29201312516
+owner: worker-WINSLICE-29201312516-TASK-638
+finalStatus: blocked
+timestamp: 2026-07-12T17:15:44Z
+summary: STOP leave ready — exclusive LuaParser.kt lock held by live TASK-642 (worker-WINSLICE-29201312516-TASK-642). No product edit. Root cause for reds is AndroLua optional-then path in parseIfCause/parseElseIfCause skipping "The <then> expected" warning for recovery goldens using ANDROLUA_5_3.
+blockedReason: LuaParser.kt locked by live TASK-642
+filesChanged: []

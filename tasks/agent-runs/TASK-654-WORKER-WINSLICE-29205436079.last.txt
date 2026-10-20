@@ -1,0 +1,9 @@
+task: TASK-654
+wave: WINSLICE-29205436079
+owner: worker-WINSLICE-29205436079-TASK-654
+finalStatus: review
+summary: Restored multi-LHS bare free-name GLOBAL invent in DeclarationBinder.visitAssignmentStatement (each Identifier LHS calls bindBareGlobalAssignmentTarget). Aligned BinderMultiAssignRangeTddTest multi-assign hardlocks to declarative GLOBAL so GlobalAssignment multi-LHS reds clear without leaving MultiAssign non-declarative conflict. Single bare free-name invent path unchanged. No Gradle.
+filesChanged:
+  - src/commonMain/kotlin/io/github/dingyi222666/luaparser/semantic/binder/DeclarationBinder.kt
+  - src/jvmTest/kotlin/semantic/binder/BinderMultiAssignRangeTddTest.kt
+  - tasks/TASK-654.md

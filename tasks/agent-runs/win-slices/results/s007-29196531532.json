@@ -1,0 +1,36 @@
+{
+  "sliceId": "s007",
+  "runId": "29196531532",
+  "sha": "631e0e4cd31678ffaad8bd38196b68858e45292c",
+  "status": "failure",
+  "exitCode": 1,
+  "durationSec": 10,
+  "tests": 115,
+  "failures": 3,
+  "errors": 0,
+  "skipped": 0,
+  "failedTests": [
+    "parser.androidlua.AndroidLuaAssetCorpusParseTddTest#parsesRepresentativeAndroidLuaAssetCorpus[jvm]",
+    "parser.ast.AstShapeTddTest#statementFixtureExposesStableStatementShapesParentsAndRanges[jvm]",
+    "parser.ast.AstShapeTddTest#tableFunctionAndCommentFixtureExposesStableAstShapesParentsAndRanges[jvm]"
+  ],
+  "testsPatterns": [
+    "parser.Lua53SyntaxRegressionTest",
+    "parser.Lua54SyntaxRegressionTest",
+    "parser.ParserCommentSyntaxRegressionTest",
+    "parser.ParserRecoveryRegressionTest",
+    "parser.ParserRegressionHarnessTest",
+    "parser.ParserShebangBomTddTest",
+    "parser.androidlua.AndroLuaSyntaxTddTest",
+    "parser.androidlua.AndroidLuaAssetCorpusExtraFixturesTddTest",
+    "parser.androidlua.AndroidLuaAssetCorpusParseTddTest",
+    "parser.androidlua.ParserVersionPolicyKeywordGatingTddTest",
+    "parser.androidlua.ParserVersionPolicyTddTest",
+    "parser.ast.AstShapeTddTest",
+    "parser.ast.AstVisitorAndroLuaNodesTddTest",
+    "parser.ast.AstVisitorModifierTddTest",
+    "parser.ast.BreakContinueAndroidLuaShapeTddTest"
+  ],
+  "gate": "must-green-to-advance",
+  "finishedAt": "2026-07-12T14:36:13Z"
+}

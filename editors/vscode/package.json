@@ -1,0 +1,75 @@
+{
+  "name": "androlua-lua-support",
+  "displayName": "AndroLua Lua Support",
+  "description": "Lua / AndroLua (.lua, .aly) language support backed by the luaparser JVM language server (LSP over stdio).",
+  "version": "0.1.0",
+  "publisher": "dingyi222666",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/dingyi222666/luaparser"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "activationEvents": [
+    "onLanguage:lua"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "lua",
+        "aliases": [
+          "Lua",
+          "AndroLua"
+        ],
+        "extensions": [
+          ".lua",
+          ".aly"
+        ]
+      }
+    ],
+    "configuration": {
+      "title": "AndroLua Lua Support (luaparser)",
+      "properties": {
+        "luaparser.jarPath": {
+          "type": "string",
+          "default": "build/libs/luaparser-jvm-1.0.4.jar",
+          "description": "Path to the luaparser JVM jar. Relative paths resolve against the first workspace folder, then the extension directory. If a sibling 'lib' directory (same folder as the jar) contains dependency jars, the server is launched via classpath; otherwise via -jar.",
+          "order": 0
+        },
+        "luaparser.javaPath": {
+          "type": "string",
+          "default": "java",
+          "description": "Java launcher used to start the language server (a JDK 11+ 'java' binary).",
+          "order": 1
+        },
+        "luaparser.jvmArgs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Extra JVM arguments passed before the -jar / -cp arguments (e.g. [\"-Xmx2g\"]).",
+          "order": 2
+        },
+        "luaparser.serverSettings": {
+          "type": "object",
+          "default": {},
+          "description": "Workspace settings forwarded verbatim to the language server via workspace/didChangeConfiguration. Recognized keys: jvm.androidJar, jvm.classpath, jvm.classes, jvm.importPrefixes, androlua.imports, lua.layout.properties.",
+          "order": 3
+        }
+      }
+    }
+  },
+  "scripts": {
+    "package": "vsce package"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.0"
+  }
+}

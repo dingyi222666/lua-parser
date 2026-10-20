@@ -1,0 +1,28 @@
+require "import"
+
+import "android.content.Context"
+import "android.view.View"
+import "android.widget.LinearLayout"
+import "android.widget.TextView"
+import "android.widget.Button"
+
+-- .aly layout tables use explicit key/value fields. Array-style
+-- `{ LinearLayout, { TextView, ... } }` heads still recover poorly in the
+-- product parser and would hide provider surfaces behind lua-parse noise.
+local layout = {
+    class = LinearLayout,
+    orientation = "vertical",
+    status = {
+        class = TextView,
+        id = "statusLabel",
+        text = Context.WINDOW_SERVICE,
+        visibility = View.VISIBLE,
+    },
+    action = {
+        class = Button,
+        id = "sendButton",
+        text = "Send",
+    },
+}
+
+return layout

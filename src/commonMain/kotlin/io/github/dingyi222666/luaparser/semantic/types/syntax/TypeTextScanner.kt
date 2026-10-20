@@ -1,0 +1,115 @@
+package io.github.dingyi222666.luaparser.semantic.types.syntax
+
+/**
+ * Depth-aware scanning of raw annotation text, for the places that must slice a type list
+ * *before* parsing it (`---@return A, B`, `---@param name type description`, `---@generic T: X`).
+ *
+ * This nesting scan previously existed three times over: a splitter on the legacy parser facade,
+ * a `findTopLevelChar` in the overlay loader, and a `TopLevelScanState` in the doc-comment parser.
+ * All of them are now this one scanner.
+ */
+class TopLevelTextScanner {
+    private var angleDepth = 0
+    private var braceDepth = 0
+    private var bracketDepth = 0
+    private var parenDepth = 0
+    private var inString = false
+    private var stringChar = '\u0000'
+
+    /**
+     * Feeds one character. Returns false when the character was consumed as string content and
+     * must not be considered as a delimiter.
+     */
+    fun accept(text: String, index: Int, char: Char): Boolean {
+        if (inString) {
+            if (char == stringChar && text.getOrNull(index - 1) != '\\') {
+                inString = false
+            }
+            return false
+        }
+
+        when (char) {
+            '\'', '"' -> {
+                inString = true
+                stringChar = char
+            }
+
+            // Unbalanced closers clamp at zero: a stray '>' must not suppress every later split.
+            '<' -> angleDepth++
+            '>' -> angleDepth = (angleDepth - 1).coerceAtLeast(0)
+            '{' -> braceDepth++
+            '}' -> braceDepth = (braceDepth - 1).coerceAtLeast(0)
+            '[' -> bracketDepth++
+            ']' -> bracketDepth = (bracketDepth - 1).coerceAtLeast(0)
+            '(' -> parenDepth++
+            ')' -> parenDepth = (parenDepth - 1).coerceAtLeast(0)
+        }
+
+        return true
+    }
+
+    fun isTopLevel(): Boolean {
+        return angleDepth == 0 && braceDepth == 0 && bracketDepth == 0 && parenDepth == 0 && !inString
+    }
+}
+
+/** Splits [text] on [delimiter] occurrences that are not nested inside brackets or strings. */
+fun splitTopLevelTypeText(text: String, delimiter: Char): List<String> {
+    val parts = mutableListOf<String>()
+    val scanner = TopLevelTextScanner()
+    var start = 0
+
+    text.forEachIndexed { index, char ->
+        if (!scanner.accept(text, index, char)) {
+            return@forEachIndexed
+        }
+        if (char == delimiter && scanner.isTopLevel()) {
+            text.substring(start, index).trim().takeIf(String::isNotEmpty)?.let(parts::add)
+            start = index + 1
+        }
+    }
+
+    text.substring(start).trim().takeIf(String::isNotEmpty)?.let(parts::add)
+    return parts
+}
+
+/** Index of the first [target] at nesting depth zero, or `-1`. */
+fun indexOfTopLevelChar(text: String, target: Char): Int {
+    val scanner = TopLevelTextScanner()
+
+    text.forEachIndexed { index, char ->
+        if (!scanner.accept(text, index, char)) {
+            return@forEachIndexed
+        }
+        if (char == target && scanner.isTopLevel()) {
+            return index
+        }
+    }
+
+    return -1
+}
+
+/**
+ * Splits [text] at the first depth-zero whitespace into `token to remainder`.
+ *
+ * Used to peel `---@param name <type> <description>` apart without parsing: the type may itself
+ * contain spaces inside `fun(a: string, b: number)`.
+ */
+fun splitTopLevelToken(text: String): Pair<String, String> {
+    val trimmed = text.trim()
+    if (trimmed.isEmpty()) {
+        return "" to ""
+    }
+
+    val scanner = TopLevelTextScanner()
+    trimmed.forEachIndexed { index, char ->
+        if (!scanner.accept(trimmed, index, char)) {
+            return@forEachIndexed
+        }
+        if (char.isWhitespace() && scanner.isTopLevel()) {
+            return trimmed.substring(0, index) to trimmed.substring(index + 1).trim()
+        }
+    }
+
+    return trimmed to ""
+}

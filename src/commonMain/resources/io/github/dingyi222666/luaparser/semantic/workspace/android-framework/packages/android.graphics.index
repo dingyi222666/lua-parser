@@ -1,0 +1,43 @@
+# Compact Android graphics package catalog for Android-Lua framework overlays.
+# Covers color helpers, bitmap handling, canvas/paint/path drawing, typefaces,
+# and PorterDuff modes used by drawable/UI helper code.
+
+android.graphics.Bitmap
+android.graphics.Bitmap$CompressFormat
+android.graphics.Bitmap$Config
+android.graphics.BitmapFactory
+android.graphics.BitmapFactory$Options
+android.graphics.Canvas
+android.graphics.Color
+android.graphics.ColorFilter
+android.graphics.ColorMatrix
+android.graphics.ColorMatrixColorFilter
+android.graphics.DashPathEffect
+android.graphics.ImageFormat
+android.graphics.LinearGradient
+android.graphics.Matrix
+android.graphics.Matrix$ScaleToFit
+android.graphics.Movie
+android.graphics.Paint
+android.graphics.Paint$Align
+android.graphics.Paint$Cap
+android.graphics.Paint$FontMetrics
+android.graphics.Paint$FontMetricsInt
+android.graphics.Paint$Join
+android.graphics.Paint$Style
+android.graphics.Path
+android.graphics.Path$Direction
+android.graphics.Path$FillType
+android.graphics.Path$Op
+android.graphics.Point
+android.graphics.PointF
+android.graphics.PorterDuff
+android.graphics.PorterDuff$Mode
+android.graphics.PorterDuffColorFilter
+android.graphics.RadialGradient
+android.graphics.Rect
+android.graphics.RectF
+android.graphics.Shader
+android.graphics.Shader$TileMode
+android.graphics.SweepGradient
+android.graphics.Typeface

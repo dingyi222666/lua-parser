@@ -1,0 +1,422 @@
+package io.github.dingyi222666.luaparser.semantic.types.model
+
+import io.github.dingyi222666.luaparser.semantic.types.resolve.TypeSubstitutor
+
+sealed interface JavaInteropType : Type {
+    val javaName: JavaTypeName
+
+    override val name: String
+        get() = javaName.canonicalName
+}
+
+data class JavaTypeName(
+    val packageName: String = "",
+    val simpleNames: List<String>,
+    val binaryName: String = buildJavaBinaryName(packageName, simpleNames),
+    val canonicalName: String = buildJavaCanonicalName(packageName, simpleNames)
+) {
+    init {
+        require(simpleNames.isNotEmpty()) { "Java type names must include at least one simple name." }
+    }
+
+    val simpleName: String
+        get() = simpleNames.last()
+
+    // The three accessors below have no caller anywhere in the repo (main + all test source
+    // sets); kept but deprecated because the artifact is published and external use is
+    // plausible.
+    @Deprecated("Unused API surface; no in-repo caller.")
+    val topLevelName: String
+        get() = simpleNames.first()
+
+    @Deprecated("Unused API surface; no in-repo caller.")
+    val innerClassNames: List<String>
+        get() = simpleNames.drop(1)
+
+    @Deprecated("Unused API surface; no in-repo caller.")
+    val hasInnerClassName: Boolean
+        get() = innerClassNames.isNotEmpty()
+}
+
+data class JavaClassType(
+    override val javaName: JavaTypeName,
+    val constructors: JavaOverloadSet<JavaConstructorType> = JavaOverloadSet(),
+    val staticMembers: Map<String, JavaStaticMemberType> = emptyMap(),
+    val instanceMembers: Map<String, JavaInstanceMemberType> = emptyMap(),
+    val innerClasses: Map<String, JavaClassType> = emptyMap(),
+    val superClass: JavaClassType? = null,
+    val interfaces: List<JavaClassType> = emptyList(),
+    val typeParameters: List<TypeParameterType> = emptyList()
+) : JavaInteropType, CallableType {
+    override val callSignatures: List<FunctionType>
+        get() = constructors.overloads.map { constructor ->
+            constructor.signature.withReturnType(JavaInstanceType(this))
+        }
+
+    override val displayName: String
+        get() = javaName.canonicalName
+
+    // Structural hashCode over a framework-class member graph is O(members) and is
+    // paid by every union/intersection set-add during normalization (device stack
+    // samples: 2-4s of pure hashCode chains per check). The graph is immutable, so
+    // compute it once per instance and reuse; equals stays the data-class
+    // structural comparison, so the contract is unchanged.
+    private val cachedHashCode: Int by lazy(LazyThreadSafetyMode.PUBLICATION) {
+        var h = javaName.hashCode()
+        h = h * 31 + constructors.hashCode()
+        h = h * 31 + staticMembers.hashCode()
+        h = h * 31 + instanceMembers.hashCode()
+        h = h * 31 + innerClasses.hashCode()
+        h = h * 31 + (superClass?.hashCode() ?: 0)
+        h = h * 31 + interfaces.hashCode()
+        h = h * 31 + typeParameters.hashCode()
+        h
+    }
+
+    override fun hashCode(): Int = cachedHashCode
+
+    // Same O(members) story as hashCode: the generated data-class equals walks the
+    // full member graph on every comparison, and diagnostics-time checks compare
+    // these types repeatedly (device stack: equals <- equals <- typeOfDeclaration
+    // <- attachVisibleAstMembersToType <- evaluateIdentifier). The pre-filter below
+    // is contract-preserving: cachedHashCode is a pure function of exactly the
+    // fields the data-class equals compares, so equal objects always share it; a
+    // mismatch only rejects candidates a structural compare would also reject.
+    // The identity check keeps the common same-instance case O(1) even when
+    // hashCode collides.
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (other !is JavaClassType) return false
+        if (cachedHashCode != other.cachedHashCode) return false
+        return javaName == other.javaName &&
+            constructors == other.constructors &&
+            staticMembers == other.staticMembers &&
+            instanceMembers == other.instanceMembers &&
+            innerClasses == other.innerClasses &&
+            superClass == other.superClass &&
+            interfaces == other.interfaces &&
+            typeParameters == other.typeParameters
+    }
+
+    // These maps belong to this immutable type. A process-wide cache retained
+    // obsolete workspace graphs indefinitely and collided on identity hashes.
+    private val flattenedStatics by lazy { collectStaticMembers(linkedSetOf()) }
+    private val flattenedInstances by lazy { collectInstanceMembers(linkedSetOf()) }
+    private val flattenedInnerClasses by lazy { collectInnerClasses(linkedSetOf()) }
+
+    fun allStaticMembers(): Map<String, JavaStaticMemberType> =
+        flattenedStatics
+
+    fun allInstanceMembers(): Map<String, JavaInstanceMemberType> =
+        flattenedInstances
+
+    fun allInnerClasses(): Map<String, JavaClassType> =
+        flattenedInnerClasses
+
+    private fun collectStaticMembers(visited: MutableSet<String>): Map<String, JavaStaticMemberType> {
+        if (!visited.add(javaName.binaryName)) {
+            return staticMembers
+        }
+        val result = linkedMapOf<String, JavaStaticMemberType>()
+        interfaces.forEach { result.putAll(it.collectStaticMembers(visited)) }
+        superClass?.let { result.putAll(it.collectStaticMembers(visited)) }
+        result.putAll(staticMembers)
+        visited.remove(javaName.binaryName)
+        return result
+    }
+
+    private fun collectInstanceMembers(visited: MutableSet<String>): Map<String, JavaInstanceMemberType> {
+        if (!visited.add(javaName.binaryName)) {
+            return instanceMembers
+        }
+        val result = linkedMapOf<String, JavaInstanceMemberType>()
+        interfaces.forEach { result.putAll(it.collectInstanceMembers(visited)) }
+        superClass?.let { result.putAll(it.collectInstanceMembers(visited)) }
+        result.putAll(instanceMembers)
+        visited.remove(javaName.binaryName)
+        return result
+    }
+
+    private fun collectInnerClasses(visited: MutableSet<String>): Map<String, JavaClassType> {
+        if (!visited.add(javaName.binaryName)) {
+            return innerClasses
+        }
+        val result = linkedMapOf<String, JavaClassType>()
+        interfaces.forEach { result.putAll(it.collectInnerClasses(visited)) }
+        superClass?.let { result.putAll(it.collectInnerClasses(visited)) }
+        result.putAll(innerClasses)
+        visited.remove(javaName.binaryName)
+        return result
+    }
+}
+
+data class JavaInstanceType(
+    val classType: JavaClassType,
+    val typeArguments: List<Type> = emptyList(),
+    override val javaName: JavaTypeName = classType.javaName
+) : JavaInteropType {
+    override val displayName: String
+        get() = buildJavaParameterizedName(javaName.canonicalName, typeArguments)
+
+    fun allInstanceMembers(): Map<String, JavaInstanceMemberType> {
+        val members = classType.allInstanceMembers()
+        val mapping = classType.typeArgumentMapping(typeArguments)
+        if (mapping.isEmpty()) {
+            return members
+        }
+        val substitutor = TypeSubstitutor()
+        return members.mapValues { (_, member) ->
+            substitutor.substitute(member, mapping) as JavaInstanceMemberType
+        }
+    }
+}
+
+enum class JavaContainerKind {
+    SEQUENCE,
+    MAP
+}
+
+fun JavaInstanceType.javaContainerKind(): JavaContainerKind? {
+    val names = linkedSetOf<String>()
+    fun visit(current: JavaClassType?) {
+        current ?: return
+        if (!names.add(current.javaName.binaryName)) {
+            return
+        }
+        visit(current.superClass)
+        current.interfaces.forEach(::visit)
+    }
+    visit(classType)
+    return when {
+        "java.util.Map" in names -> JavaContainerKind.MAP
+        names.any { it in javaSequenceContainerNames } -> JavaContainerKind.SEQUENCE
+        else -> null
+    }
+}
+
+private val javaSequenceContainerNames = setOf(
+    "java.lang.Iterable",
+    "java.util.Collection",
+    "java.util.List",
+    "java.util.Set",
+    "java.util.Queue",
+    "java.util.Deque"
+)
+
+data class JavaSignatureMetadata(
+    val isVarArgs: Boolean = false,
+    val typeParameters: List<TypeParameterType> = emptyList(),
+    val genericParameterTypeNames: List<String> = emptyList(),
+    val genericReturnTypeName: String? = null
+)
+
+data class JavaConstructorType(
+    val owner: JavaTypeName,
+    val signature: FunctionType,
+    val signatureMetadata: JavaSignatureMetadata = JavaSignatureMetadata(),
+    val visibility: JavaVisibility = JavaVisibility.PUBLIC
+) : JavaInteropType, CallableType {
+    override val javaName: JavaTypeName
+        get() = owner
+
+    override val name: String
+        get() = "${owner.canonicalName}.<init>"
+
+    override val displayName: String
+        get() = signature.displayName
+
+    override val callSignatures: List<FunctionType>
+        get() = listOf(signature)
+}
+
+sealed interface JavaMemberType : JavaInteropType {
+    val owner: JavaTypeName
+    val memberName: String
+    val memberKind: JavaMemberKind
+    val valueType: Type
+    val visibility: JavaVisibility
+
+    override val javaName: JavaTypeName
+        get() = owner
+
+    override val name: String
+        get() = "${owner.canonicalName}.$memberName"
+}
+
+data class JavaStaticMemberType(
+    override val owner: JavaTypeName,
+    override val memberName: String,
+    override val valueType: Type,
+    override val memberKind: JavaMemberKind = JavaMemberKind.FIELD,
+    override val visibility: JavaVisibility = JavaVisibility.PUBLIC,
+    val signatureMetadata: List<JavaSignatureMetadata> = emptyList()
+) : JavaMemberType {
+    override val displayName: String
+        get() = valueType.displayName
+}
+
+data class JavaInstanceMemberType(
+    override val owner: JavaTypeName,
+    override val memberName: String,
+    override val valueType: Type,
+    override val memberKind: JavaMemberKind = JavaMemberKind.FIELD,
+    override val visibility: JavaVisibility = JavaVisibility.PUBLIC,
+    val signatureMetadata: List<JavaSignatureMetadata> = emptyList()
+) : JavaMemberType {
+    override val displayName: String
+        get() = valueType.displayName
+}
+
+data class JavaOverloadSet<out T : CallableType>(
+    val overloads: List<T> = emptyList()
+) {
+    val isEmpty: Boolean
+        get() = overloads.isEmpty()
+
+    val isNotEmpty: Boolean
+        get() = overloads.isNotEmpty()
+}
+
+data class JavaOverloadType(
+    override val javaName: JavaTypeName,
+    val overloadName: String,
+    override val callSignatures: List<FunctionType>,
+    val signatureMetadata: List<JavaSignatureMetadata> = emptyList(),
+    override val name: String = "${javaName.canonicalName}.$overloadName"
+) : JavaInteropType, CallableType {
+    override val displayName: String
+        get() = callableSummary(callSignatures)
+}
+
+data class JavaPrimitiveType(
+    override val name: String,
+    val kind: Kind
+) : Type {
+    enum class Kind {
+        BOOLEAN,
+        BYTE,
+        CHAR,
+        SHORT,
+        INT,
+        LONG,
+        FLOAT,
+        DOUBLE,
+        VOID
+    }
+
+    companion object {
+        val BOOLEAN = JavaPrimitiveType("boolean", Kind.BOOLEAN)
+        val BYTE = JavaPrimitiveType("byte", Kind.BYTE)
+        val CHAR = JavaPrimitiveType("char", Kind.CHAR)
+        val SHORT = JavaPrimitiveType("short", Kind.SHORT)
+        val INT = JavaPrimitiveType("int", Kind.INT)
+        val LONG = JavaPrimitiveType("long", Kind.LONG)
+        val FLOAT = JavaPrimitiveType("float", Kind.FLOAT)
+        val DOUBLE = JavaPrimitiveType("double", Kind.DOUBLE)
+        val VOID = JavaPrimitiveType("void", Kind.VOID)
+    }
+}
+
+/**
+ * JVM array surface used for reflected array returns and LuaJava typed array helpers.
+ *
+ * Prefer nested single-rank wrappers for multi-dim allocations so index peeling yields
+ * intermediate arrays (Locale[][] -> Locale[] -> Locale). Display uses repeated "[]"
+ * suffixes only (never "[[]]").
+ */
+data class JavaArrayType(
+    val elementType: Type,
+    val dimensions: Int = 1,
+    override val name: String = buildJavaArrayName(elementType, dimensions)
+) : Type {
+    init {
+        require(dimensions > 0) { "Java array dimensions must be positive." }
+    }
+
+    /** Canonical hover/display: component root plus one "[]" per nested/flat rank. */
+    override val displayName: String
+        get() = buildJavaArrayName(elementType, dimensions)
+}
+
+internal fun Type.javaVarargElementType(): Type? = when (this) {
+    is ArrayType -> elementType
+    is JavaArrayType -> elementType
+    else -> null
+}
+
+internal fun FunctionType.withReturnType(returnType: Type): FunctionType {
+    return copy(
+        returnType = returnType,
+        name = FunctionType(
+            parameters = parameters,
+            returnType = returnType,
+            typeParameters = typeParameters
+        ).name
+    )
+}
+
+enum class JavaVisibility {
+    PUBLIC,
+    PROTECTED,
+    PACKAGE_PRIVATE,
+    PRIVATE
+}
+
+enum class JavaMemberKind {
+    FIELD,
+    METHOD
+}
+
+private fun buildJavaBinaryName(packageName: String, simpleNames: List<String>): String {
+    val className = simpleNames.joinToString("\$")
+    return packageName.takeIf { it.isNotEmpty() }?.let { "$it.$className" } ?: className
+}
+
+private fun buildJavaCanonicalName(packageName: String, simpleNames: List<String>): String {
+    val className = simpleNames.joinToString(".")
+    return packageName.takeIf { it.isNotEmpty() }?.let { "$it.$className" } ?: className
+}
+
+private fun buildJavaParameterizedName(name: String, typeArguments: List<Type>): String {
+    if (typeArguments.isEmpty()) {
+        return name
+    }
+    return typeArguments.joinToString(prefix = "$name<", postfix = ">") { it.displayName }
+}
+
+private fun JavaClassType.typeArgumentMapping(typeArguments: List<Type>): Map<String, Type> {
+    if (typeArguments.isEmpty() || typeParameters.size != typeArguments.size) {
+        return emptyMap()
+    }
+    return typeParameters.zip(typeArguments).associate { (parameter, argument) ->
+        parameter.name to argument
+    }
+}
+
+/**
+ * Build a Java-style array display name. Always appends exact "[]" per dimension
+ * (dimensions=2 on Locale -> "java.util.Locale[][]"). Nested element arrays already
+ * contribute their own "[]" via [Type.displayName], so prefer dimensions=1 wrappers
+ * for multi-rank modeling (TASK-588 / TASK-663).
+ *
+ * Never emits the double-bracket token "[[]]"; each rank is the two-char "[]".
+ * Root may already end with "[]" when [elementType] is itself a [JavaArrayType];
+ * only append additional ranks for this wrapper's [dimensions].
+ */
+private fun buildJavaArrayName(elementType: Type, dimensions: Int): String {
+    // Nested single-rank wrappers are preferred, so the component display already carries
+    // any inner ranks (JavaArrayType.displayName goes through this same builder).
+    val root = elementType.displayName
+    val rank = dimensions.coerceAtLeast(1)
+    // Explicit two-char append avoids any platform String.repeat edge and keeps each
+    // rank as "[]" (not a collapsed "[[]]" token).
+    val builder = StringBuilder(root.length + rank * 2)
+    builder.append(root)
+    var i = 0
+    while (i < rank) {
+        builder.append('[')
+        builder.append(']')
+        i++
+    }
+    return builder.toString()
+}

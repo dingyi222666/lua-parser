@@ -1,0 +1,32 @@
+{
+  "sliceId": "s008",
+  "runId": "29198171827",
+  "sha": "944c680a0c438d1eb9137c13feee7ef1bc9eec1a",
+  "status": "success",
+  "exitCode": 0,
+  "durationSec": 5,
+  "tests": 152,
+  "failures": 0,
+  "errors": 0,
+  "skipped": 0,
+  "failedTests": [],
+  "testsPatterns": [
+    "parser.ast.CompactCallAstShapeTddTest",
+    "parser.ast.DoBlockNestedReturnShapeTddTest",
+    "parser.ast.MethodCallColonShapeTddTest",
+    "parser.ast.MultiAssignLhsRhsShapeTddTest",
+    "parser.ast.ParserAstCampaignGapTddTest",
+    "parser.ast.ShebangOnlyChunkShapeTddTest",
+    "parser.ast.StringCallVsParenCallShapeTddTest",
+    "parser.ast.VarargFunctionParamShapeTddTest",
+    "parser.lexer.LuaLexerHexFloatEscapeTddTest",
+    "parser.lexer.LuaLexerJvmApiCompatibilityTddTest",
+    "parser.lexer.LuaLexerLiteralCommentTddTest",
+    "parser.lexer.LuaLexerLongBracketCorpusTddTest",
+    "parser.lexer.LuaLexerLongCommentEdgeTddTest",
+    "parser.lexer.LuaLexerLongStringEdgeTddTest",
+    "parser.lexer.LuaLexerLongStringNestedEqualsTddTest"
+  ],
+  "gate": "must-green-to-advance",
+  "finishedAt": "2026-07-12T15:28:46Z"
+}

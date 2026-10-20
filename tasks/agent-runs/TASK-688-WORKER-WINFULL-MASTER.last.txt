@@ -1,0 +1,5 @@
+taskId=688
+status=review
+wave=WINFULL-MASTER
+- normalizeLspFileUriPath: catch Exception (URISyntaxException) not only IllegalArgumentException
+- pathFromFileUri: same + fallback via normalizeLspFileUriPath
